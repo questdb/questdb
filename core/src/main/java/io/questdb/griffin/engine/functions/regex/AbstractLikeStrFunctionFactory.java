@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -47,7 +48,28 @@ import java.util.regex.Pattern;
 
 public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory {
 
-    protected abstract boolean isCaseInsensitive();
+    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) {
+        int len = pattern.length();
+
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < len; i++) {
+            char c = pattern.charAt(i);
+            if (c == '_')
+                sink.put('.');
+            else if (c == '%')
+                sink.put(".*?");
+            else if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
+                sink.put("\\");
+                sink.put(c);
+            } else
+                sink.put(c);
+        }
+
+        if (Chars.equalsNc(sink, prev)) {
+            return null;
+        }
+        return Chars.toString(sink);
+    }
 
     @Override
     public Function newInstance(
@@ -85,61 +107,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
     }
 
-    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) {
-        int len = pattern.length();
-
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int i = 0; i < len; i++) {
-            char c = pattern.charAt(i);
-            if (c == '_')
-                sink.put(".");
-            else if (c == '%')
-                sink.put(".*?");
-            else if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
-                sink.put("\\");
-                sink.put(c);
-            } else
-                sink.put(c);
-        }
-
-        if (Chars.equalsNc(sink, prev)) {
-            return null;
-        }
-        return Chars.toString(sink);
-    }
-
-    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
-        private final Matcher matcher;
-
-        public ConstLikeStrFunction(Function value, Matcher matcher) {
-            this.value = value;
-            this.matcher = matcher;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && matcher.reset(cs).matches();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-    }
+    protected abstract boolean isCaseInsensitive();
 
     private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
-        private final Function pattern;
         private final boolean caseInsensitive;
-        private Matcher matcher;
+        private final Function pattern;
+        private final Function value;
         private String lastPattern = null;
+        private Matcher matcher;
 
         public BindLikeStrFunction(Function value, Function pattern, boolean caseInsensitive) {
             this.value = value;
@@ -186,6 +161,54 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            //impl is regex 
+            sink.val(" ~ ");
+            sink.val(pattern);
+            if (!caseInsensitive) {
+                sink.val(" [case-sensitive]");
+            }
+        }
+    }
+
+    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
+        private final Matcher matcher;
+        private final Function value;
+
+        public ConstLikeStrFunction(Function value, Matcher matcher) {
+            this.value = value;
+            this.matcher = matcher;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && matcher.reset(cs).matches();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            //impl is regex 
+            sink.val(" ~ ");
+            sink.val(matcher.pattern().toString());
+            if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
+                sink.val(" [case-sensitive]");
+            }
         }
     }
 }

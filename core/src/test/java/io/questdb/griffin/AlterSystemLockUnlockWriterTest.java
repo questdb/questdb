@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.std.Misc;
@@ -102,10 +104,29 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     @Test
     public void testLockWriter() throws Exception {
         assertMemoryLeak(() -> {
-            createX();
+            TableToken x = createX();
             compile("alter system lock writer x", sqlExecutionContext);
-            TestUtils.assertEquals("alterSystem", engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock"));
+            TestUtils.assertEquals("alterSystem", engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), x, "new lock"));
             compile("alter system unlock writer x", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testLockWriter_readOnlyContext() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken x = createX();
+            SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+            try {
+                compile("alter system lock writer x", readOnlyContext);
+                fail("write lock cannot be acquired in the read-only mode");
+            } catch (SqlException expected) {
+                // check the writer wasn't actually locked
+                assertNull(engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), x, "new lock"));
+                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), x);
+            } finally {
+                Misc.free(readOnlyContext);
+            }
         });
     }
 
@@ -120,7 +141,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
             try {
                 compile("alter system unlock writer y", sqlExecutionContext);
                 fail();
-            } catch (SqlException ex) {
+            } catch (SqlException | CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist [table=y]");
             }
         });
@@ -129,47 +150,28 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     @Test
     public void testUnlockWriter() throws Exception {
         assertMemoryLeak(() -> {
-            createX();
+            TableToken x = createX();
             compile("alter system lock writer x", sqlExecutionContext);
             compile("alter system unlock writer x", sqlExecutionContext);
-            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock 2"));
-            engine.unlock(sqlExecutionContext.getCairoSecurityContext(), "x", null, false);
-        });
-    }
-
-    @Test
-    public void testLockWriter_readOnlyContext() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(new CairoSecurityContextImpl(false), bindVariableService,null, -1, null);
-            try {
-                compile("alter system lock writer x", readOnlyContext);
-                fail("write lock cannot be acquired in the read-only mode");
-            } catch (SqlException expected) {
-                // check the writer wasn't actually locked
-                assertNull(engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock"));
-                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), "x");
-            } finally {
-                Misc.free(readOnlyContext);
-            }
+            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), x, "new lock 2"));
+            engine.unlock(sqlExecutionContext.getCairoSecurityContext(), x, null, false);
         });
     }
 
     @Test
     public void testUnlockWriter_readOnlyContext() throws Exception {
         assertMemoryLeak(() -> {
-            createX();
+            TableToken x = createX();
             SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(new CairoSecurityContextImpl(false), bindVariableService,null, -1, null);
+                    .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
             compile("alter system lock writer x", sqlExecutionContext);
             try {
                 compile("alter system unlock writer x", readOnlyContext);
                 fail("write lock cannot be released in the read-only mode");
             } catch (SqlException expected) {
                 // check the writer wasn't actually released
-                TestUtils.assertEquals("alterSystem", engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock"));
-                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), "x");
+                TestUtils.assertEquals("alterSystem", engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), x, "new lock"));
+                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), x);
             } finally {
                 Misc.free(readOnlyContext);
             }
@@ -189,7 +191,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
         });
     }
 
-    private void createX() throws SqlException {
+    private TableToken createX() throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -213,5 +215,6 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
                         ") timestamp (timestamp);",
                 sqlExecutionContext
         );
+        return engine.getTableToken("x");
     }
 }

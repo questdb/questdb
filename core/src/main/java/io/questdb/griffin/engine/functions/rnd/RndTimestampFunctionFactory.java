@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -68,8 +69,8 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
 
     private static class Func extends TimestampFunction implements Function {
         private final long lo;
-        private final long range;
         private final int nanRate;
+        private final long range;
         private Rnd rnd;
 
         public Func(long lo, long hi, int nanRate) {
@@ -87,13 +88,18 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return false;
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_timestamp(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
         }
     }
 }

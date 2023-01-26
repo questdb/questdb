@@ -32,23 +32,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.IntHashSet;
+import io.questdb.std.CompactIntHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final ObjList<IntHashSet> sets = new ObjList<>();
-    private int valueIndex;
+    private final ObjList<CompactIntHashSet> sets = new ObjList<>();
     private int setIndex;
+    private int valueIndex;
 
     public CountDistinctIntGroupByFunction(Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 
     @Override
@@ -59,14 +54,14 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        final IntHashSet set;
+        final CompactIntHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new IntHashSet());
+            sets.extendAndSet(setIndex, set = new CompactIntHashSet());
         } else {
             set = sets.getQuick(setIndex);
         }
-
         set.clear();
+
         final int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {
             set.add(val);
@@ -79,7 +74,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        final IntHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final CompactIntHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final int val = arg.getInt(record);
         if (val != Numbers.INT_NaN) {
             final int index = set.keyIndex(val);
@@ -89,6 +84,31 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
             set.addAt(index, val);
             mapValue.addLong(valueIndex, 1);
         }
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public String getName() {
+        return "count_distinct";
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -111,21 +131,6 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
     }
 
     @Override

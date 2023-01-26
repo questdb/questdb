@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -31,15 +32,16 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
-    private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
+    private final int columnIndex;
+    private final int indexDirection;
     private final Function symbol;
     private int symbolKey;
-    private final int indexDirection;
 
     public DeferredSymbolIndexRowCursorFactory(
             int columnIndex,
@@ -55,11 +57,6 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public Function getFunction() {
-        return symbol;
-    }
-
-    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             return EmptyRowCursor.INSTANCE;
@@ -68,6 +65,21 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         return dataFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+    }
+
+    @Override
+    public Function getFunction() {
+        return symbol;
+    }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
+
+    @Override
+    public boolean isUsingIndex() {
+        return true;
     }
 
     @Override
@@ -80,12 +92,9 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public boolean isEntity() {
-        return false;
-    }
-
-    @Override
-    public boolean isUsingIndex() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putBaseColumnName(columnIndex);
+        sink.meta("deferred").val("true");
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbol);
     }
 }

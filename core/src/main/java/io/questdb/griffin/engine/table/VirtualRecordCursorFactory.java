@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,9 +37,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final RecordCursorFactory baseFactory;
     private final VirtualFunctionDirectSymbolRecordCursor cursor;
     private final ObjList<Function> functions;
-    private final RecordCursorFactory baseFactory;
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
@@ -60,14 +61,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(functions);
-        Misc.free(baseFactory);
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return baseFactory.usesCompiledFilter();
+    public RecordCursorFactory getBaseFactory() {
+        return baseFactory;
     }
 
     @Override
@@ -84,27 +79,35 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return supportsRandomAccess;
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return baseFactory.supportsUpdateRowId(tableName);
-    }
-
-    @Override
     public boolean hasDescendingOrder() {
         return baseFactory.hasDescendingOrder();
     }
 
     @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return supportsRandomAccess;
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return baseFactory.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
-        sink.type("VirtualRecordCursorFactory");
-        sink.attr("supportsRandomAccess");
-        sink.val(supportsRandomAccess);
-        sink.attr("functions");
-        sink.val(functions);
+        sink.type("VirtualRecord");
+        sink.optAttr("functions", functions, true);
         sink.child(baseFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return baseFactory.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(functions);
+        Misc.free(baseFactory);
     }
 }

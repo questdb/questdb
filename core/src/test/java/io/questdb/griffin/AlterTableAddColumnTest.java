@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -98,7 +97,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 CyclicBarrier startBarrier = new CyclicBarrier(2);
                 CountDownLatch haltLatch = new CountDownLatch(1);
                 new Thread(() -> {
-                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                    try (TableWriter ignore = getWriter("x")) {
                         // make sure writer is locked before test begins
                         startBarrier.await();
                         // make sure we don't release writer until main test finishes
@@ -148,32 +147,6 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                                     "\tNaN\n" +
                                     "XYZ\tNaN\n",
                             "select c, mycol from x"
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testAddColumnWithSpaceInName() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
-
-                    Assert.assertEquals(ALTER, compile("alter table x add \"spa ce\" string", sqlExecutionContext).getType());
-
-                    assertQueryPlain(
-                            "c\tspa ce\n" +
-                                    "XYZ\t\n" +
-                                    "ABC\t\n" +
-                                    "ABC\t\n" +
-                                    "XYZ\t\n" +
-                                    "\t\n" +
-                                    "CDE\t\n" +
-                                    "CDE\t\n" +
-                                    "ABC\t\n" +
-                                    "\t\n" +
-                                    "XYZ\t\n",
-                            "select c, \"spa ce\" from x"
                     );
                 }
         );
@@ -242,6 +215,32 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                                     "\tNaN\n" +
                                     "XYZ\tNaN\n",
                             "select c, mycol from x"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testAddColumnWithSpaceInName() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    Assert.assertEquals(ALTER, compile("alter table x add \"spa ce\" string", sqlExecutionContext).getType());
+
+                    assertQueryPlain(
+                            "c\tspa ce\n" +
+                                    "XYZ\t\n" +
+                                    "ABC\t\n" +
+                                    "ABC\t\n" +
+                                    "XYZ\t\n" +
+                                    "\t\n" +
+                                    "CDE\t\n" +
+                                    "CDE\t\n" +
+                                    "ABC\t\n" +
+                                    "\t\n" +
+                                    "XYZ\t\n",
+                            "select c, \"spa ce\" from x"
                     );
                 }
         );
@@ -351,28 +350,6 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddSymbolWithStatementEndingWithSemicolon_DoesntThrowException() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
-                    engine.clear();
-
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
-                        Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
-
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
-                            SymbolMapReader smr = reader.getSymbolMapReader(16);
-                            Assert.assertNotNull(smr);
-                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                        }
-                    }
-                }
-        );
-    }
-
-    @Test
     public void testAddSymbolCache() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -380,20 +357,20 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     engine.clear();
 
                     // create default configuration with nocache
-                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
                             return false;
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery compile = compiler.compile("alter table x add column meh symbol cache", sqlExecutionContext);
                             Assert.assertEquals(ALTER, compile.getType());
                             compile.execute(null).await();
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -418,7 +395,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol capacity 2048", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(2048, smr.getSymbolCapacity());
@@ -474,7 +451,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol index", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -494,7 +471,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol index capacity 9000", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -520,13 +497,35 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x add column meh symbol nocache", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = getReader("x")) {
                         SymbolMapReader smr = reader.getSymbolMapReader(16);
                         Assert.assertNotNull(smr);
                         Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
                         Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
                         Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
                         Assert.assertFalse(smr.isCached());
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testAddSymbolWithStatementEndingWithSemicolon_DoesntThrowException() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+                    engine.clear();
+
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+                        Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
+
+                        try (TableReader reader = getReader("x")) {
+                            SymbolMapReader smr = reader.getSymbolMapReader(16);
+                            Assert.assertNotNull(smr);
+                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                        }
                     }
                 }
         );
@@ -540,20 +539,20 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     engine.clear();
 
-                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
                             return false;
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());
                             cc.execute(null).await();
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
@@ -580,20 +579,20 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     engine.clear();
 
-                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
                             return true;
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());
                             cc.execute(null).await();
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                            try (TableReader reader = getReader("x")) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
                                 Assert.assertNotNull(smr);
                                 Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());

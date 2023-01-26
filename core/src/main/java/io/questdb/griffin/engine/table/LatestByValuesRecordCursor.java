@@ -27,17 +27,19 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
+class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
 
     private final int columnIndex;
+    private final IntHashSet deferredSymbolKeys;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
-    private final IntHashSet deferredSymbolKeys;
 
     public LatestByValuesRecordCursor(
             int columnIndex,
@@ -50,6 +52,25 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
         this.symbolKeys = symbolKeys;
         this.deferredSymbolKeys = deferredSymbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Row backward scan").meta("on").putColumnName(columnIndex);
+    }
+
+    private void prepare() {
+        if (deferredSymbolKeys != null) {
+            // We need to clean up the map when there are deferred keys since
+            // they may contain bind variables.
+            map.clear();
+            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                map.put(deferredSymbolKeys.get(i), 0);
+            }
+        }
+        for (int i = 0, n = symbolKeys.size(); i < n; i++) {
+            map.put(symbolKeys.get(i), 0);
+        }
     }
 
     @Override
@@ -73,20 +94,6 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
                     map.putAt(index, key, 1);
                 }
             }
-        }
-    }
-
-    private void prepare() {
-        if (deferredSymbolKeys != null) {
-            // We need to clean up the map when there are deferred keys since
-            // they may contain bind variables.
-            map.clear();
-            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
-                map.put(deferredSymbolKeys.get(i), 0);
-            }
-        }
-        for (int i = 0, n = symbolKeys.size(); i < n; i++) {
-            map.put(symbolKeys.get(i), 0);
         }
     }
 }

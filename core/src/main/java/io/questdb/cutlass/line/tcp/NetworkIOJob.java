@@ -26,13 +26,16 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.mp.Job;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.ByteCharSequence;
+import io.questdb.std.str.DirectByteCharSequence;
 
-interface NetworkIOJob extends Job {
-    void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+interface NetworkIOJob extends Job, QuietCloseable {
+    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
-    void close();
+    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
 
-    TableUpdateDetails getLocalTableDetails(CharSequence tableName);
+    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName);
 
     ObjList<SymbolCache> getUnusedSymbolCaches();
 

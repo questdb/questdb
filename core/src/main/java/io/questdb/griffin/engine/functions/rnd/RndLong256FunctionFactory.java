@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.*;
@@ -37,9 +38,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class RndLong256FunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "rnd_long256()";
+
     @Override
     public String getSignature() {
-        return "rnd_long256()";
+        return SIGNATURE;
     }
 
     @Override
@@ -54,6 +57,11 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         @Override
+        public void getLong256(Record rec, CharSink sink) {
+            Numbers.appendLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
+        }
+
+        @Override
         public Long256 getLong256A(Record rec) {
             return rndLong(long256A);
         }
@@ -64,13 +72,13 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSink sink) {
-            Numbers.appendLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
 
         @NotNull

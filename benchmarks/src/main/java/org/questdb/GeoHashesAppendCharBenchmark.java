@@ -38,6 +38,12 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GeoHashesAppendCharBenchmark {
 
+    private static final char[] base32 = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+            's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+    };
     private static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, '0'..'7'
             8, 9, -1, -1, -1, -1, -1, -1,   // 38-2F, '8','9'
@@ -50,12 +56,6 @@ public class GeoHashesAppendCharBenchmark {
             21, 22, 23, 24, 25, 26, 27, 28, // 70-77, 'p'..'w'
             29, 30, 31                      // 78-7A, 'x'..'z'
     };
-    private static final char[] base32 = {
-            '0', '1', '2', '3', '4', '5', '6', '7',
-            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
-            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
-            's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
-    };
 
     public static void main(String[] args) throws Exception {
         new Runner(new OptionsBuilder()
@@ -64,18 +64,6 @@ public class GeoHashesAppendCharBenchmark {
                 .measurementIterations(3)
                 .forks(1)
                 .build()).run();
-    }
-
-    @Benchmark
-    public void appendChar2() throws NumericException {
-        Rnd rnd = new Rnd();
-        long geohash = 0;
-        for (int j = 0, m = 12; j < m; j++) {
-            geohash = appendChar2(geohash, rnd_geochar(rnd));
-        }
-        if (geohash != 592262567632380556L) {
-            throw new AssertionError();
-        }
     }
 
     @Benchmark
@@ -102,10 +90,33 @@ public class GeoHashesAppendCharBenchmark {
         }
     }
 
+    @Benchmark
+    public void appendChar2() throws NumericException {
+        Rnd rnd = new Rnd();
+        long geohash = 0;
+        for (int j = 0, m = 12; j < m; j++) {
+            geohash = appendChar2(geohash, rnd_geochar(rnd));
+        }
+        if (geohash != 592262567632380556L) {
+            throw new AssertionError();
+        }
+    }
+
     private static long appendChar0(long geohash, char c) throws NumericException { // faster execution
         byte idx;
         if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
             idx = base32Indexes[c - 48];
+            if (idx >= 0) {
+                return (geohash << 5) | idx;
+            }
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    private static long appendChar1(long geohash, char c) throws NumericException {
+        int idx = c - 48;
+        if (idx >= 0 && idx < 75) { // base32Indexes.length
+            idx = base32Indexes[idx];
             if (idx >= 0) {
                 return (geohash << 5) | idx;
             }
@@ -118,17 +129,6 @@ public class GeoHashesAppendCharBenchmark {
         idx = GeoHashes.encodeChar(c);
         if (idx > -1) {
             return (geohash << 5) | idx;
-        }
-        throw NumericException.INSTANCE;
-    }
-
-    private static long appendChar1(long geohash, char c) throws NumericException {
-        int idx = c - 48;
-        if (idx >= 0 && idx < 75) { // base32Indexes.length
-            idx = base32Indexes[idx];
-            if (idx >= 0) {
-                return (geohash << 5) | idx;
-            }
         }
         throw NumericException.INSTANCE;
     }

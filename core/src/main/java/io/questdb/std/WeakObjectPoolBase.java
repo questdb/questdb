@@ -37,7 +37,7 @@ import java.util.ArrayDeque;
  * returns it to its own local pool.
  * <p>
  * In an extreme situation this object migration could keep feeding some
- * pools until we run out of memory. Hence we limit the maximum number of
+ * pools until we run out of memory. Hence, we limit the maximum number of
  * objects a pool can hold.
  */
 abstract class WeakObjectPoolBase<T> {
@@ -57,18 +57,6 @@ abstract class WeakObjectPoolBase<T> {
         return obj == null ? newInstance() : obj;
     }
 
-    boolean push(T obj) {
-        assert obj != null;
-        if (cache.size() < maxSize) {
-            clear(obj);
-            cache.push(obj);
-            return true;
-        } else {
-            close(obj);
-            return false;
-        }
-    }
-
     void clear(T obj) {
     }
 
@@ -82,4 +70,16 @@ abstract class WeakObjectPoolBase<T> {
     }
 
     abstract T newInstance();
+
+    boolean push(T obj) {
+        assert obj != null;
+        if (cache.size() < maxSize) {
+            clear(obj);
+            cache.push(obj);
+            return true;
+        } else {
+            close(obj);
+            return false;
+        }
+    }
 }

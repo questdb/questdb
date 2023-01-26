@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
@@ -41,12 +40,12 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 public class MinDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MIN = Math::min;
-    private final DoubleAccumulator min = new DoubleAccumulator(
-            MIN, Double.POSITIVE_INFINITY
-    );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final DoubleAccumulator min = new DoubleAccumulator(
+            MIN, Double.POSITIVE_INFINITY
+    );
     private int valueOffset;
 
     public MinDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -82,8 +81,27 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void clear() {
+        min.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        final double min = this.min.get();
+        if (Double.isInfinite(min)) {
+            return Double.NaN;
+        }
+        return min;
+    }
+
+    @Override
+    public String getName() {
+        return "min";
     }
 
     @Override
@@ -94,6 +112,11 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -110,29 +133,5 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
-    }
-
-    @Override
-    public void clear() {
-        min.reset();
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        final double min = this.min.get();
-        if (Double.isInfinite(min)) {
-            return Double.NaN;
-        }
-        return min;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinDoubleVector(").put(columnIndex).put(')');
     }
 }

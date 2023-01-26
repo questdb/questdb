@@ -36,22 +36,22 @@ import java.io.Closeable;
 
 public final class SerialCsvFileImporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SerialCsvFileImporter.class);
-    private final CharSequence inputRoot;
-    private final FilesFacade ff;
     private final CairoEngine cairoEngine;
     private final CairoConfiguration configuration;
-    private Path inputFilePath;
+    private final FilesFacade ff;
+    private final CharSequence inputRoot;
     private final CairoSecurityContext securityContext;
-    private TextLoader textLoader;
-    private CharSequence tableName;
-    private CharSequence timestampColumn;
-    private CharSequence timestampFormat;
+    private int atomicity;
+    private ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
     private boolean forceHeader;
-    private int atomicity;
-    private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
-    private ExecutionCircuitBreaker circuitBreaker;
     private long importId;
+    private Path inputFilePath;
+    private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
+    private CharSequence tableName;
+    private TextLoader textLoader;
+    private CharSequence timestampColumn;
+    private CharSequence timestampFormat;
 
     public SerialCsvFileImporter(CairoEngine cairoEngine) {
         this.configuration = cairoEngine.getConfiguration();
@@ -103,7 +103,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
         final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
         final long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
-        long fd = -1;
+        int fd = -1;
         try {
             fd = TableUtils.openRO(ff, inputFilePath, LOG);
             long fileLen = ff.length(fd);
@@ -151,12 +151,14 @@ public final class SerialCsvFileImporter implements Closeable {
         } catch (CairoException e) {
             throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
         } finally {
-            if (fd != -1) {
-                ff.close(fd);
-            }
+            ff.close(fd);
             textLoader.clear();
             Unsafe.free(buf, sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         }
+    }
+
+    public void setStatusReporter(ParallelCsvFileImporter.PhaseStatusReporter reporter) {
+        this.statusReporter = reporter;
     }
 
     public void updateImportStatus(byte status, long rowsHandled, long rowsImported, long errors) {
@@ -165,8 +167,8 @@ public final class SerialCsvFileImporter implements Closeable {
         }
     }
 
-    public void setStatusReporter(ParallelCsvFileImporter.PhaseStatusReporter reporter) {
-        this.statusReporter = reporter;
+    private long getCurrentTimeMs() {
+        return configuration.getMillisecondClock().getTicks();
     }
 
     private void setupTextLoaderFromModel() {
@@ -181,9 +183,5 @@ public final class SerialCsvFileImporter implements Closeable {
                 timestampColumn,
                 timestampFormat
         );
-    }
-
-    private long getCurrentTimeMs() {
-        return configuration.getMillisecondClock().getTicks();
     }
 }

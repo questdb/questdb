@@ -132,17 +132,9 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         throw SqlException.position(argPositions.getQuick(0)).put("unsupported part '").put(part).put('\'');
     }
 
-    static final class CenturyFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
+    static final class CenturyFunction extends IntExtractFunction {
         public CenturyFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -155,17 +147,9 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class DecadeFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
+    static final class DecadeFunction extends IntExtractFunction {
         public DecadeFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -178,17 +162,9 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class DowFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
+    static final class DowFunction extends IntExtractFunction {
         public DowFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -201,17 +177,9 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class DoyFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
+    static final class DoyFunction extends IntExtractFunction {
         public DoyFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -224,63 +192,9 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class WeekFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public WeekFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getWeek(value);
-            }
-            return Numbers.INT_NaN;
-        }
-    }
-
-    static final class IsoYearFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public IsoYearFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getIsoYear(value);
-            }
-            return Numbers.INT_NaN;
-        }
-    }
-
-    static final class EpochFunction extends LongFunction implements UnaryFunction {
-
-        private final Function arg;
-
+    static final class EpochFunction extends LongExtractFunction {
         public EpochFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -293,11 +207,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class MicrosecondsFunction extends LongFunction implements UnaryFunction {
+    static abstract class IntExtractFunction extends IntFunction implements UnaryFunction {
+        protected final Function arg;
 
-        private final Function arg;
-
-        public MicrosecondsFunction(Function arg) {
+        IntExtractFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -307,49 +220,14 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getMicrosOfMinute(value);
-            }
-            return Numbers.LONG_NaN;
+        public String getName() {
+            return "extract";
         }
     }
 
-    static final class MillisecondsFunction extends LongFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public MillisecondsFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getMillisOfMinute(value);
-            }
-            return Numbers.LONG_NaN;
-        }
-    }
-
-    static final class IsoDowFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
+    static final class IsoDowFunction extends IntExtractFunction {
         public IsoDowFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -362,17 +240,57 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class MillenniumFunction extends IntFunction implements UnaryFunction {
+    static final class IsoYearFunction extends IntExtractFunction {
+        public IsoYearFunction(Function arg) {
+            super(arg);
+        }
 
-        private final Function arg;
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getIsoYear(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
 
-        public MillenniumFunction(Function arg) {
+    static abstract class LongExtractFunction extends LongFunction implements UnaryFunction {
+        protected final Function arg;
+
+        LongExtractFunction(Function arg) {
             this.arg = arg;
         }
 
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public String getName() {
+            return "extract";
+        }
+    }
+
+    static final class MicrosecondsFunction extends LongExtractFunction {
+        public MicrosecondsFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMicrosOfMinute(value);
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
+    static final class MillenniumFunction extends IntExtractFunction {
+        public MillenniumFunction(Function arg) {
+            super(arg);
         }
 
         @Override
@@ -385,17 +303,24 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class QuarterFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public QuarterFunction(Function arg) {
-            this.arg = arg;
+    static final class MillisecondsFunction extends LongExtractFunction {
+        public MillisecondsFunction(Function arg) {
+            super(arg);
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMillisOfMinute(value);
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
+    static final class QuarterFunction extends IntExtractFunction {
+        public QuarterFunction(Function arg) {
+            super(arg);
         }
 
         @Override
@@ -403,6 +328,21 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
                 return Timestamps.getQuarter(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class WeekFunction extends IntExtractFunction {
+        public WeekFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getWeek(value);
             }
             return Numbers.INT_NaN;
         }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.Chars;
@@ -36,12 +37,11 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class StringToStringArrayFunction extends StrArrayFunction {
-    private static final int BRANCH_BEFORE_ITEM = 0;
-    private static final int BRANCH_ITEM = 1;
     private static final int BRANCH_AFTER_ITEM = 2;
     private static final int BRANCH_AFTER_LAST_ITEM = 3;
+    private static final int BRANCH_BEFORE_ITEM = 0;
     private static final int BRANCH_DOUBLE_QUOTE = 4;
-
+    private static final int BRANCH_ITEM = 1;
     private final ObjList<CharSequence> items = new ObjList<>();
 
     public StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
@@ -178,6 +178,11 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(items).val("::string[]");
     }
 
     private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {

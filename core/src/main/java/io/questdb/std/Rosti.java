@@ -57,20 +57,24 @@ public final class Rosti {
 
     public static native void clear(long pRosti);
 
-    public static boolean reset(long pRosti, int size) {
-        long oldSize = Rosti.getAllocMemory(pRosti);
-        boolean success = reset0(pRosti, Numbers.ceilPow2(size) - 1);
-        updateMemoryUsage(pRosti, oldSize);
-        return success;
-    }
+    //turns on normal allocation inside rosti
+    @TestOnly
+    public static native void disableOOMOnMalloc();
 
-    //clears and shrinks to given size
-    private static native boolean reset0(long pRosti, int size);
+    //triggers OOM on next allocation happening inside rosti
+    @TestOnly
+    public static native void enableOOMOnMalloc();
 
     public static void free(long pRosti) {
         long size = getAllocMemory(pRosti);
         free0(pRosti);
         Unsafe.recordMemAlloc(-size, MemoryTag.NATIVE_ROSTI);
+    }
+
+    public static native long getAllocMemory(long pRosti);
+
+    public static long getCapacity(long pRosti) {
+        return Unsafe.getUnsafe().getLong(pRosti + 3 * Long.BYTES);
     }
 
     public static long getCtrl(long pRosti) {
@@ -89,16 +93,12 @@ public final class Rosti {
         return Unsafe.getUnsafe().getLong(pRosti + 2 * Long.BYTES);
     }
 
-    public static long getCapacity(long pRosti) {
-        return Unsafe.getUnsafe().getLong(pRosti + 3 * Long.BYTES);
+    public static long getSlotShift(long pRosti) {
+        return Unsafe.getUnsafe().getLong(pRosti + 5 * Long.BYTES);
     }
 
     public static long getSlotSize(long pRosti) {
         return Unsafe.getUnsafe().getLong(pRosti + 4 * Long.BYTES);
-    }
-
-    public static long getSlotShift(long pRosti) {
-        return Unsafe.getUnsafe().getLong(pRosti + 5 * Long.BYTES);
     }
 
     public static long getSlots(long pRosti) {
@@ -109,7 +109,17 @@ public final class Rosti {
         return Unsafe.getUnsafe().getLong(pRosti + 7 * Long.BYTES);
     }
 
+    //returns true if rosti is set to trigger OOM on  allocation
+    @TestOnly
+    public static native boolean isOOMOnMalloc();
+
     public static native boolean keyedHourCount(long pRosti, long pKeys, long count, int valueOffset);
+
+    public static native boolean keyedHourCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedHourCountInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
+
+    public static native boolean keyedHourCountLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     public static native boolean keyedHourDistinct(long pRosti, long pKeys, long count);
 
@@ -149,7 +159,15 @@ public final class Rosti {
 
     public static native boolean keyedIntCount(long pRosti, long pKeys, long count, int valueOffset);
 
+    public static native boolean keyedIntCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native boolean keyedIntCountInt(long pRosti, long pKeys, long pInt, long count, int valueOffset);
+
+    public static native boolean keyedIntCountLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
     public static native boolean keyedIntCountMerge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native boolean keyedIntCountWrapUp(long pRosti, int valueOffset, long valueAtNull);
 
     public static native boolean keyedIntDistinct(long pRosti, long pKeys, long count);
 
@@ -284,26 +302,22 @@ public final class Rosti {
         }
     }
 
-    private static native long alloc(long pKeyTypes, int keyTypeCount, long capacity);
-
-    private static native void free0(long pRosti);
-
-    public static native long getAllocMemory(long pRosti);
+    public static boolean reset(long pRosti, int size) {
+        long oldSize = Rosti.getAllocMemory(pRosti);
+        boolean success = reset0(pRosti, Numbers.ceilPow2(size) - 1);
+        updateMemoryUsage(pRosti, oldSize);
+        return success;
+    }
 
     public static void updateMemoryUsage(long pRosti, long oldSize) {
         long newSize = Rosti.getAllocMemory(pRosti);
         Unsafe.recordMemAlloc(newSize - oldSize, MemoryTag.NATIVE_ROSTI);
     }
 
-    //triggers OOM on next allocation happening inside rosti
-    @TestOnly
-    public static native void enableOOMOnMalloc();
+    private static native long alloc(long pKeyTypes, int keyTypeCount, long capacity);
 
-    //turns on normal allocation inside rosti
-    @TestOnly
-    public static native void disableOOMOnMalloc();
+    private static native void free0(long pRosti);
 
-    //returns true if rosti is set to trigger OOM on  allocation
-    @TestOnly
-    public static native boolean isOOMOnMalloc();
+    //clears and shrinks to given size
+    private static native boolean reset0(long pRosti, int size);
 }

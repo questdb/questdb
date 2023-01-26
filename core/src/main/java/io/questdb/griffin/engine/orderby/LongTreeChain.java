@@ -56,17 +56,6 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         cursor.clear();
     }
 
-    @Override
-    public void reopen() {
-        //nothing to do here
-    }
-
-    private long appendValue(long value, long prevValueOffset) {
-        final long offset = valueChain.getAppendOffset();
-        valueChain.putLongLong(value, prevValueOffset);
-        return offset;
-    }
-
     public TreeCursor getCursor() {
         cursor.toTop();
         return cursor;
@@ -117,6 +106,17 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     @Override
+    public void reopen() {
+        //nothing to do here
+    }
+
+    private long appendValue(long value, long prevValueOffset) {
+        final long offset = valueChain.getAppendOffset();
+        valueChain.putLong128(value, prevValueOffset);
+        return offset;
+    }
+
+    @Override
     protected void putParent(long value) {
         root = allocateBlock();
         setRef(root, appendValue(value, -1L));
@@ -125,8 +125,13 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
     public class TreeCursor {
 
-        private long treeCurrent;
         private long chainCurrent;
+        private long treeCurrent;
+
+        public void clear() {
+            treeCurrent = -1;
+            chainCurrent = -1;
+        }
 
         public boolean hasNext() {
             if (chainCurrent != -1) {
@@ -160,11 +165,6 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
                 }
             }
             chainCurrent = refOf(treeCurrent = p);
-        }
-
-        public void clear() {
-            treeCurrent = -1;
-            chainCurrent = -1;
         }
     }
 }

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -43,7 +42,7 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function strFunc = args.get(0);
         Function prefixFunc = args.get(1);
 
@@ -51,8 +50,8 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
     }
 
     private static class StartsWithStrFunction extends BooleanFunction implements BinaryFunction {
-        private final Function strFunc;
         private final Function prefixFunc;
+        private final Function strFunc;
 
         public StartsWithStrFunction(Function strFunc, Function prefixFunc) {
             this.strFunc = strFunc;
@@ -73,6 +72,11 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return strFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "starts_with";
         }
 
         @Override

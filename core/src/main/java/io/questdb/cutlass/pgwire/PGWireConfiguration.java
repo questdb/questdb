@@ -32,19 +32,22 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
 public interface PGWireConfiguration extends WorkerPoolConfiguration {
+
     int getBinParamCountCapacity();
 
     int getCharacterStoreCapacity();
 
     int getCharacterStorePoolCapacity();
 
+    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+
     int getConnectionPoolInitialCapacity();
+
+    DateLocale getDefaultDateLocale();
 
     String getDefaultPassword();
 
     String getDefaultUsername();
-
-    boolean readOnlySecurityContext();
 
     IODispatcherConfiguration getDispatcherConfiguration();
 
@@ -52,25 +55,11 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
         return false;
     }
 
-    boolean isSelectCacheEnabled();
-
-    int getSelectCacheBlockCount();
-
-    int getSelectCacheRowCount();
-
-    boolean isInsertCacheEnabled();
-
     int getInsertCacheBlockCount();
 
     int getInsertCacheRowCount();
 
     int getInsertPoolCapacity();
-
-    boolean isUpdateCacheEnabled();
-
-    int getUpdateCacheBlockCount();
-
-    int getUpdateCacheRowCount();
 
     int getMaxBlobSizeOnQuery();
 
@@ -82,18 +71,36 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     int getPendingWritersCacheSize();
 
-    int getRecvBufferSize();
-
-    int getSendBufferSize();
-
-    String getServerVersion();
-
-    DateLocale getDefaultDateLocale();
-
     // this is used in tests to fix pseudo-random generator
     default Rnd getRandom() {
         return null;
     }
 
-    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+    String getReadOnlyPassword();
+
+    String getReadOnlyUsername();
+
+    int getRecvBufferSize();
+
+    int getSelectCacheBlockCount();
+
+    int getSelectCacheRowCount();
+
+    int getSendBufferSize();
+
+    String getServerVersion();
+
+    int getUpdateCacheBlockCount();
+
+    int getUpdateCacheRowCount();
+
+    boolean isInsertCacheEnabled();
+
+    boolean isReadOnlyUserEnabled();
+
+    boolean isSelectCacheEnabled();
+
+    boolean isUpdateCacheEnabled();
+
+    boolean readOnlySecurityContext();
 }

@@ -41,9 +41,9 @@ import org.junit.Test;
 public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(ContinuousMemoryMTest.class);
-    private final Rnd rnd = new Rnd();
     private final long _4M = 4 * 1024 * 1024;
     private final long _8M = 2 * _4M;
+    private final Rnd rnd = new Rnd();
 
     @Test
     public void testBoolAppend() throws Exception {
@@ -292,10 +292,10 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testForcedExtend() {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
-            final long fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+            final int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
             try (MemoryMARW mem = Vm.getMARWInstance()) {
                 mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
@@ -358,7 +358,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testJumpToSetAppendPosition() {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp3").$()) {
             ff.touch(path);
             try {
@@ -388,7 +388,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
         withMem((rwMem, roMem) -> {
             final int N = 10_000_000;
             for (int i = 0; i < N; i++) {
-                rwMem.putLong128LittleEndian(rnd.nextLong(), rnd.nextLong());
+                rwMem.putLong128(rnd.nextLong(), rnd.nextLong());
             }
 
             roMem.extend(rwMem.size());
@@ -563,7 +563,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testPageCountAPI() throws Exception {
-        withMem(FilesFacadeImpl.INSTANCE.getMapPageSize(), 0, (rwMem, roMem) -> {
+        withMem(TestFilesFacadeImpl.INSTANCE.getMapPageSize(), 0, (rwMem, roMem) -> {
 
             Assert.assertEquals(0, roMem.getPageCount());
             // read-write memory will always have one page unless it is closed
@@ -589,7 +589,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     @Test
     public void testPageCountIsZeroAfterClose() throws Exception {
         assertMemoryLeak(() -> {
-            final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
                 rnd.reset();
                 MemoryMARW rwMem = Vm.getMARWInstance(
@@ -657,7 +657,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testTruncate() {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
             try {
@@ -685,12 +685,12 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateRemapFailed() {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             int counter = 1;
             boolean failTruncate = false;
 
             @Override
-            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (--counter < 0) {
                     failTruncate = true;
                     return -1;
@@ -699,7 +699,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(long fd, long size) {
+            public boolean truncate(int fd, long size) {
                 if (failTruncate) {
                     return false;
                 }
@@ -799,8 +799,8 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     private void assertLong128(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
-            Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L + 8L));
             Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L));
+            Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L + 8L));
         }
     }
 
@@ -924,7 +924,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             rnd.reset();
             try (
                     MemoryCMARW rwMem = Vm.getCMARWInstance(
-                            FilesFacadeImpl.INSTANCE,
+                            TestFilesFacadeImpl.INSTANCE,
                             path,
                             appendSz,
                             -1,
@@ -933,7 +933,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                     );
 
                     MemoryCMR roMem = new MemoryCMRImpl(
-                            FilesFacadeImpl.INSTANCE,
+                            TestFilesFacadeImpl.INSTANCE,
                             path,
                             sz,
                             MemoryTag.MMAP_DEFAULT)

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -39,23 +40,24 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int FILTER_KEY_IS_NULL = 0;
-    private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
     private static final int FIRST_OUT_INDEX = 0;
+    private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
     private static final int LAST_OUT_INDEX = 1;
     private static final int TIMESTAMP_OUT_INDEX = 2;
     private final RecordCursorFactory base;
+    private final LongList crossFrameRow;
     private final int[] firstLastIndexByCol;
-    private final int[] queryToFrameColumnMapping;
-    private final int pageSize;
-    private final int maxSamplePeriodSize;
-    private final SingleSymbolFilter symbolFilter;
     private final int groupBySymbolColIndex;
-    private final int timestampIndex;
+    private final boolean[] isKeyColumn;
+    private final int maxSamplePeriodSize;
+    private final int pageSize;
+    private final int[] queryToFrameColumnMapping;
     private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
+    private final SingleSymbolFilter symbolFilter;
+    private final int timestampIndex;
+    private int groupByTimestampIndex = -1;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
-    private final LongList crossFrameRow;
-    private int groupByTimestampIndex = -1;
 
     public SampleByFirstLastRecordCursorFactory(
             RecordCursorFactory base,
@@ -76,10 +78,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
         this.queryToFrameColumnMapping = new int[columns.size()];
         this.firstLastIndexByCol = new int[columns.size()];
+        this.isKeyColumn = new boolean[columns.size()];
         this.crossFrameRow = new LongList(columns.size());
         this.crossFrameRow.setPos(columns.size());
         this.timestampIndex = timestampIndex;
-        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex);
+        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
         this.pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
         this.maxSamplePeriodSize = this.pageSize * 4;
@@ -98,10 +101,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
-    protected void _close() {
-        base.close();
-        rowIdOutAddress = Misc.free(rowIdOutAddress);
-        samplePeriodAddress = Misc.free(samplePeriodAddress);
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -131,6 +132,42 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleByFirstLast");
+        sink.attr("keys");
+        boolean first = true;
+        sink.val('[');
+        for (int i = 0; i < isKeyColumn.length; i++) {
+            if (isKeyColumn[i]) {
+                if (first) {
+                    first = false;
+                } else {
+                    sink.val(", ");
+                }
+                sink.putBaseColumnName(i);
+            }
+        }
+        sink.val(']');
+        sink.attr("values");
+        first = true;
+        sink.val('[');
+        for (int i = 0; i < isKeyColumn.length; i++) {
+            if (!isKeyColumn[i]) {
+                if (first) {
+                    first = false;
+                } else {
+                    sink.val(", ");
+                }
+                sink.val(firstLastIndexByCol[i] == LAST_OUT_INDEX ? "last" : "first").val('(');
+                sink.putBaseColumnName(i);
+                sink.val(')');
+            }
+        }
+        sink.val(']');
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
@@ -140,7 +177,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             int[] queryToFrameColumnMapping,
             RecordMetadata metadata,
             ObjList<QueryColumn> columns,
-            int timestampIndex
+            int timestampIndex,
+            boolean[] isKeyColumn
     ) throws SqlException {
         for (int i = 0, n = firstLastIndex.length; i < n; i++) {
             QueryColumn column = columns.getQuick(i);
@@ -167,6 +205,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
             } else {
                 int underlyingColIndex = metadata.getColumnIndex(ast.token);
+                isKeyColumn[i] = true;
                 queryToFrameColumnMapping[i] = underlyingColIndex;
                 if (underlyingColIndex == timestampIndex) {
                     groupByTimestampIndex = i;
@@ -175,35 +214,42 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         }
     }
 
+    @Override
+    protected void _close() {
+        base.close();
+        rowIdOutAddress = Misc.free(rowIdOutAddress);
+        samplePeriodAddress = Misc.free(samplePeriodAddress);
+    }
+
     private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {
-        private final static int STATE_START = 0;
+        private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
+        private final static int CROSS_ROW_STATE_SAVED = 1;
+        private final static int NONE = 0;
+        private final static int STATE_DONE = 7;
         private final static int STATE_FETCH_NEXT_DATA_FRAME = 1;
         private final static int STATE_FETCH_NEXT_INDEX_FRAME = 3;
         private final static int STATE_OUT_BUFFER_FULL = 4;
-        private final static int STATE_SEARCH = 5;
         private final static int STATE_RETURN_LAST_ROW = 6;
-        private final static int STATE_DONE = 7;
-        private final static int NONE = 0;
-        private final static int CROSS_ROW_STATE_SAVED = 1;
-        private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
+        private final static int STATE_SEARCH = 5;
+        private final static int STATE_START = 0;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
-        private int groupBySymbolKey;
-        private int state;
         private int crossRowState;
-        private PageFrameCursor pageFrameCursor;
         private PageFrame currentFrame;
         private long currentRow;
-        private int rowsFound;
-        private IndexFrameCursor indexCursor;
-        private long dataFrameLo = -1;
         private long dataFrameHi = -1;
+        private long dataFrameLo = -1;
+        private long frameNextRowId = -1;
+        private int groupBySymbolKey;
+        private IndexFrameCursor indexCursor;
         private IndexFrame indexFrame;
         private int indexFramePosition = -1;
-        private long frameNextRowId = -1;
-        private long samplePeriodIndexOffset = 0;
-        private long prevSamplePeriodOffset = 0;
-        private long samplePeriodStart;
         private boolean initialized;
+        private PageFrameCursor pageFrameCursor;
+        private long prevSamplePeriodOffset = 0;
+        private int rowsFound;
+        private long samplePeriodIndexOffset = 0;
+        private long samplePeriodStart;
+        private int state;
 
         public SampleByFirstLastRecordCursor(
                 TimestampSampler timestampSampler,
@@ -245,11 +291,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return pageFrameCursor.newSymbolTable(queryToFrameColumnMapping[columnIndex]);
-        }
-
-        @Override
         public boolean hasNext() {
             // This loop never returns last found sample by row.
             // The reason is that last row() value can be changed on next data frame pass.
@@ -265,12 +306,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         }
 
         @Override
-        public void toTop() {
-            currentRow = rowsFound = 0;
-            frameNextRowId = dataFrameLo = dataFrameHi = -1;
-            state = STATE_START;
-            crossRowState = NONE;
-            pageFrameCursor.toTop();
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return pageFrameCursor.newSymbolTable(queryToFrameColumnMapping[columnIndex]);
         }
 
         @Override
@@ -297,6 +334,15 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 initialized = true;
             }
             return localEpoch - tzOffset;
+        }
+
+        @Override
+        public void toTop() {
+            currentRow = rowsFound = 0;
+            frameNextRowId = dataFrameLo = dataFrameHi = -1;
+            state = STATE_START;
+            crossRowState = NONE;
+            pageFrameCursor.toTop();
         }
 
         private void checkCrossRowAfterFoundBufferIterated() {
@@ -508,18 +554,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             return false;
         }
 
-        void of(
-                PageFrameCursor pageFrameCursor,
-                int groupBySymbolKey,
-                SqlExecutionContext sqlExecutionContext
-        ) throws SqlException {
-            this.pageFrameCursor = pageFrameCursor;
-            this.groupBySymbolKey = groupBySymbolKey;
-            toTop();
-            parseParams(this, sqlExecutionContext);
-            this.initialized = false;
-        }
-
         private void saveFirstLastValuesToCrossFrameRowBuffer() {
             // Copies column values of all columns to cross frame row buffer for found row with index 0
             for (int i = 0, length = firstLastIndexByCol.length; i < length; i++) {
@@ -576,6 +610,18 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             }
         }
 
+        void of(
+                PageFrameCursor pageFrameCursor,
+                int groupBySymbolKey,
+                SqlExecutionContext sqlExecutionContext
+        ) throws SqlException {
+            this.pageFrameCursor = pageFrameCursor;
+            this.groupBySymbolKey = groupBySymbolKey;
+            toTop();
+            parseParams(this, sqlExecutionContext);
+            this.initialized = false;
+        }
+
         private class SampleByFirstLastRecord implements Record {
             private final SampleByCrossRecord crossRecord = new SampleByCrossRecord();
             private final SampleByDataRecord dataRecord = new SampleByDataRecord();
@@ -603,6 +649,26 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             }
 
             @Override
+            public byte getGeoByte(int col) {
+                return currentRecord.getGeoByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return currentRecord.getGeoInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return currentRecord.getGeoLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return currentRecord.getGeoShort(col);
+            }
+
+            @Override
             public int getInt(int col) {
                 return currentRecord.getInt(col);
             }
@@ -627,26 +693,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 return currentRecord.getTimestamp(col);
             }
 
-            @Override
-            public byte getGeoByte(int col) {
-                return currentRecord.getGeoByte(col);
-            }
-
-            @Override
-            public short getGeoShort(int col) {
-                return currentRecord.getGeoShort(col);
-            }
-
-            @Override
-            public int getGeoInt(int col) {
-                return currentRecord.getGeoInt(col);
-            }
-
-            @Override
-            public long getGeoLong(int col) {
-                return currentRecord.getGeoLong(col);
-            }
-
             public void of(long index) {
                 if (index == 0) {
                     currentRecord = crossRecord;
@@ -666,11 +712,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 @Override
-                public byte getGeoByte(int col) {
-                    return getByte(col);
-                }
-
-                @Override
                 public char getChar(int col) {
                     return (char) crossFrameRow.getQuick(col);
                 }
@@ -686,8 +727,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 @Override
-                public int getInt(int col) {
-                    return (int) crossFrameRow.getQuick(col);
+                public byte getGeoByte(int col) {
+                    return getByte(col);
                 }
 
                 @Override
@@ -696,23 +737,28 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 @Override
-                public long getLong(int col) {
-                    return crossFrameRow.getQuick(col);
-                }
-
-                @Override
                 public long getGeoLong(int col) {
                     return getLong(col);
                 }
 
                 @Override
-                public short getShort(int col) {
-                    return (short) crossFrameRow.getQuick(col);
+                public short getGeoShort(int col) {
+                    return getShort(col);
                 }
 
                 @Override
-                public short getGeoShort(int col) {
-                    return getShort(col);
+                public int getInt(int col) {
+                    return (int) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public long getLong(int col) {
+                    return crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public short getShort(int col) {
+                    return (short) crossFrameRow.getQuick(col);
                 }
 
                 @Override
@@ -772,6 +818,46 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 }
 
                 @Override
+                public byte getGeoByte(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
+                    } else {
+                        return GeoHashes.BYTE_NULL;
+                    }
+                }
+
+                @Override
+                public int getGeoInt(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
+                    } else {
+                        return GeoHashes.INT_NULL;
+                    }
+                }
+
+                @Override
+                public long getGeoLong(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                    } else {
+                        return GeoHashes.NULL;
+                    }
+                }
+
+                @Override
+                public short getGeoShort(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
+                    } else {
+                        return GeoHashes.SHORT_NULL;
+                    }
+                }
+
+                @Override
                 public int getInt(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
@@ -822,46 +908,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     }
                     return getLong(col);
-                }
-
-                @Override
-                public byte getGeoByte(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
-                    } else {
-                        return GeoHashes.BYTE_NULL;
-                    }
-                }
-
-                @Override
-                public short getGeoShort(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
-                    } else {
-                        return GeoHashes.SHORT_NULL;
-                    }
-                }
-
-                @Override
-                public int getGeoInt(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
-                    } else {
-                        return GeoHashes.INT_NULL;
-                    }
-                }
-
-                @Override
-                public long getGeoLong(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
-                    } else {
-                        return GeoHashes.NULL;
-                    }
                 }
 
                 public SampleByDataRecord of(long currentRow) {

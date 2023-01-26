@@ -24,48 +24,48 @@
 
 package io.questdb.griffin;
 
-import io.questdb.TelemetryJob;
+import io.questdb.TelemetryConfigLogger;
+import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class HideTelemetryTablesTest extends AbstractGriffinTest {
 
     @Test
-    public void testShow() throws Exception {
+    public void testHide() throws Exception {
+        configOverrideHideTelemetryTable(true);
 
         assertMemoryLeak(() -> {
             compiler.compile("create table test(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.tableName + "(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.configTableName + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryTask.TABLE_NAME + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)", sqlExecutionContext);
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by 2",
+                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                     sink,
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                            "2\ttelemetry\t\tNONE\t1000\t0\n" +
-                            "3\ttelemetry_config\t\tNONE\t1000\t0\n" +
-                            "1\ttest\t\tNONE\t1000\t0\n"
+                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "1\ttest\t\tNONE\t1000\t300000000\n"
             );
         });
     }
 
     @Test
-    public void testHide() throws Exception {
-
-        hideTelemetryTable = true;
+    public void testShow() throws Exception {
 
         assertMemoryLeak(() -> {
             compiler.compile("create table test(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.tableName + "(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.configTableName + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryTask.TABLE_NAME + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + "(a int)", sqlExecutionContext);
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
+                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by 2",
                     sink,
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                            "1\ttest\t\tNONE\t1000\t0\n"
+                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "2\ttelemetry\t\tNONE\t1000\t300000000\n" +
+                            "3\ttelemetry_config\t\tNONE\t1000\t300000000\n" +
+                            "1\ttest\t\tNONE\t1000\t300000000\n"
             );
         });
     }

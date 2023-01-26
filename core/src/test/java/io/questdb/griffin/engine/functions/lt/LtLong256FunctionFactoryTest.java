@@ -35,6 +35,61 @@ import org.junit.Test;
 public class LtLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testGreaterOrEqThanNull() throws SqlException {
+        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Long256Impl.NULL_LONG256;
+        callBySignature(">=(HH)", l1, l1).andAssert(true);
+        callBySignature(">=(HH)", l1, l2).andAssert(false);
+        callBySignature(">=(HH)", l2, l1).andAssert(false);
+        callBySignature(">=(HH)", l2, l2).andAssert(false);
+    }
+
+    @Test
+    public void testGreaterThan() throws SqlException {
+        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
+        CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
+        callBySignature(">(HH)", l1, l1).andAssert(false);
+        callBySignature(">(HH)", l1, l2).andAssert(false);
+        callBySignature(">(HH)", l2, l1).andAssert(true);
+    }
+
+    @Test
+    public void testGreaterThanNull() throws SqlException {
+        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Long256Impl.NULL_LONG256;
+        callBySignature(">(HH)", l1, l1).andAssert(false);
+        callBySignature(">(HH)", l1, l2).andAssert(false);
+        callBySignature(">(HH)", l2, l1).andAssert(false);
+        callBySignature(">(HH)", l2, l2).andAssert(false);
+    }
+
+    @Test
+    public void testGreaterThanOrEqual() throws SqlException {
+        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
+        CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
+        callBySignature(">=(HH)", l1, l1).andAssert(true);
+        callBySignature(">=(HH)", l1, l2).andAssert(false);
+        callBySignature(">=(HH)", l2, l1).andAssert(true);
+    }
+
+    @Test
+    public void testLessOrEqThanNull() throws SqlException {
+        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Long256Impl.NULL_LONG256;
+        callBySignature("<=(HH)", l1, l1).andAssert(true);
+        callBySignature("<=(HH)", l1, l2).andAssert(false);
+        callBySignature("<=(HH)", l2, l1).andAssert(false);
+        callBySignature("<=(HH)", l2, l2).andAssert(false);
+    }
+
+    @Test
     public void testLessThan0() throws SqlException {
         CharSequence tok1 = "0x0a";
         CharSequence tok2 = "0x0b";
@@ -93,58 +148,20 @@ public class LtLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testGreaterThan() throws SqlException {
-        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
-        CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
-        callBySignature(">(HH)", l1, l1).andAssert(false);
-        callBySignature(">(HH)", l1, l2).andAssert(false);
-        callBySignature(">(HH)", l2, l1).andAssert(true);
+    public void testSameRecordDifferentColumns_negativeCase() throws Exception {
+        assertQuery("a\tb\n",
+                "select * from tab where a < b",
+                "create table tab as (select 0x11111111 as a, 0x11111111 as b from long_sequence(1))",
+                null, true);
     }
 
     @Test
-    public void testGreaterThanOrEqual() throws SqlException {
-        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
-        CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
-        callBySignature(">=(HH)", l1, l1).andAssert(true);
-        callBySignature(">=(HH)", l1, l2).andAssert(false);
-        callBySignature(">=(HH)", l2, l1).andAssert(true);
-    }
-
-    @Test
-    public void testLessOrEqThanNull() throws SqlException {
-        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Long256Impl.NULL_LONG256;
-        callBySignature("<=(HH)", l1, l1).andAssert(true);
-        callBySignature("<=(HH)", l1, l2).andAssert(false);
-        callBySignature("<=(HH)", l2, l1).andAssert(false);
-        callBySignature("<=(HH)", l2, l2).andAssert(false);
-    }
-
-    @Test
-    public void testGreaterOrEqThanNull() throws SqlException {
-        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Long256Impl.NULL_LONG256;
-        callBySignature(">=(HH)", l1, l1).andAssert(true);
-        callBySignature(">=(HH)", l1, l2).andAssert(false);
-        callBySignature(">=(HH)", l2, l1).andAssert(false);
-        callBySignature(">=(HH)", l2, l2).andAssert(false);
-    }
-
-    @Test
-    public void testGreaterThanNull() throws SqlException {
-        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Long256Impl.NULL_LONG256;
-        callBySignature(">(HH)", l1, l1).andAssert(false);
-        callBySignature(">(HH)", l1, l2).andAssert(false);
-        callBySignature(">(HH)", l2, l1).andAssert(false);
-        callBySignature(">(HH)", l2, l2).andAssert(false);
+    public void testSameRecordDifferentColumns_positiveCase() throws Exception {
+        assertQuery("a\tb\n" +
+                        "0x11111111\t0x11111112\n",
+                "select * from tab where a < b",
+                "create table tab as (select 0x11111111 as a, 0x11111112 as b from long_sequence(1))",
+                null, true);
     }
 
     @Override

@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 package io.questdb.griffin.engine.functions.math;
+
 /**
  * Postgres-compatibility ceiling() alias for the ceil() function.
  */

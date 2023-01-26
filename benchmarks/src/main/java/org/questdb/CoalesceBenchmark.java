@@ -47,17 +47,6 @@ public class CoalesceBenchmark {
     private static ObjList<Function> constFunctions;
     private static Record[] records;
 
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(CoalesceBenchmark.class.getSimpleName())
-                .warmupIterations(2)
-                .measurementIterations(3)
-                .forks(1)
-                .build();
-
-        new Runner(opt).run();
-    }
-
     public CoalesceBenchmark() {
         constFunctions = new ObjList<>(2);
         constFunctions.add(new LongFunction() {
@@ -82,6 +71,17 @@ public class CoalesceBenchmark {
                 }
             };
         }
+    }
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(CoalesceBenchmark.class.getSimpleName())
+                .warmupIterations(2)
+                .measurementIterations(3)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
     }
 
     @Benchmark

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
@@ -44,13 +45,8 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    protected void _close() {
-        Misc.free(dataFrameCursorFactory);
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return dataFrameCursorFactory.supportTableRowId(tableName);
+    public String getBaseColumnName(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
     }
 
     @Override
@@ -62,6 +58,16 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
             dataFrameCursor.close();
             throw e;
         }
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return dataFrameCursorFactory.supportTableRowId(tableToken);
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(dataFrameCursorFactory);
     }
 
     protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException;

@@ -43,32 +43,37 @@ import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 public final class PartitionBy {
 
     public static final int DAY = 0;
-    public static final int MONTH = 1;
-    public static final int YEAR = 2;
     public static final int HOUR = 4;
+    public static final int MONTH = 1;
+    public static final int WEEK = 5;
     /**
      * Data is not partitioned at all,
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
-    private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
-    private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
-    private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
-    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
-    private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
-    private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
-    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYear;
-    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
-    private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
+    public static final int YEAR = 2;
     private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
-    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
+    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
+    private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
+    private static final PartitionAddMethod ADD_WW = Timestamps::addWeeks;
+    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYear;
+    private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
+    private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
+    private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
+    private static final PartitionCeilMethod CEIL_WW = Timestamps::ceilWW;
+    private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
+    private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
     private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
-    private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
+    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
+    private static final PartitionFloorMethod FLOOR_WW = Timestamps::floorWW;
+    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private static final DateFormat fmtDay;
-    private static final DateFormat fmtMonth;
-    private static final DateFormat fmtYear;
     private final static DateFormat fmtDefault;
     private final static DateFormat fmtHour;
+    private static final DateFormat fmtMonth;
+    private static final DateFormat fmtWeek;
+    private static final DateFormat fmtYear;
+    private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
 
     private PartitionBy() {
     }
@@ -87,6 +92,8 @@ public final class PartitionBy {
                 return ADD_YYYY;
             case HOUR:
                 return ADD_HH;
+            case WEEK:
+                return ADD_WW;
             default:
                 return null;
         }
@@ -102,6 +109,8 @@ public final class PartitionBy {
                 return fmtYear;
             case HOUR:
                 return fmtHour;
+            case WEEK:
+                return fmtWeek;
             case NONE:
                 return fmtDefault;
             default:
@@ -113,6 +122,8 @@ public final class PartitionBy {
         switch (partitionBy) {
             case DAY:
                 return FLOOR_DD;
+            case WEEK:
+                return FLOOR_WW;
             case MONTH:
                 return FLOOR_MM;
             case YEAR:
@@ -128,6 +139,8 @@ public final class PartitionBy {
         switch (partitionBy) {
             case DAY:
                 return Timestamps.DAY_MICROS;
+            case WEEK:
+                return Timestamps.DAY_MICROS * 7;
             case MONTH:
                 return Timestamps.DAY_MICROS * 28;
             case YEAR:
@@ -151,6 +164,9 @@ public final class PartitionBy {
             switch (partitionBy) {
                 case DAY:
                     ee.put("'YYYY-MM-DD'");
+                    break;
+                case WEEK:
+                    ee.put("'YYYYWww'");
                     break;
                 case MONTH:
                     ee.put("'YYYY-MM'");
@@ -230,6 +246,17 @@ public final class PartitionBy {
                             + (d - 1) * Timestamps.DAY_MICROS + (h + 1) * Timestamps.HOUR_MICROS - 1;
                 }
                 return 0;
+            case WEEK:
+                y = Timestamps.getIsoYear(timestamp);
+                int w = Timestamps.getWeek(timestamp);
+                TimestampFormatUtils.appendYear000(path, y);
+                path.put("-W");
+                TimestampFormatUtils.append0(path, w);
+
+                if (calculatePartitionMax) {
+                    return Timestamps.ceilWW(timestamp) - 1;
+                }
+                return 0;
             default:
                 path.put(DEFAULT_PARTITION_NAME);
                 return Long.MAX_VALUE;
@@ -246,6 +273,8 @@ public final class PartitionBy {
                 return "YEAR";
             case HOUR:
                 return "HOUR";
+            case WEEK:
+                return "WEEK";
             case NONE:
                 return "NONE";
             default:
@@ -263,14 +292,16 @@ public final class PartitionBy {
                 return CEIL_YYYY;
             case HOUR:
                 return CEIL_HH;
+            case WEEK:
+                return CEIL_WW;
             default:
                 return null;
         }
     }
 
     @FunctionalInterface
-    public interface PartitionFloorMethod {
-        long floor(long timestamp);
+    public interface PartitionAddMethod {
+        long calculate(long timestamp, int increment);
     }
 
     @FunctionalInterface
@@ -280,8 +311,8 @@ public final class PartitionBy {
     }
 
     @FunctionalInterface
-    public interface PartitionAddMethod {
-        long calculate(long timestamp, int increment);
+    public interface PartitionFloorMethod {
+        long floor(long timestamp);
     }
 
     static {
@@ -289,6 +320,7 @@ public final class PartitionBy {
         nameToIndexMap.put("month", MONTH);
         nameToIndexMap.put("year", YEAR);
         nameToIndexMap.put("hour", HOUR);
+        nameToIndexMap.put("week", WEEK);
         nameToIndexMap.put("none", NONE);
     }
 
@@ -298,6 +330,7 @@ public final class PartitionBy {
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");
         fmtHour = compiler.compile("yyyy-MM-ddTHH");
+        fmtWeek = compiler.compile("YYYY-Www");
         fmtDefault = new DateFormat() {
             @Override
             public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {

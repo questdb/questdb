@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public class Long256Impl implements Long256, Sinkable {
 
@@ -35,6 +36,19 @@ public class Long256Impl implements Long256, Sinkable {
     private long l1;
     private long l2;
     private long l3;
+
+    public static Long256Impl add(final Long256Impl sum, final Long256 x, final Long256 y) {
+        if (x.equals(Long256Impl.NULL_LONG256) || y.equals(Long256Impl.NULL_LONG256)) {
+            return Long256Impl.NULL_LONG256;
+        }
+        sum.copyFrom(x);
+        Long256Util.add(sum, y);
+        return sum;
+    }
+
+    public static boolean isNull(Long256 value) {
+        return Long256Impl.NULL_LONG256.equals(value);
+    }
 
     public static void putNull(long appendPointer) {
         Unsafe.getUnsafe().putLong(appendPointer, NULL_LONG256.getLong0());
@@ -99,13 +113,11 @@ public class Long256Impl implements Long256, Sinkable {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
     }
 
-    public static Long256Impl add(final Long256Impl sum, final Long256 x, final Long256 y) {
-        if (x.equals(Long256Impl.NULL_LONG256) || y.equals(Long256Impl.NULL_LONG256)) {
-            return Long256Impl.NULL_LONG256;
-        }
-        sum.copyFrom(x);
-        Long256Util.add(sum, y);
-        return sum;
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
     }
 
     static {

@@ -44,9 +44,9 @@ public class TxSerializerTest {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
+    private static SqlCompiler compiler;
     private static DefaultCairoConfiguration configuration;
     private static CairoEngine engine;
-    private static SqlCompiler compiler;
     private static SqlExecutionContextImpl sqlExecutionContext;
 
     public static void createTestPath(CharSequence root) {
@@ -60,7 +60,7 @@ public class TxSerializerTest {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        Assert.assertEquals(0, Files.rmdir(path.slash$()));
     }
 
     public static void setCairoStatic() {
@@ -103,12 +103,15 @@ public class TxSerializerTest {
         createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.reloadTableNames();
     }
 
     @After
     public void tearDown() {
         engine.getTableIdGenerator().close();
         engine.clear();
+        engine.getTableSequencerAPI().releaseInactive();
+        engine.closeNameRegistry();
         removeTestPath(root);
     }
 
@@ -124,6 +127,29 @@ public class TxSerializerTest {
                 ") timestamp(ts) PARTITION BY DAY";
 
         testRoundTxnSerialization(createTableSql, true);
+    }
+
+    @Test
+    public void testPartitionedDailyWithTruncate() throws SqlException {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 1000000000000) ts " +
+                "from long_sequence(10)" +
+                ") timestamp(ts) PARTITION BY DAY";
+
+        compiler.compile(createTableSql, sqlExecutionContext);
+
+        TxSerializer serializer = new TxSerializer();
+        String txPath = root.toString() + Files.SEPARATOR + "xxx" + Files.SEPARATOR + "_txn";
+        String json = serializer.toJson(txPath);
+        Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 0"));
+
+        compiler.compile("truncate table xxx", sqlExecutionContext);
+        json = serializer.toJson(txPath);
+        Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 1"));
     }
 
     @Test
@@ -154,30 +180,6 @@ public class TxSerializerTest {
         testRoundTxnSerialization(createTableSql, false);
     }
 
-    @Test
-    public void testPartitionedDailyWithTruncate() throws SqlException {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_symbol('A', 'B', 'C') as sym1," +
-                "rnd_symbol(4,4,4,2) as sym2," +
-                "x," +
-                "timestamp_sequence(0, 1000000000000) ts " +
-                "from long_sequence(10)" +
-                ") timestamp(ts) PARTITION BY DAY";
-
-        compiler.compile(createTableSql, sqlExecutionContext);
-
-        TxSerializer serializer = new TxSerializer();
-        String txPath = root + "/" + "xxx/_txn";
-        String json = serializer.toJson(txPath);
-        Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 0"));
-
-        compiler.compile("truncate table xxx", sqlExecutionContext);
-        json = serializer.toJson(txPath);
-        Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 1"));
-
-    }
-
     private void assertFirstColumnValueLong(String sql, long expected) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -206,7 +208,7 @@ public class TxSerializerTest {
         engine.releaseAllReaders();
 
         TxSerializer serializer = new TxSerializer();
-        String txPath = root + "/" + "xxx/_txn";
+        String txPath = root.toString() + Files.SEPARATOR + "xxx" + Files.SEPARATOR + "_txn";
         String json = serializer.toJson(txPath);
         serializer.serializeJson(json, txPath);
 
@@ -223,11 +225,9 @@ public class TxSerializerTest {
 
         if (oooSupports) {
             // Insert same records
-            compiler.compile("insert into xxx select * from xxx",
-                    sqlExecutionContext);
+            compiler.compile("insert into xxx select * from xxx", sqlExecutionContext);
         } else {
-            compiler.compile("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx",
-                    sqlExecutionContext);
+            compiler.compile("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx", sqlExecutionContext);
         }
         assertFirstColumnValueLong("select count() from xxx", 20);
         assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);

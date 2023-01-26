@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -44,12 +45,17 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
     }
 
     @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.val("?::date");
     }
 }

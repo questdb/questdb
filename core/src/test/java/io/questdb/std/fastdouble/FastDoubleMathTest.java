@@ -148,12 +148,12 @@ public class FastDoubleMathTest {
         Assert.assertEquals(testName, expected, actual, 0.001);
     }
 
-    private static void setBigEndian(byte[] array, long lo, long hi) {
-        Unsafe.getUnsafe().putLong(array, Unsafe.BYTE_OFFSET + 1, Unsafe.swapEndianness(lo));
-        Unsafe.getUnsafe().putLong(array, Unsafe.BYTE_OFFSET + 1 + 8, Unsafe.swapEndianness(hi));
+    private static long getLongFromBigEndianArray(byte[] array, int offset) {
+        return Long.reverseBytes(Unsafe.getUnsafe().getLong(array, Unsafe.BYTE_OFFSET + offset));
     }
 
-    private static long getLongFromBigEndianArray(byte[] array, int offset) {
-        return Unsafe.swapEndianness(Unsafe.getUnsafe().getLong(array, Unsafe.BYTE_OFFSET + offset));
+    private static void setBigEndian(byte[] array, long lo, long hi) {
+        Unsafe.getUnsafe().putLong(array, Unsafe.BYTE_OFFSET + 1, Long.reverseBytes(lo));
+        Unsafe.getUnsafe().putLong(array, Unsafe.BYTE_OFFSET + 1 + 8, Long.reverseBytes(hi));
     }
 }

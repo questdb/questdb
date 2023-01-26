@@ -28,8 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -67,15 +68,20 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         return new VarBetweenFunction(arg, fromFn, toFn);
     }
 
-    private static class ConstFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function left;
+    private static class ConstFunc extends BooleanFunction implements UnaryFunction {
         private final long from;
+        private final Function left;
         private final long to;
 
         public ConstFunc(Function left, long from, long to) {
             this.left = left;
             this.from = Math.min(from, to);
             this.to = Math.max(from, to);
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
         }
 
         @Override
@@ -87,12 +93,12 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return left;
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val(" between ").val(from).val(" and ").val(to);
         }
     }
 
-    private static class VarBetweenFunction extends NegatableBooleanFunction implements TernaryFunction {
+    private static class VarBetweenFunction extends BooleanFunction implements TernaryFunction {
         private final Function arg;
         private final Function from;
         private final Function to;
@@ -124,18 +130,23 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return from;
-        }
-
-        @Override
         public Function getCenter() {
             return arg;
         }
 
         @Override
+        public Function getLeft() {
+            return from;
+        }
+
+        @Override
         public Function getRight() {
             return to;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val(" between ").val(from).val(" and ").val(to);
         }
     }
 }

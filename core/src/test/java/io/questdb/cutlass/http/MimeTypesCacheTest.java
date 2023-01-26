@@ -26,8 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -53,7 +53,7 @@ public class MimeTypesCacheTest {
             try (Path path = new Path()) {
                 path.of("/tmp/sdrqwhlkkhlkhasdlkahdoiquweoiuweoiqwe.ok").$();
                 try {
-                    new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+                    new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path);
                     Assert.fail();
                 } catch (HttpException e) {
                     Assert.assertTrue(Chars.startsWith(e.getMessage(), "could not open"));
@@ -65,25 +65,25 @@ public class MimeTypesCacheTest {
     @Test()
     public void testCannotRead1() throws Exception {
         AtomicInteger closeCount = new AtomicInteger(0);
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 return 1024;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
+            public int openRO(LPSZ name) {
+                return 123;
             }
 
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 return -1;
             }
         }, "could not read");
@@ -94,26 +94,26 @@ public class MimeTypesCacheTest {
     @Test()
     public void testCannotRead2() throws Exception {
         AtomicInteger closeCount = new AtomicInteger(0);
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
 
             @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(long fd) {
+            public long length(int fd) {
                 return 1024;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
+            public int openRO(LPSZ name) {
+                return 123;
             }
 
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public long read(int fd, long buf, long len, long offset) {
                 return 128;
             }
         }, "could not read");
@@ -129,13 +129,13 @@ public class MimeTypesCacheTest {
             public void run() {
                 try (Path path = new Path()) {
                     String filePath;
-                    if (Os.type == Os.WINDOWS) {
+                    if (Os.isWindows()) {
                         filePath = this.getClass().getResource("/mime.types").getFile().substring(1);
                     } else {
                         filePath = this.getClass().getResource("/mime.types").getFile();
                     }
                     path.of(filePath).$();
-                    MimeTypesCache mimeTypes = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+                    MimeTypesCache mimeTypes = new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path);
                     Assert.assertEquals(980, mimeTypes.size());
                     TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
                     TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
@@ -151,21 +151,21 @@ public class MimeTypesCacheTest {
     @Test()
     public void testWrongFileSize() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
-            public long length(long fd) {
+            public boolean close(int fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
+            public long length(int fd) {
                 return 0;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
+            public int openRO(LPSZ name) {
+                return 123;
             }
         }, "wrong file size");
 
@@ -175,24 +175,22 @@ public class MimeTypesCacheTest {
     @Test()
     public void testWrongFileSize2() throws Exception {
         AtomicInteger closeCount = new AtomicInteger(0);
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
-            public long length(long fd) {
-                return -1;
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
+            public boolean close(int fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
+            @Override
+            public long length(int fd) {
+                return -1;
+            }
 
+            @Override
+            public int openRO(LPSZ name) {
+                return 123;
+            }
         }, "wrong file size");
 
         Assert.assertEquals(1, closeCount.get());
@@ -201,21 +199,21 @@ public class MimeTypesCacheTest {
     @Test()
     public void testWrongFileSize4() throws Exception {
         AtomicInteger closeCount = new AtomicInteger();
-        testFailure(new FilesFacadeImpl() {
+        testFailure(new TestFilesFacadeImpl() {
             @Override
-            public long length(long fd) {
+            public boolean close(int fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
+            public long length(int fd) {
                 return 1024 * 1024 * 2;
             }
 
             @Override
-            public long openRO(LPSZ name) {
-                return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
+            public int openRO(LPSZ name) {
+                return 123;
             }
         }, "wrong file size");
 

@@ -28,13 +28,14 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
-    private final int columnIndex;
-    private final Function symbolFunc;
     private final boolean cachedIndexReaderCursor;
+    private final int columnIndex;
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
+    private final Function symbolFunc;
     private int symbolKey;
 
     public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
@@ -61,6 +62,16 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
+    public boolean isEntity() {
+        return false;
+    }
+
+    @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
+
+    @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
         final CharSequence symbol = symbolFunc.getStr(null);
         symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
@@ -70,12 +81,8 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
-    public boolean isEntity() {
-        return false;
-    }
-
-    @Override
-    public boolean isUsingIndex() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnNameNoRemap(columnIndex).meta("deferred").val(true);
+        sink.attr("filter").putBaseColumnNameNoRemap(columnIndex).val('=').val(symbolFunc);
     }
 }

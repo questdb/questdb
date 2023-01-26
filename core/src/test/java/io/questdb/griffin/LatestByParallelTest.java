@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -35,9 +35,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -136,33 +136,25 @@ public class LatestByParallelTest {
         executeVanilla(LatestByParallelTest::testLatestByTimestamp);
     }
 
-    private static void testLatestByFiltered(
-            CairoEngine engine,
+    private static void assertQuery(
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String expected,
+            String ddl,
+            String query
     ) throws SqlException {
+        compiler.compile(ddl, sqlExecutionContext);
 
-        final String expected = "a\tk\tb\n" +
-                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordCursorFactory factory = cc.getRecordCursorFactory();
 
-        final String ddl = "create table x as " +
-                "(" +
-                "select" +
-                " timestamp_sequence(0, 100000000000) k," +
-                " rnd_double(0)*100 a1," +
-                " rnd_double(0)*100 a2," +
-                " rnd_double(0)*100 a3," +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b" +
-                " from long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY";
-
-        final String query = "select * from (select a,k,b from x latest on k partition by b) where a > 40";
-
-        assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
+        try {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+            }
+        } finally {
+            Misc.free(factory);
+        }
     }
 
     private static void testLatestByAll(
@@ -193,6 +185,35 @@ public class LatestByParallelTest {
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }
 
+    private static void testLatestByFiltered(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+
+        final String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) k," +
+                " rnd_double(0)*100 a1," +
+                " rnd_double(0)*100 a2," +
+                " rnd_double(0)*100 a3," +
+                " rnd_double(0)*100 a," +
+                " rnd_symbol(5,4,4,1) b" +
+                " from long_sequence(20)" +
+                "), index(b) timestamp(k) partition by DAY";
+
+        final String query = "select * from (select a,k,b from x latest on k partition by b) where a > 40";
+
+        assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
+    }
+
     private static void testLatestByTimestamp(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -216,63 +237,6 @@ public class LatestByParallelTest {
         final String query = "select * from x where k < '1970-01-03' latest on k partition by b";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
-    }
-
-    private static void assertQuery(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String expected,
-            String ddl,
-            String query
-    ) throws SqlException {
-        compiler.compile(ddl, sqlExecutionContext);
-
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        RecordCursorFactory factory = cc.getRecordCursorFactory();
-
-        try {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
-            }
-        } finally {
-            Misc.free(factory);
-        }
-    }
-
-    protected static void executeWithPool(
-            int workerCount,
-            int queueCapacity,
-            LatestByRunnable runnable
-    ) throws Exception {
-        executeVanilla(() -> {
-            if (workerCount > 0) {
-
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
-                    }
-                };
-
-                execute(pool, runnable, configuration);
-            } else {
-                // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
-                    }
-
-                    @Override
-                    public int getLatestByQueueCapacity() {
-                        return queueCapacity;
-                    }
-                };
-                execute(null, runnable, configuration);
-            }
-        });
     }
 
     protected static void execute(
@@ -306,11 +270,47 @@ public class LatestByParallelTest {
     }
 
     protected static void executeVanilla(LatestByRunnable code) throws Exception {
-        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
+        executeVanilla(() -> execute(null, code, new DefaultTestCairoConfiguration(root)));
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(code);
+    }
+
+    protected static void executeWithPool(
+            int workerCount,
+            int queueCapacity,
+            LatestByRunnable runnable
+    ) throws Exception {
+        executeVanilla(() -> {
+            if (workerCount > 0) {
+
+                WorkerPool pool = new WorkerPool(() -> workerCount);
+
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return TestFilesFacadeImpl.INSTANCE;
+                    }
+                };
+
+                execute(pool, runnable, configuration);
+            } else {
+                // we need to create entire engine
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return TestFilesFacadeImpl.INSTANCE;
+                    }
+
+                    @Override
+                    public int getLatestByQueueCapacity() {
+                        return queueCapacity;
+                    }
+                };
+                execute(null, runnable, configuration);
+            }
+        });
     }
 
     @FunctionalInterface

@@ -32,6 +32,10 @@ public class KerberosException extends Exception {
         this.code = status;
     }
 
+    public int getCode() {
+        return code;
+    }
+
     private static String toText(int status) {
         switch (status) {
             case 0x80090300:
@@ -88,9 +92,5 @@ public class KerberosException extends Exception {
                 return Integer.toHexString(status);
 
         }
-    }
-
-    public int getCode() {
-        return code;
     }
 }

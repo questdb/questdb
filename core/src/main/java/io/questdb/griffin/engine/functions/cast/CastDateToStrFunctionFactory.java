@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -53,18 +51,12 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
         return new CastDateToStrFunction(args.getQuick(0));
     }
 
-    public static class CastDateToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastDateToStrFunction extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public CastDateToStrFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -79,6 +71,16 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final long value = arg.getDate(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+
+            sink.putISODateMillis(value);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {
@@ -87,16 +89,6 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.putISODateMillis(value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-
-            sink.putISODateMillis(value);
         }
     }
 }

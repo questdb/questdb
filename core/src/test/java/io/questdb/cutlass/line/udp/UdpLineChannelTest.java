@@ -30,36 +30,34 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.fail;
 
 public class UdpLineChannelTest {
-    private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
-        @Override
-        public long socketUdp() {
-            return -1;
-        }
-    };
-
-    private static final NetworkFacade FAILS_TO_SET_MULTICAST_IFACE_NET_FACADE = new NetworkFacadeImpl() {
-        @Override
-        public int setMulticastInterface(long fd, int ipv4Address) {
-            return -1;
-        }
-    };
-
     private static final NetworkFacade FAILS_SET_SET_TTL_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastTtl(long fd, int ttl) {
+        public int setMulticastTtl(int fd, int ttl) {
+            return -1;
+        }
+    };
+    private static final NetworkFacade FAILS_TO_SET_MULTICAST_IFACE_NET_FACADE = new NetworkFacadeImpl() {
+        @Override
+        public int setMulticastInterface(int fd, int ipv4Address) {
+            return -1;
+        }
+    };
+    private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
+        @Override
+        public int socketUdp() {
             return -1;
         }
     };
 
     @Test
-    public void testConstructorLeak_FailsToSetTTL() throws Exception {
+    public void testConstructorLeak_DescriptorsExhausted() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new UdpLineChannel(FAILS_SET_SET_TTL_NET_FACADE, 1, 1, 9000, 10);
-                fail("the channel should fail to instantiate when NF fails to set multicast interface");
+                new UdpLineChannel(FD_EXHAUSTED_NET_FACADE, 1, 1, 9000, 10);
+                fail("the channel should fail to instantiate when NetworkFacade fails to create a new socket");
             } catch (LineSenderException ignored) {
                 // expected
             }
@@ -79,11 +77,11 @@ public class UdpLineChannelTest {
     }
 
     @Test
-    public void testConstructorLeak_DescriptorsExhausted() throws Exception {
+    public void testConstructorLeak_FailsToSetTTL() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new UdpLineChannel(FD_EXHAUSTED_NET_FACADE, 1, 1, 9000, 10);
-                fail("the channel should fail to instantiate when NetworkFacade fails to create a new socket");
+                new UdpLineChannel(FAILS_SET_SET_TTL_NET_FACADE, 1, 1, 9000, 10);
+                fail("the channel should fail to instantiate when NF fails to set multicast interface");
             } catch (LineSenderException ignored) {
                 // expected
             }

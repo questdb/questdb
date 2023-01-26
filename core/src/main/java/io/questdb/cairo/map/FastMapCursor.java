@@ -29,23 +29,26 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Unsafe;
 
 public final class FastMapCursor implements RecordCursor {
+    // Set to -1 when key-value pair is var-size.
+    private final int keyValueSize;
+    private final FastMap map;
     private final FastMapRecord recordA;
     private final MapRecord recordB;
-    private final FastMap map;
-    private int remaining;
     private long address;
-    private long topAddress;
     private int count;
+    private long limit;
+    private int remaining;
+    private long topAddress;
 
     FastMapCursor(FastMapRecord record, FastMap map) {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
-    }
-
-    @Override
-    public long size() {
-        return map.size();
+        if (map.keySize() != -1) {
+            keyValueSize = map.keySize() + map.valueSize();
+        } else {
+            keyValueSize = -1;
+        }
     }
 
     @Override
@@ -59,36 +62,51 @@ public final class FastMapCursor implements RecordCursor {
     }
 
     @Override
+    public MapRecord getRecordB() {
+        return recordB;
+    }
+
+    @Override
     public boolean hasNext() {
         if (remaining > 0) {
             long address = this.address;
-            this.address = address + Unsafe.getUnsafe().getInt(address);
+            if (keyValueSize == -1) {
+                this.address = address + Unsafe.getUnsafe().getInt(address);
+            } else {
+                this.address = address + keyValueSize;
+            }
+            // Key-value pairs start at 8 byte aligned addresses, so we may need to align the next pointer.
+            if ((this.address & 0x7) != 0) {
+                this.address |= 0x7;
+                this.address++;
+            }
+
             remaining--;
-            recordA.of(address);
+            recordA.of(address, limit);
             return true;
         }
         return false;
     }
 
     @Override
-    public MapRecord getRecordB() {
-        return recordB;
+    public void recordAt(Record record, long atRowId) {
+        ((FastMapRecord) record).of(atRowId, limit);
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        assert record instanceof FastMapRecord;
-        ((FastMapRecord) record).of(atRowId);
+    public long size() {
+        return map.size();
     }
 
     @Override
     public void toTop() {
-        this.address = topAddress;
-        this.remaining = count;
+        address = topAddress;
+        remaining = count;
     }
 
-    FastMapCursor init(long address, int count) {
+    FastMapCursor init(long address, long limit, int count) {
         this.address = this.topAddress = address;
+        this.limit = limit;
         this.remaining = this.count = count;
         return this;
     }

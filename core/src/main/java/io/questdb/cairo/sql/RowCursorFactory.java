@@ -25,11 +25,12 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-public interface RowCursorFactory {
+public interface RowCursorFactory extends Plannable {
     static void prepareCursor(
             ObjList<? extends RowCursorFactory> factories,
             TableReader tableReader,
@@ -42,15 +43,17 @@ public interface RowCursorFactory {
 
     RowCursor getCursor(DataFrame dataFrame);
 
-    default void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-    }
-
     boolean isEntity();
 
     /**
-     * Returns true if the returned RowCursor is using an index, false otherwise
+     * Indicates if the factory uses index
+     *
+     * @return true if the returned RowCursor is using an index, false otherwise
      */
     default boolean isUsingIndex() {
         return false;
+    }
+
+    default void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
     }
 }

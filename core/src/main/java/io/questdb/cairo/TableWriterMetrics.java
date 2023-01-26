@@ -31,12 +31,11 @@ public class TableWriterMetrics {
 
     // Includes all types of commits (in-order and o3)
     private final Counter commitCounter;
-    private final Counter o3CommitCounter;
     private final Counter committedRowCounter;
-    private final Counter rollbackCounter;
-
+    private final Counter o3CommitCounter;
     // For write amplification metric, `physicallyWrittenRowCounter / committedRowCounter`.
     private final Counter physicallyWrittenRowCounter;
+    private final Counter rollbackCounter;
 
     public TableWriterMetrics(MetricsRegistry metricsRegistry) {
         this.commitCounter = metricsRegistry.newCounter("commits");
@@ -58,20 +57,20 @@ public class TableWriterMetrics {
         return commitCounter.getValue();
     }
 
-    public long getO3CommitCount() {
-        return o3CommitCounter.getValue();
-    }
-
     public long getCommittedRows() {
         return committedRowCounter.getValue();
     }
 
-    public long getRollbackCount() {
-        return rollbackCounter.getValue();
+    public long getO3CommitCount() {
+        return o3CommitCounter.getValue();
     }
 
     public long getPhysicallyWrittenRows() {
         return physicallyWrittenRowCounter.getValue();
+    }
+
+    public long getRollbackCount() {
+        return rollbackCounter.getValue();
     }
 
     public void incrementCommits() {

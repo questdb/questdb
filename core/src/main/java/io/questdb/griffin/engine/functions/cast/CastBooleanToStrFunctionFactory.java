@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -51,16 +49,9 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractCastToStrFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -69,13 +60,13 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return arg.getStrB(rec);
+        public void getStr(Record rec, CharSink sink) {
+            arg.getStr(rec, sink);
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            arg.getStr(rec, sink);
+        public CharSequence getStrB(Record rec) {
+            return arg.getStrB(rec);
         }
     }
 }

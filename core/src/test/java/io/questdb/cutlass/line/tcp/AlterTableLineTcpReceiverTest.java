@@ -39,6 +39,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -56,8 +57,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(AlterTableLineTcpReceiverTest.class);
 
     private final SCSequence scSequence = new SCSequence();
-    private SqlException sqlException;
     private volatile OperationFuture alterOperationFuture;
+    private SqlException sqlException;
 
     @Test
     public void testAlterCommandAddColumn() throws Exception {
@@ -70,13 +71,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug Add COLUMN label2 INT");
+                    "ALTER TABLE plug ADD COLUMN label2 INT");
             Assert.assertNull(exception);
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
-
             send(server, lineData);
 
             String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
@@ -91,144 +91,295 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testAlterCommandDropPartition() throws Exception {
-        long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
-        long day3 = IntervalUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
+    public void testAlterCommandDropAllPartitions() throws Exception {
+        long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
         runInContext((server) -> {
-                    String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
-                    send(server, lineData);
-                    lineData = "plug,room=6B watts=\"22\" " + day2 + "\n" +
-                            "plug,room=6C watts=\"333\" " + day3 + "\n";
+            final AtomicLong ilpProducerWatts = new AtomicLong(0L);
+            final AtomicBoolean keepSending = new AtomicBoolean(true);
+            final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
+            final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
+            final SOCountDownLatch partitionDropperHalted = new SOCountDownLatch(1);
 
-                    SqlException exception = sendWithAlterStatement(
-                            server,
-                            lineData,
-                            WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                            "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'");
+            final Thread ilpProducer = new Thread(() -> {
+                String lineTpt = "plug,room=6A watts=\"%di\" %d%n";
+                try {
+                    while (keepSending.get()) {
+                        try {
+                            long watts = ilpProducerWatts.getAndIncrement();
+                            long day = (watts + 1) % 4 == 0 ? day1 : day2;
+                            String lineData = String.format(lineTpt, watts, day);
+                            send(server, lineData);
+                            LOG.info().$("sent: ").$(lineData).$();
+                        } catch (Throwable unexpected) {
+                            ilpProducerProblem.set(unexpected);
+                            keepSending.set(false);
+                            break;
+                        }
+                    }
+                } finally {
+                    LOG.info().$("sender has finished").$();
+                    ilpProducerHalted.countDown();
+                }
+            }, "ilp-producer");
+            ilpProducer.start();
 
-                    Assert.assertNull(exception);
-                    String expected = "room\twatts\ttimestamp\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
-                            "6C\t333\t1970-03-03T00:00:00.000000Z\n";
-                    assertTable(expected);
-                },
-                true, 250
-        );
+            final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
+
+            final Thread partitionDropper = new Thread(() -> {
+                while (ilpProducerWatts.get() < 20) {
+                    Os.pause();
+                }
+                LOG.info().$("ABOUT TO DROP PARTITIONS").$();
+                try (SqlCompiler compiler = new SqlCompiler(engine);
+                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                             .with(
+                                     AllowAllCairoSecurityContext.INSTANCE,
+                                     new BindVariableServiceImpl(configuration),
+                                     null,
+                                     -1,
+                                     null
+                             )
+                ) {
+                    CompiledQuery cc = compiler.compile("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext);
+                    try (OperationFuture result = cc.execute(scSequence)) {
+                        result.await();
+                        Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
+                    }
+                } catch (SqlException e) {
+                    partitionDropperProblem.set(e);
+                } finally {
+                    // a few rows may have made it into the active partition,
+                    // as dropping it is concurrent with inserting
+                    keepSending.set(false);
+                    Path.clearThreadLocals();
+                    partitionDropperHalted.countDown();
+                }
+            }, "partition-dropper");
+            partitionDropper.start();
+
+            ilpProducerHalted.await();
+            Assert.assertNull(ilpProducerProblem.get());
+            Assert.assertNull(partitionDropperProblem.get());
+            partitionDropperHalted.await();
+        }, true, 50L);
     }
 
     @Test
     public void testAlterCommandDropLastPartition() throws Exception {
         runInContext((server) -> {
-                    long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
+            long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
 
-                    try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
-                        tm.col("room", ColumnType.SYMBOL);
-                        tm.col("watts", ColumnType.LONG);
-                        tm.timestamp();
+            try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
+                tm.col("room", ColumnType.SYMBOL);
+                tm.col("watts", ColumnType.LONG);
+                tm.timestamp();
 
-                        CairoTestUtils.create(tm);
-                    }
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
-                        TableWriter.Row row = writer.newRow(day1 / 1000);
-                        row.putSym(0, "6A");
-                        row.putLong(1, 100L);
-                        row.append();
-                        writer.commit();
-                    }
+                CairoTestUtils.create(tm);
+            }
 
-                    Assert.assertNull(sendWithAlterStatement(
-                            server,
-                            "plug,room=6A watts=1i " + day1 + "\n" +
-                                    "plug,room=6B watts=37i " + day1 + "\n" +
-                                    "plug,room=7G watts=21i " + day1 + "\n" +
-                                    "plug,room=1C watts=11i " + day1 + "\n",
-                            WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                            "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"));
-                    assertTable("room\twatts\ttimestamp\n");
+            try (TableWriterAPI writer = getTableWriterAPI("plug")) {
+                TableWriter.Row row = writer.newRow(day1 / 1000);
+                row.putSym(0, "6A");
+                row.putLong(1, 100L);
+                row.append();
+                writer.commit();
+            }
 
-                    send(server, "plug,room=6A watts=125i " + day1 + "\n");
-                    assertTable("room\twatts\ttimestamp\n" +
-                            "6A\t125\t2023-02-27T00:00:00.000000Z\n");
-                },
-                true, 50L
-        );
+            SqlException exception = sendWithAlterStatement(
+                    server,
+                    "plug,room=6A watts=1i " + day1 + "\n" +
+                            "plug,room=6B watts=37i " + day1 + "\n" +
+                            "plug,room=7G watts=21i " + day1 + "\n" +
+                            "plug,room=1C watts=11i " + day1 + "\n",
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"
+            );
+            Assert.assertNull(exception);
+            assertTable("room\twatts\ttimestamp\n");
+
+            send(server, "plug,room=6A watts=125i " + day1 + "\n");
+
+            assertTable("room\twatts\ttimestamp\n" +
+                    "6A\t125\t2023-02-27T00:00:00.000000Z\n");
+        }, true, 50L);
     }
 
     @Test
-    public void testAlterCommandDropAllPartitions() throws Exception {
-        long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
-        long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
+    public void testAlterCommandDropPartition() throws Exception {
+        long day1 = 0;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
+        long day3 = IntervalUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
         runInContext((server) -> {
+            String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
+            send(server, lineData);
 
-                    final AtomicLong ilpProducerWatts = new AtomicLong(0L);
-                    final AtomicBoolean keepSending = new AtomicBoolean(true);
-                    final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
-                    final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
+            lineData = "plug,room=6B watts=\"22\" " + day2 + "\n" +
+                    "plug,room=6C watts=\"333\" " + day3 + "\n";
+            SqlException exception = sendWithAlterStatement(
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'"
+            );
+            Assert.assertNull(exception);
 
-                    final Thread ilpProducer = new Thread(() -> {
-                        String lineTpt = "plug,room=6A watts=\"%di\" %d%n";
-                        try {
-                            while (keepSending.get()) {
-                                try {
-                                    long watts = ilpProducerWatts.getAndIncrement();
-                                    long day = (watts + 1) % 4 == 0 ? day1 : day2;
-                                    String lineData = String.format(lineTpt, watts, day);
-                                    send(server, lineData);
-                                    LOG.info().$("sent: ").$(lineData).$();
-                                } catch (Throwable unexpected) {
-                                    ilpProducerProblem.set(unexpected);
-                                    keepSending.set(false);
-                                    break;
-                                }
-                            }
-                        } finally {
-                            ilpProducerHalted.countDown();
-                            LOG.info().$("sender is finished").$();
-                        }
-                    }, "ilp-producer");
-                    ilpProducer.start();
+            String expected = "room\twatts\ttimestamp\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
+                    "6C\t333\t1970-03-03T00:00:00.000000Z\n";
+            assertTable(expected);
+        }, true, 250);
+    }
 
+    @Test
+    public void testAlterCommandDropsColumn() throws Exception {
+        runInContext((server) -> {
+            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819994000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817905842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817906844\n";
 
-                    final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
+            SqlException exception = sendWithAlterStatement(server, lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP COLUMN label");
 
-                    final Thread partitionDropper = new Thread(() -> {
-                        while (ilpProducerWatts.get() < 20) {
-                            Os.pause();
-                        }
-                        LOG.info().$("ABOUT TO DROP PARTITIONS").$();
-                        try (SqlCompiler compiler = new SqlCompiler(engine);
-                             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                                     .with(
-                                             AllowAllCairoSecurityContext.INSTANCE,
-                                             new BindVariableServiceImpl(configuration),
-                                             null,
-                                             -1,
-                                             null
-                                     )
-                        ) {
-                            CompiledQuery cc = compiler.compile("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext);
-                            try (OperationFuture result = cc.execute(scSequence)) {
-                                result.await();
-                                Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
-                            }
-                        } catch (SqlException e) {
-                            partitionDropperProblem.set(e);
-                        } finally {
-                            // a few rows may have made it into the active partition,
-                            // as dropping it is concurrent with inserting
-                            keepSending.set(false);
-                        }
+            Assert.assertNotNull(exception);
+            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
+            exception = sendWithAlterStatement(
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug RENAME COLUMN label TO label2"
+            );
 
-                    }, "partition-dropper");
-                    partitionDropper.start();
+            Assert.assertNotNull(exception);
+            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
+            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819995001\n" +
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902845\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817903846\n";
 
-                    ilpProducerHalted.await();
-                    Assert.assertNull(ilpProducerProblem.get());
-                    Assert.assertNull(partitionDropperProblem.get());
-                },
-                true, 50L
-        );
+            // re-send, this should re-add column label
+            send(server, lineData);
+
+            String expected = "label\troom\twatts\ttimestamp\n" +
+                    "Line\t6C\t666\t1970-01-01T00:25:31.817903Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
+                    "Power\t6B\t55\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
+                    "Power\t6A\t4\t1970-01-01T00:43:51.819995Z\n";
+            assertTable(expected);
+        }, false, 1000);
+    }
+
+    @Test
+    public void testAlterCommandSequenceReleased() throws Exception {
+        long day1 = 0;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
+        runInContext((server) -> {
+            String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
+            send(server, lineData);
+            lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
+
+            for (int i = 0; i < 10; i++) {
+                SqlException exception = sendWithAlterStatement(
+                        server,
+                        lineData,
+                        WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                        "ALTER TABLE plug add column col" + i + " int");
+                Assert.assertNull(exception);
+            }
+            String expected = "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
+                    "6A\t1\t1970-01-01T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
+            assertTable(expected);
+        }, true, 250);
+    }
+
+    @Test
+    public void testAlterCommandTableMetaModifications() throws Exception {
+        runInContext((server) -> {
+            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+
+            SqlException exception = sendWithAlterStatement(
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug SET PARAM o3MaxLag = 20s;");
+            Assert.assertNull(exception);
+
+            exception = sendWithAlterStatement(
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug SET PARAM maxUncommittedRows = 1;");
+            Assert.assertNull(exception);
+
+            SqlException exception3 = sendWithAlterStatement(
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "alter table plug alter column label nocache;");
+            Assert.assertNull(exception3);
+
+            assertTable("label\troom\twatts\ttimestamp\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
+            );
+
+            engine.releaseAllReaders();
+            try (TableReader reader = getReader("plug")) {
+                TableReaderMetadata meta = reader.getMetadata();
+                Assert.assertEquals(1, meta.getMaxUncommittedRows());
+                Assert.assertEquals(20 * 1_000_000L, meta.getO3MaxLag());
+                Assert.assertFalse(reader.getSymbolMapReader(meta.getColumnIndex("label")).isCached());
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndex() throws Exception {
+        runInContext((server) -> {
+            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+            SqlException ex = sendWithAlterStatement(server, lineData, WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
+            Assert.assertNull(ex);
+
+            String expected = "label\troom\twatts\ttimestamp\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
+            assertTable(expected);
+            try (TableReader rdr = getReader("plug")) {
+                TableReaderMetadata metadata = rdr.getMetadata();
+                Assert.assertTrue("Alter makes column indexed",
+                        metadata.isColumnIndexed(
+                                metadata.getColumnIndex("label")
+                        ));
+            }
+        });
     }
 
     @Test
@@ -241,7 +392,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
-            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+            try (TableWriter tableWriter = getWriter("plug")) {
                 tableWriter.removeColumn("watts");
             }
 
@@ -271,7 +422,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lineData
             );
 
-            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+            try (TableWriter tableWriter = getWriter("plug")) {
                 tableWriter.removeColumn("watts");
             }
 
@@ -325,15 +476,14 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
 
-                    String lineData = isSymbol ?
-                            String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000) :
-                            String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
-
+                    String lineData = isSymbol
+                            ? String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000)
+                            : String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
 
                     send(server, lineData);
                     columnsAdded.add(isSymbol ? i : -i);
                 } else {
-                    try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+                    try (TableWriter tableWriter = getWriter("plug")) {
                         int dropCol = columnsAdded.get(rnd.nextPositiveInt() % columnsAdded.size());
                         tableWriter.removeColumn("column_" + Math.abs(dropCol));
                         columnsAdded.remove((Object) dropCol);
@@ -373,7 +523,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
             );
 
-            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+            try (TableWriter tableWriter = getWriter("plug")) {
                 tableWriter.removeColumn("room");
             }
 
@@ -396,159 +546,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
-    @Test
-    public void testAlterCommandDropsColumn() throws Exception {
-        runInContext((server) -> {
-            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-
-            SqlException exception = sendWithAlterStatement(server, lineData,
-                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug DROP COLUMN label");
-
-            Assert.assertNotNull(exception);
-            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
-            exception = sendWithAlterStatement(
-                    server,
-                    lineData,
-                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug RENAME COLUMN label TO label2"
-            );
-
-            Assert.assertNotNull(exception);
-            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
-            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
-                    "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
-                    "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
-
-            // re-send, this should re-add column label
-            send(server, lineData);
-
-            String expected = "label\troom\twatts\ttimestamp\n" +
-                    "Line\t6C\t666\t1970-01-01T00:25:31.817902Z\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                    "Power\t6B\t55\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6A\t4\t1970-01-01T00:43:51.819999Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
-            assertTable(expected);
-        }, false, 1000);
-    }
-
-    @Test
-    public void testAlterCommandSequenceReleased() throws Exception {
-        long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
-        runInContext((server) -> {
-                    String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
-                    send(server, lineData);
-                    lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
-
-                    for (int i = 0; i < 10; i++) {
-                        SqlException exception = sendWithAlterStatement(
-                                server,
-                                lineData,
-                                WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                                "ALTER TABLE plug add column col" + i + " int");
-                        Assert.assertNull(exception);
-                    }
-                    String expected = "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
-                            "6A\t1\t1970-01-01T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
-                    assertTable(expected);
-                },
-                true, 250
-        );
-    }
-
-    @Test
-    public void testAlterCommandTableMetaModifications() throws Exception {
-        runInContext((server) -> {
-            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-
-            SqlException exception = sendWithAlterStatement(
-                    server,
-                    lineData,
-                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug SET PARAM commitLag = 20s;");
-            Assert.assertNull(exception);
-
-            exception = sendWithAlterStatement(
-                    server,
-                    lineData,
-                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug SET PARAM maxUncommittedRows = 1;");
-            Assert.assertNull(exception);
-
-            SqlException exception3 = sendWithAlterStatement(
-                    server,
-                    lineData,
-                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "alter table plug alter column label nocache;");
-            Assert.assertNull(exception3);
-
-            assertTable("label\troom\twatts\ttimestamp\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
-            );
-
-            engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
-                TableReaderMetadata meta = reader.getMetadata();
-                Assert.assertEquals(1, meta.getMaxUncommittedRows());
-                Assert.assertEquals(20 * 1_000_000L, meta.getCommitLag());
-                Assert.assertFalse(reader.getSymbolMapReader(meta.getColumnIndex("label")).isCached());
-            }
-        });
-    }
-
-    @Test
-    public void testAlterTableAddIndex() throws Exception {
-        runInContext((server) -> {
-            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            SqlException ex = sendWithAlterStatement(server, lineData, WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
-            Assert.assertNull(ex);
-
-            String expected = "label\troom\twatts\ttimestamp\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
-            assertTable(expected);
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
-                TableReaderMetadata metadata = rdr.getMetadata();
-                Assert.assertTrue("Alter makes column indexed",
-                        metadata.isColumnIndexed(
-                                metadata.getColumnIndex("label")
-                        ));
-            }
-        });
-    }
-
     private void assertTable(CharSequence expected) {
         assertTable(expected, "plug");
     }
@@ -556,19 +553,20 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private OperationFuture executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
         LOG.info().$("Started waiting for writer ASYNC event").$();
-        try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                     .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null
-                     )
+        try (
+                SqlCompiler compiler = new SqlCompiler(engine);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(
+                                AllowAllCairoSecurityContext.INSTANCE,
+                                new BindVariableServiceImpl(configuration),
+                                null,
+                                -1,
+                                null
+                        )
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-            AlterOperation alterOperation = cc.getAlterOperation();
-            assert alterOperation != null;
+            AlterOperation alterOp = cc.getAlterOperation();
+            assert alterOp != null;
 
             return cc.execute(scSequence);
         }
@@ -614,7 +612,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         if (wait != WAIT_NO_WAIT) {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (Chars.equalsNc("plug", name)) {
+                if (name != null && Chars.equalsNc(name.getTableName(), "plug")) {
                     if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 || (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
                         if (factoryType == PoolListener.SRC_WRITER) {
                             switch (event) {
@@ -651,7 +649,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         try {
             int ipv4address = Net.parseIPv4("127.0.0.1");
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
-            long fd = Net.socketTcp(true);
+            int fd = Net.socketTcp(true);
             try {
                 TestUtils.assertConnect(fd, sockaddr);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);

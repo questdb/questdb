@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -50,12 +51,17 @@ public class NotMatchCharFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
         private final char expected;
+        private final Function value;
 
         public MatchFunction(Function value, char expected) {
             this.value = value;
             this.expected = expected;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
         }
 
         @Override
@@ -65,9 +71,8 @@ public class NotMatchCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public void toPlan(PlanSink sink) {
+            sink.val(value).val(" !~ '").val(expected).val('\'');
         }
-
     }
 }

@@ -28,8 +28,9 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -44,8 +45,8 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        base.close();
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -71,14 +72,25 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Count");
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    protected void _close() {
+        base.close();
+    }
+
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
-        private boolean hasNext = true;
         private long count;
+        private boolean hasNext = true;
 
         @Override
         public void close() {
@@ -99,13 +111,13 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void toTop() {
-            hasNext = true;
+        public long size() {
+            return 1;
         }
 
         @Override
-        public long size() {
-            return 1;
+        public void toTop() {
+            hasNext = true;
         }
 
         private void of(long count) {
@@ -122,6 +134,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        DEFAULT_COUNT_METADATA.add(new TableColumnMetadata("count", 1, ColumnType.LONG));
+        DEFAULT_COUNT_METADATA.add(new TableColumnMetadata("count", ColumnType.LONG));
     }
 }

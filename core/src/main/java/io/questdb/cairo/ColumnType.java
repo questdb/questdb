@@ -41,53 +41,64 @@ import io.questdb.std.str.StringSink;
  * Column types as numeric (integer) values
  */
 public final class ColumnType {
-    // column type version as written to the metadata file
-    public static final int VERSION = 426;
-
-    public static final short UNDEFINED = 0;
+    public static final short ARRAY_STRING = 27;
+    public static final short BINARY = 18;
     public static final short BOOLEAN = 1;
     public static final short BYTE = 2;
-    public static final short SHORT = 3;
     public static final short CHAR = 4;
-    public static final short INT = 5;
-    public static final short LONG = 6;
-    public static final short DATE = 7;
-    public static final short TIMESTAMP = 8;
-    public static final short FLOAT = 9;
-    public static final short DOUBLE = 10;
-    public static final short STRING = 11;
-    public static final short SYMBOL = 12;
-    public static final short LONG256 = 13;
-    public static final short GEOBYTE = 14;
-    public static final short GEOSHORT = 15;
-    public static final short GEOINT = 16;
-    public static final short GEOLONG = 17;
-    public static final short BINARY = 18;
-    public static final short PARAMETER = 19;
     public static final short CURSOR = 20;
-    public static final short VAR_ARG = 21;
-    public static final short RECORD = 22;
+    public static final short DATE = 7;
+    public static final short DOUBLE = 10;
+    public static final short FLOAT = 9;
+    public static final short GEOBYTE = 14;
+    public static final int GEOBYTE_MAX_BITS = 7;
+    //geohash bits <-> backing primitive types bit boundaries
+    public static final int GEOBYTE_MIN_BITS = 1;
     // This type is not stored, it is used on function arguments to resolve overloads.
     // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
     // inside the MAX type value.
     public static final short GEOHASH = 23;
+    public static final short GEOINT = 16;
+    public static final int GEOINT_MAX_BITS = 31;
+    public static final int GEOINT_MIN_BITS = 16;
+    public static final short GEOLONG = 17;
+    public static final int GEOLONG_MIN_BITS = 32;
+    public static final short GEOSHORT = 15;
+    public static final int GEOSHORT_MAX_BITS = 15;
+    public static final int GEOSHORT_MIN_BITS = 8;
+    public static final int GEO_HASH_MAX_BITS_LENGTH = 60;
+    public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
+    public static final short INT = 5;
+    public static final short LONG = 6;
     public static final short LONG128 = 24; // Limited support, few tests only
-
-    // PG specific types to work with 3rd party software with canned catalogue queries
-    public static final short REGCLASS = 25;
-    public static final short REGPROCEDURE = 26;
-    public static final short ARRAY_STRING = 27;
-    public static final short NULL = 28;
-
+    public static final short LONG256 = 13;
+    public static final int NO_OVERLOAD = 10000;
+    public static final short NULL = 29;
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
-    public static final int GEO_HASH_MAX_BITS_LENGTH;
-    public static final int NO_OVERLOAD = 10000;
+    public static final short PARAMETER = 28;
+    public static final short RECORD = 22;
+    // PG specific types to work with 3rd party software with canned catalogue queries
+    public static final short REGCLASS = 25;
+    public static final short REGPROCEDURE = 26;
+    public static final short SHORT = 3;
+    public static final short STRING = 11;
+    public static final short SYMBOL = 12;
+    public static final short TIMESTAMP = 8;
+    public static final short UNDEFINED = 0;
+    public static final short UUID = 19;
+    public static final short VAR_ARG = 21;
+    // column type version as written to the metadata file
+    public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
-    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
+    private static final int BITS_OFFSET = 8;
+    // this value has to be larger than MAX type and be power of 2
+    private static final int OVERLOAD_MATRIX_SIZE = 32;
+    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
+    private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     // For function overload the priority is taken from left to right
     private static final short[][] overloadPriority = {
@@ -110,14 +121,10 @@ public final class ColumnType {
             /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
             /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
             /* 18 BINARY    */, {BINARY}
+            /* 19 UUID      */, {UUID, STRING}
     };
-
-    // this value has to be larger than MAX type and be power of 2
-    private static final int OVERLOAD_MATRIX_SIZE = 32;
     private static final int[] overloadPriorityMatrix;
-    private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
-    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
-    private static final int BITS_OFFSET = 8;
+    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
 
     private ColumnType() {
     }
@@ -134,17 +141,6 @@ public final class ColumnType {
 
     public static boolean isAssignableFrom(int fromType, int toType) {
         return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
-    }
-
-    public static boolean isToSameOrWider(int fromType, int toType) {
-        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) &&
-                (
-                        getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0
-                ))
-                || isBuiltInWideningCast(fromType, toType)
-                || isStringCast(fromType, toType)
-                || isGeoHashWideningCast(fromType, toType)
-                || isImplicitParsingCast(fromType, toType);
     }
 
     public static boolean isBinary(int columnType) {
@@ -216,6 +212,17 @@ public final class ColumnType {
         return columnType == TIMESTAMP;
     }
 
+    public static boolean isToSameOrWider(int fromType, int toType) {
+        return ((toType == fromType || tagOf(fromType) == tagOf(toType)) &&
+                (
+                        getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0
+                ))
+                || isBuiltInWideningCast(fromType, toType)
+                || isStringCast(fromType, toType)
+                || isGeoHashWideningCast(fromType, toType)
+                || isImplicitParsingCast(fromType, toType);
+    }
+
     public static boolean isUndefined(int columnType) {
         return columnType == UNDEFINED;
     }
@@ -278,8 +285,12 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    private static int mkGeoHashType(int bits, short baseType) {
-        return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
+    public static int variableColumnLengthBytes(int columnType) {
+        if (columnType == ColumnType.STRING) {
+            return Integer.BYTES;
+        }
+        assert columnType == ColumnType.BINARY;
+        return Long.BYTES;
     }
 
     private static short indexOf(short[] list, short value) {
@@ -289,13 +300,6 @@ public final class ColumnType {
             }
         }
         return -1;
-    }
-
-    private static boolean isStringCast(int fromType, int toType) {
-        return (fromType == STRING && toType == SYMBOL)
-                || (fromType == SYMBOL && toType == STRING)
-                || (fromType == CHAR && toType == SYMBOL)
-                || (fromType == CHAR && toType == STRING);
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -337,7 +341,20 @@ public final class ColumnType {
                 || (fromType == STRING && toType == FLOAT)
                 || (fromType == STRING && toType == DOUBLE)
                 || (fromType == STRING && toType == CHAR)
+                || (fromType == STRING && toType == UUID)
                 ;
+    }
+
+    private static boolean isStringCast(int fromType, int toType) {
+        return (fromType == STRING && toType == SYMBOL)
+                || (fromType == SYMBOL && toType == STRING)
+                || (fromType == CHAR && toType == SYMBOL)
+                || (fromType == CHAR && toType == STRING)
+                || (fromType == UUID && toType == STRING);
+    }
+
+    private static int mkGeoHashType(int bits, short baseType) {
+        return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
     static {
@@ -355,7 +372,6 @@ public final class ColumnType {
     }
 
     static {
-        GEO_HASH_MAX_BITS_LENGTH = 60;
         GEO_TYPE_SIZE_POW2 = new int[GEO_HASH_MAX_BITS_LENGTH + 1];
         for (int bits = 1; bits <= GEO_HASH_MAX_BITS_LENGTH; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
@@ -376,6 +392,7 @@ public final class ColumnType {
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
         typeNameMap.put(LONG256, "LONG256");
+        typeNameMap.put(UUID, "UUID");
         typeNameMap.put(LONG128, "LONG128");
         typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(RECORD, "RECORD");
@@ -401,6 +418,7 @@ public final class ColumnType {
         nameTypeMap.put("timestamp", TIMESTAMP);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", LONG256);
+        nameTypeMap.put("uuid", UUID);
         nameTypeMap.put("long128", LONG128);
         nameTypeMap.put("geohash", GEOHASH);
         nameTypeMap.put("text", STRING);
@@ -452,6 +470,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[RECORD] = -1;
         TYPE_SIZE_POW2[NULL] = -1;
         TYPE_SIZE_POW2[LONG128] = 4;
+        TYPE_SIZE_POW2[UUID] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -476,17 +495,8 @@ public final class ColumnType {
         TYPE_SIZE[CURSOR] = -1;
         TYPE_SIZE[VAR_ARG] = -1;
         TYPE_SIZE[RECORD] = -1;
+        TYPE_SIZE[UUID] = 2 * Long.BYTES;
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
     }
-
-    //geohash bits <-> backing primitive types bit boundaries
-    public static final int GEOBYTE_MIN_BITS = 1;
-    public static final int GEOBYTE_MAX_BITS = 7;
-    public static final int GEOSHORT_MIN_BITS = 8;
-    public static final int GEOSHORT_MAX_BITS = 15;
-    public static final int GEOINT_MIN_BITS = 16;
-    public static final int GEOINT_MAX_BITS = 31;
-    public static final int GEOLONG_MIN_BITS = 32;
-    public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
 }

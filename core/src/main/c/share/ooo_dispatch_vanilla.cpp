@@ -88,6 +88,10 @@ void platform_memcpy(void *dst, const void *src, const size_t len) {
     __MEMCPY(dst, src, len);
 }
 
+void platform_memcmp(const void *a, const void *b, const size_t len, int *res) {
+    *res = __MEMCMP(a, b, len);
+}
+
 void platform_memset(void *dst, const int val, const size_t len) {
     __MEMSET(dst, val, len);
 }
@@ -138,7 +142,13 @@ void re_shuffle_int64(const int64_t *src, int64_t *dest, const index_t *index, c
     re_shuffle_vanilla(src, dest, index, count);
 }
 
+// 30
 void re_shuffle_256bit(const long_256bit *src, long_256bit *dest, const index_t *index, const int64_t count) {
+    re_shuffle_vanilla(src, dest, index, count);
+}
+
+// 32
+void re_shuffle_128bit(const __int128 *src, __int128 *dest, const index_t *index, const int64_t count) {
     re_shuffle_vanilla(src, dest, index, count);
 }
 

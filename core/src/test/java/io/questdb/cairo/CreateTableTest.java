@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -7,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -18,6 +43,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Test interactions between cast and index clauses in CREATE TABLE and CREATE TABLE AS SELECT statements .
  */
+@SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
@@ -58,8 +84,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT x FROM long_sequence(1)" +
                         "), INDEX(x)",
-                0,
-                "indexes are supported only for SYMBOL columns: x"
+                0
         );
     }
 
@@ -69,8 +94,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as STRING) x FROM long_sequence(1)" +
                         "), INDEX(x)",
-                0,
-                "indexes are supported only for SYMBOL columns: x"
+                0
         );
     }
 
@@ -80,8 +104,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as SYMBOL) x FROM long_sequence(1)" +
                         "), CAST(x as STRING), INDEX(x)",
-                82,
-                "indexes are supported only for SYMBOL columns: x"
+                82
         );
     }
 
@@ -161,7 +184,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableAsSelectWithMultipleIndexs() throws Exception {
+    public void testCreateTableAsSelectWithMultipleIndexes() throws Exception {
         assertCompile("create table old(s1 symbol,s2 symbol, s3 symbol)");
         assertQuery("s1\ts2\ts3\n", "select * from new", "create table new as (select * from old), index(s1), index(s2), index(s3)", null);
 
@@ -241,7 +264,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "a INT," +
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\tt\n", "select * from tab", "create table tab (like x)", "t");
-        assertPartitionAndTimestamp("tab", PartitionBy.MONTH, 1);
+        assertPartitionAndTimestamp();
     }
 
     @Test
@@ -285,6 +308,48 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableIfNotExistParallelWal() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 2;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                compiler.compile("create table if not exists tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(i).start();
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            Assert.assertEquals(tableCount, getTablesInRegistrySize());
+        });
+    }
+
+    @Test
     public void testCreateTableIfNotExistsExistingLikeAndDestinationTable() throws Exception {
         assertCompile("create table x (s1 symbol)");
         assertCompile("create table y (s2 symbol)");
@@ -313,6 +378,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 {"z", "STRING"},
                 {"y", "BOOLEAN"},
                 {"l", "LONG256"},
+                {"u", "UUID"},
                 {"gh1", "GEOHASH(7c)"},
                 {"gh2", "GEOHASH(4b)"}
         };
@@ -320,8 +386,9 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertCompile("create table x (" +
                 getColumnDefinitions(columnTypes) + ")"
         );
-        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
-        assertColumnTypes("tab", columnTypes);
+        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tu\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
+        assertColumnTypes(columnTypes);
+
     }
 
     @Test
@@ -336,16 +403,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableLikeTableWithCachedSymbol() throws Exception {
-        boolean isSymbolCached = true;
-        String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
-
-        assertCompile("create table x (" +
-                "a INT," +
-                "y SYMBOL " + symbolCacheParameterValue + "," +
-                "t timestamp) timestamp(t) partition by MONTH");
-        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
-        SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
-        assertSymbolParameters("tab", 1, parameters);
+        testCreateTableLikeTableWithCachedSymbol(true);
     }
 
     @Test
@@ -357,16 +415,21 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
         SymbolParameters parameters = new SymbolParameters(null, false, true, indexBlockCapacity);
-        assertSymbolParameters("tab", 1, parameters);
+        assertSymbolParameters(parameters);
     }
 
     @Test
-    public void testCreateTableLikeTableWithMaxUncommittedRowsAndCommitLag() throws Exception {
+    public void testCreateTableLikeTableWithMaxUncommittedRowsAndO3MaxLag() throws Exception {
         int maxUncommittedRows = 20;
-        int commitLag = 200;
-        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", commitLag = " + commitLag + "us");
+        int o3MaxLag = 200;
+        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", o3MaxLag = " + o3MaxLag + "us");
         assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
-        assertWithClauseParameters("x", maxUncommittedRows, commitLag);
+        assertWithClauseParameters(maxUncommittedRows, o3MaxLag);
+    }
+
+    @Test
+    public void testCreateTableLikeTableWithNotCachedSymbol() throws Exception {
+        testCreateTableLikeTableWithCachedSymbol(false);
     }
 
     @Test
@@ -379,7 +442,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
         SymbolParameters parameters = new SymbolParameters(symbolCapacity, false, false, null);
-        assertSymbolParameters("tab", 1, parameters);
+        assertSymbolParameters(parameters);
     }
 
     @Test
@@ -434,6 +497,52 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableParallelWal() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 2;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertEquals("table already exists", e.getFlyweightMessage());
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(i).start();
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            Assert.assertEquals(tableCount, getTablesInRegistrySize());
+        });
+    }
+
+    @Test
     public void testCreateTableWithIndex() throws Exception {
         assertQuery("s\n", "select * from tab", "create table tab (s symbol), index(s)", null);
 
@@ -452,9 +561,86 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertQuery("s\n", "select * from tab", "create table tab (s symbol) ", null);
     }
 
-    private void assertColumnTypes(String tableName, String[][] columnTypes) throws Exception {
+    @Test
+    public void testCreateWalAndNonWalTablesParallel() throws Throwable {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            int threadCount = 3;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(2 * threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int)", executionContext);
+                                    compiler.compile("drop table tab" + j, executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                                    Os.pause();
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(2 * i).start();
+
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL ", executionContext);
+                                    compiler.compile("drop table tab" + j, executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                                    Os.pause();
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(2 * i + 1).start();
+            }
+
+            for (int i = 0; i < threads.size(); i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
+
+    private static int getTablesInRegistrySize() {
+        ObjList<TableToken> bucket = new ObjList<>();
+        engine.getTableTokens(bucket, true);
+        return bucket.size();
+    }
+
+    private void assertColumnTypes(String[][] columnTypes) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("tab"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int i = 0; i < columnTypes.length; i++) {
                     String[] arr = columnTypes[i];
@@ -467,7 +653,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     private void assertColumnsIndexed(String tableName, String... columnNames) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader r = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader r = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName))) {
                 TableReaderMetadata metadata = r.getMetadata();
                 IntList indexed = new IntList();
                 indexed.setPos(metadata.getColumnCount());
@@ -489,54 +675,54 @@ public class CreateTableTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertFailure(String sql, int position, String message) throws Exception {
+    private void assertFailure(String sql, int position) throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compile(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), message);
+                TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
             }
         });
     }
 
-    private void assertPartitionAndTimestamp(String tableName, int partitionIndex, int timestampIndex) throws Exception {
+    private void assertPartitionAndTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(partitionIndex, reader.getPartitionedBy());
-                Assert.assertEquals(timestampIndex, reader.getMetadata().getTimestampIndex());
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("tab"))) {
+                Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
+                Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
             }
         });
     }
 
-    private void assertSymbolParameters(String tableName, int colIndex, SymbolParameters parameters) throws Exception {
+    private void assertSymbolParameters(SymbolParameters parameters) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken("tab"))) {
                 if (parameters.symbolCapacity != null) {
-                    Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(colIndex).getSymbolCapacity());
+                    Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(1).getSymbolCapacity());
                 }
-                Assert.assertEquals(parameters.isCached, reader.getSymbolMapReader(colIndex).isCached());
-                Assert.assertEquals(parameters.isIndexed, reader.getMetadata().isColumnIndexed(colIndex));
+                Assert.assertEquals(parameters.isCached, reader.getSymbolMapReader(1).isCached());
+                Assert.assertEquals(parameters.isIndexed, reader.getMetadata().isColumnIndexed(1));
                 if (parameters.indexBlockCapacity != null) {
-                    Assert.assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(colIndex));
+                    Assert.assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(1));
                 }
             }
         });
     }
 
-    private void assertWalEnabled(String tableName, boolean isWalEnabled) throws Exception {
+    private void assertWalEnabled(boolean isWalEnabled) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(("x")))) {
                 Assert.assertEquals(isWalEnabled, reader.getMetadata().isWalEnabled());
             }
         });
     }
 
-    private void assertWithClauseParameters(String tableName, int maxUncommittedRows, int commitLag) throws Exception {
+    private void assertWithClauseParameters(int maxUncommittedRows, int o3MaxLag) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(commitLag, reader.getMetadata().getCommitLag());
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(("x")))) {
+                Assert.assertEquals(o3MaxLag, reader.getMetadata().getO3MaxLag());
                 Assert.assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
             }
         });
@@ -547,7 +733,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
         assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
         assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
-        assertWalEnabled("x", isWalEnabled);
+        assertWalEnabled(isWalEnabled);
     }
 
     private String getColumnDefinitions(String[][] columnTypes) {
@@ -557,6 +743,18 @@ public class CreateTableTest extends AbstractGriffinTest {
         }
         result = new StringBuilder(result.substring(0, result.length() - 1));
         return result.toString();
+    }
+
+    private void testCreateTableLikeTableWithCachedSymbol(boolean isSymbolCached) throws Exception {
+        String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
+
+        assertCompile("create table x (" +
+                "a INT," +
+                "y SYMBOL " + symbolCacheParameterValue + "," +
+                "t timestamp) timestamp(t) partition by MONTH");
+        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
+        SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
+        assertSymbolParameters(parameters);
     }
 
     private static class SymbolParameters {

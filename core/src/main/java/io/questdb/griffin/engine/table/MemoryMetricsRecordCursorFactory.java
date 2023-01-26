@@ -30,14 +30,15 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
-    private static final int METRIC_COUNT = MemoryTag.SIZE + 1; // 1 per each tag + 1 extra for total memory
+    private static final int METRIC_COUNT = MemoryTag.SIZE + 2; // 1 per each tag + 2 extra for total memory and rss 
     private static final String[] KEYS = new String[METRIC_COUNT];
     private final StringLongTuplesRecordCursor cursor = new StringLongTuplesRecordCursor();
     private final long[] values = new long[METRIC_COUNT];
@@ -47,35 +48,42 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        collectMetrics(values);
+        cursor.of(KEYS, values);
+        return cursor;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        collectMetrics(values);
-        cursor.of(KEYS, values);
-        return cursor;
+    public void toPlan(PlanSink sink) {
+        sink.type("memory_metrics");
     }
 
     private static void collectMetrics(long[] collector) {
         assert collector.length == METRIC_COUNT;
 
         collector[0] = Unsafe.getMemUsed();
+        collector[1] = Os.getRss();
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-            collector[i + 1] = Unsafe.getMemUsedByTag(i);
+            collector[i + 2] = Unsafe.getMemUsedByTag(i);
         }
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("memory_tag", 0, ColumnType.STRING));
-        metadata.add(1, new TableColumnMetadata("bytes", 1, ColumnType.LONG));
+        metadata.add(0, new TableColumnMetadata("memory_tag", ColumnType.STRING));
+        metadata.add(1, new TableColumnMetadata("bytes", ColumnType.LONG));
         METADATA = metadata;
 
         KEYS[0] = "TOTAL_USED";
+        KEYS[1] = "RSS";
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-            KEYS[i + 1] = MemoryTag.nameOf(i);
+            KEYS[i + 2] = MemoryTag.nameOf(i);
         }
     }
 }

@@ -28,39 +28,45 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public class SystimestampFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "systimestamp()";
+
     @Override
     public String getSignature() {
-        return "systimestamp()";
+        return SIGNATURE;
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(configuration.getMicrosecondClock());
+        return new Func(sqlExecutionContext);
     }
 
     private static class Func extends TimestampFunction implements Function {
+        private final SqlExecutionContext context;
 
-        private final MicrosecondClock clock;
-
-        public Func(MicrosecondClock clock) {
-            this.clock = clock;
+        public Func(SqlExecutionContext context) {
+            this.context = context;
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            return clock.getTicks();
+            return context.getMicrosecondTimestamp();
         }
 
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

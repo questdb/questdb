@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
@@ -48,7 +48,7 @@ public class RndLogFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new TestLogFunction(
                 args.getQuick(0).getLong(null),
                 args.getQuick(1).getDouble(null) % 100d
@@ -56,8 +56,8 @@ public class RndLogFunctionFactory implements FunctionFactory {
     }
 
     private static class TestLogFunction extends BooleanFunction {
-        private final long totalLogLines;
         private final double errorRatio; // error log percentage from the total log lines
+        private final long totalLogLines;
         private Rnd rnd;
 
         public TestLogFunction(long totalLogLines, double errorRatio) {
@@ -82,13 +82,18 @@ public class RndLogFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return false;
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            this.rnd = executionContext.getRandom();
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_log(").val(totalLogLines).val(',').val(errorRatio).val(')');
         }
     }
 }

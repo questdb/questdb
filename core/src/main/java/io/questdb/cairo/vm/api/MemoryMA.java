@@ -24,25 +24,32 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.vm.Vm;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 //mapped appendable 
 public interface MemoryMA extends MemoryM, MemoryA {
 
-    void close(boolean truncate);
+    default void close(boolean truncate) {
+        close(truncate, Vm.TRUNCATE_TO_PAGE);
+    }
+
+    void close(boolean truncate, byte truncateMode);
 
     long getAppendAddress();
 
     long getAppendAddressSize();
-
-    void sync(boolean async);
 
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts);
 
     default void setSize(long size) {
         jumpTo(size);
     }
+
+    void switchTo(int fd, long offset, byte truncateMode);
+
+    void sync(boolean async);
 
     default void toTop() {
         jumpTo(0);

@@ -29,29 +29,24 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int valueIndex;
-    private int sinkIndex;
     private final ObjList<StringSink> sinks = new ObjList<>();
+    private int sinkIndex;
+    private int valueIndex;
 
     public MinStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 
     @Override
@@ -92,26 +87,9 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
         }
     }
 
-    private StringSink nextSink() {
-        final StringSink sink;
-        if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new StringSink());
-        } else {
-            sink = sinks.getQuick(sinkIndex);
-        }
-        sink.clear();
-        return sink;
-    }
-
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
@@ -126,11 +104,6 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public boolean isScalar() {
-        return false;
-    }
-
-    @Override
     public boolean isConstant() {
         return false;
     }
@@ -141,13 +114,40 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
+    public boolean isScalar() {
+        return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("min(").val(arg).val(')');
+    }
+
+    @Override
     public void toTop() {
         UnaryFunction.super.toTop();
         sinkIndex = 0;
     }
 
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinStr(").put(arg).put(')');
+    private StringSink nextSink() {
+        final StringSink sink;
+        if (sinks.size() <= sinkIndex) {
+            sinks.extendAndSet(sinkIndex, sink = new StringSink());
+        } else {
+            sink = sinks.getQuick(sinkIndex);
+        }
+        sink.clear();
+        return sink;
     }
 }

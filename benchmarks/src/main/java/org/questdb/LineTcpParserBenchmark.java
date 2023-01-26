@@ -44,23 +44,9 @@ import java.util.concurrent.TimeUnit;
 public class LineTcpParserBenchmark {
 
     private static final long BUFFER_SIZE = 32768;
-
-    private final LineTcpParser parser;
-    private final long bufLo;
     private final long bufHi;
-
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(LineTcpParserBenchmark.class.getSimpleName())
-                .warmupIterations(1)
-                .measurementIterations(3)
-                // Uncomment to collect a flame graph via async-profiler:
-                //.addProfiler(AsyncProfiler.class, "output=flamegraph")
-                .forks(1)
-                .build();
-
-        new Runner(opt).run();
-    }
+    private final long bufLo;
+    private final LineTcpParser parser;
 
     public LineTcpParserBenchmark() {
         this.bufLo = Unsafe.malloc(BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -99,6 +85,19 @@ public class LineTcpParserBenchmark {
         }
 
         this.bufHi = bufLo + sink.length();
+    }
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(LineTcpParserBenchmark.class.getSimpleName())
+                .warmupIterations(1)
+                .measurementIterations(3)
+                // Uncomment to collect a flame graph via async-profiler:
+//                .addProfiler(AsyncProfiler.class, "output=flamegraph")
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
     }
 
     @Benchmark

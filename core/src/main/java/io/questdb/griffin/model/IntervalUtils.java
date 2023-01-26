@@ -33,8 +33,8 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 public final class IntervalUtils {
-    public static final int LO_INDEX = 0;
     public static final int HI_INDEX = 1;
+    public static final int LO_INDEX = 0;
     public static final int OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX = 2;
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
@@ -549,7 +549,13 @@ public final class IntervalUtils {
                     addHiLoInterval(millis, millis, operation, out);
                     break;
                 } catch (NumericException e) {
-                    throw SqlException.$(position, "Invalid date");
+                    try {
+                        long millis = Numbers.parseLong(seq);
+                        addHiLoInterval(millis, millis, operation, out);
+                        break;
+                    } catch (NumericException e2) {
+                        throw SqlException.$(position, "Invalid date");
+                    }
                 }
             case 0:
                 // single semicolon, expect period format after date
@@ -599,12 +605,17 @@ public final class IntervalUtils {
             long millis = parseFloorPartialTimestamp(seq, lo, lim);
             addHiLoInterval(millis, millis, operation, out);
         } catch (NumericException e) {
-            for (int i = lo; i < lim; i++) {
-                if (seq.charAt(i) == ';') {
-                    throw SqlException.$(position, "Not a date, use IN keyword with intervals");
+            try {
+                long millis = Numbers.parseLong(seq);
+                addHiLoInterval(millis, millis, operation, out);
+            } catch (NumericException e2) {
+                for (int i = lo; i < lim; i++) {
+                    if (seq.charAt(i) == ';') {
+                        throw SqlException.$(position, "Not a date, use IN keyword with intervals");
+                    }
                 }
+                throw SqlException.$(position, "Invalid date");
             }
-            throw SqlException.$(position, "Invalid date");
         }
     }
 
@@ -621,22 +632,82 @@ public final class IntervalUtils {
         }
     }
 
-    private static int tenPow(int i) throws NumericException {
-        switch (i) {
-            case 0:
-                return 1;
-            case 1:
-                return 10;
-            case 2:
-                return 100;
-            case 3:
-                return 1000;
-            case 4:
-                return 10000;
-            case 5:
-                return 100000;
-            default:
-                throw NumericException.INSTANCE;
+    private static void addMillisInterval(long period, int count, LongList out) {
+        int k = out.size();
+        long lo = out.getQuick(k - 2);
+        long hi = out.getQuick(k - 1);
+        int writePoint = k / 2;
+
+        for (int i = 0, n = count - 1; i < n; i++) {
+            lo += period;
+            hi += period;
+            writePoint = append(out, writePoint, lo, hi);
+        }
+    }
+
+    private static void addMonthInterval(int period, int count, LongList out) {
+        int k = out.size();
+        long lo = out.getQuick(k - 2);
+        long hi = out.getQuick(k - 1);
+        int writePoint = k / 2;
+
+        for (int i = 0, n = count - 1; i < n; i++) {
+            lo = Timestamps.addMonths(lo, period);
+            hi = Timestamps.addMonths(hi, period);
+            writePoint = append(out, writePoint, lo, hi);
+        }
+    }
+
+    private static void addYearIntervals(int period, int count, LongList out) {
+        int k = out.size();
+        long lo = out.getQuick(k - 2);
+        long hi = out.getQuick(k - 1);
+        int writePoint = k / 2;
+
+        for (int i = 0, n = count - 1; i < n; i++) {
+            lo = Timestamps.addYear(lo, period);
+            hi = Timestamps.addYear(hi, period);
+            writePoint = append(out, writePoint, lo, hi);
+        }
+    }
+
+    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
+        if (p >= lim || s.charAt(p) != c) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
+        if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static boolean checkLen(int p, int lim) throws NumericException {
+        if (lim - p > 2) {
+            return true;
+        }
+        if (lim <= p) {
+            return false;
+        }
+
+        throw NumericException.INSTANCE;
+    }
+
+    private static boolean checkLenStrict(int p, int lim) throws NumericException {
+        if (lim - p == 2) {
+            return true;
+        }
+        if (lim <= p) {
+            return false;
+        }
+
+        throw NumericException.INSTANCE;
+    }
+
+    private static void checkRange(int x, int min, int max) throws NumericException {
+        if (x < min || x > max) {
+            throw NumericException.INSTANCE;
         }
     }
 
@@ -671,6 +742,40 @@ public final class IntervalUtils {
         throw NumericException.INSTANCE;
     }
 
+    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, short operation, LongList out) throws SqlException {
+        char type = seq.charAt(lim - 1);
+        int period;
+        try {
+            period = Numbers.parseInt(seq, p + 1, lim - 1);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "Range not a number");
+        }
+        try {
+            int index = out.size();
+            parseInterval(seq, lo, p, operation, out);
+            long low = getEncodedPeriodLo(out, index);
+            long hi = getEncodedPeriodHi(out, index);
+            hi = Timestamps.addPeriod(hi, type, period);
+            if (hi < low) {
+                throw SqlException.invalidDate(position);
+            }
+            replaceHiLoInterval(low, hi, operation, out);
+            return;
+        } catch (NumericException ignore) {
+            // try date instead
+        }
+        try {
+            long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
+            long hiMillis = Timestamps.addPeriod(loMillis, type, period);
+            if (hiMillis < loMillis) {
+                throw SqlException.invalidDate(position);
+            }
+            addHiLoInterval(loMillis, hiMillis, operation, out);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
+    }
+
     private static int parseSign(CharSequence seq, int p) throws NumericException {
         int tzSign;
         switch (seq.charAt(p)) {
@@ -684,6 +789,168 @@ public final class IntervalUtils {
                 throw NumericException.INSTANCE;
         }
         return tzSign;
+    }
+
+    private static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
+        int lastIndex = out.size() - 4;
+        out.setQuick(lastIndex, lo);
+        out.setQuick(lastIndex + HI_INDEX, hi);
+        out.setQuick(lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX, Numbers.encodeLowHighInts(
+                Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
+                0));
+        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
+    }
+
+    private static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
+        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
+    private static int tenPow(int i) throws NumericException {
+        switch (i) {
+            case 0:
+                return 1;
+            case 1:
+                return 10;
+            case 2:
+                return 100;
+            case 3:
+                return 1000;
+            case 4:
+                return 10000;
+            case 5:
+                return 100000;
+            default:
+                throw NumericException.INSTANCE;
+        }
+    }
+
+    static int append(LongList list, int writePoint, long lo, long hi) {
+        if (writePoint > 0) {
+            long prevHi = list.getQuick(2 * writePoint - 1) + 1;
+            if (prevHi >= lo) {
+                list.setQuick(2 * writePoint - 1, hi);
+                return writePoint;
+            }
+        }
+
+        list.extendAndSet(2 * writePoint + 1, hi);
+        list.setQuick(2 * writePoint, lo);
+        return writePoint + 1;
+    }
+
+    /**
+     * Intersects two lists of intervals compacted in one list in place.
+     * Intervals to be chronologically ordered and result list will be ordered as well.
+     * <p>
+     * Treat a as 2 lists,
+     * a: first from 0 to divider
+     * b: from divider to the end of list
+     *
+     * @param concatenatedIntervals 2 lists of intervals concatenated in 1
+     */
+    static void intersectInplace(LongList concatenatedIntervals, int dividerIndex) {
+        final int sizeA = dividerIndex / 2;
+        final int sizeB = sizeA + (concatenatedIntervals.size() - dividerIndex) / 2;
+        int aLower = 0;
+
+        int intervalB = sizeA;
+        int writePoint = 0;
+
+        int aUpperSize = sizeB;
+        int aUpper = sizeB;
+
+        while ((aLower < sizeA || aUpper < aUpperSize) && intervalB < sizeB) {
+
+            int intervalA = aUpper < aUpperSize ? aUpper : aLower;
+            long aLo = concatenatedIntervals.getQuick(intervalA * 2);
+            long aHi = concatenatedIntervals.getQuick(intervalA * 2 + 1);
+
+            long bLo = concatenatedIntervals.getQuick(intervalB * 2);
+            long bHi = concatenatedIntervals.getQuick(intervalB * 2 + 1);
+
+            if (aHi < bLo) {
+                // a fully above b
+                // a loses
+                if (aUpper < aUpperSize) {
+                    aUpper++;
+                } else {
+                    aLower++;
+                }
+            } else if (aLo > bHi) {
+                // a fully below b
+                // b loses
+                intervalB++;
+            } else {
+                if (aHi < bHi) {
+                    // b hanging lower than a
+                    // a loses
+                    if (aUpper < aUpperSize) {
+                        aUpper++;
+                    } else {
+                        aLower++;
+                    }
+                } else {
+                    // otherwise a lower than b
+                    // a loses
+                    intervalB++;
+                }
+
+                assert writePoint <= aLower || writePoint >= sizeA;
+                if (writePoint == aLower && aLower < sizeA) {
+                    // We cannot keep A position, it will be overwritten, hence intervalB++; is not possible
+                    // Copy a point to A area instead
+                    concatenatedIntervals.add(
+                            concatenatedIntervals.getQuick(writePoint * 2),
+                            concatenatedIntervals.getQuick(writePoint * 2 + 1)
+                    );
+                    aUpperSize = concatenatedIntervals.size() / 2;
+                    aLower++;
+                }
+
+                writePoint = append(concatenatedIntervals, writePoint, Math.max(aLo, bLo), Math.min(aHi, bHi));
+            }
+        }
+
+        concatenatedIntervals.setPos(2 * writePoint);
+    }
+
+    /**
+     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     *
+     * @param intervals collection of intervals
+     */
+    static void invert(LongList intervals) {
+        invert(intervals, 0);
+    }
+
+    /**
+     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     *
+     * @param intervals collection of intervals
+     */
+    static void invert(LongList intervals, int startIndex) {
+        long last = Long.MIN_VALUE;
+        int n = intervals.size();
+        int writeIndex = startIndex;
+        for (int i = startIndex; i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            if (lo > last) {
+                intervals.setQuick(writeIndex, last);
+                intervals.setQuick(writeIndex + 1, lo - 1);
+                writeIndex += 2;
+            }
+            last = hi + 1;
+        }
+
+        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
+        if (last != Long.MIN_VALUE) {
+            intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
+            intervals.setQuick(writeIndex, last);
+            writeIndex += 2;
+        }
+
+        intervals.setPos(writeIndex);
     }
 
     /**
@@ -773,261 +1040,5 @@ public final class IntervalUtils {
         }
 
         intervals.setPos(writePoint);
-    }
-
-    /**
-     * Intersects two lists of intervals compacted in one list in place.
-     * Intervals to be chronologically ordered and result list will be ordered as well.
-     * <p>
-     * Treat a as 2 lists,
-     * a: first from 0 to divider
-     * b: from divider to the end of list
-     *
-     * @param concatenatedIntervals 2 lists of intervals concatenated in 1
-     */
-    static void intersectInplace(LongList concatenatedIntervals, int dividerIndex) {
-        final int sizeA = dividerIndex / 2;
-        final int sizeB = sizeA + (concatenatedIntervals.size() - dividerIndex) / 2;
-        int aLower = 0;
-
-        int intervalB = sizeA;
-        int writePoint = 0;
-
-        int aUpperSize = sizeB;
-        int aUpper = sizeB;
-
-        while ((aLower < sizeA || aUpper < aUpperSize) && intervalB < sizeB) {
-
-            int intervalA = aUpper < aUpperSize ? aUpper : aLower;
-            long aLo = concatenatedIntervals.getQuick(intervalA * 2);
-            long aHi = concatenatedIntervals.getQuick(intervalA * 2 + 1);
-
-            long bLo = concatenatedIntervals.getQuick(intervalB * 2);
-            long bHi = concatenatedIntervals.getQuick(intervalB * 2 + 1);
-
-            if (aHi < bLo) {
-                // a fully above b
-                // a loses
-                if (aUpper < aUpperSize) {
-                    aUpper++;
-                } else {
-                    aLower++;
-                }
-            } else if (aLo > bHi) {
-                // a fully below b
-                // b loses
-                intervalB++;
-            } else {
-                if (aHi < bHi) {
-                    // b hanging lower than a
-                    // a loses
-                    if (aUpper < aUpperSize) {
-                        aUpper++;
-                    } else {
-                        aLower++;
-                    }
-                } else {
-                    // otherwise a lower than b
-                    // a loses
-                    intervalB++;
-                }
-
-                assert writePoint <= aLower || writePoint >= sizeA;
-                if (writePoint == aLower && aLower < sizeA) {
-                    // We cannot keep A position, it will be overwritten, hence intervalB++; is not possible
-                    // Copy a point to A area instead
-                    concatenatedIntervals.add(
-                            concatenatedIntervals.getQuick(writePoint * 2),
-                            concatenatedIntervals.getQuick(writePoint * 2 + 1)
-                    );
-                    aUpperSize = concatenatedIntervals.size() / 2;
-                    aLower++;
-                }
-
-                writePoint = append(concatenatedIntervals, writePoint, Math.max(aLo, bLo), Math.min(aHi, bHi));
-            }
-        }
-
-        concatenatedIntervals.setPos(2 * writePoint);
-    }
-
-    static int append(LongList list, int writePoint, long lo, long hi) {
-        if (writePoint > 0) {
-            long prevHi = list.getQuick(2 * writePoint - 1) + 1;
-            if (prevHi >= lo) {
-                list.setQuick(2 * writePoint - 1, hi);
-                return writePoint;
-            }
-        }
-
-        list.extendAndSet(2 * writePoint + 1, hi);
-        list.setQuick(2 * writePoint, lo);
-        return writePoint + 1;
-    }
-
-    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, short operation, LongList out) throws SqlException {
-        char type = seq.charAt(lim - 1);
-        int period;
-        try {
-            period = Numbers.parseInt(seq, p + 1, lim - 1);
-        } catch (NumericException e) {
-            throw SqlException.$(position, "Range not a number");
-        }
-        try {
-            int index = out.size();
-            parseInterval(seq, lo, p, operation, out);
-            long low = getEncodedPeriodLo(out, index);
-            long hi = getEncodedPeriodHi(out, index);
-            hi = Timestamps.addPeriod(hi, type, period);
-            if (hi < low) {
-                throw SqlException.invalidDate(position);
-            }
-            replaceHiLoInterval(low, hi, operation, out);
-            return;
-        } catch (NumericException ignore) {
-            // try date instead
-        }
-        try {
-            long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
-            long hiMillis = Timestamps.addPeriod(loMillis, type, period);
-            if (hiMillis < loMillis) {
-                throw SqlException.invalidDate(position);
-            }
-            addHiLoInterval(loMillis, hiMillis, operation, out);
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
-        }
-    }
-
-    private static void addMillisInterval(long period, int count, LongList out) {
-        int k = out.size();
-        long lo = out.getQuick(k - 2);
-        long hi = out.getQuick(k - 1);
-        int writePoint = k / 2;
-
-        for (int i = 0, n = count - 1; i < n; i++) {
-            lo += period;
-            hi += period;
-            writePoint = append(out, writePoint, lo, hi);
-        }
-    }
-
-    private static void addMonthInterval(int period, int count, LongList out) {
-        int k = out.size();
-        long lo = out.getQuick(k - 2);
-        long hi = out.getQuick(k - 1);
-        int writePoint = k / 2;
-
-        for (int i = 0, n = count - 1; i < n; i++) {
-            lo = Timestamps.addMonths(lo, period);
-            hi = Timestamps.addMonths(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
-        }
-    }
-
-    private static void addYearIntervals(int period, int count, LongList out) {
-        int k = out.size();
-        long lo = out.getQuick(k - 2);
-        long hi = out.getQuick(k - 1);
-        int writePoint = k / 2;
-
-        for (int i = 0, n = count - 1; i < n; i++) {
-            lo = Timestamps.addYear(lo, period);
-            hi = Timestamps.addYear(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
-        }
-    }
-
-    private static boolean checkLen(int p, int lim) throws NumericException {
-        if (lim - p > 2) {
-            return true;
-        }
-        if (lim <= p) {
-            return false;
-        }
-
-        throw NumericException.INSTANCE;
-    }
-
-    private static boolean checkLenStrict(int p, int lim) throws NumericException {
-        if (lim - p == 2) {
-            return true;
-        }
-        if (lim <= p) {
-            return false;
-        }
-
-        throw NumericException.INSTANCE;
-    }
-
-    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
-        if (p >= lim || s.charAt(p) != c) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
-        if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    private static void checkRange(int x, int min, int max) throws NumericException {
-        if (x < min || x > max) {
-            throw NumericException.INSTANCE;
-        }
-    }
-
-    /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
-     *
-     * @param intervals collection of intervals
-     */
-    static void invert(LongList intervals) {
-        invert(intervals, 0);
-    }
-
-    /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
-     *
-     * @param intervals collection of intervals
-     */
-    static void invert(LongList intervals, int startIndex) {
-        long last = Long.MIN_VALUE;
-        int n = intervals.size();
-        int writeIndex = startIndex;
-        for (int i = startIndex; i < n; i += 2) {
-            final long lo = intervals.getQuick(i);
-            final long hi = intervals.getQuick(i + 1);
-            if (lo > last) {
-                intervals.setQuick(writeIndex, last);
-                intervals.setQuick(writeIndex + 1, lo - 1);
-                writeIndex += 2;
-            }
-            last = hi + 1;
-        }
-
-        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
-        if (last != Long.MIN_VALUE) {
-            intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
-            intervals.setQuick(writeIndex, last);
-            writeIndex += 2;
-        }
-
-        intervals.setPos(writeIndex);
-    }
-
-    private static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
-        int lastIndex = out.size() - 4;
-        out.setQuick(lastIndex, lo);
-        out.setQuick(lastIndex + HI_INDEX, hi);
-        out.setQuick(lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX, Numbers.encodeLowHighInts(
-                Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
-                0));
-        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
-    }
-
-    private static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
-        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
     }
 }

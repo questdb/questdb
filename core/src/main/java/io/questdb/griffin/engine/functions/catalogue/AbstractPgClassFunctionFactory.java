@@ -29,38 +29,33 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
 
 public abstract class AbstractPgClassFunctionFactory implements FunctionFactory {
-    private static final Log LOG = LogFactory.getLog(AbstractPgClassFunctionFactory.class);
+    private static final int INDEX_OID = 0;
+    private static final int INDEX_RELNAME = 1;
     private static final RecordMetadata METADATA;
     private static final String[] relNames = {"pg_class"};
     private static final int fixedClassLen = relNames.length;
-    private static final int INDEX_OID = 0;
-    private static final int INDEX_RELNAME = 1;
-
     private static final int[] staticOid = {PGOids.PG_CLASS_OID};
-    private static final int[] staticRelNamespace = {PG_CATALOG_OID};
-    private static final int[] staticRelType = {0};
-    private static final int[] staticRelOfType = {0};
-    private static final int[] staticRelOwner = {0};
+    private static final int[] staticRelAllVisible = {0};
     private static final int[] staticRelAm = {0};
     private static final int[] staticRelFileNode = {0};
+    private static final int[] staticRelNamespace = {PG_CATALOG_OID};
+    private static final int[] staticRelOfType = {0};
+    private static final int[] staticRelOwner = {0};
+    private static final int[] staticRelRewrite = {0};
     // todo: adjust tablespace
     private static final int[] staticRelTablespace = {0};
-    private static final int[] staticRelAllVisible = {0};
     private static final int[] staticRelToastRelId = {0};
-    private static final int[] staticRelRewrite = {0};
+    private static final int[] staticRelType = {0};
     private static final int[][] staticIntColumns = {
             staticOid,
             null,
@@ -114,18 +109,19 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
     private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
 
-        private final Path path = new Path();
         private final PgClassRecordCursor cursor;
+        private final Path path = new Path();
         private final long tempMem;
 
         public PgClassCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
             this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new PgClassRecordCursor(configuration, path, tempMem);
+            this.cursor = new PgClassRecordCursor(configuration);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.of(executionContext.getCairoEngine());
             cursor.toTop();
             return cursor;
         }
@@ -136,6 +132,11 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("pg_class");
+        }
+
+        @Override
         protected void _close() {
             Misc.free(path);
             Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
@@ -143,23 +144,17 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
     }
 
     private static class PgClassRecordCursor implements NoRandomAccessRecordCursor {
-        private final Path path;
-        private final FilesFacade ff;
-        private final DelegatingRecord record = new DelegatingRecord();
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
-        private final StringSink sink = new StringSink();
-        private final int plimit;
         private final int[] intValues = new int[28];
-        private final long tempMem;
-        private long findFileStruct = 0;
+        private final DelegatingRecord record = new DelegatingRecord();
+        private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
+        private final ObjList<TableToken> tableBucket = new ObjList<>();
+        private CairoEngine engine;
         private int fixedRelPos = -1;
+        private int tableIndex = -1;
+        private String tableName;
 
-        public PgClassRecordCursor(CairoConfiguration configuration, Path path, long tempMem) {
-            this.ff = configuration.getFilesFacade();
-            this.path = path;
-            this.path.of(configuration.getRoot()).$();
-            this.plimit = this.path.length();
+        public PgClassRecordCursor(CairoConfiguration configuration) {
             this.record.of(staticReadingRecord);
             // oid
             this.intValues[0] = 0; // OID
@@ -183,12 +178,10 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             this.intValues[12] = 0;
             // relrewrite
             this.intValues[27] = 0;
-            this.tempMem = tempMem;
         }
 
         @Override
         public void close() {
-            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -203,27 +196,22 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             }
 
             record.of(diskReadingRecord);
-            if (findFileStruct == 0) {
-                findFileStruct = ff.findFirst(path.trimTo(plimit).$());
-                if (findFileStruct > 0) {
-                    return next0();
-                }
+            if (tableIndex < 0) {
+                engine.getTableTokens(tableBucket, false);
+                tableIndex = 0;
+            }
 
-                findFileStruct = 0;
+            if (tableIndex == tableBucket.size()) {
                 return false;
             }
-
-            if (ff.findNext(findFileStruct) > 0) {
-                return next0();
-            }
-            return false;
+            TableToken token = tableBucket.get(tableIndex++);
+            tableName = token.getTableName();
+            intValues[INDEX_OID] = token.getTableId();
+            return true;
         }
 
-        @Override
-        public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
-            fixedRelPos = -1;
-            record.of(staticReadingRecord);
+        public void of(CairoEngine engine) {
+            this.engine = engine;
         }
 
         @Override
@@ -231,34 +219,82 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             return -1;
         }
 
-        private boolean next0() {
-            do {
-                final long pUtf8NameZ = ff.findName(findFileStruct);
-                final long type = ff.findType(findFileStruct);
-                if (Files.isDir(pUtf8NameZ, type, sink)) {
-                    path.trimTo(plimit);
-                    if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
-                        // open metadata file and read id
-                        long fd = ff.openRO(path);
-                        if (fd > -1) {
-                            if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);
-                                ff.close(fd);
-                                return true;
-                            }
-                            LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                            ff.close(fd);
-                        } else {
-                            LOG.error().$("could not read metadata [file=").$(path).$(']').$();
-                        }
-                        intValues[INDEX_OID] = -1;
-                        return true;
-                    }
-                }
-            } while (ff.findNext(findFileStruct) > 0);
+        @Override
+        public void toTop() {
+            fixedRelPos = -1;
+            record.of(staticReadingRecord);
+            tableIndex = -1;
+        }
 
-            findFileStruct = ff.findClose(findFileStruct);
-            return false;
+        private class DiskReadingRecord implements Record {
+            @Override
+            public boolean getBool(int col) {
+                // most 'bool' fields are false, except 'relispopulated'
+                return col == 24;
+            }
+
+            @Override
+            public char getChar(int col) {
+                switch (col) {
+                    case 15:
+                        // relpersistence
+                        return 'p';
+                    case 16:
+                        // relkind
+                        return 'r';
+                    default:
+                        // relreplident
+                        return 'd';
+                }
+            }
+
+            @Override
+            public float getFloat(int col) {
+                return -1;
+            }
+
+            @Override
+            public int getInt(int col) {
+                return intValues[col];
+            }
+
+            @Override
+            public long getLong(int col) {
+                return 0;
+            }
+
+            @Override
+            public short getShort(int col) {
+                // todo: do we need the number of columns for 'relnatts'?
+                return 0;
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+                if (col == INDEX_RELNAME) {
+                    // relname
+                    return tableName;
+                }
+                return null;
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                if (col == INDEX_RELNAME) {
+                    // relname
+                    return tableName;
+                }
+                return null;
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                if (col == INDEX_RELNAME) {
+                    // relname
+                    return tableName.length();
+                }
+                return -1;
+            }
         }
 
         private class StaticReadingRecord implements Record {
@@ -283,12 +319,6 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             }
 
             @Override
-            public short getShort(int col) {
-                // todo: do we need the number of columns for 'relnatts'?
-                return 0;
-            }
-
-            @Override
             public float getFloat(int col) {
                 return -1;
             }
@@ -300,6 +330,12 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
             @Override
             public long getLong(int col) {
+                return 0;
+            }
+
+            @Override
+            public short getShort(int col) {
+                // todo: do we need the number of columns for 'relnatts'?
                 return 0;
             }
 
@@ -326,130 +362,47 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                 return -1;
             }
         }
-
-        private class DiskReadingRecord implements Record {
-            private final StringSink utf8SinkB = new StringSink();
-
-            @Override
-            public boolean getBool(int col) {
-                // most 'bool' fields are false, except 'relispopulated'
-                return col == 24;
-            }
-
-            @Override
-            public char getChar(int col) {
-                switch (col) {
-                    case 15:
-                        // relpersistence
-                        return 'p';
-                    case 16:
-                        // relkind
-                        return 'r';
-                    default:
-                        // relreplident
-                        return 'd';
-                }
-            }
-
-            @Override
-            public short getShort(int col) {
-                // todo: do we need the number of columns for 'relnatts'?
-                return 0;
-            }
-
-            @Override
-            public float getFloat(int col) {
-                return -1;
-            }
-
-            @Override
-            public int getInt(int col) {
-                return intValues[col];
-            }
-
-            @Override
-            public long getLong(int col) {
-                return 0;
-            }
-
-            @Override
-            public CharSequence getStr(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return sink;
-                }
-                return null;
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return getName(utf8SinkB);
-                }
-                return null;
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return sink.length();
-                }
-                return -1;
-            }
-
-            @Nullable
-            private CharSequence getName(StringSink sink) {
-                sink.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), sink)) {
-                    return sink;
-                } else {
-                    return null;
-                }
-            }
-        }
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("relname", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
         // The OID of the namespace that contains this relation
         // references pg_namespace.oid)
-        metadata.add(new TableColumnMetadata("relnamespace", 3, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT));
         // The OID of the data type that corresponds to this table's row type, if any; zero for indexes, sequences, and toast tables, which have no pg_type entry
         // references pg_type.oid
-        metadata.add(new TableColumnMetadata("reltype", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("reltype", ColumnType.INT));
         // For typed tables, the OID of the underlying composite type; zero for all other relations
         // references pg_type.oid
-        metadata.add(new TableColumnMetadata("reloftype", 5, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("reloftype", ColumnType.INT));
         // Owner of the relation
         // references pg_authid.oid
-        metadata.add(new TableColumnMetadata("relowner", 6, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relowner", ColumnType.INT));
         // If this is a table or an index, the access method used (heap, B-tree, hash, etc.); otherwise zero (zero occurs for sequences, as well as relations without storage, such as views)
         // references pg_am.oid
-        metadata.add(new TableColumnMetadata("relam", 7, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relam", ColumnType.INT));
         // Name of the on-disk file of this relation; zero means this is a “mapped” relation whose disk file name is determined by low-level state
-        metadata.add(new TableColumnMetadata("relfilenode", 8, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relfilenode", ColumnType.INT));
         // The tablespace in which this relation is stored. If zero, the database's default tablespace is implied. (Not meaningful if the relation has no on-disk file.)
         // references pg_tablespace.oid
-        metadata.add(new TableColumnMetadata("reltablespace", 9, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("reltablespace", ColumnType.INT));
         // Size of the on-disk representation of this table in pages (of size BLCKSZ). This is only an estimate used by the planner. It is updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX.
-        metadata.add(new TableColumnMetadata("relpages", 10, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relpages", ColumnType.BOOLEAN));
         // Number of live rows in the table. This is only an estimate used by the planner. It is updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX. If the table has never yet been vacuumed or analyzed, reltuples contains -1 indicating that the row count is unknown.
-        metadata.add(new TableColumnMetadata("reltuples", 11, ColumnType.FLOAT));
+        metadata.add(new TableColumnMetadata("reltuples", ColumnType.FLOAT));
         // Number of pages that are marked all-visible in the table's visibility map. This is only an estimate used by the planner. It is updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX.
-        metadata.add(new TableColumnMetadata("relallvisible", 12, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relallvisible", ColumnType.INT));
         // OID of the TOAST table associated with this table, zero if none. The TOAST table stores large attributes “out of line” in a secondary table.
         // references pg_class.oid
-        metadata.add(new TableColumnMetadata("reltoastrelid", 13, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("reltoastrelid", ColumnType.INT));
         // True if this is a table and it has (or recently had) any indexes
-        metadata.add(new TableColumnMetadata("relhasindex", 14, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relhasindex", ColumnType.BOOLEAN));
         // True if this table is shared across all databases in the cluster. Only certain system catalogs (such as pg_database) are shared.
-        metadata.add(new TableColumnMetadata("relisshared", 15, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relisshared", ColumnType.BOOLEAN));
         //p = permanent table, u = unlogged table, t = temporary table
-        metadata.add(new TableColumnMetadata("relpersistence", 16, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("relpersistence", ColumnType.CHAR));
         // r = ordinary table,
         // i = index,
         // S = sequence,
@@ -460,39 +413,39 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         // f = foreign table,
         // p = partitioned table,
         // I = partitioned index
-        metadata.add(new TableColumnMetadata("relkind", 17, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR));
         // Number of user columns in the relation (system columns not counted). There must be this many corresponding entries in pg_attribute. See also pg_attribute.attnum.
-        metadata.add(new TableColumnMetadata("relnatts", 18, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("relnatts", ColumnType.SHORT));
         // Number of CHECK constraints on the table; see pg_constraint catalog
-        metadata.add(new TableColumnMetadata("relchecks", 19, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("relchecks", ColumnType.SHORT));
         // True if table has (or once had) rules; see pg_rewrite catalog
-        metadata.add(new TableColumnMetadata("relhasrules", 20, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relhasrules", ColumnType.BOOLEAN));
         // True if table has (or once had) triggers; see pg_trigger catalog
-        metadata.add(new TableColumnMetadata("relhastriggers", 21, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relhastriggers", ColumnType.BOOLEAN));
         // True if table or index has (or once had) any inheritance children
-        metadata.add(new TableColumnMetadata("relhassubclass", 22, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relhassubclass", ColumnType.BOOLEAN));
         // True if table has row-level security enabled; see pg_policy catalog
-        metadata.add(new TableColumnMetadata("relrowsecurity", 23, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relrowsecurity", ColumnType.BOOLEAN));
         // True if row-level security (when enabled) will also apply to table owner; see pg_policy catalog
-        metadata.add(new TableColumnMetadata("relforcerowsecurity", 24, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relforcerowsecurity", ColumnType.BOOLEAN));
         // True if relation is populated (this is true for all relations other than some materialized views)
-        metadata.add(new TableColumnMetadata("relispopulated", 25, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relispopulated", ColumnType.BOOLEAN));
         // Columns used to form “replica identity” for rows: d = default (primary key, if any), n = nothing, f = all columns, i = index with indisreplident set (same as nothing if the index used has been dropped)
-        metadata.add(new TableColumnMetadata("relreplident", 26, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("relreplident", ColumnType.CHAR));
         // True if table or index is a partition
-        metadata.add(new TableColumnMetadata("relispartition", 27, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relispartition", ColumnType.BOOLEAN));
         // For new relations being written during a DDL operation that requires a table rewrite, this contains the OID of the original relation; otherwise zero. That state is only visible internally; this field should never contain anything other than zero for a user-visible relation.
         // references pg_class.oid
-        metadata.add(new TableColumnMetadata("relrewrite", 28, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relrewrite", ColumnType.INT));
         // All transaction IDs before this one have been replaced with a permanent (“frozen”) transaction ID in this table. This is used to track whether the table needs to be vacuumed in order to prevent transaction ID wraparound or to allow pg_xact to be shrunk. Zero (InvalidTransactionId) if the relation is not a table.
-        metadata.add(new TableColumnMetadata("relfrozenxid", 29, ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("relfrozenxid", ColumnType.LONG));
         // All multixact IDs before this one have been replaced by a transaction ID in this table. This is used to track whether the table needs to be vacuumed in order to prevent multixact ID wraparound or to allow pg_multixact to be shrunk. Zero (InvalidMultiXactId) if the relation is not a table.
-        metadata.add(new TableColumnMetadata("relminmxid", 30, ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("relacl", 31, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("reloptions", 32, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("relpartbound", 33, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("relhasoids", 34, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("xmin", 35, ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("relminmxid", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("relacl", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("reloptions", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("relpartbound", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("relhasoids", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("xmin", ColumnType.LONG));
         METADATA = metadata;
     }
 }

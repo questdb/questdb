@@ -32,40 +32,60 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class LogRollingFileWriter extends SynchronizedJob implements Closeable, LogWriter {
 
     public static final long DEFAULT_SPIN_BEFORE_FLUSH = 100_000;
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
-    private final RingQueue<LogRecordSink> ring;
-    private final SCSequence subSeq;
+    private static final int INITIAL_LOG_FILE_LIST_SIZE = 1024;
+    private static final int INITIAL_LOG_FILE_NAME_SINK_SIZE = 64 * 1024;
+    private final MicrosecondClock clock;
+    private final FilesFacade ff;
     private final int level;
+    private final TemplateParser locationParser = new TemplateParser();
+    private final NativeLPSZ logFileName = new NativeLPSZ();
     private final Path path = new Path();
     private final Path renameToPath = new Path();
-    private final FilesFacade ff;
-    private final MicrosecondClock clock;
-    private long fd = -1;
-    private long lim;
-    private long buf;
+    private final RingQueue<LogRecordSink> ring;
+    private final AtomicLong rolledCounter = new AtomicLong();
+    private final SCSequence subSeq;
     private long _wptr;
-    private int nBufferSize;
-    private long nRollSize;
-    private final TemplateParser locationParser = new TemplateParser();
+    private long buf;
+    private String bufferSize;
+    private long currentSize;
+    private int fd = -1;
+    private long idleSpinCount = 0;
+    private String lifeDuration;
+    private long lim;
     // can be set via reflection
     private String location;
-    private String bufferSize;
-    private String rollSize;
-    private String spinBeforeFlush;
+    private String logDir;
+    // used in size limit based auto-deletion; contains [last_modification_ts, packed_file_name_offsets] pairs
+    private DirectLongList logFileList;
+    // used in size limit based auto-deletion; contains log file names written sequentially
+    private DirectCharSink logFileNameSink;
+    private String logFileTemplate;
+    private final FindVisitor removeExcessiveLogsRef = this::removeExcessiveLogs;
+    private int nBufferSize;
+    private long nLifeDuration;
+    private final FindVisitor removeExpiredLogsRef = this::removeExpiredLogs;
+    private long nRollSize;
+    private long nSizeLimit;
     private long nSpinBeforeFlush;
-    private long currentSize;
-    private String rollEvery;
-    private long idleSpinCount = 0;
     private long rollDeadline;
     private NextDeadline rollDeadlineFunction;
-    private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
+    private String rollEvery;
+    private String rollSize;
+    private String sizeLimit;
+    private final QueueConsumer<LogRecordSink> copyToBufferRef = this::copyToBuffer;
+    private String spinBeforeFlush;
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
@@ -88,9 +108,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     @Override
     public void bindProperties(LogFactory factory) {
         locationParser.parseEnv(location, clock.getTicks());
-        if (this.bufferSize != null) {
+        if (bufferSize != null) {
             try {
-                nBufferSize = Numbers.parseIntSize(this.bufferSize);
+                nBufferSize = Numbers.parseIntSize(bufferSize);
             } catch (NumericException e) {
                 throw new LogError("Invalid value for bufferSize");
             }
@@ -98,14 +118,33 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             nBufferSize = DEFAULT_BUFFER_SIZE;
         }
 
-        if (this.rollSize != null) {
+        if (rollSize != null) {
             try {
-                nRollSize = Numbers.parseLongSize(this.rollSize);
+                nRollSize = Numbers.parseLongSize(rollSize);
             } catch (NumericException e) {
                 throw new LogError("Invalid value for rollSize");
             }
         } else {
             nRollSize = Long.MAX_VALUE;
+        }
+
+        if (sizeLimit != null) {
+            try {
+                nSizeLimit = Numbers.parseLongSize(sizeLimit);
+                if (nSizeLimit < nRollSize) {
+                    throw new LogError("sizeLimit must be larger than rollSize");
+                }
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for sizeLimit");
+            }
+        }
+
+        if (lifeDuration != null) {
+            try {
+                nLifeDuration = Numbers.parseLongDuration(lifeDuration);
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for lifeDuration");
+            }
         }
 
         if (spinBeforeFlush != null) {
@@ -143,10 +182,12 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             rollDeadlineFunction = this::getInfiniteDeadline;
         }
 
-        this.rollDeadline = rollDeadlineFunction.getDeadline();
-        this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
-        this.lim = buf + nBufferSize;
+        rollDeadline = rollDeadlineFunction.getDeadline();
+        buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
+        lim = buf + nBufferSize;
         openFile();
+        logFileTemplate = location.substring(path.toString().lastIndexOf(Files.SEPARATOR) + 1, location.indexOf('$'));
+        logDir = location.substring(0, location.indexOf(logFileTemplate) - 1);
     }
 
     @Override
@@ -158,17 +199,18 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
             buf = 0;
         }
-        if (this.fd != -1) {
-            ff.close(this.fd);
-            this.fd = -1;
+        if (ff.close(fd)) {
+            fd = -1;
         }
         Misc.free(path);
         Misc.free(renameToPath);
+        Misc.free(logFileList);
+        Misc.free(logFileNameSink);
     }
 
     @Override
     public boolean runSerially() {
-        if (subSeq.consumeAll(ring, myConsumer)) {
+        if (subSeq.consumeAll(ring, copyToBufferRef)) {
             return true;
         }
 
@@ -184,6 +226,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         this.bufferSize = bufferSize;
     }
 
+    public void setLifeDuration(String lifeDuration) {
+        this.lifeDuration = lifeDuration;
+    }
+
     public void setLocation(String location) {
         this.location = location;
     }
@@ -194,6 +240,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     public void setRollSize(String rollSize) {
         this.rollSize = rollSize;
+    }
+
+    public void setSizeLimit(String sizeLimit) {
+        this.sizeLimit = sizeLimit;
     }
 
     public void setSpinBeforeFlush(String spinBeforeFlush) {
@@ -216,7 +266,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void copyToBuffer(LogRecordSink sink) {
         final int l = sink.length();
         if ((sink.getLevel() & this.level) != 0 && l > 0) {
-
             if (_wptr + l >= lim) {
                 flush();
             }
@@ -230,11 +279,13 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         long ticks = Long.MIN_VALUE;
         if (currentSize > nRollSize || (ticks = clock.getTicks()) > rollDeadline) {
             ff.close(fd);
+            removeOldLogs();
             if (ticks > rollDeadline) {
                 rollDeadline = rollDeadlineFunction.getDeadline();
                 locationParser.setDateValue(ticks);
             }
             openFile();
+            rolledCounter.incrementAndGet();
         }
 
         int len = (int) (_wptr - buf);
@@ -271,11 +322,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     private void openFile() {
         buildUniquePath();
-        this.fd = ff.openAppend(path.$());
-        if (this.fd == -1) {
+        fd = ff.openAppend(path.$());
+        if (fd == -1) {
             throw new LogError("[" + ff.errno() + "] Cannot open file for append: " + path);
         }
-        this.currentSize = ff.length(fd);
+        currentSize = ff.length(fd);
     }
 
     private void pushFileStackUp() {
@@ -323,6 +374,80 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         if (ff.rename(path.$(), renameToPath.$()) != Files.FILES_RENAME_OK) {
             throw new LogError("Could not rename " + path + " to " + renameToPath);
         }
+    }
+
+    private void removeExcessiveLogs() {
+        path.of(logDir);
+        // The list is sorted by last modification ts ASC, so we iterate in reverse order
+        // starting with the newest files.
+        long totalSize = 0;
+        for (long i = logFileList.size() - 1; i > -1; i -= 2) {
+            final long packedOffsets = logFileList.get(i);
+            final int startOffset = Numbers.decodeLowInt(packedOffsets);
+            final int endOffset = Numbers.decodeHighInt(packedOffsets);
+            CharSequence fileName = logFileNameSink.subSequence(startOffset, endOffset);
+            path.trimTo(logDir.length()).concat(fileName).$();
+            if ((totalSize += Files.length(path)) > nSizeLimit) {
+                if (!ff.remove(path)) {
+                    throw new LogError("cannot remove: " + path);
+                }
+            }
+        }
+    }
+
+    private void removeExcessiveLogs(long filePointer, int type) {
+        if (type == Files.DT_FILE && Files.notDots(filePointer)) {
+            logFileName.of(filePointer);
+            if (Chars.contains(logFileName, logFileTemplate)) {
+                path.trimTo(logDir.length()).concat(filePointer).$();
+                int startOffset = logFileNameSink.length();
+                logFileNameSink.put(logFileName);
+                int endOffset = logFileNameSink.length();
+                logFileList.add(ff.getLastModified(path));
+                logFileList.add(Numbers.encodeLowHighInts(startOffset, endOffset));
+            }
+        }
+    }
+
+    private void removeExpiredLogs(long filePointer, int type) {
+        if (type == Files.DT_FILE && Files.notDots(filePointer)) {
+            path.trimTo(logDir.length()).concat(filePointer).$();
+            logFileName.of(filePointer);
+            if (Chars.contains(logFileName, logFileTemplate)
+                    && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
+                if (!ff.remove(path)) {
+                    throw new LogError("cannot remove: " + path);
+                }
+            }
+        }
+    }
+
+    private void removeOldLogs() {
+        if (lifeDuration != null) {
+            ff.iterateDir(path.of(logDir).$(), removeExpiredLogsRef);
+        }
+        if (sizeLimit != null) {
+            if (logFileList == null) {
+                logFileList = new DirectLongList(2 * INITIAL_LOG_FILE_LIST_SIZE, MemoryTag.NATIVE_LONG_LIST);
+            }
+            if (logFileNameSink == null) {
+                logFileNameSink = new DirectCharSink(INITIAL_LOG_FILE_NAME_SINK_SIZE);
+            }
+
+            ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsRef);
+            // Sort log files by last modification timestamp.
+            Vect.sort128BitAscInPlace(logFileList.getAddress(), logFileList.size() / 2);
+            removeExcessiveLogs();
+
+            logFileNameSink.resetCapacity();
+            logFileList.clear();
+            logFileList.resetCapacity();
+        }
+    }
+
+    @TestOnly
+    long getRolledCount() {
+        return rolledCounter.get();
     }
 
     @FunctionalInterface

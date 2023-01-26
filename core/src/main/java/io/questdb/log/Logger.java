@@ -50,27 +50,26 @@ import java.io.File;
  * LOG.info().$("Hello world: ").$(123).$();
  * </code>
  * <p>
- * <p>
  * Logger appends messages to native memory buffer and dispatches buffer to writer thread queue with {@link #$()} call.
  * When writer queue is full all logger method calls between level and $() become no-ops. In this case queue size
  * have to be increased or choice of log storage has to be reviewed. Depending on complexity of log message
  * structure it should be possible to log between 1,000,000 and 10,000,000 messages per second to SSD device.
  * </p>
  */
-class Logger implements LogRecord, Log {
-    private final CharSequence name;
-    private final RingQueue<LogRecordSink> debugRing;
-    private final Sequence debugSeq;
-    private final RingQueue<LogRecordSink> infoRing;
-    private final Sequence infoSeq;
-    private final RingQueue<LogRecordSink> errorRing;
-    private final Sequence errorSeq;
-    private final RingQueue<LogRecordSink> criticalRing;
-    private final Sequence criticalSeq;
+public final class Logger implements LogRecord, Log {
     private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
-    private final ThreadLocalCursor tl = new ThreadLocalCursor();
     private final MicrosecondClock clock;
+    private final RingQueue<LogRecordSink> criticalRing;
+    private final Sequence criticalSeq;
+    private final RingQueue<LogRecordSink> debugRing;
+    private final Sequence debugSeq;
+    private final RingQueue<LogRecordSink> errorRing;
+    private final Sequence errorSeq;
+    private final RingQueue<LogRecordSink> infoRing;
+    private final Sequence infoSeq;
+    private final CharSequence name;
+    private final ThreadLocalCursor tl = new ThreadLocalCursor();
 
     Logger(
             MicrosecondClock clock,
@@ -124,12 +123,6 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $utf8(long lo, long hi) {
-        Chars.utf8Decode(lo, hi, this);
-        return this;
-    }
-
-    @Override
     public LogRecord $(int x) {
         sink().put(x);
         return this;
@@ -142,8 +135,8 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(long x) {
-        sink().put(x);
+    public LogRecord $(long l) {
+        sink().put(l);
         return this;
     }
 
@@ -156,18 +149,6 @@ class Logger implements LogRecord, Log {
     @Override
     public LogRecord $(char c) {
         sink().put(c);
-        return this;
-    }
-
-    @Override
-    public LogRecord $hex(long value) {
-        Numbers.appendHex(sink(), value, false);
-        return this;
-    }
-
-    @Override
-    public LogRecord $hexPadded(long value) {
-        Numbers.appendHex(sink(), value, true);
         return this;
     }
 
@@ -202,6 +183,24 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $256(long a, long b, long c, long d) {
+        Numbers.appendLong256(a, b, c, d, sink());
+        return this;
+    }
+
+    @Override
+    public LogRecord $hex(long value) {
+        Numbers.appendHex(sink(), value, false);
+        return this;
+    }
+
+    @Override
+    public LogRecord $hexPadded(long value) {
+        Numbers.appendHex(sink(), value, true);
+        return this;
+    }
+
+    @Override
     public LogRecord $ip(long ip) {
         Net.appendIP4(sink(), ip);
         return this;
@@ -214,42 +213,31 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $256(long a, long b, long c, long d) {
-        Numbers.appendLong256(a, b, c, d, sink());
+    public LogRecord $utf8(long lo, long hi) {
+        Chars.utf8Decode(lo, hi, this);
         return this;
     }
 
     @Override
-    public boolean isEnabled() {
-        return true;
+    public LogRecord advisory() {
+        // Same as advisoryW()
+        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
     }
 
     @Override
-    public LogRecord ts() {
-        sink().putISODate(clock.getTicks());
-        return this;
+    public LogRecord advisoryW() {
+        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
     }
 
     @Override
-    public LogRecord microTime(long x) {
-        TimestampFormatUtils.appendDateTimeUSec(sink(), x);
-        return this;
+    public LogRecord critical() {
+        // same as criticalW()
+        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
-    public LogRecord utf8(CharSequence sequence) {
-        if (sequence == null) {
-            sink().put("null");
-        } else {
-            sink().encodeUtf8(sequence);
-        }
-        return this;
-    }
-
-    @Override
-    public LogRecord put(char c) {
-        sink().put(c);
-        return this;
+    public LogRecord criticalW() {
+        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
@@ -258,14 +246,22 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord debugW() {
+        return addTimestamp(xDebugW(), LogLevel.DEBUG_HEADER);
+    }
+
+    @Override
     public LogRecord error() {
         return addTimestamp(xerror(), LogLevel.ERROR_HEADER);
     }
 
     @Override
-    public LogRecord critical() {
-        // same as criticalW()
-        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
+    public LogRecord errorW() {
+        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
+    }
+
+    public Sequence getCriticalSequence() {
+        return criticalSeq;
     }
 
     @Override
@@ -279,44 +275,53 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord errorW() {
-        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
+    public boolean isEnabled() {
+        return true;
     }
 
     @Override
-    public LogRecord criticalW() {
-        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
+    public LogRecord microTime(long x) {
+        TimestampFormatUtils.appendDateTimeUSec(sink(), x);
+        return this;
     }
 
     @Override
-    public LogRecord debugW() {
-        return addTimestamp(xDebugW(), LogLevel.DEBUG_HEADER);
+    public LogRecord put(char c) {
+        sink().put(c);
+        return this;
     }
 
     @Override
-    public LogRecord advisoryW() {
-        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
+    public LogRecord ts() {
+        sink().putISODate(clock.getTicks());
+        return this;
     }
 
     @Override
-    public LogRecord advisory() {
-        // Same as advisoryW()
-        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
+    public LogRecord utf8(CharSequence sequence) {
+        if (sequence == null) {
+            sink().put("null");
+        } else {
+            sink().encodeUtf8(sequence);
+        }
+        return this;
+    }
+
+    public LogRecord xAdvisoryW() {
+        return nextWaiting(advisorySeq, advisoryRing, LogLevel.ADVISORY);
+    }
+
+    public LogRecord xCriticalW() {
+        return nextWaiting(criticalSeq, criticalRing, LogLevel.CRITICAL);
     }
 
     @Override
-    public LogRecord xerror() {
-        return next(errorSeq, errorRing, LogLevel.ERROR);
+    public LogRecord xDebugW() {
+        return nextWaiting(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
-    @Override
-    public LogRecord xcritical() {
-        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
-    }
-
-    @Override
-    public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.INFO);
+    public LogRecord xErrorW() {
+        return nextWaiting(errorSeq, errorRing, LogLevel.ERROR);
     }
 
     /**
@@ -331,35 +336,28 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord xadvisory() {
+        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
+    }
+
+    @Override
+    public LogRecord xcritical() {
+        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
+    }
+
+    @Override
     public LogRecord xdebug() {
         return next(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
     @Override
-    public LogRecord xadvisory() {
-        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
-    }
-
-    public LogRecord xAdvisoryW() {
-        return nextWaiting(advisorySeq, advisoryRing, LogLevel.ADVISORY);
+    public LogRecord xerror() {
+        return next(errorSeq, errorRing, LogLevel.ERROR);
     }
 
     @Override
-    public LogRecord xDebugW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.DEBUG);
-    }
-
-    public LogRecord xErrorW() {
-        return nextWaiting(errorSeq, errorRing, LogLevel.ERROR);
-    }
-
-    public LogRecord xCriticalW() {
-        return nextWaiting(criticalSeq, criticalRing, LogLevel.CRITICAL);
-    }
-
-    @Override
-    public Sequence getCriticalSequence() {
-        return criticalSeq;
+    public LogRecord xinfo() {
+        return next(infoSeq, infoRing, LogLevel.INFO);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {
@@ -367,7 +365,6 @@ class Logger implements LogRecord, Log {
     }
 
     private LogRecord next(Sequence seq, RingQueue<LogRecordSink> ring, int level) {
-
         if (seq == null) {
             return NullLogRecord.INSTANCE;
         }
@@ -405,8 +402,8 @@ class Logger implements LogRecord, Log {
 
     private static class Holder {
         private long cursor;
-        private Sequence seq;
         private RingQueue<LogRecordSink> ring;
+        private Sequence seq;
     }
 
     private static class ThreadLocalCursor extends ThreadLocal<Holder> {

@@ -35,29 +35,33 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3PartitionTask {
-    private Path pathToTable;
-    private int partitionBy;
+    private long colTopSinkAddr;
+    private AtomicInteger columnCounter;
     private ObjList<MemoryMA> columns;
-    private ReadOnlyObjList<? extends MemoryCR> o3Columns;
-    private long srcOooLo;
-    private long srcOooHi;
-    private long srcOooMax;
-    private long oooTimestampMin;
-    private long oooTimestampMax;
-    private long partitionTimestamp;
+    private boolean last;
     private long maxTimestamp; // table's max timestamp
+    private O3Basket o3Basket;
+    private ReadOnlyObjList<? extends MemoryCR> o3Columns;
+    private long oooTimestampMax;
+    private long oooTimestampMin;
+    private int partitionBy;
+    private long partitionTimestamp;
+    private Path pathToTable;
+    private long sortedTimestampsAddr;
     private long srcDataMax;
     private long srcNameTxn;
-    private boolean last;
-    private long txn;
-    private long sortedTimestampsAddr;
+    private long srcOooHi;
+    private long srcOooLo;
+    private long srcOooMax;
     private TableWriter tableWriter;
-    private AtomicInteger columnCounter;
-    private O3Basket o3Basket;
-    private long colTopSinkAddr;
+    private long txn;
 
     public long getColTopSinkAddr() {
         return colTopSinkAddr;
+    }
+
+    public AtomicInteger getColumnCounter() {
+        return columnCounter;
     }
 
     public ObjList<MemoryMA> getColumns() {
@@ -66,6 +70,10 @@ public class O3PartitionTask {
 
     public long getMaxTimestamp() {
         return maxTimestamp;
+    }
+
+    public O3Basket getO3Basket() {
+        return o3Basket;
     }
 
     public ReadOnlyObjList<? extends MemoryCR> getO3Columns() {
@@ -120,20 +128,12 @@ public class O3PartitionTask {
         return tableWriter;
     }
 
-    public AtomicInteger getColumnCounter() {
-        return columnCounter;
-    }
-
     public long getTxn() {
         return txn;
     }
 
     public boolean isLast() {
         return last;
-    }
-
-    public O3Basket getO3Basket() {
-        return o3Basket;
     }
 
     public void of(

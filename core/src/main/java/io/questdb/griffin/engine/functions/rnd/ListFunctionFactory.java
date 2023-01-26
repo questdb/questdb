@@ -30,11 +30,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
 
 public class ListFunctionFactory implements FunctionFactory {
     @Override
@@ -56,13 +58,18 @@ public class ListFunctionFactory implements FunctionFactory {
     }
 
     private static final class Func extends SymbolFunction implements Function {
-        private final ObjList<String> symbols;
         private final int count;
+        private final ObjList<String> symbols;
         private int position = 0;
 
         public Func(ObjList<String> symbols) {
             this.symbols = symbols;
             this.count = symbols.size();
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return next();
         }
 
         @Override
@@ -75,23 +82,9 @@ public class ListFunctionFactory implements FunctionFactory {
             return getSymbol(rec);
         }
 
-        private int next() {
-            return position++ % count;
-        }
-
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return next();
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            position = 0;
         }
 
         @Override
@@ -100,8 +93,22 @@ public class ListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            position = 0;
+        public void toPlan(PlanSink sink) {
+            sink.val("list(").val((Sinkable) symbols).val(')');
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        private int next() {
+            return position++ % count;
         }
     }
 }

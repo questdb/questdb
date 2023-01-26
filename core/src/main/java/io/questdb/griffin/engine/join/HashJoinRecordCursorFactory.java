@@ -31,17 +31,20 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final RecordSink masterSink;
-    private final RecordSink slaveKeySink;
     private final HashJoinRecordCursor cursor;
+    private final JoinContext joinContext;
+    private final RecordCursorFactory masterFactory;
+    private final RecordSink masterSink;
+    private final RecordCursorFactory slaveFactory;
+    private final RecordSink slaveKeySink;
 
     public HashJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -53,7 +56,8 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordSink masterSink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
-            int columnSplit
+            int columnSplit,
+            JoinContext joinContext
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
@@ -63,14 +67,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.masterSink = masterSink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
-    }
-
-    @Override
-    protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
+        this.joinContext = joinContext;
     }
 
     @Override
@@ -87,27 +84,43 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
     public boolean hasDescendingOrder() {
         return masterFactory.hasDescendingOrder();
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return masterFactory.supportsUpdateRowId(tableName);
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return masterFactory.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Hash Join");
+        sink.attr("condition").val(joinContext);
+        sink.child(masterFactory);
+        sink.child("Hash", slaveFactory);
+    }
+
+    @Override
+    protected void _close() {
+        ((JoinRecordMetadata) getMetadata()).close();
+        masterFactory.close();
+        slaveFactory.close();
+        cursor.close();
     }
 
     private class HashJoinRecordCursor extends AbstractJoinCursor {
+        private final Map joinKeyMap;
         private final JoinRecord recordA;
         private final RecordChain slaveChain;
-        private final Map joinKeyMap;
+        private boolean isOpen;
         private Record masterRecord;
         private boolean useSlaveCursor;
-        private boolean isOpen;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             super(columnSplit);
@@ -118,13 +131,18 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecord() {
-            return recordA;
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                slaveChain.close();
+                super.close();
+            }
         }
 
         @Override
-        public long size() {
-            return -1;
+        public Record getRecord() {
+            return recordA;
         }
 
         @Override
@@ -147,6 +165,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
             return false;
+        }
+
+        @Override
+        public long size() {
+            return -1;
         }
 
         @Override
@@ -178,16 +201,6 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             } catch (Throwable e) {
                 masterCursor = Misc.free(masterCursor);
                 throw e;
-            }
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                joinKeyMap.close();
-                slaveChain.close();
-                super.close();
             }
         }
     }

@@ -52,6 +52,11 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReloadTruncateByWeek() {
+        testReloadAfterTruncate(PartitionBy.WEEK, 7 * 3000000000L);
+    }
+
+    @Test
     public void testReloadTruncateByYear() {
         testReloadAfterTruncate(PartitionBy.YEAR, 365 * 50000000000L);
     }
@@ -69,6 +74,16 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     @Test
     public void testTruncateInsertReloadNone() {
         testTruncateInsertReload(PartitionBy.NONE, 1000000L);
+    }
+
+    @Test
+    public void testTruncateInsertReloadWeek() {
+        testTruncateInsertReload(PartitionBy.WEEK, 7 * 3000000000L);
+    }
+
+    @Test
+    public void testTruncateInsertReloadYear() {
+        testTruncateInsertReload(PartitionBy.YEAR, 365 * 50000000000L);
     }
 
     private void assertTable(Rnd rnd, long buffer, RecordCursor cursor, Record record) {
@@ -110,7 +125,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     private void testReloadAfterTruncate(int partitionBy, long increment) {
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             return;
         }
         final Rnd rnd = new Rnd();
@@ -122,16 +137,16 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
 
         long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
 
-            try (TableReader reader = new TableReader(configuration, "all")) {
+            try (TableReader reader = newTableReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());
             }
 
             populateTable(rnd, buffer, timestamp, increment, writer);
             rnd.reset();
 
-            try (TableReader reader = new TableReader(configuration, "all")) {
+            try (TableReader reader = newTableReader(configuration, "all")) {
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);
@@ -152,7 +167,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     private void testTruncateInsertReload(int partitionBy, long increment) {
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             return;
         }
 
@@ -165,16 +180,16 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
 
         long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newTableWriter(configuration, "all", metrics)) {
 
-            try (TableReader reader = new TableReader(configuration, "all")) {
+            try (TableReader reader = newTableReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());
             }
 
             populateTable(rnd, buffer, timestamp, increment, writer);
             rnd.reset();
 
-            try (TableReader reader = new TableReader(configuration, "all")) {
+            try (TableReader reader = newTableReader(configuration, "all")) {
                 RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 assertTable(rnd, buffer, cursor, record);

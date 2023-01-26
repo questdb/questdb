@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
@@ -36,12 +37,11 @@ import io.questdb.std.str.CharSink;
 
 public class InterpolationGroupByFunction implements GroupByFunction {
     private final GroupByFunction wrappedFunction;
-
-    private boolean interpolating;
-    private long startTime;
-    private long endTime;
-    private long interval;
     private long current;
+    private long endTime;
+    private boolean interpolating;
+    private long interval;
+    private long startTime;
     private Record target;
 
     private InterpolationGroupByFunction(GroupByFunction wrappedFunction) {
@@ -60,16 +60,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         wrappedFunction.computeNext(mapValue, record);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        wrappedFunction.pushValueTypes(columnTypes);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        wrappedFunction.setNull(mapValue);
     }
 
     @Override
@@ -134,6 +124,26 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        return wrappedFunction.getGeoByte(rec);
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        return wrappedFunction.getGeoInt(rec);
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return wrappedFunction.getGeoLong(rec);
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        return wrappedFunction.getGeoShort(rec);
+    }
+
+    @Override
     public int getInt(Record rec) {
         int value = wrappedFunction.getInt(rec);
         if (interpolating) {
@@ -152,6 +162,16 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public long getLong128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void getLong256(Record rec, CharSink sink) {
         wrappedFunction.getLong256(rec, sink);
     }
@@ -167,23 +187,13 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong128Lo(Record rec) {
-        throw new UnsupportedOperationException();
+    public Record getRecord(Record rec) {
+        return wrappedFunction.getRecord(rec);
     }
 
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return wrappedFunction.getRecordCursorFactory();
-    }
-
-    @Override
-    public Record getRecord(Record rec) {
-        return wrappedFunction.getRecord(rec);
     }
 
     @Override
@@ -251,28 +261,18 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        return wrappedFunction.getGeoByte(rec);
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return wrappedFunction.getGeoShort(rec);
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return wrappedFunction.getGeoInt(rec);
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return wrappedFunction.getGeoLong(rec);
-    }
-
-    @Override
     public int getType() {
         return wrappedFunction.getType();
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        wrappedFunction.pushValueTypes(columnTypes);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        wrappedFunction.setNull(mapValue);
     }
 
     public void setTarget(Record target) {
@@ -289,5 +289,10 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     public void stopInterpolating() {
         interpolating = false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("Interpolated(").val(wrappedFunction).val(")");
     }
 }

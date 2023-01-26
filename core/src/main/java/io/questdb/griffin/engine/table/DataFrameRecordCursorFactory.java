@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -35,20 +36,22 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    protected final int pageFrameMinRows;
+    protected final DataFrameRecordCursor cursor;
     protected final int pageFrameMaxRows;
-    private final DataFrameRecordCursor cursor;
-    private final boolean followsOrderByAdvice;
-    private final Function filter;
-    private final boolean framingSupported;
+    protected final int pageFrameMinRows;
+    protected final RowCursorFactory rowCursorFactory;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
-    protected BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    private final Function filter;
+    private final boolean followsOrderByAdvice;
+    private final boolean framingSupported;
     private final boolean supportsRandomAccess;
+    protected BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
 
     public DataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -64,7 +67,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             boolean supportsRandomAccess
     ) {
         super(metadata, dataFrameCursorFactory);
-
+        this.rowCursorFactory = rowCursorFactory;
         this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
@@ -77,14 +80,18 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        Misc.free(filter);
+    public boolean followedOrderByAdvice() {
+        return followsOrderByAdvice;
     }
 
     @Override
-    public boolean followedOrderByAdvice() {
-        return followsOrderByAdvice;
+    public String getBaseColumnName(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(idx));
+    }
+
+    @Override
+    public String getBaseColumnNameNoRemap(int idx) {
+        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
     }
 
     @Override
@@ -99,6 +106,10 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return null;
     }
 
+    public boolean hasDescendingOrder() {
+        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
@@ -110,8 +121,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return dataFrameCursorFactory.supportTableRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return dataFrameCursorFactory.supportTableRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DataFrame");
+        toPlanInner(sink);
     }
 
     @Override
@@ -122,32 +139,21 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("DataFrameRecordCursorFactory");
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
-            sink.attr("filter").val(filter);
+            filter.init(cursor, executionContext);
         }
-        sink.child(dataFrameCursorFactory);
-    }
-
-    public boolean hasDescendingOrder() {
-        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
-    }
-
-    protected PageFrameCursor initFwdPageFrameCursor(
-            SqlExecutionContext executionContext,
-            DataFrameCursor dataFrameCursor
-    ) {
-        if (fwdPageFrameCursor == null) {
-            fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
-                    columnIndexes,
-                    columnSizes,
-                    executionContext.getSharedWorkerCount(),
-                    pageFrameMinRows,
-                    pageFrameMaxRows
-            );
-        }
-        return fwdPageFrameCursor.of(dataFrameCursor);
+        return cursor;
     }
 
     protected PageFrameCursor initBwdPageFrameCursor(
@@ -166,15 +172,24 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return bwdPageFrameCursor.of(dataFrameCursor);
     }
 
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
-        if (filter != null) {
-            filter.init(cursor, executionContext);
+    protected PageFrameCursor initFwdPageFrameCursor(
+            SqlExecutionContext executionContext,
+            DataFrameCursor dataFrameCursor
+    ) {
+        if (fwdPageFrameCursor == null) {
+            fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
+                    columnIndexes,
+                    columnSizes,
+                    executionContext.getSharedWorkerCount(),
+                    pageFrameMinRows,
+                    pageFrameMaxRows
+            );
         }
-        return cursor;
+        return fwdPageFrameCursor.of(dataFrameCursor);
+    }
+
+    protected void toPlanInner(PlanSink sink) {
+        sink.child(rowCursorFactory);
+        sink.child(dataFrameCursorFactory);
     }
 }

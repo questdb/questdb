@@ -27,10 +27,10 @@ package io.questdb.cutlass.http;
 import java.io.Closeable;
 
 public interface HttpRequestProcessorSelector extends Closeable {
-    HttpRequestProcessor select(CharSequence url);
+    @Override
+    void close();
 
     HttpRequestProcessor getDefaultProcessor();
 
-    @Override
-    void close();
+    HttpRequestProcessor select(CharSequence url);
 }

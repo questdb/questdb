@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -64,11 +65,10 @@ public class Base64FunctionFactory implements FunctionFactory {
     }
 
     private static class Base64Func extends StrFunction implements UnaryFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
         private final Function data;
         private final int maxLength;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
 
         public Base64Func(final Function data, final int maxLength) {
             this.data = data;
@@ -89,6 +89,12 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final BinarySequence sequence = getArg().getBin(rec);
+            Chars.base64Encode(sequence, this.maxLength, sink);
+        }
+
+        @Override
         public CharSequence getStrB(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
             sinkB.clear();
@@ -97,9 +103,8 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            final BinarySequence sequence = getArg().getBin(rec);
-            Chars.base64Encode(sequence, this.maxLength, sink);
+        public void toPlan(PlanSink sink) {
+            sink.val("base64(").val(data).val(',').val(maxLength).val(')');
         }
     }
 }

@@ -25,8 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -38,16 +39,17 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursor cursor;
     private final int columnIndex;
-    private final Function filter;
+    private final IntList columnIndexes;
+    private final DataFrameRecordCursor cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
+    private final int[] cursorFactoriesIdx;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
+    private final Function filter;
+    private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
     private IntObjHashMap<RowCursorFactory> factories;
-    private final Record.CharSequenceFunction func;
-    private final IntList columnIndexes;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -63,10 +65,24 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.columnIndex = columnIndex;
         this.filter = filter;
         this.factories = factoriesA;
-        cursorFactories = new ObjList<>();
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
+        this.cursorFactories = new ObjList<>();
+        this.cursorFactoriesIdx = new int[]{0};
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         this.func = func;
         this.columnIndexes = columnIndexes;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FilterOnSubQuery");
+        sink.optAttr("filter", filter);
+        sink.child(recordCursorFactory);
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override
@@ -76,11 +92,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         recordCursorFactory.close();
         factoriesA.clear();
         factoriesB.clear();
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 
     @Override
@@ -138,6 +149,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             return EmptyTableRandomRecordCursor.INSTANCE;
         }
 
+        this.cursorFactoriesIdx[0] = cursorFactories.size();
         this.cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);

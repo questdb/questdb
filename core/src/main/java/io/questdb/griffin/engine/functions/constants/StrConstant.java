@@ -26,15 +26,15 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
 
 public class StrConstant extends StrFunction implements ConstantFunction {
-    public static final StrConstant NULL = new StrConstant(null);
     public static final StrConstant EMPTY = new StrConstant("");
-
-    private final String value;
+    public static final StrConstant NULL = new StrConstant(null);
     private final int length;
+    private final String value;
 
     public StrConstant(CharSequence value) {
         if (value == null) {
@@ -67,5 +67,14 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     @Override
     public int getStrLen(Record rec) {
         return length;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        if (value == null) {
+            sink.val("null");
+        } else {
+            sink.val('\'').val(value).val('\'');
+        }
     }
 }

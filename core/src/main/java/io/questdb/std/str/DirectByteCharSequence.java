@@ -30,10 +30,13 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * UTF8-encoded off-heap char sequence.
+ */
 public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
     public static final Factory FACTORY = new Factory();
-    private long lo;
     private long hi;
+    private long lo;
 
     @Override
     public byte byteAt(int index) {
@@ -41,8 +44,17 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
     }
 
     @Override
+    public char charAt(int index) {
+        return (char) byteAt(index);
+    }
+
+    @Override
     public void clear() {
         this.lo = this.hi = 0;
+    }
+
+    public void decHi() {
+        this.hi--;
     }
 
     public long getHi() {
@@ -58,24 +70,15 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         return (int) (hi - lo);
     }
 
-    @Override
-    public char charAt(int index) {
-        return (char) byteAt(index);
-    }
-
-    public void shl(long delta) {
-        this.lo -= delta;
-        this.hi -= delta;
-    }
-
     public DirectByteCharSequence of(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
         return this;
     }
 
-    public void decHi() {
-        this.hi--;
+    public void shl(long delta) {
+        this.lo -= delta;
+        this.hi -= delta;
     }
 
     public void squeeze() {
@@ -90,7 +93,7 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
     }
 
     @Override
-    public CharSequence subSequence(int start, int end) {
+    protected CharSequence _subSequence(int start, int end) {
         DirectByteCharSequence seq = new DirectByteCharSequence();
         seq.lo = this.lo + start;
         seq.hi = this.lo + end;

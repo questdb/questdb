@@ -40,20 +40,24 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
         compiledQuery = new CompiledQueryImpl(engine);
     }
 
-    public CompiledQuery getCompiledQuery() {
-        return compiledQuery;
-    }
-
-    public void of(UpdateOperation updateOperation, BindVariableService bindVariableService) {
-        // Compiled query from SqlCompiler cannot be used
-        // to store compiled statements because the instance re-used for every new compilation
-        this.compiledQuery.ofUpdate(updateOperation);
-        copyTypesFrom(bindVariableService);
-    }
-
     @Override
     public void close() {
         super.close();
         this.compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
+    }
+
+    public CompiledQuery getCompiledQuery() {
+        return compiledQuery;
+    }
+
+    public void of(CompiledQuery updateQuery, BindVariableService bindVariableService) {
+        // Compiled query from SqlCompiler cannot be used
+        // to store compiled statements because the instance re-used for every new compilation
+        UpdateOperation updateOperation = updateQuery.getUpdateOperation();
+        String sqlStatement = updateQuery.getSqlStatement();
+        compiledQuery.ofUpdate(updateOperation);
+        compiledQuery.withSqlStatement(sqlStatement);
+        updateOperation.withSqlStatement(sqlStatement);
+        copyTypesFrom(bindVariableService);
     }
 }

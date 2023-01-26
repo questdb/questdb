@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
@@ -56,18 +58,13 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
-    public void of(int symbolKey) {
-        cursor.of(symbolKey);
-    }
-
-    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         return cursor.of(dataFrame);
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
-        this.cursor.prepare(tableReader);
+    public Function getFunction() {
+        return symbolFunction;
     }
 
     @Override
@@ -81,7 +78,19 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
-    public Function getFunction() {
-        return symbolFunction;
+    public void of(int symbolKey) {
+        cursor.of(symbolKey);
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+        this.cursor.prepare(tableReader);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putColumnName(cursor.getColumnIndex());
+        sink.attr("filter").putColumnName(cursor.getColumnIndex()).val('=').val(cursor.getSymbolKey()).val(" and ").val(cursor.getFilter());
     }
 }
+

@@ -25,18 +25,22 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.*;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import io.questdb.cairo.TableReader;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
@@ -46,7 +50,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PGUpdateConcurrentTest extends BasePGTest {
-    private final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
 
     @BeforeClass
     public static void setUpStatic() {
@@ -125,10 +129,9 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     create.close();
                 }
 
-                TableWriter lockedWriter = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        "testUpdateTimeout",
-                        "test");
+                TableWriter lockedWriter = getWriter(
+                        "testUpdateTimeout"
+                );
 
                 try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? WHERE x != 4");
@@ -177,10 +180,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     create.close();
                 }
 
-                TableWriter lockedWriter = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        "testUpdateTimeout",
-                        "test");
+                TableWriter lockedWriter = getWriter("testUpdateTimeout");
 
                 // Non-simple connection
                 try (final Connection connection = getConnection(server1.getPort(), false, true, 1L)) {
@@ -207,10 +207,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     }
                 }
 
-                lockedWriter = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        "testUpdateTimeout",
-                        "test");
+                lockedWriter = getWriter("testUpdateTimeout");
 
                 // Simple connection
                 try (final Connection connection = getConnection(server1.getPort(), true, true, 1L)) {
@@ -260,7 +257,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         int recordIndex = 0;
         while (cursor.hasNext()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final StringSink readerSink = this.readerSink.get();
+                final StringSink readerSink = PGUpdateConcurrentTest.readerSink.get();
                 readerSink.clear();
                 TestUtils.printColumn(record, metadata, i, readerSink);
                 CharSequence[] expectedValueArray = expectedValues.get(i);
@@ -304,10 +301,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
                 Thread tick = new Thread(() -> {
                     while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
-                        try (TableWriter tableWriter = engine.getWriter(
-                                sqlExecutionContext.getCairoSecurityContext(),
-                                "up",
-                                "test")) {
+                        try (TableWriter tableWriter = getWriter("up")) {
                             tableWriter.tick();
                         } catch (EntryUnavailableException ignored) {
                         }
@@ -348,22 +342,22 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             private CharSequence value;
 
                             @Override
+                            public void reset() {
+                                value = null;
+                            }
+
+                            @Override
                             public boolean validate(CharSequence expected, CharSequence actual) {
                                 if (value == null) {
                                     value = actual.toString();
                                 }
                                 return actual.equals(value);
                             }
-
-                            @Override
-                            public void reset() {
-                                value = null;
-                            }
                         });
 
                         try {
                             barrier.await();
-                            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                            try (TableReader rdr = getReader("up")) {
                                 while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
                                     rdr.reload();
                                     assertReader(rdr, expectedValues, validators);
@@ -392,14 +386,6 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     private enum PartitionMode {
         NONE, SINGLE, MULTIPLE;
 
-        static boolean isPartitioned(PartitionMode mode) {
-            return mode != NONE;
-        }
-
-        static long getTimestampSeq(PartitionMode mode) {
-            return mode == MULTIPLE ? 43200000000L : 1000000L;
-        }
-
         static CharSequence[] getExpectedTimestamps(PartitionMode mode) {
             return mode == MULTIPLE ?
                     new CharSequence[]{
@@ -416,6 +402,14 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             "1970-01-01T00:00:03.000000Z",
                             "1970-01-01T00:00:04.000000Z"
                     };
+        }
+
+        static long getTimestampSeq(PartitionMode mode) {
+            return mode == MULTIPLE ? 43200000000L : 1000000L;
+        }
+
+        static boolean isPartitioned(PartitionMode mode) {
+            return mode != NONE;
         }
     }
 

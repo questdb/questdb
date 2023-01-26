@@ -37,6 +37,29 @@ import org.junit.Test;
 public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testAllNull() throws SqlException {
+
+        compiler.compile("create table tab (f double)", sqlExecutionContext);
+
+        try (TableWriter w = getWriter("tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                r.append();
+            }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertTrue(Double.isNaN(record.getDouble(0)));
+            }
+        }
+    }
+
+    @Test
     public void testLastDouble() throws Exception {
         assertQuery(
                 "x\n" +
@@ -65,35 +88,12 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAllNull() throws SqlException {
-
-        compiler.compile("create table tab (f double)", sqlExecutionContext);
-
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                r.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Double.isNaN(record.getDouble(0)));
-            }
-        }
-    }
-
-    @Test
     public void testNonNull() throws SqlException {
 
         compiler.compile("create table tab (f double)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putDouble(0, rnd.nextDouble());

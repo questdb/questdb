@@ -41,6 +41,7 @@ public interface FunctionFactory {
      * Argument types are represented by single character from this table:
      * <ul>
      * <li>B = byte</li>
+     * <li>C = cursor</li>
      * <li>E = short</li>
      * <li>I = int</li>
      * <li>L = long</li>
@@ -61,8 +62,9 @@ public interface FunctionFactory {
      * <li>p = REGCLASS - this type is used in cast()</li>
      * <li>q = REGPROCEDURE - this type is used in cast()</li>
      * <li>J = long128</li>
+     * <li>Z = uuid</li>
      * </ul>
-     *
+     * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
      * variable expressions.
      *
@@ -70,7 +72,7 @@ public interface FunctionFactory {
      */
     String getSignature();
 
-    default boolean isGroupBy() {
+    default boolean isBoolean() {
         return false;
     }
 
@@ -78,7 +80,7 @@ public interface FunctionFactory {
         return false;
     }
 
-    default boolean isBoolean() {
+    default boolean isGroupBy() {
         return false;
     }
 

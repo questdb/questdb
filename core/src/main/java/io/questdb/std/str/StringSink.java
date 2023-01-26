@@ -28,7 +28,20 @@ import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
 
 public class StringSink extends AbstractCharSink implements MutableCharSink, CloneableMutable {
-    private final StringBuilder builder = new StringBuilder();
+    private final StringBuilder builder;
+
+    public StringSink() {
+        this.builder = new StringBuilder();
+    }
+
+    public StringSink(int initialCapacity) {
+        this.builder = new StringBuilder(initialCapacity);
+    }
+
+    @Override
+    public char charAt(int index) {
+        return builder.charAt(index);
+    }
 
     public void clear(int pos) {
         builder.setLength(pos);
@@ -45,35 +58,18 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
     }
 
     @Override
+    public boolean equals(Object obj) {
+        return obj instanceof CharSequence && Chars.equals(builder, (CharSequence) obj);
+    }
+
+    @Override
     public int hashCode() {
         return Chars.hashCode(builder);
     }
 
     @Override
-    public boolean equals(Object obj) {
-        return obj instanceof CharSequence && Chars.equals(builder, (CharSequence) obj);
-    }
-
-    /* Either IDEA or FireBug complain, annotation galore */
-    @NotNull
-    @Override
-    public String toString() {
-        return builder.toString();
-    }
-
-    @Override
     public int length() {
         return builder.length();
-    }
-
-    @Override
-    public char charAt(int index) {
-        return builder.charAt(index);
-    }
-
-    @Override
-    public CharSequence subSequence(int lo, int hi) {
-        return builder.subSequence(lo, hi);
     }
 
     @Override
@@ -108,5 +104,21 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
             builder.append(c);
         }
         return this;
+    }
+
+    public void setCharAt(int index, char ch) {
+        builder.setCharAt(index, ch);
+    }
+
+    @Override
+    public CharSequence subSequence(int lo, int hi) {
+        return builder.subSequence(lo, hi);
+    }
+
+    /* Either IDEA or FireBug complain, annotation galore */
+    @NotNull
+    @Override
+    public String toString() {
+        return builder.toString();
     }
 }

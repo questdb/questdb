@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -38,13 +40,13 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor {
+class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor implements Plannable {
 
     private final int columnIndex;
-    private final IntHashSet found = new IntHashSet();
-    private final IntHashSet symbolKeys;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
+    private final IntHashSet found = new IntHashSet();
+    private final IntHashSet symbolKeys;
 
     public LatestByValuesIndexedFilteredRecordCursor(
             int columnIndex,
@@ -62,9 +64,31 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
+        sink.optAttr("filter", filter);
+    }
+
+    @Override
     public void toTop() {
         super.toTop();
         filter.toTop();
+    }
+
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int partitionIndex, long rowLo, long rowHi) {
+        int index = found.keyIndex(symbolKey);
+        if (index > -1) {
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            while (cursor.hasNext()) {
+                final long row = cursor.next();
+                recordA.setRecordIndex(row);
+                if (filter.getBool(recordA)) {
+                    rows.add(Rows.toRowID(partitionIndex, row));
+                    found.addAt(index, symbolKey);
+                    break;
+                }
+            }
+        }
     }
 
     @Override
@@ -104,21 +128,5 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
             }
         }
         rows.sortAsUnsigned();
-    }
-
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int partitionIndex, long rowLo, long rowHi) {
-        int index = found.keyIndex(symbolKey);
-        if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
-            while (cursor.hasNext()) {
-                final long row = cursor.next();
-                recordA.setRecordIndex(row);
-                if (filter.getBool(recordA)) {
-                    rows.add(Rows.toRowID(partitionIndex, row));
-                    found.addAt(index, symbolKey);
-                    break;
-                }
-            }
-        }
     }
 }

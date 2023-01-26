@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
@@ -44,14 +46,14 @@ import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
+class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor implements Plannable {
+    protected final long indexShift = 0;
     protected final DirectLongList prefixes;
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    protected long indexShift = 0;
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
     protected long aIndex;
     protected long aLimit;
-    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
@@ -75,13 +77,38 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
+    public long size() {
+        return aLimit - indexShift;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
+        sink.meta("parallel").val(true);
+    }
+
+    @Override
     public void toTop() {
         aIndex = indexShift;
     }
 
-    @Override
-    public long size() {
-        return aLimit - indexShift;
+    private static int getPow2SizeOfGeoHashType(int type) {
+        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
+    }
+
+    private void processTasks(SqlExecutionCircuitBreaker circuitBreaker, RingQueue<LatestByTask> queue, Sequence subSeq, int queuedCount) {
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                if (circuitBreaker.checkIfTripped()) {
+                    sharedCircuitBreaker.cancel();
+                }
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
+        }
+
+        doneLatch.await(queuedCount);
     }
 
     @Override
@@ -121,7 +148,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
-        if(this.prefixes.size() > 2) {
+        if (this.prefixes.size() > 2) {
             hashColumnIndex = (int) prefixes.get(0);
             hashColumnType = (int) prefixes.get(1);
             prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;
@@ -258,25 +285,6 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
-    }
-
-    private void processTasks(SqlExecutionCircuitBreaker circuitBreaker, RingQueue<LatestByTask> queue, Sequence subSeq, int queuedCount) {
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                if (circuitBreaker.checkIfTripped()) {
-                    sharedCircuitBreaker.cancel();
-                }
-                queue.get(seq).run();
-                subSeq.done(seq);
-            }
-        }
-
-        doneLatch.await(queuedCount);
-    }
-
-    private static int getPow2SizeOfGeoHashType(int type) {
-        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
 
     protected void postProcessRows() {

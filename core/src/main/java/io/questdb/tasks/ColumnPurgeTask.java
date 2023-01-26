@@ -24,23 +24,24 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 
 public class ColumnPurgeTask implements Mutable {
     public static final int BLOCK_SIZE = 4;
     public static final int OFFSET_COLUMN_VERSION = 0;
-    public static final int OFFSET_PARTITION_TIMESTAMP = 1;
     public static final int OFFSET_PARTITION_NAME_TXN = 2;
+    public static final int OFFSET_PARTITION_TIMESTAMP = 1;
     public static final int OFFSET_UPDATE_ROW_ID = 3;
     private final LongList updatedColumnInfo = new LongList();
     private CharSequence columnName;
-    private String tableName;
-    private int tableId;
-    private int partitionBy;
-    private long updateTxn;
     private int columnType;
+    private int partitionBy;
+    private int tableId;
+    private TableToken tableName;
     private long truncateVersion;
+    private long updateTxn;
 
     public void appendColumnInfo(long columnVersion, long partitionTimestamp, long partitionNameTxn) {
         updatedColumnInfo.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
@@ -83,7 +84,7 @@ public class ColumnPurgeTask implements Mutable {
         return tableId;
     }
 
-    public String getTableName() {
+    public TableToken getTableName() {
         return tableName;
     }
 
@@ -91,16 +92,16 @@ public class ColumnPurgeTask implements Mutable {
         return truncateVersion;
     }
 
-    public LongList getUpdatedColumnInfo() {
-        return updatedColumnInfo;
-    }
-
     public long getUpdateTxn() {
         return updateTxn;
     }
 
+    public LongList getUpdatedColumnInfo() {
+        return updatedColumnInfo;
+    }
+
     public void of(
-            String tableName,
+            TableToken tableName,
             CharSequence columnName,
             int tableId,
             long truncateVersion,
@@ -119,7 +120,7 @@ public class ColumnPurgeTask implements Mutable {
     }
 
     public void of(
-            String tableName,
+            TableToken tableName,
             CharSequence columnName,
             int tableId,
             int truncateVersion,

@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
@@ -83,8 +83,8 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstChrFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function strFunc;
         private final char chrConst;
+        private final Function strFunc;
 
         public ConstChrFunc(Function strFunc, char chrConst) {
             this.strFunc = strFunc;
@@ -100,11 +100,39 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(strFunc.getStr(rec), chrConst);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(strFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='");
+            sink.val(chrConst).val("'");
+        }
+    }
+
+    private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
+        private final boolean equals;
+
+        public ConstStrConstChrFunc(boolean equals) {
+            this.equals = equals;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != equals;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getBool(null));
+        }
     }
 
     private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function chrFunc;
         private final char chrConst;
+        private final Function chrFunc;
 
         public ConstStrFunc(Function chrFunc, char chrConst) {
             this.chrFunc = chrFunc;
@@ -120,18 +148,26 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (chrFunc.getChar(rec) == chrConst);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(chrFunc);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=');
+            sink.val(chrConst);
+        }
     }
 
-    private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
-        private final boolean equals;
-
-        public ConstStrConstChrFunc(boolean equals) {
-            this.equals = equals;
+    private static class Func extends AbstractEqBinaryFunction {
+        public Func(Function strFunc, Function chrFunc) {
+            super(strFunc, chrFunc);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != equals;
+            return negated != (Chars.equalsNc(left.getStr(rec), right.getChar(rec)));
         }
     }
 
@@ -141,30 +177,10 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated;
         }
-    }
-
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function strFunc;
-        private final Function chrFunc;
-
-        public Func(Function strFunc, Function chrFunc) {
-            this.strFunc = strFunc;
-            this.chrFunc = chrFunc;
-        }
 
         @Override
-        public Function getLeft() {
-            return strFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return chrFunc;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
+        public void toPlan(PlanSink sink) {
+            sink.val(getBool(null));
         }
     }
 }

@@ -35,7 +35,7 @@ public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final VectorAggregateEntry entry = queue.get(cursor).entry;
         final boolean result = entry.run(workerId);
         subSeq.done(cursor);

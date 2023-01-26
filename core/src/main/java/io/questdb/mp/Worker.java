@@ -33,21 +33,21 @@ import io.questdb.std.Unsafe;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Worker extends Thread {
-    private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
     private final static AtomicInteger COUNTER = new AtomicInteger();
-    private final ObjHashSet<? extends Job> jobs;
-    private final SOCountDownLatch haltLatch;
     private final int affinity;
-    private final Log log;
     private final WorkerCleaner cleaner;
-    private final boolean haltOnError;
-    private final int workerId;
-    private final long sleepMs;
-    private final long yieldThreshold;
-    private final long sleepThreshold;
-    private final HealthMetrics metrics;
     private final String criticalErrorLine;
-    private volatile int running = 0;
+    private final SOCountDownLatch haltLatch;
+    private final boolean haltOnError;
+    private final ObjHashSet<? extends Job> jobs;
+    private final Log log;
+    private final HealthMetrics metrics;
+    private final AtomicInteger running = new AtomicInteger();
+    private final Job.RunStatus runStatus = () -> running.get() == 2;
+    private final long sleepMs;
+    private final long sleepThreshold;
+    private final int workerId;
+    private final long yieldThreshold;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -83,14 +83,14 @@ public class Worker extends Thread {
     }
 
     public void halt() {
-        running = 2;
+        running.set(2);
     }
 
     @Override
     public void run() {
         Throwable ex = null;
         try {
-            if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
+            if (running.compareAndSet(0, 1)) {
                 if (affinity > -1) {
                     if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
                         if (log != null) {
@@ -109,13 +109,13 @@ public class Worker extends Thread {
                 setupJobs();
                 int n = jobs.size();
                 long uselessCounter = 0;
-                while (running == 1) {
+                while (running.get() == 1) {
                     boolean useful = false;
                     for (int i = 0; i < n; i++) {
                         Unsafe.getUnsafe().loadFence();
                         try {
                             try {
-                                useful |= jobs.get(i).run(workerId);
+                                useful |= jobs.get(i).run(workerId, runStatus);
                             } catch (Throwable e) {
                                 onError(i, e);
                             }
@@ -136,12 +136,10 @@ public class Worker extends Thread {
                         uselessCounter = sleepThreshold + 1;
                     }
 
-                    if (uselessCounter > yieldThreshold) {
-                        Thread.yield();
-                    }
-
                     if (uselessCounter > sleepThreshold) {
                         Os.sleep(sleepMs);
+                    } else if (uselessCounter > yieldThreshold) {
+                        Os.pause();
                     }
                 }
             }
@@ -180,7 +178,7 @@ public class Worker extends Thread {
     }
 
     private void setupJobs() {
-        if (running == 1) {
+        if (running.get() == 1) {
             for (int i = 0; i < jobs.size(); i++) {
                 Unsafe.getUnsafe().loadFence();
                 try {

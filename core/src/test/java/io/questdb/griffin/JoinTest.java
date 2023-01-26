@@ -25,14 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
@@ -42,6 +42,62 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class JoinTest extends AbstractGriffinTest {
+
+    @Test
+    public void test2686() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table table_1 (\n" +
+                    "          ts timestamp,\n" +
+                    "          name string,\n" +
+                    "          age int,\n" +
+                    "          member boolean\n" +
+                    "        ) timestamp(ts) PARTITION by month");
+
+            compile("insert into table_1 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60, True )");
+            compile("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
+            compile("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
+
+            compile("create table table_2 (\n" +
+                    "          ts timestamp,\n" +
+                    "          name string,\n" +
+                    "          age int,\n" +
+                    "          address string\n" +
+                    "        ) timestamp(ts) PARTITION by month");
+
+            compile("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
+            compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+        });
+
+        //query "2"
+        assertQuery("name\tage\tmember\taddress\tts\n" +
+                        "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
+                        "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
+                        "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
+                "select a.name, a.age, a.member, b.address, a.ts\n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b \n" +
+                        "   on a.ts = b.ts ", null, "ts", false, true, false);
+
+        //query "3"
+        assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                        "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                        "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                        "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b \n" +
+                        "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ", null, "ts", false, true, false);
+
+        //query "4" - same as "3" but between is replaced with >= and <=
+        assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                        "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                        "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                        "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                        "from table_1 as a \n" +
+                        "left join table_2 as b \n" +
+                        "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)", null, "ts", false, true, false);
+    }
 
     @Test
     public void testAsOfCorrectness() throws Exception {
@@ -58,8 +114,8 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
+                    TableWriter orders = getWriter("orders");
+                    TableWriter quotes = getWriter("quotes")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;
@@ -589,6 +645,23 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinLeftTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x asof join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(93, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
             final String query =
@@ -898,6 +971,11 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinNoKeyNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj");
+    }
+
+    @Test
     public void testAsOfJoinNoKeyPartialBottomOverlap() throws Exception {
         assertMemoryLeak(() -> {
             final String query =
@@ -1092,40 +1170,6 @@ public class JoinTest extends AbstractGriffinTest {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
             compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
             compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))", sqlExecutionContext);
-
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(65, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
-            }
-        });
-    }
-
-    @Test
-    public void testAsOfJoinLeftTimestampDescOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x asof join y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
-
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(93, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
-            }
-        });
-    }
-
-    @Test
-    public void testAsOfJoinRightTimestampDescOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join (y order by timestamp desc) y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
 
             try {
                 compiler.compile(query, sqlExecutionContext);
@@ -1745,6 +1789,37 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinRecordNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj on xx.x = crj.x ");
+    }
+
+    @Test
+    public void testAsOfJoinRecordNoLeaks2() throws Exception {
+        try {
+            testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj on xx.x = crj.x ");
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
+    }
+
+    @Test
+    public void testAsOfJoinRightTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join (y order by timestamp desc) y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinSlaveSymbol() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, x.sym, sym2, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
@@ -1824,18 +1899,62 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsOfJoinNoKeyNoLeaks() throws Exception {
-        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj");
+    public void testAsofJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trips as (" +
+                    "  select rnd_double() fare_amount, " +
+                    "    CAST(x as Timestamp) pickup_datetime " +
+                    "  from long_sequence(5)) " +
+                    "timestamp(pickup_datetime)", sqlExecutionContext);
+
+            compiler.compile("create table weather as (" +
+                    "  select rnd_double() tempF, " +
+                    "    rnd_int() windDir, " +
+                    "    cast(x as TIMESTAMP) timestamp " +
+                    "  from long_sequence(5)) " +
+                    "timestamp(timestamp)", sqlExecutionContext);
+
+            assertQuery("pickup_datetime\tfare_amount\ttempF\twindDir\n" +
+                            "1970-01-01T00:00:00.000001Z\t0.6607777894187332\t0.6508594025855301\t-1436881714\n" +
+                            "1970-01-01T00:00:00.000002Z\t0.2246301342497259\t0.7905675319675964\t1545253512\n" +
+                            "1970-01-01T00:00:00.000003Z\t0.08486964232560668\t0.22452340856088226\t-409854405\n" +
+                            "1970-01-01T00:00:00.000004Z\t0.299199045961845\t0.3491070363730514\t1904508147\n" +
+                            "1970-01-01T00:00:00.000005Z\t0.20447441837877756\t0.7611029514995744\t1125579207\n",
+                    "SELECT pickup_datetime, fare_amount, tempF, windDir \n" +
+                            "FROM (trips WHERE pickup_datetime IN '1970-01-01') \n" +
+                            "ASOF JOIN weather",
+                    "pickup_datetime", false, false, true);
+        });
     }
 
     @Test
-    public void testUnionAllCursorLeaks() throws Exception {
-        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union all select x from crj");
+    public void testAsofJoinWithComplexConditionFails1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1=l2+5", "unsupported ASOF join expression [expr='l1 = l2 + 5']", 35);
+        });
     }
 
     @Test
-    public void testUnionCursorLeaks() throws Exception {
-        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj");
+    public void testAsofJoinWithComplexConditionFails2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1>l2", "unsupported ASOF join expression [expr='l1 > l2']", 35);
+        });
+    }
+
+    @Test
+    public void testAsofJoinWithComplexConditionFails3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1=abs(l2)", "unsupported ASOF join expression [expr='l1 = abs(l2)']", 35);
+        });
     }
 
     @Test
@@ -2010,17 +2129,48 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsOfJoinRecordNoLeaks() throws Exception {
-        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj on xx.x = crj.x ");
+    public void testCrossTripleOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            final CompiledQuery cq = compiler.compile("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c", sqlExecutionContext);
+            final RecordCursorFactory factory = cq.getRecordCursorFactory();
+            try {
+                Assert.assertNotNull(factory);
+                sink.clear();
+                printer.printHeader(factory.getMetadata(), sink);
+                TestUtils.assertEquals("x\tx1\tx2\n", sink);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
+                }
+            } finally {
+                Misc.free(factory);
+            }
+        });
     }
 
     @Test
-    public void testAsOfJoinRecordNoLeaks2() throws Exception {
-        try {
-            testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj on xx.x = crj.x ");
-        } finally {
-            compiler.setFullFatJoins(false);
-        }
+    public void testHashJoinLightdNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select * from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ");
+    }
+
+    @Test
+    public void testHashJoinRecordNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ");
+    }
+
+    @Test
+    public void testJoinAliasBug() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (xid int, a int, b int)", sqlExecutionContext);
+            compiler.compile("create table y (yid int, a int, b int)", sqlExecutionContext);
+            compiler.compile(
+                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
+                    sqlExecutionContext
+            ).getRecordCursorFactory().close();
+            compiler.compile(
+                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
+                    sqlExecutionContext
+            ).getRecordCursorFactory().close();
+        });
     }
 
     @Test
@@ -2722,77 +2872,130 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsofJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table trips as (" +
-                    "  select rnd_double() fare_amount, " +
-                    "    CAST(x as Timestamp) pickup_datetime " +
-                    "  from long_sequence(5)) " +
-                    "timestamp(pickup_datetime)", sqlExecutionContext);
+    public void testJoinOfTablesWithReservedWordsColNames() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " x as i, " +
+                        " x*2 as \"in\", " +
+                        " x*3 as \"from\" " +
+                        " from long_sequence(3)" +
+                        ")",
+                sqlExecutionContext
+        );
 
-            compiler.compile("create table weather as (" +
-                    "  select rnd_double() tempF, " +
-                    "    rnd_int() windDir, " +
-                    "    cast(x as TIMESTAMP) timestamp " +
-                    "  from long_sequence(5)) " +
-                    "timestamp(timestamp)", sqlExecutionContext);
+        assertSql("select \"in\", \"from\" from x",
+                "in\tfrom\n" +
+                        "2\t3\n" +
+                        "4\t6\n" +
+                        "6\t9\n");
 
-            assertQuery("pickup_datetime\tfare_amount\ttempF\twindDir\n" +
-                            "1970-01-01T00:00:00.000001Z\t0.6607777894187332\t0.6508594025855301\t-1436881714\n" +
-                            "1970-01-01T00:00:00.000002Z\t0.2246301342497259\t0.7905675319675964\t1545253512\n" +
-                            "1970-01-01T00:00:00.000003Z\t0.08486964232560668\t0.22452340856088226\t-409854405\n" +
-                            "1970-01-01T00:00:00.000004Z\t0.299199045961845\t0.3491070363730514\t1904508147\n" +
-                            "1970-01-01T00:00:00.000005Z\t0.20447441837877756\t0.7611029514995744\t1125579207\n",
-                    "SELECT pickup_datetime, fare_amount, tempF, windDir \n" +
-                            "FROM (trips WHERE pickup_datetime IN '1970-01-01') \n" +
-                            "ASOF JOIN weather",
-                    "pickup_datetime", false, false, true);
-        });
+        assertSql("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
+                        "from x " +
+                        "join x as x1 on x.i = x1.i",
+                "in\tfrom\tin1\tfrom1\n" +
+                        "2\t3\t2\t3\n" +
+                        "4\t6\t4\t6\n" +
+                        "6\t9\t6\t9\n");
+
+        assertSql("select *, x.\"in\" + x1.\"from\" " +
+                        "from x " +
+                        "join x as x1 on x.i = x1.i",
+                "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
+                        "1\t2\t3\t1\t2\t3\t5\n" +
+                        "2\t4\t6\t2\t4\t6\t10\n" +
+                        "3\t6\t9\t3\t6\t9\t15\n");
     }
 
     @Test
-    public void testCrossTripleOverflow() throws Exception {
+    public void testJoinOnGeohashCompactMap() throws Exception {
+        configOverrideDefaultMapType("compact");
+        testJoinOnGeohash();
+    }
+
+    @Test
+    public void testJoinOnGeohashFastMap() throws Exception {
+        configOverrideDefaultMapType("fast");
+        testJoinOnGeohash();
+    }
+
+    @Test
+    public void testJoinOnGeohashNonExactPrecisionNotAllowed() throws Exception {
         assertMemoryLeak(() -> {
-            final CompiledQuery cq = compiler.compile("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c", sqlExecutionContext);
-            final RecordCursorFactory factory = cq.getRecordCursorFactory();
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            compiler.compile("create table t2 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
+
+            String sql = "with g1 as (select distinct * from t1)," +
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
+
             try {
-                Assert.assertNotNull(factory);
-                sink.clear();
-                printer.printHeader(factory.getMetadata(), sink);
-                TestUtils.assertEquals("x\tx1\tx2\n", sink);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
-                }
-            } finally {
-                Misc.free(factory);
+                assertSql(sql, "");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
             }
         });
     }
 
     @Test
-    public void testHashJoinLightdNoLeaks() throws Exception {
-        testJoinForCursorLeaks("with crj as (select * from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ");
+    public void testJoinOnLong256() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
+
+            final String expected = "i\ti1\thash\n" +
+                    "1\t1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
+                    "2\t2\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
+                    "3\t3\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n";
+
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_long256() hash" +
+                            " from long_sequence(3)" +
+                            ")",
+                    sqlExecutionContext
+            );
+
+            assertQueryAndCache(expected, query, null, false);
+        }));
     }
 
     @Test
-    public void testHashJoinRecordNoLeaks() throws Exception {
-        testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ");
-    }
+    public void testJoinOnUUID() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "select x.i, y.i, x.uuid " +
+                    "from x " +
+                    "join x y on y.uuid = x.uuid";
 
-    @Test
-    public void testJoinAliasBug() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x (xid int, a int, b int)", sqlExecutionContext);
-            compiler.compile("create table y (yid int, a int, b int)", sqlExecutionContext);
+            final String expected = "i\ti1\tuuid\n" +
+                    "1\t1\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                    "2\t2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                    "3\t3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
+
             compiler.compile(
-                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_uuid4() uuid" +
+                            " from long_sequence(3)" +
+                            ")",
                     sqlExecutionContext
-            ).getRecordCursorFactory().close();
-            compiler.compile(
-                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
-                    sqlExecutionContext
-            ).getRecordCursorFactory().close();
-        });
+            );
+
+            assertQueryAndCache(expected, query, null, false);
+        }));
     }
 
     @Test
@@ -2859,7 +3062,7 @@ public class JoinTest extends AbstractGriffinTest {
             // filter is applied to final join result
             assertQuery(
                     expected,
-                    "select * from x outer join y on (kk)",
+                    "select * from x left join y on (kk)",
                     null
             );
         });
@@ -2911,7 +3114,7 @@ public class JoinTest extends AbstractGriffinTest {
             // filter is applied to final join result
             assertQuery(
                     expected,
-                    "select * from x outer join y on (kk)",
+                    "select * from x left join y on (kk)",
                     null
             );
         });
@@ -2958,7 +3161,7 @@ public class JoinTest extends AbstractGriffinTest {
             // filter is applied to final join result
             assertQuery(
                     expected,
-                    "select * from x outer join y on (kk) order by x.a desc, y.a",
+                    "select * from x left join y on (kk) order by x.a desc, y.a",
                     null,
                     true
             );
@@ -2989,7 +3192,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, "select x.c, x.a, b from x outer join y on y.m = x.c", null, false);
+            assertQueryAndCache(expected, "select x.c, x.a, b from x left join y on y.m = x.c", null, false);
 
             compiler.compile("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)", sqlExecutionContext);
             compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -3001,7 +3204,7 @@ public class JoinTest extends AbstractGriffinTest {
                             "13\t244\tNaN\n" +
                             "14\t197\t50\n" +
                             "14\t197\t68\n",
-                    "select x.c, x.a, b from x outer join y on y.m = x.c",
+                    "select x.c, x.a, b from x left join y on y.m = x.c",
                     null
             );
         });
@@ -3015,7 +3218,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinOuterTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select x.c, x.a, b, ts from x outer join y on y.m = x.c";
+            final String query = "select x.c, x.a, b, ts from x left join y on y.m = x.c";
             final String expected = "c\ta\tb\tts\n" +
                     "1\t120\tNaN\t2018-03-01T00:00:00.000001Z\n" +
                     "2\t568\t16\t2018-03-01T00:00:00.000002Z\n" +
@@ -3056,133 +3259,635 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinOfTablesWithReservedWordsColNames() throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " x as i, " +
-                        " x*2 as \"in\", " +
-                        " x*3 as \"from\" " +
-                        " from long_sequence(3)" +
-                        ")",
-                sqlExecutionContext
-        );
-
-        assertSql("select \"in\", \"from\" from x",
-                "in\tfrom\n" +
-                        "2\t3\n" +
-                        "4\t6\n" +
-                        "6\t9\n");
-
-        assertSql("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
-                        "from x " +
-                        "join x as x1 on x.i = x1.i",
-                "in\tfrom\tin1\tfrom1\n" +
-                        "2\t3\t2\t3\n" +
-                        "4\t6\t4\t6\n" +
-                        "6\t9\t6\t9\n");
-
-        assertSql("select *, x.\"in\" + x1.\"from\" " +
-                        "from x " +
-                        "join x as x1 on x.i = x1.i",
-                "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
-                        "1\t2\t3\t1\t2\t3\t5\n" +
-                        "2\t4\t6\t2\t4\t6\t10\n" +
-                        "3\t6\t9\t3\t6\t9\t15\n");
-    }
-
-    @Test
-    public void testJoinOnGeohashCompactMap() throws Exception {
-        defaultMapType = "compact";
-        testJoinOnGeohash();
-    }
-
-    @Test
-    public void testJoinOnGeohashFastMap() throws Exception {
-        defaultMapType = "fast";
-        testJoinOnGeohash();
-    }
-
-    @Test
-    public void testJoinOnGeohashNonExactPrecisionNotAllowed() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table t1 as (select " +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
-                    "x," +
-                    "timestamp_sequence(0, 1000000) ts " +
-                    "from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
-            compiler.compile("create table t2 as (select " +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
-                    "x," +
-                    "timestamp_sequence(0, 1000000) ts " +
-                    "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
-
-            String sql = "with g1 as (select distinct * from t1)," +
-                    "g2 as (select distinct * from t2)" +
-                    "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
-
-            try {
-                assertSql(sql, "");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
-            }
-        });
-    }
-
-    @Test
-    public void testJoinOnLong256() throws Exception {
-        testFullFat(() -> assertMemoryLeak(() -> {
-            final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
-
-            final String expected = "i\ti1\thash\n" +
-                    "1\t1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
-                    "2\t2\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
-                    "3\t3\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n";
-
-            compiler.compile(
-                    "create table x as (" +
-                            "select" +
-                            " cast(x as int) i," +
-                            " rnd_long256() hash" +
-                            " from long_sequence(3)" +
-                            ")",
-                    sqlExecutionContext
-            );
-
-            assertQueryAndCache(expected, query, null, false);
-        }));
-    }
-
-    @Test
     public void testJoinWithGeohashCompactMap() throws Exception {
-        defaultMapType = "compact";
+        configOverrideDefaultMapType("compact");
         testJoinWithGeoHash();
     }
 
     @Test
     public void testJoinWithGeohashCompactMap2() throws Exception {
-        defaultMapType = "compact";
+        configOverrideDefaultMapType("compact");
         testJoinWithGeohash2();
     }
 
     @Test
     public void testJoinWithGeohashFastMap() throws Exception {
-        defaultMapType = "fast";
+        configOverrideDefaultMapType("fast");
         testJoinWithGeoHash();
     }
 
     @Test
     public void testJoinWithGeohashFastMap2() throws Exception {
-        defaultMapType = "fast";
+        configOverrideDefaultMapType("fast");
         testJoinWithGeohash2();
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (5), (4), (3), (2), (1);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 3",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\t4\n" +
+                            "5\t5\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition10() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = s1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\t2\tb\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\t4\td\n" +
+                            "5\te\t5\te\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition11() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition12() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\te\n" +
+                            "2\tb\t2\tb\n" +
+                            "2\tb\t2\td\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition13() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\tNaN\t\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition14() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition15() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("create table t2 (j int, s2 string)");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition16() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (1,'f'), (1, 'g'), (1, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "1\ta\t1\td\n" +
+                            "2\tb\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition17() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string, ts1 timestamp) timestamp(ts1)");
+            compile("insert into t1 values (1, 'a', 1), (2, 'b', 2);");
+            compile("create table t2 (j int, s2 string, ts2 timestamp) timestamp(ts2) ");
+            compile("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc",
+                    "i\ts1\tts1\tj\ts2\tts2\n" +
+                            "2\tb\t1970-01-01T00:00:00.000002Z\tNaN\t\t\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (5), (4), (3), (2), (1);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 5",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (5), (4), (3), (2), (1);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) = 3",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\t3\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (2), (4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) <= 0",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition5() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (2), (4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition6() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (2), (4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (j = 2 or i = 4)",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\t2\n" +
+                            "3\tNaN\n" +
+                            "4\t4\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition7() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (-4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (1), (5), (-2), (-4), (3);");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "-4\t-4\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition8() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = 'a'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "2\tNaN\t\n" +
+                            "3\tNaN\t\n" +
+                            "4\tNaN\t\n" +
+                            "5\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition9() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 ~ '[ad]'",
+                    "i\tj\ts2\n" +
+                            "1\t1\ta\n" +
+                            "2\tNaN\t\n" +
+                            "3\tNaN\t\n" +
+                            "4\t4\td\n" +
+                            "5\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and i = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and j = 1 where 1 = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\tNaN\t\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinWithWhere4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 string)");
+            compile("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (1, 'a');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1 or j = null",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "4\td\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition0() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int);");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+
+            String query = "select * from t1 left join t2 on t1.i+10 = t2.j";
+
+            assertSql(query, "i\tj\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(5))");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+
+            assertSql("select * from t1 left join t2 on t1.i+10 = t2.j",
+                    "i\tj\n" +
+                            "1\t11\n" +
+                            "2\t12\n" +
+                            "3\t13\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(5))");
+            compile("create table t2 as (select x-3 j from long_sequence(3))");//-2,-1,0
+
+            assertSql("select * from t1 left join t2 on t1.i = - t2.j",
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (-2), (3), (-4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-1), (-2), (3), (0), (-5);");
+
+            String query = "select * from t1 left join t2 on abs(t1.i) = abs(t2.j)";
+
+            assertSql(query,
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "-2\t-2\n" +
+                            "3\t3\n" +
+                            "-4\tNaN\n" +
+                            "5\t-5\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-1), (-2), (-3), (-4), (-5);");
+
+            assertSql("select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\t-4\n" +
+                            "5\t-5\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition5() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on i > 4  ",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n" +
+                            "5\t-3\n" +
+                            "5\t-2\n" +
+                            "5\t-1\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition6() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on i > 4 and j < -3 ",
+                    "i\tj\n" +
+                            "1\tNaN\n" +
+                            "2\tNaN\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition7() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on i*j >= -4 ",
+                    "i\tj\n" +
+                            "1\t-4\n" +
+                            "1\t-3\n" +
+                            "1\t-2\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "2\t-1\n" +
+                            "3\t-1\n" +
+                            "4\t-1\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionCondition8() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int)");
+            compile("insert into t1 values (1), (2), (3), (4), (5);");
+            compile("create table t2 (j int)");
+            compile("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
+
+            assertSql("select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4",
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "3\tNaN\n" +
+                            "4\tNaN\n" +
+                            "5\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnFunctionConditionWith3Tables() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(5))");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+            compile("create table t3 as (select x+1 k from long_sequence(3))");
+
+            String query = "select * from t1 left join (select * k from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
+
+            assertSql(query,
+                    "i\tj\tk\n" +
+                            "1\t11\tNaN\n" +
+                            "2\t12\tNaN\n" +
+                            "3\t13\tNaN\n" +
+                            "4\tNaN\tNaN\n" +
+                            "5\tNaN\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinWithConstantFalseFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 as (select x i from long_sequence(3))");
+            compile("create table t2 as (select x+10 j from long_sequence(3))");
+
+            String query = "select * from t1 left join t2 on i=j and abs(1) = 0";
+
+            assertSql(query, "i\tj\n" +
+                    "1\tNaN\n" +
+                    "2\tNaN\n" +
+                    "3\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testLtJoinLeftTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x lt join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(93, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
     }
 
     @Test
     public void testLtJoinNoKeyNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx lt join crj ");
+    }
+
+    @Test
+    public void testLtJoinNoLeftTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
+    }
+
+    @Test
+    public void testLtJoinNoRightTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
     }
 
     @Test
@@ -3198,6 +3903,85 @@ public class JoinTest extends AbstractGriffinTest {
         } finally {
             compiler.setFullFatJoins(false);
         }
+    }
+
+    @Test
+    public void testLtJoinRightTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join (y order by timestamp desc) y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1=l2+5", "unsupported LT join expression [expr='l1 = l2 + 5']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1>l2", "unsupported LT join expression [expr='l1 > l2']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1=abs(l2)", "unsupported LT join expression [expr='l1 = abs(l2)']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithCondition01() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            compile("insert into t2 select x, x::timestamp from long_sequence(3)");
+
+            assertSql("select * from t1 lt join t2 on l1=l2",
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n");
+        });
+    }
+
+    @Test
+    public void testLtJoinWithoutCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            compile("insert into t2 select x, x::timestamp from long_sequence(3)");
+
+            assertSql("select * from t1 lt join t2",
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z\n");
+        });
     }
 
     @Test
@@ -3232,11 +4016,6 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSpliceJoinRecordNoLeaks() throws Exception {
-        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx splice join crj on xx.x = crj.x ");
-    }
-
-    @Test
     public void testSpliceCorrectness() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -3246,8 +4025,8 @@ public class JoinTest extends AbstractGriffinTest {
                     "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)", sqlExecutionContext);
 
             try (
-                    TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders", "testing");
-                    TableWriter quotes = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "quotes", "testing")
+                    TableWriter orders = getWriter("orders");
+                    TableWriter quotes = getWriter("quotes")
             ) {
                 TableWriter.Row rOrders;
                 TableWriter.Row rQuotes;
@@ -3537,6 +4316,23 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinLeftTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(93, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
+    }
+
+    @Test
     public void testSpliceJoinNoLeftTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
@@ -3559,40 +4355,6 @@ public class JoinTest extends AbstractGriffinTest {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
             compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
             compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))", sqlExecutionContext);
-
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(65, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
-            }
-        });
-    }
-
-    @Test
-    public void testSpliceJoinLeftTimestampDescOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
-
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(93, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
-            }
-        });
-    }
-
-    @Test
-    public void testSpliceJoinRightTimestampDescOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join (y order by timestamp desc) y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
 
             try {
                 compiler.compile(query, sqlExecutionContext);
@@ -3813,6 +4575,58 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinRecordNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx splice join crj on xx.x = crj.x ");
+    }
+
+    @Test
+    public void testSpliceJoinRightTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join (y order by timestamp desc) y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
+    }
+
+    @Test
+    public void testSpliceJoinWithComplexConditionFails1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1=l2+5", "unsupported SPLICE join expression [expr='l1 = l2 + 5']", 37);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinWithComplexConditionFails2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1>l2", "unsupported SPLICE join expression [expr='l1 > l2']", 37);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinWithComplexConditionFails3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1=abs(l2)", "unsupported SPLICE join expression [expr='l1 = abs(l2)']", 37);
+        });
+    }
+
+    @Test
     public void testSpliceOfJoinAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -3842,7 +4656,7 @@ public class JoinTest extends AbstractGriffinTest {
                             "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
                             "    SPLICE JOIN\n" +
                             "(select a.ask a, a.ts timeask from asks a) a\n" +
-                            "    ON (b.timebid != a.timeask);";
+                            "WHERE (b.timebid != a.timeask);";
 
             String expected = "timebid\ttimeask\tb\ta\n" +
                     "\t1970-01-01T00:00:00.000000Z\tNaN\t100\n" +
@@ -3878,71 +4692,40 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLtJoinNoLeftTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
-
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(65, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
-            }
-        });
+    public void testUnionAllCursorLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union all select x from crj");
     }
 
     @Test
-    public void testLtJoinNoRightTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))", sqlExecutionContext);
-
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(65, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
-            }
-        });
+    public void testUnionCursorLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj");
     }
 
-    @Test
-    public void testLtJoinLeftTimestampDescOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x lt join y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
-
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(93, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
-            }
-        });
+    private void assertFailure(String query, String expectedMessage, int position) {
+        try {
+            compile(query, sqlExecutionContext);
+            Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
+        } catch (SqlException | ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            Assert.assertEquals(Chars.toString(query), position, e.getPosition());
+        }
     }
 
-    @Test
-    public void testLtJoinRightTimestampDescOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join (y order by timestamp desc) y on y.sym2 = x.sym";
-            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+    private void assertHashJoinSql(String query, String expected) throws SqlException {
+        assertSql(query, expected);
 
-            try {
-                compiler.compile(query, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(65, e.getPosition());
-                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
-            }
-        });
+        compiler.setFullFatJoins(true);
+        try {
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    query,
+                    sink
+            );
+            TestUtils.assertEquals("full fat join", expected, sink);
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
     }
 
     private void testFullFat(TestMethod method) throws Exception {
@@ -3957,13 +4740,13 @@ public class JoinTest extends AbstractGriffinTest {
     private void testJoinForCursorLeaks(String sql) throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger counter = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRO(LPSZ name) {
+                public int openRO(LPSZ name) {
                     if (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
-                    return Files.openRO(name);
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
 

@@ -31,19 +31,8 @@ import io.questdb.std.str.Path;
 
 
 public interface ColumnIndexer extends QuietCloseable {
-    void distress();
 
-    long getFd();
-
-    long getSequence();
-
-    void refreshSourceAndIndex(long loRow, long hiRow);
-
-    void index(MemoryR mem, long loRow, long hiRow);
-
-    BitmapIndexWriter getWriter();
-
-    boolean isDistressed();
+    void closeSlider();
 
     void configureFollowerAndWriter(
             CairoConfiguration configuration,
@@ -56,7 +45,19 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop);
 
-    void closeSlider();
+    void distress();
+
+    int getFd();
+
+    long getSequence();
+
+    BitmapIndexWriter getWriter();
+
+    void index(MemoryR mem, long loRow, long hiRow);
+
+    boolean isDistressed();
+
+    void refreshSourceAndIndex(long loRow, long hiRow);
 
     void rollback(long maxRow);
 

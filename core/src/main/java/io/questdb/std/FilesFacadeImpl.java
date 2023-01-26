@@ -25,39 +25,51 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
 
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
-    private long mapPageSize = 0;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
+    private long mapPageSize = 0;
 
     @Override
-    public boolean allocate(long fd, long size) {
-        // do not bother allocating on Windows because mmap() will try to allocate regardless
-        if (Os.type != Os.WINDOWS) {
-            return Files.allocate(fd, size);
-        }
-        return true;
+    public boolean allocate(int fd, long size) {
+        return Files.allocate(fd, size);
     }
 
     @Override
-    public long append(long fd, long buf, int len) {
+    public long append(int fd, long buf, int len) {
         return Files.append(fd, buf, len);
     }
 
     @Override
-    public boolean close(long fd) {
+    public boolean close(int fd) {
         return Files.close(fd) == 0;
+    }
+
+    @Override
+    public boolean closeRemove(int fd, LPSZ path) {
+        if (fd > -1) {
+            Files.close(fd);
+        }
+        return remove(path);
     }
 
     @Override
     public int copy(LPSZ from, LPSZ to) {
         return Files.copy(from, to);
+    }
+
+    @Override
+    public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
+        return Files.copyData(srcFd, destFd, offsetSrc, length);
     }
 
     @Override
@@ -76,21 +88,14 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean exists(long fd) {
+    public boolean exists(int fd) {
         return Files.exists(fd);
     }
 
     @Override
-    public void fadvise(long fd, long offset, long len, int advise) {
+    public void fadvise(int fd, long offset, long len, int advise) {
         if (advise > -1) {
             Files.fadvise(fd, offset, len, advise);
-        }
-    }
-
-    @Override
-    public void madvise(long address, long len, int advise) {
-        if (advise > -1) {
-            Files.madvise(address, len, advise);
         }
     }
 
@@ -131,8 +136,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int fsync(long fd) {
+    public int fsync(int fd) {
         return Files.fsync(fd);
+    }
+
+    @Override
+    public long getDiskSize(LPSZ path) {
+        return Files.getDiskSize(path);
     }
 
     @Override
@@ -174,8 +184,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type);
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink) {
+        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
+    }
+
+    @Override
     public boolean isRestrictedFileSystem() {
-        return Os.type == Os.WINDOWS;
+        return Os.isWindows();
+    }
+
+    @Override
+    public boolean isSoftLink(LPSZ softLink) {
+        return Files.isSoftLink(softLink);
     }
 
     @Override
@@ -193,7 +218,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long length(long fd) {
+    public long length(int fd) {
         long r = Files.length(fd);
         if (r < 0) {
             throw CairoException.critical(Os.errno()).put("Checking file size failed");
@@ -207,8 +232,15 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int lock(long fd) {
+    public int lock(int fd) {
         return Files.lock(fd);
+    }
+
+    @Override
+    public void madvise(long address, long len, int advise) {
+        if (advise > -1) {
+            Files.madvise(address, len, advise);
+        }
     }
 
     @Override
@@ -222,12 +254,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+    public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
         return Files.mmap(fd, len, offset, flags, memoryTag);
     }
 
     @Override
-    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+    public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
@@ -242,12 +274,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openAppend(LPSZ name) {
+    public int openAppend(LPSZ name) {
         return Files.openAppend(name);
     }
 
     @Override
-    public long openCleanRW(LPSZ name, long size) {
+    public int openCleanRW(LPSZ name, long size) {
         // Open files and if file exists, try exclusively lock it
         // If exclusive lock worked the file will be cleaned and allocated to the given size
         // Shared lock will be left on the file which will be removed when file descriptor is closed
@@ -256,23 +288,33 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openRO(LPSZ name) {
+    public int openRO(LPSZ name) {
         return Files.openRO(name);
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
+    public int openRW(LPSZ name, long opts) {
         return Files.openRW(name, opts);
     }
 
     @Override
-    public long read(long fd, long buf, long len, long offset) {
+    public long read(int fd, long buf, long len, long offset) {
         return Files.read(fd, buf, len, offset);
     }
 
     @Override
-    public long readULong(long fd, long offset) {
-        return Files.readULong(fd, offset);
+    public byte readNonNegativeByte(int fd, long offset) {
+        return Files.readNonNegativeByte(fd, offset);
+    }
+
+    @Override
+    public int readNonNegativeInt(int fd, long offset) {
+        return Files.readNonNegativeInt(fd, offset);
+    }
+
+    @Override
+    public long readNonNegativeLong(int fd, long offset) {
+        return Files.readNonNegativeLong(fd, offset);
     }
 
     @Override
@@ -291,6 +333,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int softLink(LPSZ src, LPSZ softLink) {
+        return Files.softLink(src, softLink);
+    }
+
+    @Override
     public int sync() {
         return Files.sync();
     }
@@ -301,8 +348,48 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean truncate(long fd, long size) {
+    public boolean truncate(int fd, long size) {
         return Files.truncate(fd, size);
+    }
+
+    @Override
+    public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+        return Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);
+    }
+
+    @Override
+    public int unlink(LPSZ softLink) {
+        return Files.unlink(softLink);
+    }
+
+    @Override
+    public int unlinkOrRemove(Path path, Log LOG) {
+        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        return unlinkOrRemove(path, checkedType, LOG);
+    }
+
+    @Override
+    public int unlinkOrRemove(Path path, int checkedType, Log LOG) {
+        if (checkedType == Files.DT_LNK) {
+            // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+            if (unlink(path) == 0) {
+                LOG.info().$("removed by unlink [path=").utf8(path).I$();
+                return 0;
+            } else {
+                LOG.error().$("failed to unlink, will remove [path=").utf8(path).I$();
+            }
+        }
+
+        int errno;
+        if ((errno = rmdir(path)) == 0) {
+            LOG.info().$("removed [path=").utf8(path).I$();
+        } else {
+            LOG.error().$("cannot remove [path=").utf8(path).$(", errno=").$(errno).I$();
+        }
+        return errno;
     }
 
     public void walk(Path path, FindVisitor func) {
@@ -329,7 +416,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long write(long fd, long address, long len, long offset) {
+    public long write(int fd, long address, long len, long offset) {
         return Files.write(fd, address, len, offset);
     }
 
@@ -351,12 +438,10 @@ public class FilesFacadeImpl implements FilesFacade {
         int srcLen = src.length();
         int len = src.length();
         long p = findFirst(src.$());
-        src.chop$();
 
         if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
             return -1;
         }
-        dst.chop$();
 
         if (p > 0) {
             try {
@@ -366,32 +451,24 @@ public class FilesFacadeImpl implements FilesFacade {
                     if (Files.notDots(name)) {
                         int type = findType(p);
                         src.trimTo(len);
+                        src.concat(name);
+                        dst.concat(name);
                         if (type == Files.DT_FILE) {
-                            src.concat(name);
-                            dst.concat(name);
-
                             if ((res = operation.invoke(src.$(), dst.$())) < 0) {
                                 return res;
                             }
-
-                            src.trimTo(srcLen);
-                            dst.trimTo(dstLen);
-
                         } else {
-                            src.concat(name);
-                            dst.concat(name);
 
                             // Ignore if subfolder already exists
                             mkdir(dst.$(), dirMode);
 
-                            dst.chop$();
                             if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
                                 return res;
                             }
 
-                            src.trimTo(srcLen);
-                            dst.trimTo(dstLen);
                         }
+                        src.trimTo(srcLen);
+                        dst.trimTo(dstLen);
                     }
                 } while (findNext(p) > 0);
             } finally {

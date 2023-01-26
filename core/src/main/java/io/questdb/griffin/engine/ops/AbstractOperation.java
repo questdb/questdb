@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.QuietCloseable;
@@ -32,49 +33,29 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
-
-    static final long NO_CORRELATION_ID = -1L;
-
-    private int cmdType;
+    private static final long NO_CORRELATION_ID = -1L;
+    protected @Nullable TableToken tableToken;
+    @Nullable SqlExecutionContext sqlExecutionContext;
+    @Nullable CharSequence sqlText;
+    int tableNamePosition;
     private String cmdName;
+    private int cmdType;
+    private long correlationId;
     private int tableId;
     private long tableVersion;
-    private long correlationId;
 
-    String tableName;
-    int tableNamePosition;
-    @Nullable SqlExecutionContext sqlExecutionContext;
-
-    void init(
-            int cmdType,
-            String cmdName,
-            String tableName,
-            int tableId,
-            long tableVersion,
-            int tableNamePosition
-    ) {
-        this.cmdType = cmdType;
-        this.cmdName = cmdName;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.tableVersion = tableVersion;
-        this.tableNamePosition = tableNamePosition;
-        this.correlationId = NO_CORRELATION_ID;
+    public void clearCommandCorrelationId() {
+        setCommandCorrelationId(NO_CORRELATION_ID);
     }
 
     @Override
-    public int getTableId() {
-        return tableId;
+    public void close() {
+        // intentionally left empty
     }
 
     @Override
-    public long getTableVersion() {
-        return tableVersion;
-    }
-
-    @Override
-    public String getTableName() {
-        return tableName;
+    public int getCmdType() {
+        return cmdType;
     }
 
     @Override
@@ -83,13 +64,42 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     @Override
+    public long getCorrelationId() {
+        return correlationId;
+    }
+
+    public @Nullable SqlExecutionContext getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
+
+    public @Nullable CharSequence getSqlText() {
+        return sqlText;
+    }
+
+    @Override
+    public int getTableId() {
+        return tableId;
+    }
+
+    @Override
     public int getTableNamePosition() {
         return tableNamePosition;
     }
 
     @Override
-    public long getCorrelationId() {
-        return correlationId;
+    public @Nullable TableToken getTableToken() {
+        return tableToken;
+    }
+
+    @Override
+    public long getTableVersion() {
+        return tableVersion;
+    }
+
+    @Override
+    public void serialize(TableWriterTask task) {
+        task.of(cmdType, tableId, tableToken);
+        task.setInstance(correlationId);
     }
 
     @Override
@@ -97,23 +107,28 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.correlationId = correlationId;
     }
 
-    public void clearCommandCorrelationId() {
-        setCommandCorrelationId(NO_CORRELATION_ID);
-    }
-
-    @Override
-    public void serialize(TableWriterTask task) {
-        task.of(cmdType, tableId, tableName);
-        task.setInstance(correlationId);
-    }
-
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
-        assert sqlExecutionContext != null;
         this.sqlExecutionContext = sqlExecutionContext;
     }
 
-    @Override
-    public void close() {
-        // intentionally left empty
+    public void withSqlStatement(String sqlStatement) {
+        this.sqlText = sqlStatement;
+    }
+
+    void init(
+            int cmdType,
+            String cmdName,
+            TableToken tableToken,
+            int tableId,
+            long tableVersion,
+            int tableNamePosition
+    ) {
+        this.cmdType = cmdType;
+        this.cmdName = cmdName;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.tableVersion = tableVersion;
+        this.tableNamePosition = tableNamePosition;
+        this.correlationId = NO_CORRELATION_ID;
     }
 }

@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
 import org.junit.*;
@@ -45,17 +46,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractGriffinTest {
     private static final AtomicInteger nCheckInterruptedCalls = new AtomicInteger();
-    private static SqlExecutionContext readOnlyExecutionContext;
-    private static SqlCompiler memoryRestrictedCompiler;
-    private static CairoEngine memoryRestrictedEngine;
     private static long circuitBreakerCallLimit = Long.MAX_VALUE;
     private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
+    private static SqlCompiler memoryRestrictedCompiler;
+    private static CairoEngine memoryRestrictedEngine;
+    private static SqlExecutionContext readOnlyExecutionContext;
 
     @BeforeClass
     public static void setUpStatic() {
         inputRoot = TestUtils.getCsvRoot();
         AbstractGriffinTest.setUpStatic();
-        CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration readOnlyConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
             public int getSqlJoinMetadataMaxResizes() {
                 return 10;
@@ -73,6 +74,11 @@ public class SecurityTest extends AbstractGriffinTest {
 
             @Override
             public int getSqlMapPageSize() {
+                return 64;
+            }
+
+            @Override
+            public int getSqlSmallMapPageSize() {
                 return 64;
             }
 
@@ -102,6 +108,40 @@ public class SecurityTest extends AbstractGriffinTest {
             private long deadline;
 
             @Override
+            public boolean checkIfTripped() {
+                return false;
+            }
+
+            @Override
+            public boolean checkIfTripped(long millis, int fd) {
+                return false;
+            }
+
+            @Override
+            public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
+                return null;
+            }
+
+            @Override
+            public int getFd() {
+                return -1;
+            }
+
+            @Override
+            public boolean isTimerSet() {
+                return false;
+            }
+
+            @Override
+            public void resetTimer() {
+                deadline = circuitBreakerTimeoutDeadline;
+            }
+
+            @Override
+            public void setFd(int fd) {
+            }
+
+            @Override
             public void statefulThrowExceptionIfTripped() {
                 int nCalls = nCheckInterruptedCalls.incrementAndGet();
                 long max = circuitBreakerCallLimit;
@@ -116,42 +156,7 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public boolean checkIfTripped() {
-                return false;
-            }
-
-            @Override
-            public boolean checkIfTripped(long millis, long fd) {
-                return false;
-            }
-
-            @Override
-            public void resetTimer() {
-                deadline = circuitBreakerTimeoutDeadline;
-            }
-
-            @Override
-            public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-                return null;
-            }
-
-            @Override
-            public void setFd(long fd) {
-            }
-
-            @Override
-            public long getFd() {
-                return -1;
-            }
-
-            @Override
             public void unsetTimer() {
-
-            }
-
-            @Override
-            public boolean isTimerSet() {
-                return false;
             }
         };
 
@@ -179,6 +184,8 @@ public class SecurityTest extends AbstractGriffinTest {
         //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
         memoryRestrictedEngine.getTableIdGenerator().close();
         memoryRestrictedEngine.clear();
+        memoryRestrictedEngine.getTableSequencerAPI().releaseInactive();
+        memoryRestrictedEngine.closeNameRegistry();
         super.tearDown();
     }
 
@@ -186,6 +193,8 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testAlterTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            memoryRestrictedEngine.reloadTableNames();
+
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
             InsertOperation insertStatement = cq.getInsertOperation();
             try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
@@ -225,6 +234,8 @@ public class SecurityTest extends AbstractGriffinTest {
             compiler.compile("create table tab as (select" +
                     " rnd_double(2) d" +
                     " from long_sequence(10000000))", sqlExecutionContext);
+            memoryRestrictedEngine.reloadTableNames();
+
             try {
                 setMaxCircuitBreakerChecks(Long.MAX_VALUE);
                 circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + Timestamps.SECOND_MICROS;
@@ -250,6 +261,8 @@ public class SecurityTest extends AbstractGriffinTest {
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
                     " from long_sequence(10000)) timestamp(ts1)", sqlExecutionContext);
+            memoryRestrictedEngine.reloadTableNames();
+
             assertQuery(
                     memoryRestrictedCompiler,
                     "sum\n" +
@@ -316,13 +329,25 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCopyDeniedOnNoWriteAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.toString(), "permission denied");
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
+                MatcherAssert.assertThat(ex.toString(), CoreMatchers.containsString("permission denied"));
             }
             try {
                 assertQuery("count\n1\n", "select count() from balances", null);
@@ -337,25 +362,14 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testDropTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            memoryRestrictedEngine.reloadTableNames();
             try {
                 compiler.compile("drop table balances", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
+                MatcherAssert.assertThat(ex.toString(), Matchers.containsString("permission denied"));
             }
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
-        });
-    }
-
-    @Test
-    public void testCopyDeniedOnNoWriteAccess() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.toString(), "permission denied");
-            }
         });
     }
 
@@ -363,6 +377,8 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testInsertDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            memoryRestrictedEngine.reloadTableNames();
+
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
 
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
@@ -414,7 +430,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "",
+                        "TOO MUCH",
                         "select sym2, d from tb1 order by sym2",
                         null,
                         true, readOnlyExecutionContext);
@@ -430,21 +446,25 @@ public class SecurityTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(20,4,4,20000) sym1," +
-                    " rnd_symbol(20,4,4,20000) sym2," +
+                    " rnd_symbol(40,4,4,20000) sym1," +
+                    " rnd_symbol(40,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(20)) timestamp(ts)", sqlExecutionContext);
+                    " from long_sequence(40)) timestamp(ts)", sqlExecutionContext);
             assertQuery(
                     memoryRestrictedCompiler,
-                    "sym1\tsym2\nDEYY\tCXZO\nDEYY\tDSWU\nSXUX\tZSRY\n",
+                    "sym1\tsym2\n" +
+                            "OOZZ\tHNZH\n" +
+                            "GPGW\tQSRL\n" +
+                            "FJGE\tQCEH\n" +
+                            "PEHN\tIPHZ\n",
                     "select distinct sym1, sym2 from tb1 where d < 0.07",
                     null,
                     true, readOnlyExecutionContext);
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nHYRX\tGPGW\nVTJW\tIBBT\nVTJW\tGPGW\n",
+                        "TOO MUCH",
                         "select distinct sym1, sym2 from tb1",
                         null,
                         true, readOnlyExecutionContext);
@@ -479,8 +499,46 @@ public class SecurityTest extends AbstractGriffinTest {
                 try {
                     assertQuery(
                             memoryRestrictedCompiler,
-                            "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                            "TOO MUCH",
                             "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                            null,
+                            false, readOnlyExecutionContext);
+                    Assert.fail();
+                } catch (Exception ex) {
+                    Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+                }
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
+        });
+    }
+
+    @Test
+    public void testMemoryRestrictionsWithFullFatOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+            try {
+                compiler.setFullFatJoins(true);
+                assertQuery(
+                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        null,
+                        false, sqlExecutionContext);
+                try {
+                    assertQuery(
+                            memoryRestrictedCompiler,
+                            "TOO MUCH",
+                            "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
                             false, readOnlyExecutionContext);
                     Assert.fail();
@@ -515,7 +573,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);
@@ -551,6 +609,16 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMemoryRestrictionsWithLeftHashJoinWithFilter() throws Exception {
+        assertLeftHashJoin(false);
+    }
+
+    @Test
+    public void testMemoryRestrictionsWithLeftHashJoinWithFilterFullFat() throws Exception {
+        assertLeftHashJoin(true);
+    }
+
+    @Test
     public void testMemoryRestrictionsWithOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
@@ -566,14 +634,14 @@ public class SecurityTest extends AbstractGriffinTest {
                     " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
             assertQuery(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                    "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
                     false, sqlExecutionContext);
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                        "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
+                        "TOO MUCH",
+                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
                         false, readOnlyExecutionContext);
                 Assert.fail();
@@ -601,7 +669,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\nPEHN\t0.3288176907679504\n",
+                        "TOO MUCH",
                         "select sym, d from tb1 where d < 0.5 ORDER BY d",
                         null,
                         true, readOnlyExecutionContext);
@@ -646,15 +714,14 @@ public class SecurityTest extends AbstractGriffinTest {
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)", sqlExecutionContext);
+
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
                         null,
-                        false,
-                        readOnlyExecutionContext
-                );
+                        false, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 MatcherAssert.assertThat(ex.toString(), Matchers.containsString("limit of 2 resizes exceeded"));
@@ -735,7 +802,6 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testMemoryRestrictionsWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
@@ -758,7 +824,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\td1\tts1\nVTJW\t0.1985581797355932\t1970-01-01T01:06:40.000000Z\nVTJW\t0.21583224269349388\t1970-01-01T01:40:00.000000Z\nRQQ\t0.5522494170511608\t1970-01-01T02:46:40.000000Z\n",
+                        "TOO MUCH",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
                         null,
                         false, readOnlyExecutionContext);
@@ -792,51 +858,13 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\nPEHN\tRQQ\n",
+                        "TOO MUCH",
                         "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
                         null,
                         true, readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
-            }
-        });
-    }
-
-    @Test
-    public void testMemoryRestrictionsWithFullFatOuterJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            sqlExecutionContext.getRandom().reset();
-            compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
-                    " rnd_double(2) d1," +
-                    " timestamp_sequence(0, 1000000000) ts1" +
-                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
-            compiler.compile("create table tb2 as (select" +
-                    " rnd_symbol(3,3,3,20000) sym2," +
-                    " rnd_double(2) d2," +
-                    " timestamp_sequence(0, 1000000000) ts2" +
-                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
-            try {
-                compiler.setFullFatJoins(true);
-                assertQuery(
-                        "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                        "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                        null,
-                        false, sqlExecutionContext);
-                try {
-                    assertQuery(
-                            memoryRestrictedCompiler,
-                            "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
-                            "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
-                            null,
-                            false, readOnlyExecutionContext);
-                    Assert.fail();
-                } catch (Exception ex) {
-                    Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-                }
-            } finally {
-                compiler.setFullFatJoins(false);
             }
         });
     }
@@ -871,6 +899,8 @@ public class SecurityTest extends AbstractGriffinTest {
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(2000)) timestamp(ts)", sqlExecutionContext);
+
+            memoryRestrictedEngine.reloadTableNames();
             assertQuery(
                     memoryRestrictedCompiler,
                     "sym2\tcount\nGZ\t1040\nRX\t960\n",
@@ -883,7 +913,7 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\tcount\nPEHN\t265\nCPSW\t231\nHYRX\t262\nVTJW\t242\n",
+                        "TOO MUCH",
                         "select sym1, count() from tb1 order by sym1",
                         null,
                         readOnlyExecutionContext, true,
@@ -902,7 +932,46 @@ public class SecurityTest extends AbstractGriffinTest {
         circuitBreakerCallLimit = max;
     }
 
+    private void assertLeftHashJoin(boolean fullFat) throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10)) timestamp(ts1)", sqlExecutionContext);
+            compiler.compile("create table tb2 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym2," +
+                    " rnd_double(2) d2," +
+                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
+
+            assertQuery(
+                    "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
+                    "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
+                    null,
+                    false, sqlExecutionContext);
+            memoryRestrictedCompiler.setFullFatJoins(fullFat);
+            try {
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "TOO MUCH",
+                        "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
+                        null,
+                        false, readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+            } finally {
+                memoryRestrictedCompiler.setFullFatJoins(false);
+            }
+        });
+    }
+
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        memoryRestrictedEngine.releaseInactive();
+        memoryRestrictedEngine.releaseInactiveTableSequencers();
+        memoryRestrictedEngine.closeNameRegistry();
         TestUtils.assertMemoryLeak(() -> {
             try {
                 circuitBreakerCallLimit = Integer.MAX_VALUE;
@@ -912,6 +981,8 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.assertEquals("engine's busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("engine's busy reader count", 0, engine.getBusyReaderCount());
                 memoryRestrictedEngine.releaseInactive();
+                memoryRestrictedEngine.releaseInactiveTableSequencers();
+                memoryRestrictedEngine.closeNameRegistry();
                 Assert.assertEquals("restricted engine's busy writer count", 0, memoryRestrictedEngine.getBusyWriterCount());
                 Assert.assertEquals("restricted engine's busy reader count", 0, memoryRestrictedEngine.getBusyReaderCount());
             } finally {
@@ -919,6 +990,25 @@ public class SecurityTest extends AbstractGriffinTest {
                 memoryRestrictedEngine.clear();
             }
         });
+    }
+
+    @Override
+    protected void assertQuery(SqlCompiler compiler,
+                               String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               SqlExecutionContext sqlExecutionContext) throws SqlException {
+        memoryRestrictedEngine.reloadTableNames();
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                false);
     }
 
 }

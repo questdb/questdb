@@ -27,11 +27,11 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -55,8 +55,18 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
+    public void clear() {
+        count.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return -1;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return count.sum();
     }
 
     @Override
@@ -67,6 +77,11 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -81,32 +96,17 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("count(*)");
+    }
+
+    @Override
     public boolean wrapUp(long pRosti) {
-        return true;
-    }
-
-    @Override
-    public void clear() {
-        count.reset();
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return count.sum();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
+        return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum() > 0 ? count.sum() : -1);
     }
 
     @FunctionalInterface
     private interface CountFunc {
         boolean count(long pRosti, long pKeys, long count, int valueOffset);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("CountVectorAgg(").put(valueOffset).put(')');
     }
 }

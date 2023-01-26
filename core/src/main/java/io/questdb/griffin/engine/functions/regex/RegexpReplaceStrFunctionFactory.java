@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -77,16 +78,16 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends StrFunction implements UnaryFunction {
-        private final Function value;
+        private final int maxLength;
         private final Function pattern;
         private final int patternPos;
         private final Function replacement;
         private final int replacementPos;
-        private final int maxLength;
-        private Matcher matcher;
-        private String replacementStr;
         private final StringBufferSink sink = new StringBufferSink();
         private final StringBufferSink sinkB = new StringBufferSink();
+        private final Function value;
+        private Matcher matcher;
+        private String replacementStr;
 
         public Func(Function value, Function pattern, int patternPos, Function replacement, int replacementPos, int maxLength) {
             this.value = value;
@@ -105,11 +106,6 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             return getStr(rec, sink);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr(rec, sinkB);
         }
 
         public CharSequence getStr(Record rec, StringBufferSink sink) {
@@ -140,18 +136,8 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return false;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public CharSequence getStrB(Record rec) {
+            return getStr(rec, sinkB);
         }
 
         @Override
@@ -166,6 +152,26 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             }
             replacementStr = cs.toString();
         }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
+        }
     }
 
     // TODO(puzpuzpuz):
@@ -174,8 +180,18 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
     private static class StringBufferSink implements CharSequence {
         private final StringBuffer buffer = new StringBuffer();
 
+        @Override
+        public char charAt(int index) {
+            return buffer.charAt(index);
+        }
+
         public void clear() {
             buffer.setLength(0);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            return obj instanceof CharSequence && Chars.equals(buffer, (CharSequence) obj);
         }
 
         @Override
@@ -184,29 +200,18 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean equals(Object obj) {
-            return obj instanceof CharSequence && Chars.equals(buffer, (CharSequence) obj);
-        }
-
-
-        @Override
-        public @NotNull String toString() {
-            return buffer.toString();
-        }
-
-        @Override
         public int length() {
             return buffer.length();
         }
 
         @Override
-        public char charAt(int index) {
-            return buffer.charAt(index);
+        public @NotNull CharSequence subSequence(int lo, int hi) {
+            return buffer.subSequence(lo, hi);
         }
 
         @Override
-        public @NotNull CharSequence subSequence(int lo, int hi) {
-            return buffer.subSequence(lo, hi);
+        public @NotNull String toString() {
+            return buffer.toString();
         }
     }
 }

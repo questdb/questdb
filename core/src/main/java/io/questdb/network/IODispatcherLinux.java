@@ -24,10 +24,18 @@
 
 package io.questdb.network;
 
+import io.questdb.std.LongMatrix;
+
 public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher<C> {
-    private static final int M_ID = 2;
+    private static final int EVM_DEADLINE = 1;
+    private static final int EVM_ID = 0;
+    private static final int EVM_OPERATION_ID = 2;
+    private static final int OPM_ID = 3;
+    protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final Epoll epoll;
-    private long fdid = 1;
+    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
+    // id 0 is reserved for operations on the server fd
+    private long idSeq = 1;
 
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
@@ -38,21 +46,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         registerListenerFd();
     }
 
-    private void enqueuePending(int watermark) {
-        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
-            epoll.setOffset(offset);
-            if (
-                    epoll.control(
-                            (int) pending.get(i, M_FD),
-                            pending.get(i, M_ID),
-                            EpollAccessor.EPOLL_CTL_ADD,
-                            initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                    ) < 0) {
-                LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
-            }
-        }
-    }
-
     @Override
     public void close() {
         super.close();
@@ -60,50 +53,226 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         LOG.info().$("closed").$();
     }
 
-    @Override
-    protected void pendingAdded(int index) {
-        pending.set(index, M_ID, fdid++);
+    private static boolean isEventId(long id) {
+        return (id & 1) == 1;
     }
 
-    private void processIdleConnections(long deadline) {
+    private void doDisconnect(C context, long id, int reason) {
+        final SuspendEvent suspendEvent = context.getSuspendEvent();
+        if (suspendEvent != null) {
+            // yes, we can do a binary search over EVM_OPERATION_ID since
+            // these ref ids are monotonically growing
+            int eventRow = pendingEvents.binarySearch(id, EVM_OPERATION_ID);
+            if (eventRow < 0) {
+                LOG.critical().$("internal error: suspend event not found [id=").$(id).I$();
+            } else {
+                final long eventId = pendingEvents.get(eventRow, EVM_ID);
+                if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                    LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                            .$(", err=").$(nf.errno()).I$();
+                }
+                pendingEvents.deleteRow(eventRow);
+            }
+        }
+        doDisconnect(context, reason);
+    }
+
+    private void enqueuePending(int watermark) {
+        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
+            final long id = pending.get(i, OPM_ID);
+            if (
+                    epoll.control(
+                            (int) pending.get(i, OPM_FD),
+                            id,
+                            EpollAccessor.EPOLL_CTL_ADD,
+                            initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                    ) < 0
+            ) {
+                LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
+                        .$(", err=").$(nf.errno()).I$();
+            }
+        }
+    }
+
+    private boolean handleSocketOperation(long id) {
+        // find row in pending for two reasons:
+        // 1. find payload
+        // 2. remove row from pending, remaining rows will be timed out
+        final int row = pending.binarySearch(id, OPM_ID);
+        if (row < 0) {
+            LOG.critical().$("internal error: epoll returned unexpected id [id=").$(id).I$();
+            return false;
+        }
+
+        final C context = pending.get(row);
+        final SuspendEvent suspendEvent = context.getSuspendEvent();
+        if (suspendEvent != null) {
+            // the operation is suspended, check if we have a client disconnect
+            if (testConnection(context.getFd())) {
+                doDisconnect(context, id, DISCONNECT_SRC_PEER_DISCONNECT);
+                pending.deleteRow(row);
+                return true;
+            }
+        } else {
+            publishOperation(
+                    (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
+                    context
+            );
+            pending.deleteRow(row);
+            return true;
+        }
+        return false;
+    }
+
+    private void handleSuspendEvent(long id) {
+        final int eventsRow = pendingEvents.binarySearch(id, EVM_ID);
+        if (eventsRow < 0) {
+            LOG.critical().$("internal error: epoll returned unexpected event id [eventId=").$(id).I$();
+            return;
+        }
+
+        final long opId = pendingEvents.get(eventsRow, EVM_OPERATION_ID);
+        final int row = pending.binarySearch(opId, OPM_ID);
+        if (row < 0) {
+            LOG.critical().$("internal error: suspended operation not found [id=").$(opId).$(", eventId=").$(id).I$();
+            return;
+        }
+
+        final int operation = (int) pending.get(row, OPM_OPERATION);
+        final C context = pending.get(row);
+        final SuspendEvent suspendEvent = context.getSuspendEvent();
+        assert suspendEvent != null;
+
+        resumeOperation(context, opId, operation);
+        pendingEvents.deleteRow(eventsRow);
+    }
+
+    private long nextEventId() {
+        return (idSeq++ << 1) + 1;
+    }
+
+    private long nextOpId() {
+        return idSeq++ << 1;
+    }
+
+    private void processIdleConnections(long idleTimestamp) {
         int count = 0;
-        for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < idleTimestamp; i++, count++) {
+            doDisconnect(pending.get(i), pending.get(i, OPM_ID), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
     }
 
     private boolean processRegistrations(long timestamp) {
+        boolean useful = false;
         long cursor;
-        int offset = 0;
         while ((cursor = interestSubSeq.next()) > -1) {
-            IOEvent<C> evt = interestQueue.get(cursor);
-            C context = evt.context;
-            int operation = evt.operation;
+            IOEvent<C> event = interestQueue.get(cursor);
+            C context = event.context;
+            int requestedOperation = event.operation;
             interestSubSeq.done(cursor);
 
-            int fd = (int) context.getFd();
-            final long id = fdid++;
+            useful = true;
+            final long opId = nextOpId();
+            final int fd = context.getFd();
+            int operation = requestedOperation;
+            LOG.debug().$("processing registration [fd=").$(fd)
+                    .$(", op=").$(operation)
+                    .$(", id=").$(opId).I$();
+
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                // if the operation was suspended, we request a read to be able to detect a client disconnect 
+                operation = IOOperation.READ;
+            }
+
+            int opRow = pending.addRow();
+            pending.set(opRow, OPM_TIMESTAMP, timestamp);
+            pending.set(opRow, OPM_FD, fd);
+            pending.set(opRow, OPM_ID, opId);
+            pending.set(opRow, OPM_OPERATION, requestedOperation);
+            pending.set(opRow, context);
+
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
-            LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
-            epoll.setOffset(offset);
-            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT) < 0) {
-                System.out.println("oops2: " + nf.errno());
+            final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
+            if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_MOD, epollOp) < 0) {
+                LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
+                        .$(", err=").$(nf.errno()).I$();
             }
-            offset += EpollAccessor.SIZEOF_EVENT;
 
-            int r = pending.addRow();
-            pending.set(r, M_TIMESTAMP, timestamp);
-            pending.set(r, M_FD, fd);
-            pending.set(r, M_ID, id);
-            pending.set(r, context);
-        }
+            if (suspendEvent != null) {
+                // ok, the operation was suspended, so we need to track the suspend event
+                final long eventId = nextEventId();
+                LOG.debug().$("registering suspend event [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", eventId=").$(eventId)
+                        .$(", suspendedOpId=").$(opId)
+                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
 
-        if (offset > 0) {
-            LOG.debug().$("reg").$();
+                int eventRow = pendingEvents.addRow();
+                pendingEvents.set(eventRow, EVM_ID, eventId);
+                pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
+                pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
+
+                if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
+                    LOG.critical().$("internal error: epoll_ctl add suspend event failure [id=").$(eventId)
+                            .$(", err=").$(nf.errno()).I$();
+                }
+            }
         }
-        return offset > 0;
+        return useful;
+    }
+
+    private void processSuspendEventDeadlines(long timestamp) {
+        int count = 0;
+        for (int i = 0, n = pendingEvents.size(); i < n && pendingEvents.get(i, EVM_DEADLINE) < timestamp; i++, count++) {
+            final long eventId = pendingEvents.get(i, EVM_ID);
+            final long opId = pendingEvents.get(i, EVM_OPERATION_ID);
+            final int pendingRow = pending.binarySearch(opId, OPM_ID);
+            if (pendingRow < 0) {
+                LOG.critical().$("internal error: failed to find operation for expired suspend event [id=").$(opId).I$();
+                continue;
+            }
+            // First, remove the suspend event from the epoll interest list.
+            final C context = pending.get(pendingRow);
+            final int operation = (int) pending.get(pendingRow, OPM_OPERATION);
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            assert suspendEvent != null;
+            if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                        .$(", err=").$(nf.errno()).I$();
+            }
+            // Next, resume the original operation and close the event.
+            resumeOperation(context, opId, operation);
+        }
+        pendingEvents.zapTop(count);
+    }
+
+    private void resumeOperation(C context, long id, int operation) {
+        // to resume a socket operation, we simply re-arm epoll
+        if (
+                epoll.control(
+                        context.getFd(),
+                        id,
+                        EpollAccessor.EPOLL_CTL_MOD,
+                        operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                ) < 0
+        ) {
+            LOG.critical().$("internal error: epoll_ctl operation mod failure [id=").$(id)
+                    .$(", err=").$(nf.errno()).I$();
+        }
+        context.clearSuspendEvent();
+    }
+
+    @Override
+    protected void pendingAdded(int index) {
+        pending.set(index, OPM_ID, nextOpId());
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        this.epoll.listen(serverFd);
     }
 
     @Override
@@ -130,45 +299,38 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
                     accept(timestamp);
-                } else {
-                    // find row in pending for two reasons:
-                    // 1. find payload
-                    // 2. remove row from pending, remaining rows will be timed out
-                    int row = pending.binarySearch(id, M_ID);
-                    if (row < 0) {
-                        LOG.error().$("internal error: epoll returned unexpected id [id=").$(id).$(']').$();
-                        continue;
-                    }
-
-                    publishOperation(
-                            (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
-                            pending.get(row)
-                    );
-                    pending.deleteRow(row);
+                    useful = true;
+                    continue;
+                }
+                if (isEventId(id)) {
+                    handleSuspendEvent(id);
+                    continue;
+                }
+                if (handleSocketOperation(id)) {
+                    useful = true;
                     watermark--;
                 }
             }
+        }
 
-            // process rows over watermark
-            if (watermark < pending.size()) {
-                enqueuePending(watermark);
-            }
-            useful = true;
+        // process rows over watermark (new connections)
+        if (watermark < pending.size()) {
+            enqueuePending(watermark);
+        }
+
+        // process timed out suspend events and resume the original operations
+        if (pendingEvents.size() > 0 && pendingEvents.get(0, EVM_DEADLINE) < timestamp) {
+            processSuspendEventDeadlines(timestamp);
         }
 
         // process timed out connections
-        final long deadline = timestamp - idleConnectionTimeout;
-        if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
-            processIdleConnections(deadline);
+        final long idleTimestamp = timestamp - idleConnectionTimeout;
+        if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < idleTimestamp) {
+            processIdleConnections(idleTimestamp);
             useful = true;
         }
 
         return processRegistrations(timestamp) || useful;
-    }
-
-    @Override
-    protected void registerListenerFd() {
-        this.epoll.listen(serverFd);
     }
 
     @Override

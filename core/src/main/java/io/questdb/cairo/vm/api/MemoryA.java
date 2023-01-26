@@ -26,6 +26,7 @@ package io.questdb.cairo.vm.api;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -62,13 +63,9 @@ public interface MemoryA extends Closeable {
 
     void putLong(long value);
 
-    default void putLong128LittleEndian(long hi, long lo) {
-        putLongLong(lo, hi);
-    }
-
-    // two longs are written back to back
-    void putLongLong(long l0, long l1);
-
+    // two longs are written back to back: little endian
+    void putLong128(long lo, long hi);
+    
     void putLong256(long l0, long l1, long l2, long l3);
 
     void putLong256(Long256 value);
@@ -88,6 +85,8 @@ public interface MemoryA extends Closeable {
     long putStr(char value);
 
     long putStr(CharSequence value, int pos, int len);
+
+    long putStrUtf8AsUtf16(DirectByteCharSequence value, boolean hasNonAsciiChars);
 
     void skip(long bytes);
 

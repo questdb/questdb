@@ -38,16 +38,16 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
+    private final Cursor cursor = new Cursor();
     private final MemoryMARW keyMem = Vm.getMARWInstance();
     private final MemoryMARW valueMem = Vm.getMARWInstance();
-    private final Cursor cursor = new Cursor();
     private int blockCapacity;
     private int blockValueCountMod;
-    private long valueMemSize = -1;
     private int keyCount = -1;
-    private long seekValueCount;
     private long seekValueBlockOffset;
+    private long seekValueCount;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
+    private long valueMemSize = -1;
 
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
         of(
@@ -166,15 +166,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return keyMem.getLong(38L);
     }
 
-    public void setMaxValue(long maxValue) {
-        keyMem.putLong(38L, maxValue);
-    }
-
     public boolean isOpen() {
         return keyMem.isOpen();
     }
 
-    final public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int indexBlockCapacity) {
+    public final void of(CairoConfiguration configuration, int keyFd, int valueFd, boolean init, int indexBlockCapacity) {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
         boolean kFdUnassigned = true;
@@ -252,7 +248,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
-    final public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
+    public final void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
         close();
         final int plen = path.length();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -359,6 +355,10 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         setMaxValue(maxValue);
     }
 
+    public void setMaxValue(long maxValue) {
+        keyMem.putLong(38L, maxValue);
+    }
+
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
         long newValueBlockOffset = allocateValueBlockAndStore(value);
 
@@ -449,21 +449,30 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return this.keyCount * BitmapIndexUtils.KEY_ENTRY_SIZE + BitmapIndexUtils.KEY_FILE_RESERVED;
     }
 
-    void rollbackConditionally(long row) {
-        final long currentMaxRow;
-        if (row > 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow > row)) {
-            rollbackValues(row - 1);
-        }
-    }
-
     private void seek(long count, long offset) {
         this.seekValueCount = count;
         this.seekValueBlockOffset = offset;
     }
 
+    private void updateValueMemSize() {
+        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
+        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+    }
+
     @TestOnly
     long getValueMemSize() {
         return valueMemSize;
+    }
+
+    void rollbackConditionally(long row) {
+        final long currentMaxRow;
+        if (row > 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow > row)) {
+            rollbackValues(row - 1);
+        }
     }
 
     void truncate() {
@@ -482,15 +491,6 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
         Unsafe.getUnsafe().storeFence();
         keyMem.putInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
-    }
-
-    private void updateValueMemSize() {
-        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }

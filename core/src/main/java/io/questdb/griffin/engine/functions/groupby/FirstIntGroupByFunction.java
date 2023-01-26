@@ -64,14 +64,19 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+    public String getName() {
+        return "first";
     }
 
     @Override
-    public void setNull(MapValue mapValue) {
-        setInt(mapValue, Numbers.INT_NaN);
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT);
     }
 
     @Override
@@ -80,7 +85,7 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public void setNull(MapValue mapValue) {
+        setInt(mapValue, Numbers.INT_NaN);
     }
 }

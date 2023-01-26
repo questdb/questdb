@@ -30,9 +30,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -77,26 +77,6 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         return new Func(symFunc, chrFunc);
     }
 
-    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final char constant;
-
-        public ConstCheckFunc(Function arg, char constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
-        }
-    }
-
     private static class ConstCheckColumnFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final char constant;
@@ -124,30 +104,54 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
             assert symbolTable != null;
             valueIndex = symbolTable.keyOf(SingleCharCharSequence.get(constant));
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").val(constant).val('\'');
+        }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function symFunc;
-        private final Function chrFunc;
+    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final char constant;
 
-        public Func(Function symFunc, Function chrFunc) {
-            this.symFunc = symFunc;
-            this.chrFunc = chrFunc;
+        public ConstCheckFunc(Function arg, char constant) {
+            this.arg = arg;
+            this.constant = constant;
         }
 
         @Override
-        public Function getLeft() {
-            return symFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return chrFunc;
+        public Function getArg() {
+            return arg;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
+            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").val(constant).val('\'');
+        }
+    }
+
+    private static class Func extends AbstractEqBinaryFunction {
+        public Func(Function symFunc, Function chrFunc) {
+            super(symFunc, chrFunc);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(left.getSymbol(rec), right.getChar(rec));
         }
     }
 }

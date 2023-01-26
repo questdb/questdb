@@ -38,29 +38,29 @@ import java.io.Closeable;
 
 public class HttpMultipartContentParser implements Closeable, Mutable {
 
-    private static final int START_PARSING = 1;
-    private static final int START_BOUNDARY = 2;
-    private static final int PARTIAL_START_BOUNDARY = 3;
-    private static final int HEADERS = 4;
-    private static final int PARTIAL_HEADERS = 5;
     private static final int BODY = 6;
     private static final int BODY_BROKEN = 8;
-    private static final int POTENTIAL_BOUNDARY = 9;
-    private static final int PRE_HEADERS = 10;
-    private static final int START_PRE_HEADERS = 11;
-    private static final int START_HEADERS = 12;
-    private static final int DONE = 13;
+    private static final int BOUNDARY_INCOMPLETE = 3;
     private static final int BOUNDARY_MATCH = 1;
     private static final int BOUNDARY_NO_MATCH = 2;
-    private static final int BOUNDARY_INCOMPLETE = 3;
+    private static final int DONE = 13;
+    private static final int HEADERS = 4;
+    private static final int PARTIAL_HEADERS = 5;
+    private static final int PARTIAL_START_BOUNDARY = 3;
+    private static final int POTENTIAL_BOUNDARY = 9;
+    private static final int PRE_HEADERS = 10;
+    private static final int START_BOUNDARY = 2;
+    private static final int START_HEADERS = 12;
+    private static final int START_PARSING = 1;
+    private static final int START_PRE_HEADERS = 11;
     private final HttpHeaderParser headerParser;
     private DirectByteCharSequence boundary;
     private byte boundaryByte;
     private int boundaryLen;
     private int boundaryPtr;
     private int consumedBoundaryLen;
-    private int state;
     private long resumePtr;
+    private int state;
 
     public HttpMultipartContentParser(HttpHeaderParser headerParser) {
         this.headerParser = headerParser;
@@ -71,8 +71,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     public final void clear() {
         this.state = START_PARSING;
         this.boundaryPtr = 0;
+        this.boundaryByte = 0;
+        this.boundary = null;
         this.consumedBoundaryLen = 0;
-        headerParser.clear();
+        this.headerParser.clear();
     }
 
     @Override
@@ -85,7 +87,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     }
 
     /**
-     * Setup multi-part parser with boundary. Boundary value retrieved from HTTP header must be
+     * Setup multipart parser with boundary. Boundary value retrieved from HTTP header must be
      * prefixed with '\r\n--'.
      *
      * @param boundary boundary value
@@ -96,8 +98,11 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         this.boundaryByte = (byte) boundary.charAt(0);
     }
 
-    public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public boolean parse(
+            long lo,
+            long hi,
+            HttpMultipartContentListener listener
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long _lo = lo;
         long ptr = lo;
         while (ptr < hi) {
@@ -211,7 +216,6 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     // DONE
                     return true;
             }
-
         }
 
         if (state == BODY) {
@@ -219,42 +223,6 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         }
 
         return false;
-    }
-
-    private long onChunkWithRetryHandle(
-            HttpMultipartContentListener listener,
-            long lo,
-            long hi,
-            int state,
-            long resumePtr,
-            boolean handleIncomplete
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
-        RetryOperationException needsRetry = null;
-        try {
-            listener.onChunk(lo, hi);
-        } catch (RetryOperationException e) {
-            // Request re-try
-            needsRetry = e;
-        } catch (NotEnoughLinesException e) {
-            if (handleIncomplete) {
-                this.resumePtr = lo;
-                throw TooFewBytesReceivedException.INSTANCE;
-            } else {
-                throw e;
-            }
-        }
-
-        // Roll to next state
-        this.state = state;
-
-        // And save point to continue
-        // even if RetryOperationException happened
-        this.resumePtr = resumePtr;
-
-        // If retry exception happened, rethrow after setting state and resume point.
-        if (needsRetry != null) throw needsRetry;
-
-        return resumePtr;
     }
 
     private int matchBoundary(long lo, long hi) {
@@ -275,5 +243,40 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
 
         this.consumedBoundaryLen = (int) (lo - start);
         return BOUNDARY_MATCH;
+    }
+
+    private long onChunkWithRetryHandle(
+            HttpMultipartContentListener listener,
+            long lo,
+            long hi,
+            int state,
+            long resumePtr,
+            boolean handleIncomplete
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+        RetryOperationException needsRetry = null;
+        try {
+            listener.onChunk(lo, hi);
+        } catch (RetryOperationException e) {
+            // Request re-try.
+            needsRetry = e;
+        } catch (NotEnoughLinesException e) {
+            if (handleIncomplete) {
+                this.resumePtr = lo;
+                throw TooFewBytesReceivedException.INSTANCE;
+            } else {
+                throw e;
+            }
+        }
+
+        // Roll to the next state.
+        this.state = state;
+
+        // And save point to continue even if RetryOperationException happened.
+        this.resumePtr = resumePtr;
+
+        // If retry exception happened, rethrow after setting state and resume point.
+        if (needsRetry != null) throw needsRetry;
+
+        return resumePtr;
     }
 }

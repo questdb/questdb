@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -64,18 +62,12 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    private static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -90,6 +82,14 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final char value = arg.getChar(rec);
+            if (value != 0) {
+                sink.put(value);
+            }
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final char value = arg.getChar(rec);
             if (value == 0) {
@@ -98,14 +98,6 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final char value = arg.getChar(rec);
-            if (value != 0) {
-                sink.put(value);
-            }
         }
     }
 }

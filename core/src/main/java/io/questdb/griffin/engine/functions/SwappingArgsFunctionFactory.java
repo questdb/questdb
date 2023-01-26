@@ -36,8 +36,8 @@ import io.questdb.std.Transient;
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
 
 public class SwappingArgsFunctionFactory implements FunctionFactory {
-    private final String signature;
     private final FunctionFactory delegate;
+    private final String signature;
 
     public SwappingArgsFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
         this.signature = replaceSignatureNameAndSwapArgs(name, delegate.getSignature());

@@ -25,17 +25,18 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public interface Function extends Closeable, StatefulAtom, Sinkable {
+public interface Function extends Closeable, StatefulAtom, Plannable {
 
     static void init(
             ObjList<? extends Function> args,
@@ -95,18 +96,25 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     long getLong(Record rec);
 
+    long getLong128Hi(Record rec);
+
+    long getLong128Lo(Record rec);
+
     void getLong256(Record rec, CharSink sink);
 
     Long256 getLong256A(Record rec);
 
     Long256 getLong256B(Record rec);
 
-    long getLong128Hi(Record rec);
-
-    long getLong128Lo(Record rec);
-
     default RecordMetadata getMetadata() {
         return null;
+    }
+
+    /**
+     * Returns function name or symbol, e.g. concat or + .
+     */
+    default String getName() {
+        return getClass().getName();
     }
 
     // function returns a record of values
@@ -150,11 +158,18 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
         return false;
     }
 
+    //used in generic toSink implementations
+    default boolean isOperator() {
+        return false;
+    }
+
     /**
      * Returns true if the function and all of its children functions are thread-safe
      * and, thus, can be called concurrently, false - otherwise. Used as a hint for
      * parallel SQL filters runtime, thus this method makes sense only for functions
      * that are allowed in a filter (WHERE clause).
+     *
+     * @return true if the function and all of its children functions are thread-safe
      */
     default boolean isReadThreadSafe() {
         return false;
@@ -174,10 +189,11 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
         return true;
     }
 
-    default void toTop() {
+    @Override
+    default void toPlan(PlanSink sink) {
+        sink.val(getName()).val("()");
     }
 
-    default void toSink(CharSink sink) {
-        sink.put(getClass().getName());
+    default void toTop() {
     }
 }

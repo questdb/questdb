@@ -32,22 +32,29 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 import java.lang.ThreadLocal;
 
 public interface CairoConfiguration {
 
-    long O_NONE = 0;
     long O_ASYNC = 0x40;
-    long O_SYNC = 0x80;
     long O_DIRECT = 0x4000;
-
+    long O_NONE = 0;
+    long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
 
+    default boolean disableColumnPurgeJob() {
+        return false;
+    }
+
     boolean enableTestFactories();
+
+    boolean getAllowTableRegistrySharedWrite();
 
     int getAnalyticColumnPoolCapacity();
 
@@ -89,14 +96,6 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    /**
-     * Default commit lag in microseconds for new tables. This value
-     * can be overridden with 'create table' statement.
-     *
-     * @return commit lag in microseconds
-     */
-    long getCommitLag();
-
     int getCommitMode();
 
     CharSequence getConfRoot(); // same as root/../conf
@@ -129,6 +128,8 @@ public interface CairoConfiguration {
 
     int getDoubleToStrCastScale();
 
+    int getExplainPoolCapacity();
+
     int getFileOperationRetryCount();
 
     FilesFacade getFilesFacade();
@@ -146,6 +147,8 @@ public interface CairoConfiguration {
     long getIdleCheckInterval();
 
     long getInactiveReaderTTL();
+
+    long getInactiveWalWriterTTL();
 
     long getInactiveWriterTTL();
 
@@ -165,9 +168,15 @@ public interface CairoConfiguration {
 
     int getMaxUncommittedRows();
 
-    MicrosecondClock getMicrosecondClock();
+    int getMetadataPoolCapacity();
 
-    MillisecondClock getMillisecondClock();
+    default MicrosecondClock getMicrosecondClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
+
+    default MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
 
     long getMiscAppendPageSize();
 
@@ -182,6 +191,24 @@ public interface CairoConfiguration {
     int getO3ColumnMemorySize();
 
     int getO3CopyQueueCapacity();
+
+    default double getO3LagDecreaseFactor() {
+        return 0.5;
+    }
+
+    default double getO3LagIncreaseFactor() {
+        return 1.5;
+    }
+
+    /**
+     * Default commit lag in microseconds for new tables. This value
+     * can be overridden with 'create table' statement.
+     *
+     * @return upper bound of "commit lag" in micros
+     */
+    long getO3MaxLag();
+
+    long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
 
@@ -224,8 +251,6 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
-
-    int getStrFunctionMaxBufferLength();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -350,6 +375,8 @@ public interface CairoConfiguration {
 
     int getSqlSmallMapKeyCapacity();
 
+    int getSqlSmallMapPageSize();
+
     int getSqlSortKeyMaxPages();
 
     long getSqlSortKeyPageSize();
@@ -362,7 +389,11 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getStrFunctionMaxBufferLength();
+
     CharSequence getSystemTableNamePrefix();
+
+    long getTableRegistryAutoReloadFrequency();
 
     TelemetryConfiguration getTelemetryConfiguration();
 
@@ -372,7 +403,17 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    boolean getWallEnabledDefault();
+    int getWalCommitSquashRowLimit();
+
+    boolean getWalEnabledDefault();
+
+    long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
+
+    long getWalSegmentRolloverRowCount();
+
+    int getWalTxnNotificationQueueCapacity();
 
     int getWithClauseModelPoolCapacity();
 
@@ -396,6 +437,8 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean isReadOnlyInstance();
+
     /**
      * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
      *
@@ -408,4 +451,16 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isWalSupported();
+
+    /**
+     * This is a flag to enable/disable making table directory names different to table names for non-WAL tables.
+     * When it is enabled directory name of table TRADE becomes TRADE~, so that ~ sign is added at the end.
+     * The flag is enabled in tests and disabled in released code for backward compatibility. Tests verify that
+     * we do not rely on the fact that table directory name is the same as table name.
+     *
+     * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
+     */
+    boolean mangleTableDirNames();
 }

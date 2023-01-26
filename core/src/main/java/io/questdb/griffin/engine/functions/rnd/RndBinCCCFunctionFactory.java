@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinFunction;
@@ -75,11 +76,64 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         return new FixLenFunction(lo, nullRate);
     }
 
-    private static final class VarLenFunction extends BinFunction implements Function {
-        private final Sequence sequence = new Sequence();
-        private final long lo;
-        private final long range;
+    private static final class FixLenFunction extends BinFunction implements Function {
         private final int nullRate;
+        private final Sequence sequence = new Sequence();
+
+        public FixLenFunction(long len, int nullRate) {
+            this.nullRate = nullRate + 1;
+            this.sequence.len = len;
+        }
+
+        @Override
+        public BinarySequence getBin(Record rec) {
+            if ((sequence.rnd.nextPositiveInt() % nullRate) == 1) {
+                return null;
+            }
+            return sequence;
+        }
+
+        @Override
+        public long getBinLen(Record rec) {
+            return sequence.len;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.sequence.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_bin(").val(this.sequence.len).val(',').val(this.sequence.len).val(',').val(nullRate - 1).val(')');
+        }
+    }
+
+    private static class Sequence implements BinarySequence {
+        private long len;
+        private Rnd rnd;
+
+        @Override
+        public byte byteAt(long index) {
+            return rnd.nextByte();
+        }
+
+        @Override
+        public long length() {
+            return len;
+        }
+    }
+
+    private static final class VarLenFunction extends BinFunction implements Function {
+        private final long lo;
+        private final int nullRate;
+        private final long range;
+        private final Sequence sequence = new Sequence();
 
         public VarLenFunction(long lo, long hi, int nullRate) {
             this.lo = lo;
@@ -102,36 +156,8 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.sequence.rnd = executionContext.getRandom();
-        }
-    }
-
-    private static final class FixLenFunction extends BinFunction implements Function {
-        private final Sequence sequence = new Sequence();
-        private final int nullRate;
-
-        public FixLenFunction(long len, int nullRate) {
-            this.nullRate = nullRate + 1;
-            this.sequence.len = len;
-        }
-
-        @Override
-        public BinarySequence getBin(Record rec) {
-            if ((sequence.rnd.nextPositiveInt() % nullRate) == 1) {
-                return null;
-            }
-            return sequence;
-        }
-
-        @Override
-        public long getBinLen(Record rec) {
-            return sequence.len;
         }
 
         @Override
@@ -140,23 +166,8 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.sequence.rnd = executionContext.getRandom();
-        }
-    }
-
-    private static class Sequence implements BinarySequence {
-        private Rnd rnd;
-        private long len;
-
-        @Override
-        public byte byteAt(long index) {
-            return rnd.nextByte();
-        }
-
-        @Override
-        public long length() {
-            return len;
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_bin(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate - 1).val(')');
         }
     }
 }

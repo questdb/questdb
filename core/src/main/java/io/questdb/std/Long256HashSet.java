@@ -32,9 +32,9 @@ public class Long256HashSet implements Mutable {
     protected static final long noEntryKey = -1;
     private static final int MIN_INITIAL_CAPACITY = 16;
     protected final double loadFactor;
-    protected int mask;
-    protected int free;
     protected int capacity;
+    protected int free;
+    protected int mask;
     private long[] keys;
 
     public Long256HashSet() {

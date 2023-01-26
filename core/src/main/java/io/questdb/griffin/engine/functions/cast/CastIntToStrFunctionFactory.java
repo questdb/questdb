@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -53,18 +51,12 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         return new CastIntToStrFunction(args.getQuick(0));
     }
 
-    public static class CastIntToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastIntToStrFunction extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public CastIntToStrFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -79,6 +71,15 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final int value = arg.getInt(rec);
+            if (value == Numbers.INT_NaN) {
+                return;
+            }
+            sink.put(value);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final int value = arg.getInt(rec);
             if (value == Numbers.INT_NaN) {
@@ -87,15 +88,6 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
-                return;
-            }
-            sink.put(value);
         }
     }
 }

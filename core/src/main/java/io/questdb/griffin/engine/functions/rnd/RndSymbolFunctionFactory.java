@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -116,13 +117,18 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return strMem.getStr(symbolKey);
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_symbol(").val(count).val(',').val(strMem.getLo()).val(',').val(strMem.getHi()).val(',').val(nullRate - 1).val(')');
         }
 
         @Override
         public CharSequence valueBOf(int symbolKey) {
             return valueOf(symbolKey);
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return strMem.getStr(symbolKey);
         }
 
         private int next() {

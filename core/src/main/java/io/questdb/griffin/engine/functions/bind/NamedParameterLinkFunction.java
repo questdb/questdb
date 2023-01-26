@@ -27,16 +27,18 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
 public class NamedParameterLinkFunction implements ScalarFunction {
-    private final String variableName;
     private final int type;
+    private final String variableName;
     private Function base;
 
     public NamedParameterLinkFunction(String variableName, int type) {
@@ -90,6 +92,26 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        return getBase().getGeoByte(rec);
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        return getBase().getGeoInt(rec);
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return getBase().getGeoLong(rec);
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        return getBase().getGeoShort(rec);
+    }
+
+    @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
     }
@@ -97,6 +119,16 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+        return getBase().getLong128Hi(rec);
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        return getBase().getLong128Lo(rec);
     }
 
     @Override
@@ -160,28 +192,22 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        return getBase().getGeoByte(rec);
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return getBase().getGeoShort(rec);
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return getBase().getGeoInt(rec);
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return getBase().getGeoLong(rec);
-    }
-
-    @Override
     public int getType() {
         return type;
+    }
+
+    public String getVariableName() {
+        return variableName;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        base = executionContext.getBindVariableService().getFunction(variableName);
+        if (base == null) {
+            throw SqlException.position(0).put("undefined bind variable: ").put(variableName);
+        }
+        assert base.getType() == type;
+        base.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -197,18 +223,9 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         }
     }
 
-    public String getVariableName() {
-        return variableName;
-    }
-
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        base = executionContext.getBindVariableService().getFunction(variableName);
-        if (base == null) {
-            throw SqlException.position(0).put("undefined bind variable: ").put(variableName);
-        }
-        assert base.getType() == type;
-        base.init(symbolTableSource, executionContext);
+    public void toPlan(PlanSink sink) {
+        sink.val(variableName).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 
     private Function getBase() {

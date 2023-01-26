@@ -24,39 +24,44 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.Nullable;
 
-public interface AsyncWriterCommand {
-    long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
+import java.io.Closeable;
+
+public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     AsyncWriterCommand deserialize(TableWriterTask task);
 
+    int getCmdType();
+
     String getCommandName();
-
-    int getTableId();
-
-    String getTableName();
-
-    int getTableNamePosition();
-
-    long getTableVersion();
 
     long getCorrelationId();
 
-    void startAsync();
+    int getTableId();
+
+    int getTableNamePosition();
+
+    @Nullable TableToken getTableToken();
+
+    long getTableVersion();
+
+    boolean isStructural();
 
     void serialize(TableWriterTask task);
 
     void setCommandCorrelationId(long correlationId);
 
+    void startAsync();
+
     interface Error {
+        int CAIRO_ERROR = -3;
         int OK = 0;
         int READER_OUT_OF_DATE = -1;
         int STRUCTURE_CHANGE_NOT_ALLOWED = -2;
-        int SQL_OR_CAIRO_ERROR = -3;
         int UNEXPECTED_ERROR = -4;
     }
 }

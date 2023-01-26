@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
@@ -38,10 +38,11 @@ import io.questdb.std.ObjList;
 
 public class PgDatabaseFunctionFactory implements FunctionFactory {
     private final static RecordMetadata METADATA;
+    private final static String SIGNATURE = "pg_catalog.pg_database()";
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_database()";
+        return SIGNATURE;
     }
 
     @Override
@@ -61,83 +62,18 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return new CursorFunction(new PgDatabaseRecordCursorFactory());
-    }
-
-    private static class PgDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
-        private final PgDatabaseRecordCursor cursor = new PgDatabaseRecordCursor();
-
-        public PgDatabaseRecordCursorFactory() {
-            super(METADATA);
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-            cursor.toTop();
-            return cursor;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return true;
-        }
-    }
-
-    private static class PgDatabaseRecordCursor implements RecordCursor {
-        private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
-        private boolean hasNext = true;
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return RECORD;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (hasNext) {
-                hasNext = false;
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return RECORD;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-        }
-
-        @Override
-        public void toTop() {
-            hasNext = true;
-        }
-
-        @Override
-        public long size() {
-            return 1;
-        }
     }
 
     private static class PgDatabaseRecord implements Record {
         @Override
         public boolean getBool(int col) {
-            if (col == 6) {
-                // datistemplate
-                // If true, then this database can be cloned by any user with CREATEDB privileges; if false, then only superusers or the owner of the database can clone it.
-                return false;
-            } else {
-                // datallowconn
-                // If false then no one can connect to this database. This is used to protect the template0 database from being altered.
-                return true;
-            }
+            // datistemplate
+            // If true, then this database can be cloned by any user with CREATEDB privileges; if false, then only superusers or the owner of the database can clone it.
+            // datallowconn
+            // If false then no one can connect to this database. This is used to protect the template0 database from being altered.
+            return col != 6;
         }
 
         @Override
@@ -203,22 +139,88 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class PgDatabaseRecordCursor implements RecordCursor {
+        private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
+        private boolean hasNext = true;
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return RECORD;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return RECORD;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (hasNext) {
+                hasNext = false;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
+        public void toTop() {
+            hasNext = true;
+        }
+    }
+
+    private static class PgDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
+        private final PgDatabaseRecordCursor cursor = new PgDatabaseRecordCursor();
+
+        public PgDatabaseRecordCursorFactory() {
+            super(METADATA);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.toTop();
+            return cursor;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(SIGNATURE);
+        }
+    }
+
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("datname", 2, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("datdba", 3, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("encoding", 4, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("datcollate", 5, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("datctype", 6, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("datistemplate", 7, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("datallowconn", 8, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("datconnlimit", 9, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("datlastsysoid", 10, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("datfrozenxid", 11, ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("datminmxid", 12, ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("dattablespace", 13, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("datacl", 14, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("datname", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("datdba", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("encoding", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("datcollate", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("datctype", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("datistemplate", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("datallowconn", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("datconnlimit", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("datlastsysoid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("datfrozenxid", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("datminmxid", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("dattablespace", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("datacl", ColumnType.STRING));
         METADATA = metadata;
     }
 }

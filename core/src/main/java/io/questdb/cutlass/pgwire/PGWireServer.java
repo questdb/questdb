@@ -39,6 +39,7 @@ import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -82,24 +83,34 @@ public class PGWireServer implements Closeable {
                     try {
                         jobContext.handleClientOperation(context, operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
+                        return true;
                     } catch (PeerIsSlowToWriteException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                    } catch (QueryPausedException e) {
+                        context.setSuspendEvent(e.getEvent());
+                        context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException e) {
-                        context.getDispatcher().disconnect(context, operation == IOOperation.READ ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                        context.getDispatcher().disconnect(
+                                context,
+                                operation == IOOperation.READ
+                                        ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                                        : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
+                        );
                     } catch (BadProtocolException e) {
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                    } catch (Throwable e) { //must remain last in catch list!
+                    } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
                         metrics.health().incrementUnhandledErrors();
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
+                    return false;
                 };
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     long seq = queryCacheEventSubSeq.next();
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.
@@ -122,11 +133,6 @@ public class PGWireServer implements Closeable {
         }
     }
 
-    @TestOnly
-    public WorkerPool getWorkerPool() {
-        return workerPool;
-    }
-
     @Override
     public void close() {
         Misc.free(dispatcher);
@@ -134,6 +140,11 @@ public class PGWireServer implements Closeable {
 
     public int getPort() {
         return dispatcher.getPort();
+    }
+
+    @TestOnly
+    public WorkerPool getWorkerPool() {
+        return workerPool;
     }
 
     public static class PGConnectionContextFactory extends MutableIOContextFactory<PGConnectionContext> {

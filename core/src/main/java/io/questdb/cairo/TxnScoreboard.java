@@ -35,10 +35,10 @@ import java.io.Closeable;
 public class TxnScoreboard implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
+    private final FilesFacade ff;
     private final int pow2EntryCount;
     private final long size;
-    private final FilesFacade ff;
-    private long fd = -1;
+    private int fd = -1;
     private long mem;
 
     public TxnScoreboard(FilesFacade ff, int entryCount) {
@@ -78,8 +78,8 @@ public class TxnScoreboard implements Closeable, Mutable {
             mem = 0;
         }
 
-        if (fd != -1) {
-            ff.close(fd);
+        if (ff.close(fd)) {
+            LOG.debug().$("closed [fd=").$(fd).I$();
             fd = -1;
         }
     }
@@ -150,6 +150,38 @@ public class TxnScoreboard implements Closeable, Mutable {
         return released;
     }
 
+    private static long acquireTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).$(']').$();
+        return acquireTxn0(pTxnScoreboard, txn);
+    }
+
+    private native static long acquireTxn0(long pTxnScoreboard, long txn);
+
+    /**
+     * Reverts toInternalTxn() value.
+     */
+    private static long fromInternalTxn(long txn) {
+        return txn - 1;
+    }
+
+    private static native long getCount(long pTxnScoreboard, long txn);
+
+    private static native long getMin(long pTxnScoreboard);
+
+    private static native void init(long pTxnScoreboard, int entryCount);
+
+    private native static boolean isRangeAvailable0(long pTxnScoreboard, long txnFrom, long txnTo);
+
+    private static long releaseTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        final long internalTxn = toInternalTxn(txn);
+        return releaseTxn0(pTxnScoreboard, internalTxn);
+    }
+
+    private native static long releaseTxn0(long pTxnScoreboard, long txn);
+
     /**
      * Table readers use 0 txn as the empty table transaction number.
      * The scoreboard only supports txn > 0, so we have to patch the value
@@ -159,40 +191,8 @@ public class TxnScoreboard implements Closeable, Mutable {
         return txn + 1;
     }
 
-    /**
-     * Reverts toInternalTxn() value.
-     */
-    private static long fromInternalTxn(long txn) {
-        return txn - 1;
-    }
-
-    private static long acquireTxn(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).$(']').$();
-        return acquireTxn0(pTxnScoreboard, txn);
-    }
-
-    private static long releaseTxn(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        final long internalTxn = toInternalTxn(txn);
-        return releaseTxn0(pTxnScoreboard, internalTxn);
-    }
-
-    private native static long acquireTxn0(long pTxnScoreboard, long txn);
-
-    private native static long releaseTxn0(long pTxnScoreboard, long txn);
-
-    private native static boolean isRangeAvailable0(long pTxnScoreboard, long txnFrom, long txnTo);
-
-    private static native long getCount(long pTxnScoreboard, long txn);
-
-    private static native long getMin(long pTxnScoreboard);
-
-    private static native void init(long pTxnScoreboard, int entryCount);
-
-    static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
-        final long fd = ff.openCleanRW(path, size);
+    static int openCleanRW(FilesFacade ff, LPSZ path, long size) {
+        final int fd = ff.openCleanRW(path, size);
         if (fd > -1) {
             LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;

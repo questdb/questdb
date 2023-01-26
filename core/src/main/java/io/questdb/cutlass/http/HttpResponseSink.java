@@ -41,40 +41,28 @@ import java.io.Closeable;
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
-
-    static {
-        httpStatusMap.put(200, "OK");
-        httpStatusMap.put(206, "Partial content");
-        httpStatusMap.put(304, "Not Modified");
-        httpStatusMap.put(400, "Bad request");
-        httpStatusMap.put(404, "Not Found");
-        httpStatusMap.put(416, "Request range not satisfiable");
-        httpStatusMap.put(431, "Headers too large");
-        httpStatusMap.put(500, "Internal server error");
-    }
-
     private final ChunkBuffer buffer;
+    private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
     private final ChunkBuffer compressOutBuffer;
+    private final boolean connectionCloseHeader;
+    private final boolean dumpNetworkTraffic;
     private final HttpResponseHeaderImpl headerImpl;
+    private final String httpVersion;
+    private final NetworkFacade nf;
+    private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
     private final SimpleResponseImpl simple = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
-    private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
-    private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
-    private final NetworkFacade nf;
-    private final boolean dumpNetworkTraffic;
-    private final String httpVersion;
-    private long fd;
-    private long z_streamp = 0;
-    private boolean deflateBeforeSend = false;
-    private int crc = 0;
-    private long total = 0;
-    private long totalBytesSent = 0;
-    private final boolean connectionCloseHeader;
-    private boolean headersSent;
     private boolean chunkedRequestDone;
     private boolean compressedHeaderDone;
     private boolean compressedOutputReady;
     private boolean compressionComplete;
+    private int crc = 0;
+    private boolean deflateBeforeSend = false;
+    private int fd;
+    private boolean headersSent;
+    private long total = 0;
+    private long totalBytesSent = 0;
+    private long z_streamp = 0;
 
     public HttpResponseSink(HttpContextConfiguration configuration) {
         final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -85,10 +73,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
-    }
-
-    public HttpChunkedResponseSocket getChunkedSocket() {
-        return chunkedResponse;
     }
 
     @Override
@@ -111,12 +95,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         fd = -1;
     }
 
-    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
-        this.deflateBeforeSend = deflateBeforeSend;
-        if (z_streamp == 0 && deflateBeforeSend) {
-            z_streamp = Zip.deflateInit();
-            compressOutBuffer.reopen();
-        }
+    public HttpChunkedResponseSocket getChunkedSocket() {
+        return chunkedResponse;
     }
 
     public int getCode() {
@@ -147,6 +127,14 @@ public class HttpResponseSink implements Closeable, Mutable {
             } else {
                 break;
             }
+        }
+    }
+
+    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
+        this.deflateBeforeSend = deflateBeforeSend;
+        if (z_streamp == 0 && deflateBeforeSend) {
+            z_streamp = Zip.deflateInit();
+            compressOutBuffer.reopen();
         }
     }
 
@@ -224,23 +212,15 @@ public class HttpResponseSink implements Closeable, Mutable {
         compressOutBuffer.prepareToReadFromBuffer(true, finished);
     }
 
+    private void dumpBuffer(long buffer, int size) {
+        if (dumpNetworkTraffic && size > 0) {
+            StdoutSink.INSTANCE.put('<');
+            Net.dump(buffer, size);
+        }
+    }
+
     private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
         sendBuffer(buffer);
-    }
-
-    HttpResponseHeader getHeader() {
-        return headerImpl;
-    }
-
-    HttpRawSocket getRawSocket() {
-        return rawSocket;
-    }
-
-    void of(long fd) {
-        this.fd = fd;
-        if (fd > -1) {
-            this.buffer.reopen();
-        }
     }
 
     private void prepareHeaderSink() {
@@ -252,8 +232,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         if (z_streamp != 0) {
             Zip.deflateReset(z_streamp);
             compressOutBuffer.clear();
-            this.crc = 0;
-            this.total = 0;
+            crc = 0;
+            total = 0;
             compressedHeaderDone = false;
             compressedOutputReady = false;
             compressionComplete = false;
@@ -286,15 +266,228 @@ public class HttpResponseSink implements Closeable, Mutable {
         sendBuf.clearAndPrepareToWriteToBuffer();
     }
 
-    private void dumpBuffer(long buffer, int size) {
-        if (dumpNetworkTraffic && size > 0) {
-            StdoutSink.INSTANCE.put('<');
-            Net.dump(buffer, size);
-        }
+    HttpResponseHeader getHeader() {
+        return headerImpl;
+    }
+
+    HttpRawSocket getRawSocket() {
+        return rawSocket;
     }
 
     long getTotalBytesSent() {
         return totalBytesSent;
+    }
+
+    void of(int fd) {
+        this.fd = fd;
+        if (fd > -1) {
+            this.buffer.reopen();
+        }
+    }
+
+    private class ChunkBuffer extends AbstractCharSink implements Closeable, Reopenable {
+        private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
+        private static final int MAX_CHUNK_HEADER_SIZE = 12;
+        private final long bufSize;
+        private long _rptr;
+        private long _wptr;
+        private long bufStart;
+        private long bufStartOfData;
+
+        private ChunkBuffer(int bufSize) {
+            this.bufSize = bufSize;
+        }
+
+        @Override
+        public void close() {
+            if (bufStart != 0) {
+                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                bufStart = bufStartOfData = _wptr = _rptr = 0;
+            }
+        }
+
+        @Override
+        public CharSink put(CharSequence cs) {
+            int len = cs.length();
+            Chars.asciiStrCpy(cs, len, getWriteAddress(len));
+            onWrite(len);
+            return this;
+        }
+
+        @Override
+        public CharSink put(char c) {
+            Unsafe.getUnsafe().putByte(getWriteAddress(1), (byte) c);
+            onWrite(1);
+            return this;
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            Chars.asciiCopyTo(chars, start, len, getWriteAddress(len));
+            onWrite(len);
+            return this;
+        }
+
+        @Override
+        public CharSink put(CharSequence cs, int lo, int hi) {
+            int len = hi - lo;
+            Chars.asciiStrCpy(cs, lo, len, getWriteAddress(len));
+            onWrite(len);
+            return this;
+        }
+
+        @Override
+        public void reopen() {
+            if (bufStart == 0) {
+                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
+                clear();
+            }
+        }
+
+        void clear() {
+            _wptr = _rptr = bufStartOfData;
+        }
+
+        void clearAndPrepareToWriteToBuffer() {
+            _rptr = _wptr = bufStartOfData;
+        }
+
+        long getReadAddress() {
+            assert _rptr != 0;
+            return _rptr;
+        }
+
+        long getReadNAvailable() {
+            return _wptr - _rptr;
+        }
+
+        long getWriteAddress(int len) {
+            assert _wptr != 0;
+            if (getWriteNAvailable() >= len) {
+                return _wptr;
+            }
+            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+        }
+
+        long getWriteNAvailable() {
+            return bufStartOfData + bufSize - _wptr;
+        }
+
+        void onRead(int nRead) {
+            assert nRead >= 0 && nRead <= getReadNAvailable();
+            _rptr += nRead;
+        }
+
+        void onWrite(int nWrite) {
+            assert nWrite >= 0 && nWrite <= getWriteNAvailable();
+            _wptr += nWrite;
+        }
+
+        void prepareToReadFromBuffer(boolean addChunkHeader, boolean addEofChunk) {
+            if (addChunkHeader) {
+                int len = (int) (_wptr - bufStartOfData);
+                int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) >> 3) << 1;
+                long tmp = _wptr;
+                _rptr = _wptr = bufStart + padding;
+                put(Misc.EOL);
+                Numbers.appendHex(this, len);
+                put(Misc.EOL);
+                _wptr = tmp;
+            }
+            if (addEofChunk) {
+                int len = EOF_CHUNK.length();
+                Chars.asciiStrCpy(EOF_CHUNK, len, _wptr);
+                _wptr += len;
+                LOG.debug().$("end chunk sent [fd=").$(fd).$(']').$();
+            }
+        }
+
+        void write64BitZeroPadding() {
+            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);
+            Unsafe.getUnsafe().putLong(_wptr, 0);
+        }
+    }
+
+    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponseSocket {
+        private long bookmark = 0;
+
+        @Override
+        public void bookmark() {
+            bookmark = buffer._wptr;
+        }
+
+        @Override
+        public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (!chunkedRequestDone) {
+                sendChunk(true);
+            }
+        }
+
+        @Override
+        public HttpResponseHeader headers() {
+            return headerImpl;
+        }
+
+        @Override
+        public boolean resetToBookmark() {
+            buffer._wptr = bookmark;
+            return bookmark != buffer.bufStartOfData;
+        }
+
+        @Override
+        public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            headersSent = true;
+            chunkedRequestDone = done;
+            if (buffer.getReadNAvailable() > 0 || done) {
+                if (!deflateBeforeSend) {
+                    buffer.prepareToReadFromBuffer(true, chunkedRequestDone);
+                }
+                resumeSend();
+            }
+        }
+
+        @Override
+        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
+            chunkedRequestDone = false;
+            prepareHeaderSink();
+            flushSingle();
+            buffer.clearAndPrepareToWriteToBuffer();
+        }
+
+        @Override
+        public void shutdownWrite() {
+            nf.shutdown(fd, Net.SHUT_WR);
+        }
+
+        @Override
+        public void status(int status, CharSequence contentType) {
+            super.status(status, contentType);
+            if (deflateBeforeSend) {
+                headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
+            }
+        }
+    }
+
+    public class HttpRawSocketImpl implements HttpRawSocket {
+
+        @Override
+        public long getBufferAddress() {
+            return buffer.getWriteAddress(1);
+        }
+
+        @Override
+        public int getBufferSize() {
+            return (int) buffer.getWriteNAvailable();
+        }
+
+        @Override
+        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            buffer.onWrite(size);
+            buffer.prepareToReadFromBuffer(false, false);
+            flushSingle();
+            buffer.clearAndPrepareToWriteToBuffer();
+        }
     }
 
     public class HttpResponseHeaderImpl extends AbstractCharSink implements Mutable, HttpResponseHeader {
@@ -381,31 +574,6 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
         }
 
-    }
-
-    public class SimpleResponseImpl {
-
-        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
-            prepareHeaderSink();
-            flushSingle();
-            buffer.clearAndPrepareToWriteToBuffer();
-            sink.put(message == null ? std : message).put(Misc.EOL);
-            buffer.prepareToReadFromBuffer(true, true);
-            resumeSend();
-        }
-
-        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            headerImpl.status(httpVersion, code, "text/html; charset=utf-8", -2L);
-            prepareHeaderSink();
-            flushSingle();
-        }
-
-        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatus(code, null);
-        }
     }
 
     private class ResponseSinkImpl extends AbstractCharSink {
@@ -500,208 +668,39 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    public class HttpRawSocketImpl implements HttpRawSocket {
+    public class SimpleResponseImpl {
 
-        @Override
-        public long getBufferAddress() {
-            return buffer.getWriteAddress(1);
-        }
-
-        @Override
-        public int getBufferSize() {
-            return (int) buffer.getWriteNAvailable();
-        }
-
-        @Override
-        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.onWrite(size);
-            buffer.prepareToReadFromBuffer(false, false);
-            flushSingle();
+        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
             buffer.clearAndPrepareToWriteToBuffer();
-        }
-    }
-
-    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponseSocket {
-        private long bookmark = 0;
-
-        @Override
-        public void bookmark() {
-            bookmark = buffer._wptr;
-        }
-
-        @Override
-        public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
-            if (!chunkedRequestDone) {
-                sendChunk(true);
-            }
-        }
-
-        @Override
-        public HttpResponseHeader headers() {
-            return headerImpl;
-        }
-
-        @Override
-        public boolean resetToBookmark() {
-            buffer._wptr = bookmark;
-            return bookmark != buffer.bufStartOfData;
-        }
-
-        @Override
-        public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            headersSent = true;
-            chunkedRequestDone = done;
-            if (buffer.getReadNAvailable() > 0 || done) {
-                if (!deflateBeforeSend) {
-                    buffer.prepareToReadFromBuffer(true, chunkedRequestDone);
-                }
-                resumeSend();
-            }
-        }
-
-        @Override
-        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
-            chunkedRequestDone = false;
+            final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
             prepareHeaderSink();
             flushSingle();
             buffer.clearAndPrepareToWriteToBuffer();
+            sink.put(message == null ? std : message).put(Misc.EOL);
+            buffer.prepareToReadFromBuffer(true, true);
+            resumeSend();
         }
 
-        @Override
-        public void status(int status, CharSequence contentType) {
-            super.status(status, contentType);
-            if (deflateBeforeSend) {
-                headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
-            }
+        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            buffer.clearAndPrepareToWriteToBuffer();
+            headerImpl.status(httpVersion, code, "text/html; charset=utf-8", -2L);
+            prepareHeaderSink();
+            flushSingle();
         }
 
-        @Override
-        public void shutdownWrite() {
-            nf.shutdown(fd, Net.SHUT_WR);
+        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatus(code, null);
         }
     }
 
-    private class ChunkBuffer extends AbstractCharSink implements Closeable, Reopenable {
-        private static final int MAX_CHUNK_HEADER_SIZE = 12;
-        private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
-        private final long bufSize;
-        private long bufStart;
-        private long bufStartOfData;
-        private long _wptr;
-        private long _rptr;
-
-        private ChunkBuffer(int bufSize) {
-            this.bufSize = bufSize;
-        }
-
-        @Override
-        public void close() {
-            if (bufStart != 0) {
-                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
-                bufStart = bufStartOfData = _wptr = _rptr = 0;
-            }
-        }
-
-        @Override
-        public void reopen() {
-            if (bufStart == 0) {
-                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
-                bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
-                clear();
-            }
-        }
-
-        void clear() {
-            _wptr = _rptr = bufStartOfData;
-        }
-
-        long getReadAddress() {
-            assert _rptr != 0;
-            return _rptr;
-        }
-
-        long getReadNAvailable() {
-            return _wptr - _rptr;
-        }
-
-        void onRead(int nRead) {
-            assert nRead >= 0 && nRead <= getReadNAvailable();
-            _rptr += nRead;
-        }
-
-        long getWriteAddress(int len) {
-            assert _wptr != 0;
-            if (getWriteNAvailable() >= len) {
-                return _wptr;
-            }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
-        }
-
-        long getWriteNAvailable() {
-            return bufStartOfData + bufSize - _wptr;
-        }
-
-        void onWrite(int nWrite) {
-            assert nWrite >= 0 && nWrite <= getWriteNAvailable();
-            _wptr += nWrite;
-        }
-
-        void write64BitZeroPadding() {
-            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);
-            Unsafe.getUnsafe().putLong(_wptr, 0);
-        }
-
-        @Override
-        public CharSink put(CharSequence cs) {
-            int len = cs.length();
-            Chars.asciiStrCpy(cs, len, getWriteAddress(len));
-            onWrite(len);
-            return this;
-        }
-
-        @Override
-        public CharSink put(char c) {
-            Unsafe.getUnsafe().putByte(getWriteAddress(1), (byte) c);
-            onWrite(1);
-            return this;
-        }
-
-        @Override
-        public CharSink put(char[] chars, int start, int len) {
-            Chars.asciiCopyTo(chars, start, len, getWriteAddress(len));
-            onWrite(len);
-            return this;
-        }
-
-        @Override
-        public CharSink put(CharSequence cs, int lo, int hi) {
-            int len = hi - lo;
-            Chars.asciiStrCpy(cs, lo, len, getWriteAddress(len));
-            onWrite(len);
-            return this;
-        }
-
-        void clearAndPrepareToWriteToBuffer() {
-            _rptr = _wptr = bufStartOfData;
-        }
-
-        void prepareToReadFromBuffer(boolean addChunkHeader, boolean addEofChunk) {
-            if (addChunkHeader) {
-                int len = (int) (_wptr - bufStartOfData);
-                int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) >> 3) << 1;
-                long tmp = _wptr;
-                _rptr = _wptr = bufStart + padding;
-                put(Misc.EOL);
-                Numbers.appendHex(this, len);
-                put(Misc.EOL);
-                _wptr = tmp;
-            }
-            if (addEofChunk) {
-                int len = EOF_CHUNK.length();
-                Chars.asciiStrCpy(EOF_CHUNK, len, _wptr);
-                _wptr += len;
-                LOG.debug().$("end chunk sent [fd=").$(fd).$(']').$();
-            }
-        }
+    static {
+        httpStatusMap.put(200, "OK");
+        httpStatusMap.put(206, "Partial content");
+        httpStatusMap.put(304, "Not Modified");
+        httpStatusMap.put(400, "Bad request");
+        httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(416, "Request range not satisfiable");
+        httpStatusMap.put(431, "Headers too large");
+        httpStatusMap.put(500, "Internal server error");
     }
 }

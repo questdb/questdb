@@ -31,7 +31,7 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
     @Override
     public @Nullable DataFrame next() {
-        while (this.partitionIndex < partitionHi) {
+        while (partitionIndex < partitionHi) {
             final long hi = getTableReader().openPartition(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
@@ -45,11 +45,6 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
             }
         }
         return null;
-    }
-
-    @Override
-    public void toTop() {
-        this.partitionIndex = 0;
     }
 
     @Override
@@ -90,5 +85,10 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
     public boolean supportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toTop() {
+        this.partitionIndex = 0;
     }
 }

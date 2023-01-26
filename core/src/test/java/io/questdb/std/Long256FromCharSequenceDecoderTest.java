@@ -37,6 +37,19 @@ public class Long256FromCharSequenceDecoderTest {
     private long l2;
     private long l3;
 
+    @Before
+    public void before() {
+        decoder = new Long256FromCharSequenceDecoder() {
+            @Override
+            public void setAll(long l0, long l1, long l2, long l3) {
+                Long256FromCharSequenceDecoderTest.this.l0 = l0;
+                Long256FromCharSequenceDecoderTest.this.l1 = l1;
+                Long256FromCharSequenceDecoderTest.this.l2 = l2;
+                Long256FromCharSequenceDecoderTest.this.l3 = l3;
+            }
+        };
+    }
+
     @Test
     public void testBadEncoding() {
         try {
@@ -132,21 +145,8 @@ public class Long256FromCharSequenceDecoderTest {
             TestUtils.assertContains(
                     e.getFlyweightMessage(),
                     "inconvertible value: `10000000000000000000000000000000000000000000000000000000000000000` [STRING -> LONG256]"
-                    );
+            );
         }
-    }
-
-    @Before
-    public void before() {
-        decoder = new Long256FromCharSequenceDecoder() {
-            @Override
-            public void setAll(long l0, long l1, long l2, long l3) {
-                Long256FromCharSequenceDecoderTest.this.l0 = l0;
-                Long256FromCharSequenceDecoderTest.this.l1 = l1;
-                Long256FromCharSequenceDecoderTest.this.l2 = l2;
-                Long256FromCharSequenceDecoderTest.this.l3 = l3;
-            }
-        };
     }
 
     private void assertDecoded(String hexString, int prefixSize, int suffixSize, long l0, long l1, long l2, long l3) {

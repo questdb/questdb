@@ -34,19 +34,22 @@ import java.io.Closeable;
 
 public final class Epoll implements Closeable {
     private static final Log LOG = LogFactory.getLog(Epoll.class);
-    private final long events;
-    private final long epollFd;
+
     private final int capacity;
     private final EpollFacade epf;
-    private boolean closed = false;
+    private final int epollFd;
+    private final long events;
     private long _rPtr;
+    private boolean closed = false;
 
     public Epoll(EpollFacade epf, int capacity) {
         this.epf = epf;
         this.capacity = capacity;
-        this.events = _rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        // todo: this can be unsuccessful
+        this.events = this._rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         this.epollFd = epf.epollCreate();
+        if (epollFd < 0) {
+            throw NetworkError.instance(epf.errno(), "could not create epoll");
+        }
         Files.bumpFileCount(this.epollFd);
     }
 
@@ -60,7 +63,7 @@ public final class Epoll implements Closeable {
         closed = true;
     }
 
-    public int control(long fd, long id, int cmd, int event) {
+    public int control(int fd, long id, int cmd, int event) {
         Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, event | EpollAccessor.EPOLLET | EpollAccessor.EPOLLONESHOT);
         Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, id);
         return epf.epollCtl(epollFd, cmd, fd, events);
@@ -74,26 +77,24 @@ public final class Epoll implements Closeable {
         return Unsafe.getUnsafe().getInt(_rPtr + EpollAccessor.EVENTS_OFFSET);
     }
 
-    public void listen(long sfd) {
+    public void listen(int sfd) {
         Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, EpollAccessor.EPOLLIN | EpollAccessor.EPOLLET);
         Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, 0);
-
         if (epf.epollCtl(epollFd, EpollAccessor.EPOLL_CTL_ADD, sfd, events) != 0) {
-            throw NetworkError.instance(epf.errno(), "epoll_ctl");
-        }
-    }
-
-    public void removeListen(long sfd) {
-        Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, EpollAccessor.EPOLLIN | EpollAccessor.EPOLLET);
-        Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, 0);
-
-        if (epf.epollCtl(epollFd, EpollAccessor.EPOLL_CTL_DEL, sfd, events) != 0) {
             throw NetworkError.instance(epf.errno(), "epoll_ctl");
         }
     }
 
     public int poll() {
         return epf.epollWait(epollFd, events, capacity, 0);
+    }
+
+    public void removeListen(int sfd) {
+        Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, EpollAccessor.EPOLLIN | EpollAccessor.EPOLLET);
+        Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, 0);
+        if (epf.epollCtl(epollFd, EpollAccessor.EPOLL_CTL_DEL, sfd, events) != 0) {
+            throw NetworkError.instance(epf.errno(), "epoll_ctl");
+        }
     }
 
     public void setOffset(int offset) {

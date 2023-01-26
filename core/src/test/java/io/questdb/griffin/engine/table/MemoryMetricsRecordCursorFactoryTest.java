@@ -27,10 +27,14 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -45,25 +49,27 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testValues() throws Exception {
-        try (MemoryMetricsRecordCursorFactory factory = new MemoryMetricsRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor(cursor);
+    public void testSql() throws Exception {
+        CompiledQuery cc = compiler.compile("select * from memory_metrics()", sqlExecutionContext);
+        RecordCursorFactory factory = cc.getRecordCursorFactory();
+        try {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+
+                String expected = expectedTableContent();
+                assertTrue(sink.toString().matches(expected));
+            }
+        } finally {
+            Misc.free(factory);
         }
     }
 
     @Test
-    public void testSql() throws Exception {
-        printSqlResult(MemoryMetricsRecordCursorFactoryTest::expectedTableContent, "select * from memory_metrics()", null, null, null, false, true, true, false, null);
-    }
-
-    private static String expectedTableContent() {
-        StringBuilder sb = new StringBuilder("memory_tag").append('\t').append("bytes").append('\n');
-        sb.append("TOTAL_USED").append('\t').append(Unsafe.getMemUsed()).append('\n');
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            sb.append(MemoryTag.nameOf(i)).append('\t').append(Unsafe.getMemUsedByTag(i)).append('\n');
+    public void testValues() {
+        try (MemoryMetricsRecordCursorFactory factory = new MemoryMetricsRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(cursor);
         }
-        return sb.toString();
     }
 
     private static void assertCursor(RecordCursor cursor) {
@@ -72,6 +78,9 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
         assertEquals("TOTAL_USED", record.getStr(0));
         assertEquals(Unsafe.getMemUsed(), record.getLong(1));
+        cursor.hasNext();
+        assertEquals("RSS", record.getStr(0));
+        assertTrue(record.getLong(1) > 0);
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             assertTrue(cursor.hasNext());
             assertEquals(MemoryTag.nameOf(i), record.getStr(0));
@@ -88,5 +97,15 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
         assertEquals(ColumnType.LONG, metadata.getColumnType(1));
         assertEquals("bytes", metadata.getColumnName(1));
+    }
+
+    private static String expectedTableContent() {
+        StringBuilder sb = new StringBuilder("memory_tag").append('\t').append("bytes").append('\n');
+        sb.append("TOTAL_USED").append('\t').append(Unsafe.getMemUsed()).append('\n');
+        sb.append("RSS").append("\t[0-9]+\n");//asserting exact value is not practical
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            sb.append(MemoryTag.nameOf(i)).append('\t').append(Unsafe.getMemUsedByTag(i)).append('\n');
+        }
+        return sb.toString();
     }
 }

@@ -24,19 +24,21 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
 public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCursorFactory {
-    private final SymbolIndexFilteredRowCursor cursor;
     private final int columnIndex;
+    private final SymbolIndexFilteredRowCursor cursor;
     private final Function symbolFunction;
     private int symbolKey = SymbolTable.VALUE_NOT_FOUND;
 
@@ -62,13 +64,8 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        symbolFunction.init(tableReader, sqlExecutionContext);
-        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStr(null));
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            this.cursor.of(symbolKey);
-            this.cursor.prepare(tableReader);
-        }
+    public Function getFunction() {
+        return symbolFunction;
     }
 
     @Override
@@ -82,7 +79,20 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
-    public Function getFunction() {
-        return symbolFunction;
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        symbolFunction.init(tableReader, sqlExecutionContext);
+        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStr(null));
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            this.cursor.of(symbolKey);
+            this.cursor.prepare(tableReader);
+        }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putBaseColumnName(cursor.getColumnIndex());
+        sink.meta("deferred").val(true);
+        sink.attr("symbolFilter").putBaseColumnName(cursor.getColumnIndex()).val('=').val(symbolFunction);
+        sink.optAttr("filter", cursor.getFilter());
     }
 }

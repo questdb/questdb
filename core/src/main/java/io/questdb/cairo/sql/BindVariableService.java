@@ -28,6 +28,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 
 /**
  * Allows for setting the values of bind variables passed
@@ -49,6 +50,11 @@ public interface BindVariableService extends Mutable {
      * @return number of bind variables in a query
      */
     int getIndexedVariableCount();
+
+    /**
+     * @return list of named variables in a query
+     */
+    ObjList<CharSequence> getNamedVariables();
 
     /**
      * Set the type of bind variable by name as binary and provide a value
@@ -123,33 +129,11 @@ public interface BindVariableService extends Mutable {
      * Set type of bind variable by index as byte
      *
      * @param index numeric index of the bind variable
-     * @param  value value as byte
+     * @param value value as byte
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with Byte
      */
     void setByte(int index, byte value) throws SqlException;
-
-    /**
-     * Set type of bind variable by index as geo hash
-     *
-     * @param name  of the bind variable
-     * @param value value as geo hash
-     * @param type geo hash type
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with geo hash
-     */
-    void setGeoHash(CharSequence name, long value, int type) throws SqlException;
-
-    /**
-     * Set type of bind variable by index as geo hash
-     *
-     * @param index numeric index of the bind variable
-     * @param value value as geo hash
-     * @param type geo hash type
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with geo hash
-     */
-    void setGeoHash(int index, long value, int type) throws SqlException;
 
     /**
      * Set type of bind variable by index as binary
@@ -159,16 +143,6 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Byte
      */
     void setByte(int index) throws SqlException;
-
-    /**
-     * Set type of bind variable by index as binary
-     *
-     * @param index numeric index of the bind variable
-     * @param type type of GeoHash, specifies number of bits
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with Byte
-     */
-    void setGeoHash(int index, int type) throws SqlException;
 
     /**
      * Set type of bind variable by index as char and provide a value
@@ -285,6 +259,38 @@ public interface BindVariableService extends Mutable {
     void setFloat(int index, float value) throws SqlException;
 
     /**
+     * Set type of bind variable by index as geo hash
+     *
+     * @param name  of the bind variable
+     * @param value value as geo hash
+     * @param type  geo hash type
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with geo hash
+     */
+    void setGeoHash(CharSequence name, long value, int type) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as geo hash
+     *
+     * @param index numeric index of the bind variable
+     * @param value value as geo hash
+     * @param type  geo hash type
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with geo hash
+     */
+    void setGeoHash(int index, long value, int type) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as binary
+     *
+     * @param index numeric index of the bind variable
+     * @param type  type of GeoHash, specifies number of bits
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with Byte
+     */
+    void setGeoHash(int index, int type) throws SqlException;
+
+    /**
      * Set type of bind variable by name as integer and provide a value
      *
      * @param name  of the bind variable
@@ -378,10 +384,10 @@ public interface BindVariableService extends Mutable {
      * Set type of bind variable by index as long256
      *
      * @param index numeric index of the bind variable
-     * @param l0   64 bit long 0
-     * @param l1   64 bit long 1
-     * @param l2   64 bit long 2
-     * @param l3   64 bit long 3
+     * @param l0    64 bit long 0
+     * @param l1    64 bit long 1
+     * @param l2    64 bit long 2
+     * @param l3    64 bit long 3
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with Long256
      */
@@ -482,4 +488,24 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Timestamp
      */
     void setTimestamp(CharSequence name, long value) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as UUID and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param lo    lower 64 bits of UUID
+     * @param hi    higher 64 bits of UUID
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setUuid(int index, long lo, long hi) throws SqlException;
+
+    /**
+     * Set type of bind variable by name as UUID and provide a value
+     *
+     * @param name of the bind variable
+     * @param lo   lower 64 bits of UUID
+     * @param hi   higher 64 bits of UUID
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setUuid(CharSequence name, long lo, long hi) throws SqlException;
 }

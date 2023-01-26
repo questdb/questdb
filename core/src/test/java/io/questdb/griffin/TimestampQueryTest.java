@@ -27,10 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -75,6 +74,23 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String query = "select time, cast from xyz;";
             assertSql(query, expected);
         });
+    }
+
+    @Test
+    public void testDesignatedTimestampOpSymbolColumns() throws Exception {
+        assertQuery(
+                "a\tdk\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, dk, k from x where dk < cast(a as timestamp)",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -456,6 +472,24 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMinOnTimestampEmptyResutlSetIsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            String expected = "min\tmax\tcount\n\t\t0\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where nts < '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where '2020-01-01' > nts");
+        });
+    }
+
+    @Test
     public void testMoreThanOrEqualsToTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
             //create table
@@ -572,130 +606,233 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonContinuousPartitions() throws Exception {
+        currentMicros = 0;
+        assertMemoryLeak(() -> {
+            // Create table
+            // One hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
+            final int count = 32;
+            final int skip = 48;
+            final int iterations = 10;
+            final long hour = Timestamps.HOUR_MICROS;
+
+            String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            long start = 0;
+            List<Object[]> datesArr = new ArrayList<>();
+            SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
+            formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
+
+            for (int i = 0; i < iterations; i++) {
+                String insert = "insert into xts " +
+                        "select timestamp_sequence(" + start + "L, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")";
+                compiler.compile(insert, sqlExecutionContext);
+                for (long ts = 0; ts < count; ts++) {
+                    long nextTs = start + ts * hour;
+                    datesArr.add(new Object[]{nextTs, formatter.format(nextTs / 1000L)});
+                }
+                start += (count + skip) * hour;
+            }
+            final long end = start;
+
+            // Search with 3 hour window every 22 hours
+            int min = Integer.MAX_VALUE;
+            int max = Integer.MIN_VALUE;
+            for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
+                int results = compareNowRange("select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
+                        datesArr,
+                        ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour));
+                min = Math.min(min, results);
+                max = Math.max(max, results);
+            }
+
+            Assert.assertEquals(0, min);
+            Assert.assertEquals(4, max);
+        });
+    }
+
+    @Test
     public void testNowIsSameForAllQueryParts() throws Exception {
-        try {
-            currentMicros = 0;
-            assertMemoryLeak(() -> {
-                //create table
-                String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-                compiler.compile(createStmt, sqlExecutionContext);
-                //insert
-                executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
-                String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
+        currentMicros = 0;
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
+                    "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
 
-                String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
-                printSqlResult(expected, query1, "timestamp", true, false);
+            String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
+            printSqlResult(expected, query1, "timestamp", true, false);
 
-                expected = "symbol\tme_seq_num\ttimestamp\n" +
-                        "1\t1\t2020-12-31T23:59:59.000000Z\n";
-                String query = "select * from ob_mem_snapshot where timestamp > now()";
-                printSqlResult(expected, query, "timestamp", true, true);
-            });
-        } finally {
-            currentMicros = -1;
-        }
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot where timestamp > now()";
+            printSqlResult(expected, query, "timestamp", true, true);
+        });
     }
 
     @Test
     public void testNowPerformsBinarySearchOnTimestamp() throws Exception {
-        try {
-            currentMicros = 0;
-            assertMemoryLeak(() -> {
-                //create table
-                // One hour step timestamps from epoch for 2000 steps
-                final int count = 200;
-                String createStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
-                SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
-                compiler.compile(createStmt, sqlExecutionContext);
+        currentMicros = 0;
+        assertMemoryLeak(() -> {
+            //create table
+            // One hour step timestamps from epoch for 2000 steps
+            final int count = 200;
+            String createStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
+            SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
+            compiler.compile(createStmt, sqlExecutionContext);
 
-                formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
-                Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
-                        .map(i -> i * 3600L * 1000)
-                        .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new Date(ts))});
+            formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
+            Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
+                    .map(i -> i * 3600L * 1000)
+                    .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new Date(ts))});
 
-                List<Object[]> datesArr = dates.collect(Collectors.toList());
+            List<Object[]> datesArr = dates.collect(Collectors.toList());
 
-                final long hour = Timestamps.HOUR_MICROS;
-                final long day = 24 * hour;
-                compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
+            final long hour = Timestamps.HOUR_MICROS;
+            final long day = 24 * hour;
+            compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
 
-                // Scroll now to the end
-                currentMicros = 200L * hour;
-                compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour);
-                compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour);
+            // Scroll now to the end
+            currentMicros = 200L * hour;
+            compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour);
+            compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour);
 
-                for (currentMicros = hour; currentMicros < count * hour; currentMicros += day) {
-                    compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros);
-                }
+            for (currentMicros = hour; currentMicros < count * hour; currentMicros += day) {
+                compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros);
+            }
 
-                for (currentMicros = hour; currentMicros < count * hour; currentMicros += 12 * hour) {
-                    compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros);
-                }
+            for (currentMicros = hour; currentMicros < count * hour; currentMicros += 12 * hour) {
+                compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros);
+            }
 
-                for (currentMicros = 0; currentMicros < count * hour + 4 * day; currentMicros += 5 * hour) {
-                    compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
-                            datesArr,
-                            ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day));
-                }
+            for (currentMicros = 0; currentMicros < count * hour + 4 * day; currentMicros += 5 * hour) {
+                compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
+                        datesArr,
+                        ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day));
+            }
 
-                currentMicros = 100L * hour;
-                compareNowRange("WITH temp AS (SELECT ts FROM xts WHERE ts > dateadd('y', -1, now())) " +
-                        "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros);
-            });
-        } finally {
-            currentMicros = -1;
-        }
+            currentMicros = 100L * hour;
+            compareNowRange("WITH temp AS (SELECT ts FROM xts WHERE ts > dateadd('y', -1, now())) " +
+                    "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros);
+        });
     }
 
     @Test
-    public void testNonContinuousPartitions() throws Exception {
-        try {
-            currentMicros = 0;
-            assertMemoryLeak(() -> {
-                // Create table
-                // One hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
-                final int count = 32;
-                final int skip = 48;
-                final int iterations = 10;
-                final long hour = Timestamps.HOUR_MICROS;
+    public void testTimestampConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
+                m.timestamp("dts")
+                        .col("ts", ColumnType.TIMESTAMP);
+                createPopulateTable(m, 31, "2021-03-14", 31);
+                String expected = "dts\tts\n" +
+                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
 
-                String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
-                compiler.compile(createStmt, sqlExecutionContext);
-                long start = 0;
-                List<Object[]> datesArr = new ArrayList<>();
-                SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
-                formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
+                assertQuery(
+                        expected,
+                        "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
+                        "dts",
+                        true,
+                        true);
 
-                for (int i = 0; i < iterations; i++) {
-                    String insert = "insert into xts " +
-                            "select timestamp_sequence(" + start + "L, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")";
-                    compiler.compile(insert, sqlExecutionContext);
-                    for (long ts = 0; ts < count; ts++) {
-                        long nextTs = start + ts * hour;
-                        datesArr.add(new Object[]{nextTs, formatter.format(nextTs / 1000L)});
-                    }
-                    start += (count + skip) * hour;
-                }
-                final long end = start;
+                assertQuery(
+                        expected,
+                        "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
+                        "dts",
+                        true,
+                        false);
+            }
+        });
+    }
 
-                // Search with 3 hour window every 22 hours
-                int min = Integer.MAX_VALUE;
-                int max = Integer.MIN_VALUE;
-                for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
-                    int results = compareNowRange("select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
-                            datesArr,
-                            ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour));
-                    min = Math.min(min, results);
-                    max = Math.max(max, results);
-                }
+    @Test
+    public void testTimestampDifferentThanFixedValue() throws Exception {
+        assertQuery(
+                "t\n" +
+                        "1970-01-01T00:00:01.000000Z\n" +
+                        "1970-01-01T00:00:02.000000Z\n",
+                "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
+                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)",
+                "t",
+                null,
+                null,
+                true,
+                true,
+                true
+        );
+    }
 
-                Assert.assertEquals(0, min);
-                Assert.assertEquals(4, max);
-            });
-        } finally {
-            currentMicros = -1;
-        }
+    @Test
+    public void testTimestampDifferentThanNonFixedValue() throws Exception {
+        assertQuery(
+                "t\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:01.000000Z\n",
+                "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')",
+                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)",
+                "t",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampInDay1orDay2() throws Exception {
+        assertQuery(
+                "min\tmax\n\t\n",
+                "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n",
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampMin() throws Exception {
+        assertQuery(
+                "nts\tmin\n" +
+                        "nts\t\n",
+                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                        "from long_sequence(2L)",
+                "nts\tmin\n" +
+                        "nts\t2020-01-01T00:00:00.000010Z\n",
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampOpSymbolColumns() throws Exception {
+        assertQuery(
+                "a\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, k from x where k < cast(a as timestamp)",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -744,78 +881,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTimestampConversion() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
-                m.timestamp("dts")
-                        .col("ts", ColumnType.TIMESTAMP);
-                createPopulateTable(m, 31, "2021-03-14", 31);
-                String expected = "dts\tts\n" +
-                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
-
-                assertQuery(
-                        expected,
-                        "tt where dts > '2021-04-02T13:45:49.207Z' and dts < '2021-04-03 13:45:49.207'",
-                        "dts",
-                        true,
-                        true);
-
-                assertQuery(
-                        expected,
-                        "tt where ts > '2021-04-02T13:45:49.207Z' and ts < '2021-04-03 13:45:49.207'",
-                        "dts",
-                        true,
-                        false);
-            }
-        });
-    }
-
-    @Test
-    public void testTimestampSymbolConversion() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
-                m.timestamp("dts")
-                        .col("ts", ColumnType.TIMESTAMP);
-                createPopulateTable(m, 31, "2021-03-14", 31);
-                String expected = "dts\tts\n" +
-                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
-
-                assertQuery(
-                        expected,
-                        "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
-                        "dts",
-                        true,
-                        true);
-
-                assertQuery(
-                        expected,
-                        "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
-                        "dts",
-                        true,
-                        false);
-            }
-        });
-    }
-
-    @Test
-    public void testTimestampInDay1orDay2() throws Exception {
-        assertQuery(
-                "min\tmax\n\t\n",
-                "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)",
-                "min\tmax\n" +
-                        "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n",
-                false,
-                false,
-                true
-        );
-    }
-
-    @Test
     public void testTimestampStringComparison() throws Exception {
         assertQuery(
                 "min\tmax\n\t\n",
@@ -831,175 +896,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 false,
                 true
         );
-    }
-
-    @Test
-    public void testTimestampSymbolComparison() throws Exception {
-        assertQuery(
-                "min\tmax\n\t\n",
-                "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                        "from long_sequence(48L)",
-                "min\tmax\n" +
-                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
-                false,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestampStringDateAdd() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2020-01-02T00:00:00.000000Z\n",
-                "select dateadd('d', 1, '2020-01-01')",
-                null,
-                null,
-                null,
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestampSymbolDateAdd() throws Exception {
-        assertQuery(
-                "dateadd\n" +
-                        "2020-01-02T00:00:00.000000Z\n",
-                "select dateadd('d', 1, cast('2020-01-01' as symbol))",
-                null,
-                null,
-                null,
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestampStringComparisonWithString() throws Exception {
-        assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
-            // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
-                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
-
-            String expected;
-            // >
-            expected = "min\tmax\n" +
-                    "2020-01-01T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts > '2020-01-01'");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01' < nts");
-
-            // >=
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts >= '2020-01-01'");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01' <= nts");
-
-            // <
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts < '2020-01-01T01:00:00'");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01T01:00:00' > nts");
-
-            // <=
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T01:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts <= '2020-01-01T01:00:00'");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01T01:00:00' >= nts");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T11:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts < dateadd('d',-1, '2020-01-02T12:00:00')");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dateadd('d', -1, '2020-01-02T12:00:00') > nts");
-
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where nts > (case when 1=1 THEN dts else now() end)");
-        });
-    }
-
-    @Test
-    public void testTimestampStringComparisonInString() throws Exception {
-        assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
-            // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
-                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
-
-            String expected;
-            // not in period
-            expected = "min\tmax\n" +
-                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in '2020-01-01'");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01-01'");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in ('2020-01' || '-02')");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-' || rnd_str('01', '01'))");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-01T12:00', '2020-01-01')");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dts in ('2020-01-01', '2020-01-03') ");
-
-            expected = "min\tmax\n" +
-                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01' || '-02'");
-
-            expected = "dts\tnts\n" +
-                    "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select * from tt where nts in (NULL, cast('2020-01-05' as TIMESTAMP), '2020-01-02', NULL)");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01',1234567,1234567L,CAST('2020-01-01' as TIMESTAMP),NULL,nts)");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01')");
-
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02', now())");
-
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02', '2020-01-01')");
-
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where nts in now()");
-
-            expected = "dts\tnts\n";
-            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid')");
-
-            expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid')");
-        });
     }
 
     @Test
@@ -1174,7 +1070,28 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTimestampStringComparisonNonConst() throws Exception {
+    public void testTimestampStringComparisonBetweenInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'");
+            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'");
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+        });
+    }
+
+    @Test
+    public void testTimestampStringComparisonInString() throws Exception {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
@@ -1186,10 +1103,62 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "from long_sequence(48L)", sqlExecutionContext);
 
             String expected;
-            // between constants
+            // not in period
             expected = "min\tmax\n" +
-                    "2020-01-01T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts = cast( to_str(nts,'yyyy-MM-dd') as timestamp)");
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in '2020-01-01'");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01-01'");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not in ('2020-01' || '-02')");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-' || rnd_str('01', '01'))");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in ('2020-01-01T12:00', '2020-01-01')");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dts in ('2020-01-01', '2020-01-03') ");
+
+            expected = "min\tmax\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in '2020-01' || '-02'");
+
+            expected = "dts\tnts\n" +
+                    "2020-01-02T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (NULL, cast('2020-01-05' as TIMESTAMP), '2020-01-02', NULL)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01',1234567,1234567L,CAST('2020-01-01' as TIMESTAMP),NULL,nts)");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts in (now(),'2020-01-01')");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02', now())");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where CAST(NULL as TIMESTAMP) in ('2020-01-02', '2020-01-01')");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in now()");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid')");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid')");
         });
     }
 
@@ -1211,7 +1180,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTimestampSymbolComparisonInvalidValue() throws Exception {
+    public void testTimestampStringComparisonNonConst() throws Exception {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
@@ -1222,13 +1191,16 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)", sqlExecutionContext);
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
-            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type DOUBLE", "select min(nts), max(nts) from tt in (cast('2020-01-01' as symbol), NaN)");
+            String expected;
+            // between constants
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts = cast( to_str(nts,'yyyy-MM-dd') as timestamp)");
         });
     }
 
     @Test
-    public void testTimestampStringComparisonBetweenInvalidValue() throws Exception {
+    public void testTimestampStringComparisonWithString() throws Exception {
         assertMemoryLeak(() -> {
             // create table
             String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
@@ -1239,13 +1211,73 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)", sqlExecutionContext);
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'");
-            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')");
-            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+            String expected;
+            // >
+            expected = "min\tmax\n" +
+                    "2020-01-01T01:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts > '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01' < nts");
+
+            // >=
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts >= '2020-01-01'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01' <= nts");
+
+            // <
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts < '2020-01-01T01:00:00'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01T01:00:00' > nts");
+
+            // <=
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T01:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts <= '2020-01-01T01:00:00'");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where '2020-01-01T01:00:00' >= nts");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-01T11:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts < dateadd('d',-1, '2020-01-02T12:00:00')");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where dateadd('d', -1, '2020-01-02T12:00:00') > nts");
+
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts > (case when 1=1 THEN dts else now() end)");
         });
+    }
+
+    @Test
+    public void testTimestampStringDateAdd() throws Exception {
+        assertQuery(
+                "dateadd\n" +
+                        "2020-01-02T00:00:00.000000Z\n",
+                "select dateadd('d', 1, '2020-01-01')",
+                null,
+                null,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampSymbolComparison() throws Exception {
+        assertQuery(
+                "min\tmax\n\t\n",
+                "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
+                false,
+                false,
+                true
+        );
     }
 
     @Test
@@ -1270,71 +1302,180 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTimestampOpSymbolColumns() throws Exception {
-        assertQuery(
-                "a\tk\n" +
-                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
-                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
-                "select a, k from x where k < cast(a as timestamp)",
-                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
-                "k",
-                null,
-                null,
-                true,
-                true,
-                false
-        );
+    public void testTimestampSymbolComparisonInvalidValue() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table
+            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
+            compiler.compile(createStmt, sqlExecutionContext);
+
+            // insert same values to dts (designated) as nts (non-designated) timestamp
+            compiler.compile("insert into tt " +
+                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                    "from long_sequence(48L)", sqlExecutionContext);
+
+            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
+            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type DOUBLE", "select min(nts), max(nts) from tt in (cast('2020-01-01' as symbol), NaN)");
+        });
     }
 
     @Test
-    public void testDesignatedTimestampOpSymbolColumns() throws Exception {
-        assertQuery(
-                "a\tdk\tk\n" +
-                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
-                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
-                "select a, dk, k from x where dk < cast(a as timestamp)",
-                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
-                "k",
-                null,
-                null,
-                true,
-                true,
-                false
-        );
+    public void testTimestampSymbolConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)) {
+                m.timestamp("dts")
+                        .col("ts", ColumnType.TIMESTAMP);
+                createPopulateTable(m, 31, "2021-03-14", 31);
+                String expected = "dts\tts\n" +
+                        "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
+
+                assertQuery(
+                        expected,
+                        "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
+                        "dts",
+                        true,
+                        true);
+
+                assertQuery(
+                        expected,
+                        "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
+                        "dts",
+                        true,
+                        false);
+            }
+        });
     }
 
     @Test
-    public void testTimestampDifferentThanFixedValue() throws Exception {
+    public void testTimestampSymbolDateAdd() throws Exception {
         assertQuery(
-                "t\n" +
-                        "1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:02.000000Z\n",
-                "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
-                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)",
-                "t",
+                "dateadd\n" +
+                        "2020-01-02T00:00:00.000000Z\n",
+                "select dateadd('d', 1, cast('2020-01-01' as symbol))",
+                null,
+                null,
                 null,
                 null,
                 true,
-                true,
+                false,
                 true
         );
     }
 
     @Test
-    public void testTimestampDifferentThanNonFixedValue() throws Exception {
-        assertQuery(
-                "t\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:01.000000Z\n",
-                "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')",
-                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)",
-                "t",
-                null,
-                null,
-                true,
-                true,
-                false
-        );
+    public void testTimestampIntervalPartitionDay() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2022-11-20T00:00:00.000000Z\n" +
+                    "3\t2022-11-21T00:00:00.000000Z\n" +
+                    "4\t2022-11-22T00:00:00.000000Z\n" +
+                    "5\t2022-11-23T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2022-11-21T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2022-11-21'";
+            assertSql(query, expected);
+        });
+    }
+
+    @Test
+    public void testTimestampIntervalPartitionMonth() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2022-12-19T00:00:00.000000Z\n" +
+                    "3\t2023-01-18T00:00:00.000000Z\n" +
+                    "4\t2023-02-17T00:00:00.000000Z\n" +
+                    "5\t2023-03-19T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2023-01-18T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2023-01'";
+            assertSql(query, expected);
+        });
+    }
+
+    @Test
+    public void testTimestampIntervalPartitionWeek() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2022-11-26T00:00:00.000000Z\n" +
+                    "3\t2022-12-03T00:00:00.000000Z\n" +
+                    "4\t2022-12-10T00:00:00.000000Z\n" +
+                    "5\t2022-12-17T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2022-12-03T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2022-12-03'";
+            assertSql(query, expected);
+        });
+    }
+
+    @Test
+    public void testTimestampIntervalPartitionYear() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2023-11-19T00:00:00.000000Z\n" +
+                    "3\t2024-11-18T00:00:00.000000Z\n" +
+                    "4\t2025-11-18T00:00:00.000000Z\n" +
+                    "5\t2026-11-18T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2024-11-18T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2024'";
+            assertSql(query, expected);
+        });
+    }
+
+    private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
+        assertSql(query, expected);
+
+        String joining = query.indexOf("where") > 0 ? " and " : " where ";
+
+        // Non-impacting additions to WHERE
+        assertSql(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)", expected);
+        assertSql(query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())", expected);
+        assertSql(query + joining + columnName + " > dateadd('y', -1000, now())", expected);
+        assertSql(query + joining + columnName + " <= dateadd('y', 1000, now())", expected);
+        assertSql(query + joining + columnName + " not in '1970-01-01'", expected);
     }
 
     private void assertTimestampTtFailedQuery(String expectedError, String query) {
@@ -1358,62 +1499,10 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         assertQueryWithConditions(dtsQuery, expected, "dts");
     }
 
-    private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
-        assertSql(query, expected);
-
-        String joining = query.indexOf("where") > 0 ? " and " : " where ";
-
-        // Non-impacting additions to WHERE
-        assertSql(query + joining + columnName + " not between now() and CAST(NULL as TIMESTAMP)", expected);
-        assertSql(query + joining + columnName + " between '2200-01-01' and dateadd('y', -10000, now())", expected);
-        assertSql(query + joining + columnName + " > dateadd('y', -1000, now())", expected);
-        assertSql(query + joining + columnName + " <= dateadd('y', 1000, now())", expected);
-        assertSql(query + joining + columnName + " not in '1970-01-01'", expected);
-    }
-
-    @Test
-    public void testMinOnTimestampEmptyResutlSetIsNull() throws Exception {
-        assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            compiler.compile(createStmt, sqlExecutionContext);
-
-            // insert same values to dts (designated) as nts (non-designated) timestamp
-            compiler.compile("insert into tt " +
-                    "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                    "from long_sequence(48L)", sqlExecutionContext);
-
-            String expected = "min\tmax\tcount\n\t\t0\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where nts < '2020-01-01'");
-            assertTimestampTtQuery(expected, "select min(nts), max(nts), count() from tt where '2020-01-01' > nts");
-        });
-    }
-
-    @Test
-    public void testTimestampMin() throws Exception {
-        assertQuery(
-                "nts\tmin\n" +
-                        "nts\t\n",
-                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                        "from long_sequence(2L)",
-                "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z\n",
-                false,
-                false,
-                true
-        );
-    }
-
     private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter) throws SqlException {
-        String queryPlan =
-                "DataFrameRecordCursorFactory\n" +
-                        "    IntervalFwdDataFrame\n" +
-                        "      tableName=xts\n";
-        Assert.assertTrue(Chars.startsWith(getPlan(query).getText(), queryPlan));
+        String queryPlan = "Interval forward scan on: xts";
+        StringSink text = getPlanSink(query).getSink();
+        Assert.assertTrue(text.toString(), Chars.contains(text, queryPlan));
 
         long expectedCount = dates.stream().filter(arr -> filter.test((long) arr[0])).count();
         String expected = "ts\n"

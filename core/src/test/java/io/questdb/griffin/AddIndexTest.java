@@ -24,36 +24,12 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class AddIndexTest extends AbstractGriffinTest {
-
-    @Test
-    public void testAddIndexToIndexedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table trades as (\n" +
-                            "    select \n" +
-                            "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                            "        rnd_double() price, \n" +
-                            "        timestamp_sequence(172800000000, 36000000) ts \n" +
-                            "    from long_sequence(10000)\n" +
-                            ") timestamp(ts) partition by DAY",
-                    sqlExecutionContext
-            );
-            compile("alter table trades alter column sym add index", sqlExecutionContext);
-
-            try {
-                compile("alter table trades alter column sym add index", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "already indexed");
-            }
-        });
-    }
 
     @Test
     public void testAddIndexToColumnWithTop() throws Exception {
@@ -103,9 +79,100 @@ public class AddIndexTest extends AbstractGriffinTest {
             );
 
             compile("alter table trades alter column sym2 add index", sqlExecutionContext);
+            // While row count is derived from append page size, the expected row count value is hardcoded
+            // as a string. Test will fail should append page size change.
             assertSql("select count(*) from trades where sym2 = 'ABB'", "count\n" +
-                    "1398605\n");
+                    "175654\n");
         });
+    }
+
+    @Test
+    public void testAddIndexToIndexedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table trades as (\n" +
+                            "    select \n" +
+                            "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                            "        rnd_double() price, \n" +
+                            "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                            "    from long_sequence(10000)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+            compile("alter table trades alter column sym add index", sqlExecutionContext);
+
+            try {
+                compile("alter table trades alter column sym add index", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException | CairoException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "already indexed");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAlterColumnSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades alter columnz",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                25,
+                "'column' or 'partition' expected"
+        );
+    }
+
+    @Test
+    public void testAlterTableAttachPartitionSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades attach bucket",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                26,
+                "'partition' expected"
+        );
+    }
+
+    @Test
+    public void testAlterTableDropColumnSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades drop bucket",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                24,
+                "'column' or 'partition' expected"
+        );
+    }
+
+    @Test
+    public void testAlterTableRenameColumnSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades rename bucket",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                26,
+                "'column' expected"
+        );
     }
 
     @Test
@@ -143,70 +210,6 @@ public class AddIndexTest extends AbstractGriffinTest {
                 "alter table trades alter column sym add index",
                 expected,
                 true
-        );
-    }
-
-    @Test
-    public void testAlterTableAlterColumnSyntaxError1() throws Exception {
-        assertFailure(
-                "alter table trades alter columnz",
-                "create table trades as (\n" +
-                        "    select \n" +
-                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360) ts \n" +
-                        "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                25,
-                "'column' or 'partition' expected"
-        );
-    }
-
-    @Test
-    public void testAlterTableDropColumnSyntaxError1() throws Exception {
-        assertFailure(
-                "alter table trades drop bucket",
-                "create table trades as (\n" +
-                        "    select \n" +
-                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360) ts \n" +
-                        "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                24,
-                "'column' or 'partition' expected"
-        );
-    }
-
-    @Test
-    public void testAlterTableAttachPartitionSyntaxError1() throws Exception {
-        assertFailure(
-                "alter table trades attach bucket",
-                "create table trades as (\n" +
-                        "    select \n" +
-                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360) ts \n" +
-                        "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                26,
-                "'partition' expected"
-        );
-    }
-
-    @Test
-    public void testAlterTableRenameColumnSyntaxError1() throws Exception {
-        assertFailure(
-                "alter table trades rename bucket",
-                "create table trades as (\n" +
-                        "    select \n" +
-                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360) ts \n" +
-                        "    from long_sequence(30)\n" +
-                        ") timestamp(ts) partition by DAY",
-                26,
-                "'column' expected"
         );
     }
 }

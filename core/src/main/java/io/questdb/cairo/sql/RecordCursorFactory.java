@@ -24,12 +24,13 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
@@ -38,35 +39,35 @@ import java.io.Closeable;
 /**
  * Factory for creating a SQL execution plan.
  * Queries may be executed more than once without changing execution plan.
- *
+ * <p>
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
- *
+ * <p>
  * Example:
- *
+ * <p>
  * final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
  * try (SqlCompiler compiler = new SqlCompiler(engine)) {
- *     try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
- *         try (RecordCursor cursor = factory.getCursor(ctx)) {
- *             final Record record = cursor.getRecord();
- *             while (cursor.hasNext()) {
- *                 // access 'record' instance for field values
- *             }
- *         }
- *     }
+ * try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+ * try (RecordCursor cursor = factory.getCursor(ctx)) {
+ * final Record record = cursor.getRecord();
+ * while (cursor.hasNext()) {
+ * // access 'record' instance for field values
  * }
- *
+ * }
+ * }
+ * }
  */
 public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     @Override
     default void close() {
     }
 
-    /**
-     * True if record cursor factory followed order by advice and doesn't require sorting .
-     */
-    default boolean followedOrderByAdvice() {
-        return false;
+    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+        return null;
+    }
+
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+        return null;
     }
 
     default boolean followedLimitAdvice() {
@@ -74,9 +75,48 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * True if record cursor factory followed order by advice and doesn't require sorting.
+     *
+     * @return true if record cursor factory followed order by advice and doesn't require sorting
+     */
+    default boolean followedOrderByAdvice() {
+        return false;
+    }
+
+    // Factories, such as union all do not conform to the assumption
+    // that key read from symbol column map to symbol values unambiguously.
+    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
+    // key 1 at row 100 it might map to 'BBB'.
+    // Such factories cannot be used in multi-threaded execution and cannot be tested
+    // via `testSymbolAPI()` call.
+    default boolean fragmentedSymbolTables() {
+        return false;
+    }
+
+    default String getBaseColumnName(int idx) {
+        return getBaseFactory().getMetadata().getColumnName(idx);
+    }
+
+    /**
+     * Method is necessary for cases where row cursor uses index from table reader while record cursor can reorder columns (e.g. DataFrameRecordCursorFactory)
+     *
+     * @param idx idx of column
+     * @return name of base column (no remapping)
+     */
+    default String getBaseColumnNameNoRemap(int idx) {
+        return getBaseColumnName(idx);
+    }
+
+    default RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException("Unsupported for: " + getClass());
+    }
+
+    /* used for describing query execution plan */
+
+    /**
      * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
      * The calling code must not hold on to copies of the cursor.
-     *
+     * <p>
      * The new cursor will have refreshed its view of the data. If new data was added to table(s)
      * the cursor will pick it up.
      *
@@ -99,30 +139,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
-        return null;
-    }
-
-    boolean recordCursorSupportsRandomAccess();
-
-    default boolean supportPageFrameCursor() {
+    default boolean hasDescendingOrder() {
         return false;
-    }
-
-    default boolean supportsUpdateRowId(CharSequence tableName) {
-        return false;
-    }
-
-    default boolean usesCompiledFilter() {
-        return false;
-    }
-
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException("Unsupported for: " + getClass());
-    }
-
-    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
-        return null;
     }
 
     /* Returns true if this factory handles limit M , N clause already and false otherwise .
@@ -131,22 +149,26 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    default boolean hasDescendingOrder() {
+    boolean recordCursorSupportsRandomAccess();
+
+    default boolean supportPageFrameCursor() {
         return false;
     }
 
-    // Factories, such as union all do not conform to the assumption
-    // that key read from symbol column map to symbol values unambiguously.
-    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
-    // key 1 at row 100 it might map to 'BBB'.
-    // Such factories cannot be used in multi-threaded execution and cannot be tested
-    // via `testSymbolAPI()` call.
-    default boolean fragmentedSymbolTables() {
+    default boolean supportsUpdateRowId(TableToken tableName) {
         return false;
     }
 
     @Override
     default void toPlan(PlanSink sink) {
         sink.type(getClass().getName());
+    }
+
+    default void toSink(CharSink sink) {
+        throw new UnsupportedOperationException("Unsupported for: " + getClass());
+    }
+
+    default boolean usesCompiledFilter() {
+        return false;
     }
 }

@@ -51,9 +51,9 @@ public class TableReaderReloadBenchmark {
 
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
     private static final long ts;
-    private static TableWriter writer;
     private static TableReader reader;
     private static long sum = 0;
+    private static TableWriter writer;
 
     public static void main(String[] args) throws RunnerException {
         try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -85,7 +85,9 @@ public class TableReaderReloadBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws NumericException {
-        writer = new TableWriter(configuration, "test", Metrics.disabled());
+
+        TableToken tableToken = new TableToken("test", "test", 0, false);
+        writer = new TableWriter(configuration, tableToken, Metrics.disabled());
         writer.truncate();
         // create 10 partitions
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-01T00:00:00.000000Z"));
@@ -99,7 +101,7 @@ public class TableReaderReloadBenchmark {
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-09T00:00:00.000000Z"));
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z"));
         writer.commit();
-        reader = new TableReader(configuration, "test");
+        reader = new TableReader(configuration, tableToken);
 
         // ensure reader opens all partitions and maps all data
         RecordCursor cursor = reader.getCursor();

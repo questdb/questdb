@@ -38,7 +38,7 @@ public class ContinuousOffsetMappedMemoryTest {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     private static String root;
-    private final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+    private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
     @Rule
     public TestName testName = new TestName();
 
@@ -78,14 +78,14 @@ public class ContinuousOffsetMappedMemoryTest {
                 try (
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
-                    FilesFacade ff = new FilesFacadeImpl() {
+                    FilesFacade ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long length(long fd) {
+                        public long length(int fd) {
                             return -1;
                         }
 
                         @Override
-                        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                        public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                             return -1;
                         }
                     };
@@ -109,9 +109,9 @@ public class ContinuousOffsetMappedMemoryTest {
                     Assert.assertEquals(-1, memoryROffset.getFd());
 
                     // Failed to remap
-                    ff = new FilesFacadeImpl() {
+                    ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                        public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                             return -1;
                         }
                     };
@@ -126,9 +126,9 @@ public class ContinuousOffsetMappedMemoryTest {
                     Assert.assertEquals(-1, memoryROffset.getFd());
 
                     // Cannot get length to grow to file size
-                    ff = new FilesFacadeImpl() {
+                    ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long length(long fd) {
+                        public long length(int fd) {
                             return -1;
                         }
                     };
@@ -245,7 +245,7 @@ public class ContinuousOffsetMappedMemoryTest {
         } else {
             System.out.println("Created file " + path.$());
         }
-        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > 0);
 
         try (MemoryMARW memoryW = Vm.getMARWInstance()) {

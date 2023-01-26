@@ -32,49 +32,32 @@ import org.junit.Test;
 
 public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     @Test
-    public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "with t as (\n" +
-                        "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
-                        ")\n" +
-                        "select\n" +
-                        "  ts\n" +
-                        "  , timestamp_ceil('T', ts) c_milli\n" +
-                        "  , timestamp_ceil('s', ts) c_second\n" +
-                        "  , timestamp_ceil('m', ts) c_minute\n" +
-                        "  , timestamp_ceil('h', ts) c_hour\n" +
-                        "  , timestamp_ceil('d', ts) c_day\n" +
-                        "  , timestamp_ceil('M', ts) c_month\n" +
-                        "  , timestamp_ceil('y', ts) c_year\n" +
-                        "  , timestamp_ceil('y', null) c_null\n" +
-                        "  , timestamp_floor('T', ts) f_milli\n" +
-                        "  , timestamp_floor('s', ts) f_second\n" +
-                        "  , timestamp_floor('m', ts) f_minute\n" +
-                        "  , timestamp_floor('h', ts) f_hour\n" +
-                        "  , timestamp_floor('d', ts) f_day\n" +
-                        "  , timestamp_floor('M', ts) f_month\n" +
-                        "  , timestamp_floor('y', ts) f_year\n" +
-                        "  , timestamp_floor('y', null) f_null\n" +
-                        "  from t\n",
-                sink,
-                "ts\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_year\tc_null\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_year\tf_null\n" +
-                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n"
-        ));
-    }
-
-    @Test
-    public void testFloorNullKind() throws Exception {
+    public void testCeilInvalidKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile(
-                        "select timestamp_floor(null, null)",
-                         sqlExecutionContext
+                        "select timestamp_ceil('o', null)",
+                        sqlExecutionContext
                 );
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(23, e.getPosition());
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains("invalid kind 'o'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testCeilNullKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "select timestamp_ceil(null, null)",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
             }
         });
@@ -97,34 +80,53 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCeilNullKind() throws Exception {
+    public void testFloorNullKind() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile(
-                        "select timestamp_ceil(null, null)",
+                        "select timestamp_floor(null, null)",
                         sqlExecutionContext
                 );
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(22, e.getPosition());
+                Assert.assertEquals(23, e.getPosition());
                 TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
             }
         });
     }
 
     @Test
-    public void testCeilInvalidKind() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "select timestamp_ceil('o', null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'o'", e.getFlyweightMessage());
-            }
-        });
+    public void testSimple() throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "with t as (\n" +
+                        "   select cast('2016-02-10T16:18:22.862145Z' as timestamp) ts\n" +
+                        ")\n" +
+                        "select\n" +
+                        "  ts\n" +
+                        "  , timestamp_ceil('T', ts) c_milli\n" +
+                        "  , timestamp_ceil('s', ts) c_second\n" +
+                        "  , timestamp_ceil('m', ts) c_minute\n" +
+                        "  , timestamp_ceil('h', ts) c_hour\n" +
+                        "  , timestamp_ceil('d', ts) c_day\n" +
+                        "  , timestamp_ceil('M', ts) c_month\n" +
+                        "  , timestamp_ceil('w', ts) c_week\n" +
+                        "  , timestamp_ceil('y', ts) c_year\n" +
+                        "  , timestamp_ceil('y', null) c_null\n" +
+                        "  , timestamp_floor('T', ts) f_milli\n" +
+                        "  , timestamp_floor('s', ts) f_second\n" +
+                        "  , timestamp_floor('m', ts) f_minute\n" +
+                        "  , timestamp_floor('h', ts) f_hour\n" +
+                        "  , timestamp_floor('d', ts) f_day\n" +
+                        "  , timestamp_floor('M', ts) f_month\n" +
+                        "  , timestamp_floor('w', ts) f_week\n" +
+                        "  , timestamp_floor('y', ts) f_year\n" +
+                        "  , timestamp_floor('y', null) f_null\n" +
+                        "  from t\n",
+                sink,
+                "ts\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_week\tc_year\tc_null\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_week\tf_year\tf_null\n" +
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2016-02-15T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-02-08T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n"
+        ));
     }
 }

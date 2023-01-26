@@ -26,18 +26,67 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 
 public class CompactMapValue implements MapValue {
-
-    private final MemoryARW entries;
     private final long[] columnOffsets;
-    private long currentValueOffset;
+    private final MemoryARW entries;
+    private final Long256Impl long256 = new Long256Impl();
     private boolean _new;
+    private long currentValueOffset;
     private CompactMapRecord record;
 
     CompactMapValue(MemoryARW entries, long[] columnOffsets) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
+    }
+
+    @Override
+    public void addByte(int index, byte value) {
+        final long o = getValueColumnOffset(index);
+        entries.putByte(o, (byte) (entries.getByte(o) + value));
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final long o = getValueColumnOffset(index);
+        entries.putDouble(o, entries.getDouble(o) + value);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final long o = getValueColumnOffset(index);
+        entries.putFloat(o, entries.getFloat(o) + value);
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        final long o = getValueColumnOffset(index);
+        entries.putInt(o, entries.getInt(o) + value);
+    }
+
+    @Override
+    public void addLong(int index, long value) {
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, entries.getLong(o) + value);
+    }
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+        Long256 acc = getLong256A(index);
+        Long256Util.add(acc, value);
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, acc.getLong0());
+        entries.putLong(o + Long.BYTES, acc.getLong1());
+        entries.putLong(o + 2 * Long.BYTES, acc.getLong2());
+        entries.putLong(o + 3 * Long.BYTES, acc.getLong3());
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        final long o = getValueColumnOffset(index);
+        entries.putShort(o, (short) (entries.getShort(o) + value));
     }
 
     @Override
@@ -56,6 +105,11 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public char getChar(int columnIndex) {
+        return entries.getChar(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
     public long getDate(int index) {
         return getLong(index);
     }
@@ -71,74 +125,8 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public int getInt(int columnIndex) {
-        return entries.getInt(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public long getLong(int columnIndex) {
-        return entries.getLong(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public void addLong(int index, long value) {
-        final long o = getValueColumnOffset(index);
-        entries.putLong(o, entries.getLong(o) + value);
-    }
-
-    @Override
-    public void addByte(int index, byte value) {
-        final long o = getValueColumnOffset(index);
-        entries.putByte(o, (byte) (entries.getByte(o) + value));
-    }
-
-    @Override
-    public void addShort(int index, short value) {
-        final long o = getValueColumnOffset(index);
-        entries.putShort(o, (short) (entries.getShort(o) + value));
-    }
-
-    @Override
-    public void addInt(int index, int value) {
-        final long o = getValueColumnOffset(index);
-        entries.putInt(o, entries.getInt(o) + value);
-    }
-
-    @Override
-    public void addDouble(int index, double value) {
-        final long o = getValueColumnOffset(index);
-        entries.putDouble(o, entries.getDouble(o) + value);
-    }
-
-    @Override
-    public void addFloat(int index, float value) {
-        final long o = getValueColumnOffset(index);
-        entries.putFloat(o, entries.getFloat(o) + value);
-    }
-
-    @Override
-    public short getShort(int columnIndex) {
-        return entries.getShort(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public char getChar(int columnIndex) {
-        return entries.getChar(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public long getTimestamp(int index) {
-        return getLong(index);
-    }
-
-    @Override
     public byte getGeoByte(int col) {
         return getByte(col);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getShort(col);
     }
 
     @Override
@@ -149,6 +137,53 @@ public class CompactMapValue implements MapValue {
     @Override
     public long getGeoLong(int col) {
         return getLong(col);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getShort(col);
+    }
+
+    @Override
+    public int getInt(int columnIndex) {
+        return entries.getInt(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public long getLong(int columnIndex) {
+        return entries.getLong(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public long getLong128Hi(int columnIndex) {
+        return entries.getLong(getValueColumnOffset(columnIndex) + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+        return entries.getLong(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public Long256 getLong256A(int index) {
+        final long o = getValueColumnOffset(index);
+        long256.setAll(
+                entries.getLong(o),
+                entries.getLong(o + Long.BYTES),
+                entries.getLong(o + 2 * Long.BYTES),
+                entries.getLong(o + 3 * Long.BYTES)
+        );
+        return long256;
+    }
+
+    @Override
+    public short getShort(int columnIndex) {
+        return entries.getShort(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public long getTimestamp(int index) {
+        return getLong(index);
     }
 
     @Override
@@ -164,6 +199,11 @@ public class CompactMapValue implements MapValue {
     @Override
     public void putByte(int columnIndex, byte value) {
         entries.putByte(getValueColumnOffset(columnIndex), value);
+    }
+
+    @Override
+    public void putChar(int columnIndex, char value) {
+        entries.putChar(getValueColumnOffset(columnIndex), value);
     }
 
     @Override
@@ -192,13 +232,24 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public void putShort(int columnIndex, short value) {
-        entries.putShort(getValueColumnOffset(columnIndex), value);
+    public void putLong128(int columnIndex, long lo, long hi) {
+        long valueColumnOffset = getValueColumnOffset(columnIndex);
+        entries.putLong(valueColumnOffset, lo);
+        entries.putLong(valueColumnOffset + Long.BYTES, hi);
     }
 
     @Override
-    public void putChar(int columnIndex, char value) {
-        entries.putChar(getValueColumnOffset(columnIndex), value);
+    public void putLong256(int index, Long256 value) {
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, value.getLong0());
+        entries.putLong(o + Long.BYTES, value.getLong1());
+        entries.putLong(o + 2 * Long.BYTES, value.getLong2());
+        entries.putLong(o + 3 * Long.BYTES, value.getLong3());
+    }
+
+    @Override
+    public void putShort(int columnIndex, short value) {
+        entries.putShort(getValueColumnOffset(columnIndex), value);
     }
 
     @Override
@@ -209,16 +260,6 @@ public class CompactMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         record.of(currentValueOffset);
-    }
-
-    @Override
-    public void addLong256(int index, Long256 value) {
-
-    }
-
-    @Override
-    public void putLong256(int index, Long256 value) {
-
     }
 
     private long getValueColumnOffset(int columnIndex) {

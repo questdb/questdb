@@ -29,14 +29,27 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
 
 public class GroupByFunctionsUpdaterFactory {
+    private static final int FIELD_POOL_OFFSET = 3;
 
     private GroupByFunctionsUpdaterFactory() {
     }
 
     /**
      * Creates a GroupByFunctionUpdater instance capturing the provided group by functions.
-     * The functions are unrolled in the updateExisting method to avoid megamorphic calls
-     * hurting JIT compiler efficiency.
+     * The generated class will have fields GroupByFunction f0, GroupByFunction f1, GroupByFunction f2 ... GroupByFunction fn
+     * for each group by function from the provided list.
+     * <p>
+     * The generated class will have the following methods:
+     * <ul>
+     * <li>updateNew(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeFirst(value, record) for each group by function</li>
+     * <li>updateExisting(MapValue value, Record record) - calls f0, f1, f2 ... fn.computeNext(value, record) for each group by function</li>
+     * <li>updateEmpty(MapValue value) - calls f0, f1, f2 ... fn.setEmpty(value) for each group by function</li>
+     * <li>setFunctions(ObjList&lt;GroupByFunction&gt; groupByFunctions) - sets the group by functions to the fields. This method is called by the factory and should not be called by the caller.</li>
+     * </ul>
+     *
+     * @param asm              BytecodeAssembler instance
+     * @param groupByFunctions list of group by functions
+     * @return GroupByFunctionUpdater instance
      */
     public static GroupByFunctionsUpdater getInstance(
             BytecodeAssembler asm,
@@ -45,13 +58,27 @@ public class GroupByFunctionsUpdaterFactory {
         asm.init(GroupByFunctionsUpdater.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/engine/groupby/GroupByFunctionsUpdaterAsm"));
-        final int superclassIndex = asm.poolClass(AbstractGroupByFunctionsUpdater.class);
+        final int superclassIndex = asm.poolClass(Object.class);
+        int interfaceClassIndex = asm.poolClass(GroupByFunctionsUpdater.class);
+
 
         final int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
-        final int typeIndex = asm.poolUtf8("Lio/questdb/std/ObjList;");
-        final int nameIndex = asm.poolUtf8().put("groupByFunctions").$();
-        final int functionsFieldIndex = asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex));
-        final int getQuickIndex = asm.poolMethod(ObjList.class, "getQuick", "(I)Ljava/lang/Object;");
+
+        final int typeIndex = asm.poolUtf8("Lio/questdb/griffin/engine/functions/GroupByFunction;");
+        final int functionSize = groupByFunctions.size();
+
+        int firstFieldNameIndex = 0;
+        int firstFieldIndex = 0;
+        for (int i = 0; i < functionSize; i++) {
+            // if you change pool calls then you will likely need to change the FIELD_POOL_OFFSET constant
+            int fieldNameIndex = asm.poolUtf8().put("f").put(i).$();
+            int nameAndType = asm.poolNameAndType(fieldNameIndex, typeIndex);
+            int fieldIndex = asm.poolField(thisClassIndex, nameAndType);
+            if (i == 0) {
+                firstFieldNameIndex = fieldNameIndex;
+                firstFieldIndex = fieldIndex;
+            }
+        }
 
         final int computeFirstIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeFirst", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
         final int computeNextIndex = asm.poolInterfaceMethod(GroupByFunction.class, "computeNext", "(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
@@ -63,57 +90,69 @@ public class GroupByFunctionsUpdaterFactory {
         final int updateExistingSigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;Lio/questdb/cairo/sql/Record;)V");
         final int updateEmptyIndex = asm.poolUtf8("updateEmpty");
         final int updateEmptySigIndex = asm.poolUtf8("(Lio/questdb/cairo/map/MapValue;)V");
+        final int setFunctionsIndex = asm.poolUtf8("setFunctions");
+        final int setFunctionsSigIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
+
+        final int getIndex = asm.poolMethod(ObjList.class, "get", "(I)Ljava/lang/Object;");
 
         asm.finishPool();
 
         asm.defineClass(thisClassIndex, superclassIndex);
-        asm.interfaceCount(0);
-        asm.fieldCount(0);
-        asm.methodCount(4);
+        asm.interfaceCount(1);
+        asm.putShort(interfaceClassIndex);
+        asm.fieldCount(functionSize);
+        for (int i = 0; i < functionSize; i++) {
+            asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
+        }
+        asm.methodCount(5);
         asm.defineDefaultConstructor(superIndex);
 
-        generateUpdateNew(asm, groupByFunctions, functionsFieldIndex, getQuickIndex, computeFirstIndex, updateNewIndex, updateNewSigIndex);
-        generateUpdateExisting(asm, groupByFunctions, functionsFieldIndex, getQuickIndex, computeNextIndex, updateExistingIndex, updateExistingSigIndex);
-        generateUpdateEmpty(asm, groupByFunctions, functionsFieldIndex, getQuickIndex, setEmptyIndex, updateEmptyIndex, updateEmptySigIndex);
+        generateUpdateNew(asm, functionSize, firstFieldIndex, computeFirstIndex, updateNewIndex, updateNewSigIndex);
+        generateUpdateExisting(asm, functionSize, firstFieldIndex, computeNextIndex, updateExistingIndex, updateExistingSigIndex);
+        generateUpdateEmpty(asm, functionSize, firstFieldIndex, setEmptyIndex, updateEmptyIndex, updateEmptySigIndex);
+        generateSetFunction(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
 
         // class attribute count
         asm.putShort(0);
 
         GroupByFunctionsUpdater updater = asm.newInstance();
-        ((AbstractGroupByFunctionsUpdater) updater).groupByFunctions = groupByFunctions;
+
+        updater.setFunctions(groupByFunctions);
         return updater;
     }
 
-    /**
-     * Here we simply unroll the function list and call computeNext on each of them.
-     * The end bytecode equals to the following:
-     * <code>
-     *   groupByFunctions.getQuick(0).computeNext(value, record);
-     *   groupByFunctions.getQuick(1).computeNext(value, record);
-     *   // ...
-     *   groupByFunctions.getQuick(n).computeNext(value, record);
-     * </code>
-     * <p>
-     * Other generated methods look similar.
-     */
-    private static void generateUpdateNew(
+    private static void generateSetFunction(BytecodeAssembler asm, int functionSize, int firstFieldIndex, int setFunctionsIndex, int setFunctionsSigIndex, int getIndex) {
+        asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
+        for (int i = 0; i < functionSize; i++) {
+            asm.aload(0);
+            asm.aload(1);
+            asm.iconst(i);
+            asm.invokeVirtual(getIndex);
+            asm.putfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+        }
+        asm.return_();
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+        // attributes
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
+    private static void generateUpdateEmpty(
             BytecodeAssembler asm,
-            ObjList<GroupByFunction> groupByFunctions,
-            int functionsFieldIndex,
-            int getQuickIndex,
-            int computeFirstIndex,
+            int fieldCount,
+            int firstFieldIndex,
+            int setEmptyIndex,
             int updateNameIndex,
             int updateSigIndex
     ) {
         asm.startMethod(updateNameIndex, updateSigIndex, 3, 3);
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+        for (int i = 0; i < fieldCount; i++) {
             asm.aload(0);
-            asm.getfield(functionsFieldIndex);
-            asm.iconst(i);
-            asm.invokeVirtual(getQuickIndex);
-            asm.aload(1); // map value
-            asm.aload(2); // record
-            asm.invokeInterface(computeFirstIndex, 2);
+            asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+            asm.aload(1);
+            asm.invokeInterface(setEmptyIndex, 1);
         }
         asm.return_();
         asm.endMethodCode();
@@ -126,19 +165,16 @@ public class GroupByFunctionsUpdaterFactory {
 
     private static void generateUpdateExisting(
             BytecodeAssembler asm,
-            ObjList<GroupByFunction> groupByFunctions,
-            int functionsFieldIndex,
-            int getQuickIndex,
+            int fieldCount,
+            int firstFieldIndex,
             int computeNextIndex,
             int updateNameIndex,
             int updateSigIndex
     ) {
         asm.startMethod(updateNameIndex, updateSigIndex, 3, 3);
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+        for (int i = 0; i < fieldCount; i++) {
             asm.aload(0);
-            asm.getfield(functionsFieldIndex);
-            asm.iconst(i);
-            asm.invokeVirtual(getQuickIndex);
+            asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
             asm.aload(1); // map value
             asm.aload(2); // record
             asm.invokeInterface(computeNextIndex, 2);
@@ -152,23 +188,33 @@ public class GroupByFunctionsUpdaterFactory {
         asm.endMethod();
     }
 
-    private static void generateUpdateEmpty(
+    /**
+     * Here we simply unroll the function list and call computeNext on each of them.
+     * The end bytecode equals to the following:
+     * <code>
+     * f0.computeFist(value, record);
+     * f1.computeFirst(value, record);
+     * // ...
+     * fn.computeFirst(value, record);
+     * </code>
+     * <p>
+     * Other generated methods look similar.
+     */
+    private static void generateUpdateNew(
             BytecodeAssembler asm,
-            ObjList<GroupByFunction> groupByFunctions,
-            int functionsFieldIndex,
-            int getQuickIndex,
-            int setEmptyIndex,
+            int fieldCount,
+            int firstFieldIndex,
+            int computeFirstIndex,
             int updateNameIndex,
             int updateSigIndex
     ) {
         asm.startMethod(updateNameIndex, updateSigIndex, 3, 3);
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+        for (int i = 0; i < fieldCount; i++) {
             asm.aload(0);
-            asm.getfield(functionsFieldIndex);
-            asm.iconst(i);
-            asm.invokeVirtual(getQuickIndex);
+            asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
             asm.aload(1); // map value
-            asm.invokeInterface(setEmptyIndex, 1);
+            asm.aload(2); // record
+            asm.invokeInterface(computeFirstIndex, 2);
         }
         asm.return_();
         asm.endMethodCode();

@@ -50,9 +50,8 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -63,6 +62,12 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(recordFunctions);
+        Misc.free(base);
     }
 
     protected abstract AbstractNoRecordSampleByCursor getRawCursor();

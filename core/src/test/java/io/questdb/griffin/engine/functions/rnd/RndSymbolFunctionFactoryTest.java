@@ -31,30 +31,42 @@ import org.junit.Test;
 
 public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
+    // null rate is not used properly in RndSymbolFunctionFactory
+    @Ignore
     @Test
-    public void testFixedLengthNoNulls() throws Exception {
-        testNullRateFixedLength("testCol\n" +
-                        "PDXYSBE\n" +
-                        "VTJWCPS\n" +
-                        "VTJWCPS\n" +
-                        "HNRXGZS\n" +
-                        "HNRXGZS\n" +
-                        "GPGWFFY\n" +
-                        "HNRXGZS\n" +
-                        "PDXYSBE\n" +
-                        "GPGWFFY\n" +
-                        "PDXYSBE\n" +
-                        "UDEYYQE\n" +
-                        "XUXIBBT\n" +
-                        "XUXIBBT\n" +
-                        "HBHFOWL\n" +
-                        "XUXIBBT\n" +
-                        "PDXYSBE\n" +
-                        "VTJWCPS\n" +
-                        "GPGWFFY\n" +
-                        "HNRXGZS\n" +
-                        "VTJWCPS\n",
-                0);
+    public void testAllNulls() throws Exception {
+        testNullRate("testCol\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                1);
+    }
+
+    @Test
+    public void testCountNegative() {
+        assertFailure("[18] invalid symbol count", "select rnd_symbol(-3,15,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testCountZero() {
+        assertFailure("[18] invalid symbol count", "select rnd_symbol(0,15,33,6) as testCol from long_sequence(20)");
     }
 
     // null rate is not used properly in RndSymbolFunctionFactory
@@ -86,6 +98,32 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testFixedLengthNoNulls() throws Exception {
+        testNullRateFixedLength("testCol\n" +
+                        "PDXYSBE\n" +
+                        "VTJWCPS\n" +
+                        "VTJWCPS\n" +
+                        "HNRXGZS\n" +
+                        "HNRXGZS\n" +
+                        "GPGWFFY\n" +
+                        "HNRXGZS\n" +
+                        "PDXYSBE\n" +
+                        "GPGWFFY\n" +
+                        "PDXYSBE\n" +
+                        "UDEYYQE\n" +
+                        "XUXIBBT\n" +
+                        "XUXIBBT\n" +
+                        "HBHFOWL\n" +
+                        "XUXIBBT\n" +
+                        "PDXYSBE\n" +
+                        "VTJWCPS\n" +
+                        "GPGWFFY\n" +
+                        "HNRXGZS\n" +
+                        "VTJWCPS\n",
+                0);
+    }
+
+    @Test
     public void testFixedLengthWithNulls() throws Exception {
         testNullRateFixedLength("testCol\n" +
                         "PDXYSBE\n" +
@@ -109,6 +147,26 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
                         "\n" +
                         "XUXIBBT\n",
                 4);
+    }
+
+    @Test
+    public void testInvalidRange() {
+        assertFailure("[7] invalid range", "select rnd_symbol(5,34,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testLowNegative() {
+        assertFailure("[7] invalid range", "select rnd_symbol(50,-1,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testLowZero() {
+        assertFailure("[7] invalid range", "select rnd_symbol(50,0,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testNegativeNullRate() {
+        assertFailure("[26] null rate must be positive", "select rnd_symbol(5,25,33,-1) as testCol from long_sequence(20)");
     }
 
     @Test
@@ -137,32 +195,13 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 0);
     }
 
-    // null rate is not used properly in RndSymbolFunctionFactory
-    @Ignore
     @Test
-    public void testAllNulls() throws Exception {
-        testNullRate("testCol\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
-                1);
+    public void testRndFunctionsMemoryConfiguration() {
+        configOverrideRndFunctionMemoryPageSize(1024);
+        configOverrideRndFunctionMemoryMaxPages(32);
+
+        assertFailure("[18] breached memory limit set for rnd_symbol(iiii) [pageSize=1024, maxPages=32, memLimit=32768, requiredMem=78000]",
+                "select rnd_symbol(1000,30,33,0) as testCol from long_sequence(20)");
     }
 
     @Test
@@ -191,58 +230,16 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 4);
     }
 
-    @Test
-    public void testRndFunctionsMemoryConfiguration() {
-        rndFunctionMemoryPageSize = 1024;
-        rndFunctionMemoryMaxPages = 32;
-
-        assertFailure("[18] breached memory limit set for rnd_symbol(iiii) [pageSize=1024, maxPages=32, memLimit=32768, requiredMem=78000]",
-                "select rnd_symbol(1000,30,33,0) as testCol from long_sequence(20)");
-
-        rndFunctionMemoryPageSize = -1;
-        rndFunctionMemoryMaxPages = -1;
-    }
-
-    @Test
-    public void testNegativeNullRate() {
-        assertFailure("[26] null rate must be positive", "select rnd_symbol(5,25,33,-1) as testCol from long_sequence(20)");
-    }
-
-    @Test
-    public void testInvalidRange() {
-        assertFailure("[7] invalid range", "select rnd_symbol(5,34,33,6) as testCol from long_sequence(20)");
-    }
-
-    @Test
-    public void testLowZero() {
-        assertFailure("[7] invalid range", "select rnd_symbol(50,0,33,6) as testCol from long_sequence(20)");
-    }
-
-    @Test
-    public void testLowNegative() {
-        assertFailure("[7] invalid range", "select rnd_symbol(50,-1,33,6) as testCol from long_sequence(20)");
-    }
-
-    @Test
-    public void testCountZero() {
-        assertFailure("[18] invalid symbol count", "select rnd_symbol(0,15,33,6) as testCol from long_sequence(20)");
-    }
-
-    @Test
-    public void testCountNegative() {
-        assertFailure("[18] invalid symbol count", "select rnd_symbol(-3,15,33,6) as testCol from long_sequence(20)");
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new RndSymbolFunctionFactory();
-    }
-
     private void testNullRate(CharSequence expectedData, int nullRate) throws Exception {
         assertQuery(expectedData, "select rnd_symbol(8,5,10," + nullRate + ") as testCol from long_sequence(20)");
     }
 
     private void testNullRateFixedLength(CharSequence expectedData, int nullRate) throws Exception {
         assertQuery(expectedData, "select rnd_symbol(8,7,7," + nullRate + ") as testCol from long_sequence(20)");
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new RndSymbolFunctionFactory();
     }
 }

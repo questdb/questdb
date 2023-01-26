@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.griffin.SqlException;
@@ -45,10 +45,9 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpHealthCheckTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpHealthCheckTestBuilder.class);
-
+    private boolean injectUnhandledError;
     private Metrics metrics;
     private TemporaryFolder temp;
-    private boolean injectUnhandledError;
 
     public void run(HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
@@ -66,7 +65,7 @@ public class HttpHealthCheckTestBuilder {
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();
-                workerPool.assign(workerId -> {
+                workerPool.assign((workerId, runStatus) -> {
                     if (!alreadyErrored.getAndSet(true)) {
                         throw new NullPointerException("you'd better not handle me");
                     }
@@ -74,7 +73,7 @@ public class HttpHealthCheckTestBuilder {
                 });
             }
 
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
+            DefaultTestCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
                     HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)
@@ -99,13 +98,13 @@ public class HttpHealthCheckTestBuilder {
         });
     }
 
-    public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
-        this.metrics = metrics;
+    public HttpHealthCheckTestBuilder withInjectedUnhandledError() {
+        this.injectUnhandledError = true;
         return this;
     }
 
-    public HttpHealthCheckTestBuilder withInjectedUnhandledError() {
-        this.injectUnhandledError = true;
+    public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
+        this.metrics = metrics;
         return this;
     }
 

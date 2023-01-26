@@ -37,6 +37,49 @@ public class SimpleMapValue implements MapValue {
         this.values = new long[4 * columnCount];
     }
 
+    @Override
+    public void addByte(int index, byte value) {
+        values[4 * index] += value;
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final double d = Double.longBitsToDouble(values[4 * index]);
+        values[4 * index] = Double.doubleToLongBits(value + d);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final float d = Float.intBitsToFloat((int) values[4 * index]);
+        values[4 * index] = Float.floatToIntBits(value + d);
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        values[4 * index] += value;
+    }
+
+    @Override
+    public void addLong(int index, long value) {
+        values[4 * index] += value;
+    }
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+        Long256 acc = getLong256A(index);
+        Long256Util.add(acc, value);
+        final int idx = 4 * index;
+        values[idx] = acc.getLong0();
+        values[idx + 1] = acc.getLong1();
+        values[idx + 2] = acc.getLong2();
+        values[idx + 3] = acc.getLong3();
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        values[4 * index] += value;
+    }
+
     public void copy(SimpleMapValue other) {
         assert values.length >= other.values.length;
         System.arraycopy(other.values, 0, values, 0, other.values.length);
@@ -58,6 +101,11 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public char getChar(int index) {
+        return (char) values[4 * index];
+    }
+
+    @Override
     public long getDate(int index) {
         return values[4 * index];
     }
@@ -73,8 +121,23 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public char getChar(int index) {
-        return (char) values[4 * index];
+    public byte getGeoByte(int col) {
+        return (byte) values[4 * col];
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return (int) values[4 * col];
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return values[4 * col];
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return (short) values[4 * col];
     }
 
     @Override
@@ -85,6 +148,23 @@ public class SimpleMapValue implements MapValue {
     @Override
     public long getLong(int index) {
         return values[4 * index];
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        return values[4 * col + 1];
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return values[4 * col];
+    }
+
+    @Override
+    public Long256 getLong256A(int index) {
+        final int idx = 4 * index;
+        long256.setAll(values[idx], values[idx + 1], values[idx + 2], values[idx + 3]);
+        return long256;
     }
 
     @Override
@@ -113,8 +193,8 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public void addByte(int index, byte value) {
-        values[4 * index] += value;
+    public void putChar(int index, char value) {
+        values[4 * index] = value;
     }
 
     @Override
@@ -128,20 +208,8 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public void addDouble(int index, double value) {
-        final double d = Double.longBitsToDouble(values[4 * index]);
-        values[4 * index] = Double.doubleToLongBits(value + d);
-    }
-
-    @Override
     public void putFloat(int index, float value) {
         values[4 * index] = Float.floatToIntBits(value);
-    }
-
-    @Override
-    public void addFloat(int index, float value) {
-        final float d = Float.intBitsToFloat((int) values[4 * index]);
-        values[4 * index] = Float.floatToIntBits(value + d);
     }
 
     @Override
@@ -150,49 +218,15 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public void addInt(int index, int value) {
-        values[4 * index] += value;
-    }
-
-    @Override
     public void putLong(int index, long value) {
         values[4 * index] = value;
     }
 
     @Override
-    public void addLong(int index, long value) {
-        values[4 * index] += value;
-    }
-
-    @Override
-    public void putShort(int index, short value) {
-        values[4 * index] = value;
-    }
-
-    @Override
-    public void addShort(int index, short value) {
-        values[4 * index] += value;
-    }
-
-    @Override
-    public void putChar(int index, char value) {
-        values[4 * index] = value;
-    }
-
-    @Override
-    public void putTimestamp(int index, long value) {
-        values[4 * index] = value;
-    }
-
-    @Override
-    public void addLong256(int index, Long256 value) {
-        Long256 acc = getLong256A(index);
-        Long256Util.add(acc, value);
+    public void putLong128(int index, long lo, long hi) {
         final int idx = 4 * index;
-        values[idx] = acc.getLong0();
-        values[idx + 1] = acc.getLong1();
-        values[idx + 2] = acc.getLong2();
-        values[idx + 3] = acc.getLong3();
+        values[idx] = lo;
+        values[idx + 1] = hi;
     }
 
     @Override
@@ -205,34 +239,17 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public Long256 getLong256A(int index) {
-        final int idx = 4 * index;
-        long256.setAll(values[idx], values[idx + 1], values[idx + 2], values[idx + 3]);
-        return long256;
+    public void putShort(int index, short value) {
+        values[4 * index] = value;
     }
 
     @Override
-    public byte getGeoByte(int col) {
-        return (byte) values[4 * col];
+    public void putTimestamp(int index, long value) {
+        values[4 * index] = value;
     }
 
     @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return (short) values[4 * col];
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return (int) values[4 * col];
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return values[4 * col];
     }
 }

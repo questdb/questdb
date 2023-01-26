@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -53,8 +54,8 @@ public class NullIfIFunctionFactory implements FunctionFactory {
     }
 
     private static class NullIfIFunction extends IntFunction implements UnaryFunction {
-        private final Function value;
         private final int replacement;
+        private final Function value;
 
         public NullIfIFunction(Function value, int replacement) {
             super();
@@ -71,6 +72,11 @@ public class NullIfIFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
             return val == replacement ? Numbers.INT_NaN : val;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("nullif(").val(value).val(',').val(replacement).val(')');
         }
     }
 }

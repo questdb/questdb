@@ -27,6 +27,7 @@ package io.questdb.cairo;
 
 import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
 
@@ -42,13 +43,8 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public int getKeyCount() {
-        return 1;
-    }
-
-    @Override
-    public boolean isOpen() {
-        return true;
+    public IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
+        return NullIndexFrameCursor.INSTANCE;
     }
 
     @Override
@@ -57,17 +53,12 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
+    public int getKeyCount() {
+        return 1;
+    }
+
+    @Override
     public long getKeyMemorySize() {
-        return 0;
-    }
-
-    @Override
-    public long getValueBaseAddress() {
-        return 0;
-    }
-
-    @Override
-    public long getValueMemorySize() {
         return 0;
     }
 
@@ -77,17 +68,31 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
+    public long getValueBaseAddress() {
+        return 0;
+    }
+
+    @Override
     public int getValueBlockCapacity() {
         return 0;
     }
 
-    private NullCursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new NullCursor();
+    @Override
+    public long getValueMemorySize() {
+        return 0;
     }
 
     @Override
-    public IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
-        return NullIndexFrameCursor.INSTANCE;
+    public boolean isOpen() {
+        return true;
+    }
+
+    @Override
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
+    }
+
+    private NullCursor getCursor(boolean cachedInstance) {
+        return cachedInstance ? cursor : new NullCursor();
     }
 
     private static class NullCursor implements RowCursor {

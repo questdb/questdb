@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -56,6 +57,17 @@ public class DivIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getInt(Record rec) {
+            final int l = left.getInt(rec);
+            final int r = right.getInt(rec);
+
+            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN || r == 0) {
+                return Numbers.INT_NaN;
+            }
+            return l / r;
+        }
+
+        @Override
         public Function getLeft() {
             return left;
         }
@@ -66,14 +78,8 @@ public class DivIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int l = left.getInt(rec);
-            final int r = right.getInt(rec);
-
-            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN || r == 0) {
-                return Numbers.INT_NaN;
-            }
-            return l / r;
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val('/').val(right);
         }
     }
 }

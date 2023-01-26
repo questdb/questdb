@@ -237,6 +237,10 @@ void MULTI_VERSION_NAME (platform_memcpy)(void *dst, const void *src, const size
     __MEMCPY(dst, src, len);
 }
 
+void MULTI_VERSION_NAME (platform_memcmp)(const void *a, const void *b, const size_t len, int *res) {
+    *res = __MEMCMP(a, b, len);
+}
+
 void MULTI_VERSION_NAME (platform_memset)(void *dst, const int val, const size_t len) {
     __MEMSET(dst, val, len);
 }
@@ -297,6 +301,14 @@ MULTI_VERSION_NAME (re_shuffle_int64)(const int64_t *src, int64_t *dest, const i
 #endif
 }
 
+// 32
+void
+MULTI_VERSION_NAME (re_shuffle_128bit)(const __int128 *src, __int128 *dest, const index_t *index, const int64_t count) {
+    // Let compiler optimise copying 2 longs per each CPU architecture.
+    re_shuffle_vanilla(src, dest, index, count);
+}
+
+// 30
 void
 MULTI_VERSION_NAME (re_shuffle_256bit)(const long_256bit *src, long_256bit *dest, const index_t *index, const int64_t count) {
     // Let compile optimise copying 4 longs per every CPU.

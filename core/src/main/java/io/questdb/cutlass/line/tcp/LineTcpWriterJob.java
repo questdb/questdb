@@ -35,21 +35,22 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 class LineTcpWriterJob implements Job, Closeable {
     private final static Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
-    private final int workerId;
-    private final RingQueue<LineTcpMeasurementEvent> queue;
-    private final Sequence sequence;
-    private final Path path = new Path();
-    private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
-    private final MillisecondClock millisecondClock;
+    private final ObjList<TableUpdateDetails> assignedTables;
     private final long commitIntervalDefault;
-    private final LineTcpMeasurementScheduler scheduler;
-    private long nextCommitTime;
     private final Metrics metrics;
+    private final MillisecondClock millisecondClock;
+    private final Path path = new Path();
+    private final RingQueue<LineTcpMeasurementEvent> queue;
+    private final LineTcpMeasurementScheduler scheduler;
+    private final Sequence sequence;
+    private final int workerId;
+    private long nextCommitTime;
 
     LineTcpWriterJob(
             int workerId,
@@ -58,7 +59,8 @@ class LineTcpWriterJob implements Job, Closeable {
             MillisecondClock millisecondClock,
             long commitIntervalDefault,
             LineTcpMeasurementScheduler scheduler,
-            Metrics metrics
+            Metrics metrics,
+            ObjList<TableUpdateDetails> assignedTables
     ) {
         this.workerId = workerId;
         this.queue = queue;
@@ -68,6 +70,7 @@ class LineTcpWriterJob implements Job, Closeable {
         this.nextCommitTime = millisecondClock.getTicks();
         this.scheduler = scheduler;
         this.metrics = metrics;
+        this.assignedTables = assignedTables;
     }
 
     @Override
@@ -75,18 +78,16 @@ class LineTcpWriterJob implements Job, Closeable {
         LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
-            if (!run(workerId)) {
+            if (!run(workerId, Job.TERMINATING_STATUS)) {
                 break;
             }
         }
 
         Misc.free(path);
-        Misc.freeObjList(assignedTables);
-        assignedTables.clear();
     }
 
     @Override
-    public boolean run(int workerId) {
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
         // while ILP is hammering the database via multiple connections the writer
@@ -119,7 +120,7 @@ class LineTcpWriterJob implements Job, Closeable {
                     }
                 } catch (Throwable ex) {
                     LOG.critical()
-                            .$("commit failed [table=").$(assignedTables.getQuick(n).getTableNameUtf16())
+                            .$("commit failed [table=").$(assignedTables.getQuick(n).getTableToken())
                             .$(",ex=").$(ex)
                             .I$();
                     metrics.health().incrementUnhandledErrors();
@@ -147,33 +148,33 @@ class LineTcpWriterJob implements Job, Closeable {
                 // we check the event's writer thread ID to avoid consuming
                 // incomplete events
 
-                final TableUpdateDetails tab = event.getTableUpdateDetails();
+                final TableUpdateDetails tud = event.getTableUpdateDetails();
                 boolean closeWriter = false;
                 if (event.getWriterWorkerId() == workerId) {
                     try {
-                        if (tab.isWriterInError()) {
+                        if (tud.isWriterInError()) {
                             closeWriter = true;
                         } else {
-                            if (!tab.isAssignedToJob()) {
-                                assignedTables.add(tab);
-                                tab.setAssignedToJob(true);
+                            if (!tud.isAssignedToJob()) {
+                                assignedTables.add(tud);
+                                tud.setAssignedToJob(true);
                                 nextCommitTime = millisecondClock.getTicks();
                                 LOG.info()
-                                        .$("assigned table to writer thread [tableName=").$(tab.getTableNameUtf16())
+                                        .$("assigned table to writer thread [tableName=").$(tud.getTableToken())
                                         .$(", threadId=").$(workerId)
                                         .I$();
                             }
                             event.append();
                         }
                     } catch (Throwable ex) {
-                        tab.setWriterInError();
+                        tud.setWriterInError();
                         LOG.critical()
-                                .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
+                                .$("closing writer because of error [table=").$(tud.getTableToken())
                                 .$(",ex=").$(ex)
                                 .I$();
                         metrics.health().incrementUnhandledErrors();
                         closeWriter = true;
-                        event.createWriterReleaseEvent(tab, false);
+                        event.createWriterReleaseEvent(tud, false);
                         // This is a critical error, so we treat it as an unhandled one.
                     }
                 } else {
@@ -182,10 +183,10 @@ class LineTcpWriterJob implements Job, Closeable {
                     }
                 }
 
-                if (closeWriter && tab.getWriter() != null) {
+                if (closeWriter && tud.getWriter() != null) {
                     scheduler.processWriterReleaseEvent(event, workerId);
-                    assignedTables.remove(tab);
-                    tab.setAssignedToJob(false);
+                    assignedTables.remove(tud);
+                    tud.setAssignedToJob(false);
                     nextCommitTime = millisecondClock.getTicks();
                 }
             } catch (Throwable ex) {

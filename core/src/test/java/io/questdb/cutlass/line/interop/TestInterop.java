@@ -25,12 +25,12 @@
 package io.questdb.cutlass.line.interop;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.client.Sender;
 import io.questdb.cutlass.line.tcp.StringChannel;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
@@ -45,11 +45,11 @@ public class TestInterop {
 
     @Test
     public void testInterop() throws Exception {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         URL testCasesUrl = TestInterop.class.getResource("/io/questdb/cutlass/line/interop/ilp-client-interop-test.json");
         Assert.assertNotNull("interop test cases missing", testCasesUrl);
         String pp = testCasesUrl.getFile();
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
             // with OS file open methods.
             pp = pp.substring(1);
@@ -60,7 +60,7 @@ public class TestInterop {
              Path path = new Path().of(pp).$();
              Sender sender = new LineTcpSender(channel, 1024)) {
             JsonTestSuiteParser parser = new JsonTestSuiteParser(sender, channel);
-            long fd = ff.openRO(path);
+            int fd = ff.openRO(path);
             assert fd > 0;
             final long memSize = 1024 * 1024;
             final long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);
@@ -81,25 +81,25 @@ public class TestInterop {
 
     private static class JsonTestSuiteParser implements JsonParser {
 
-        public static final int TAG_TEST_NAME = 0;
-        public static final int TAG_TABLE_NAME = 1;
-        public static final int TAG_SYMBOL_NAME = 2;
-        public static final int TAG_SYMBOL_VALUE = 3;
+        public static final int TAG_COLUMNS = 8;
         public static final int TAG_COLUMN_NAME = 4;
+        public static final int TAG_COLUMN_TYPE = 9;
         public static final int TAG_COLUMN_VALUE = 5;
         public static final int TAG_EXPECTED_RESULT = 6;
-        public static final int TAG_SYMBOLS = 7;
-        public static final int TAG_COLUMNS = 8;
-        public static final int TAG_COLUMN_TYPE = 9;
         public static final int TAG_LINE = 10;
+        public static final int TAG_SYMBOLS = 7;
+        public static final int TAG_SYMBOL_NAME = 2;
+        public static final int TAG_SYMBOL_VALUE = 3;
+        public static final int TAG_TABLE_NAME = 1;
+        public static final int TAG_TEST_NAME = 0;
         private final Sender sender;
         private final StringChannel stringChannel;
         private final StringSink stringSink = new StringSink();
+        private int columnType = -1;
+        private boolean encounteredError;
+        private String name;
         private int tag1Type = -1;
         private int tag2Type = -1;
-        private int columnType = -1;
-        private String name;
-        private boolean encounteredError;
 
         public JsonTestSuiteParser(Sender sender, StringChannel channel) {
             this.sender = sender;

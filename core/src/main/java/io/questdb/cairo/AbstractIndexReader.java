@@ -40,11 +40,11 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MemoryMR keyMem = Vm.getMRInstance();
     protected final MemoryMR valueMem = Vm.getMRInstance();
-    protected int blockValueCountMod;
     protected int blockCapacity;
-    protected long spinLockTimeoutUs;
+    protected int blockValueCountMod;
     protected MillisecondClock clock;
     protected int keyCount;
+    protected long spinLockTimeoutUs;
     protected long unIndexedNullCount;
     private int keyCountIncludingNulls;
 
@@ -56,9 +56,33 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         }
     }
 
+    public long getKeyBaseAddress() {
+        return keyMem.addressOf(0);
+    }
+
     @Override
     public int getKeyCount() {
         return keyCountIncludingNulls;
+    }
+
+    public long getKeyMemorySize() {
+        return keyMem.size();
+    }
+
+    public long getUnIndexedNullCount() {
+        return unIndexedNullCount;
+    }
+
+    public long getValueBaseAddress() {
+        return valueMem.addressOf(0);
+    }
+
+    public int getValueBlockCapacity() {
+        return blockValueCountMod;
+    }
+
+    public long getValueMemorySize() {
+        return valueMem.size();
     }
 
     @Override
@@ -66,30 +90,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         return keyMem.getFd() != -1;
     }
 
-    public long getKeyBaseAddress() {
-        return keyMem.addressOf(0);
-    }
-
-    public long getKeyMemorySize() {
-        return keyMem.size();
-    }
-
-    public long getValueBaseAddress() {
-        return valueMem.addressOf(0);
-    }
-
-    public long getValueMemorySize() {
-        return valueMem.size();
-    }
-
-    public long getUnIndexedNullCount() {
-        return unIndexedNullCount;
-    }
-
-    public int getValueBlockCapacity() {
-        return blockValueCountMod;
-    }
-
+    @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
         this.unIndexedNullCount = unIndexedNullCount;
         TableUtils.txnPartitionConditionally(path, partitionTxn);

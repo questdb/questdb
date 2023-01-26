@@ -220,13 +220,13 @@ public class JsonLexerTest {
         String path = JsonLexerTest.class.getResource("/json/test.json").getPath();
 
         try (Path p = new Path()) {
-            if (Os.type == Os.WINDOWS && path.startsWith("/")) {
+            if (Os.isWindows() && path.startsWith("/")) {
                 p.of(path.substring(1));
             } else {
                 p.of(path);
             }
             long l = Files.length(p.$());
-            long fd = Files.openRO(p);
+            int fd = TestFilesFacadeImpl.INSTANCE.openRO(p);
             JsonParser listener = new NoOpParser();
             try {
                 long buf = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
@@ -254,7 +254,7 @@ public class JsonLexerTest {
                     Unsafe.free(bufB, l, MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
-                Files.close(fd);
+                TestFilesFacadeImpl.INSTANCE.close(fd);
             }
         }
     }
@@ -709,12 +709,6 @@ public class JsonLexerTest {
         }
     }
 
-    private static final class NoOpParser implements JsonParser {
-        @Override
-        public void onEvent(int code, CharSequence tag, int position) {
-        }
-    }
-
     private static class JsonAssemblingParser implements JsonParser, Mutable {
         private final StringBuffer buffer = new StringBuffer();
         private final IntStack itemCountStack = new IntStack();
@@ -726,10 +720,6 @@ public class JsonLexerTest {
             buffer.setLength(0);
             itemCount = 0;
             itemCountStack.clear();
-        }
-
-        public CharSequence value() {
-            return buffer;
         }
 
         @Override
@@ -788,6 +778,16 @@ public class JsonLexerTest {
                 default:
                     break;
             }
+        }
+
+        public CharSequence value() {
+            return buffer;
+        }
+    }
+
+    private static final class NoOpParser implements JsonParser {
+        @Override
+        public void onEvent(int code, CharSequence tag, int position) {
         }
     }
 }

@@ -51,35 +51,18 @@ public class PongMain {
         // event loop job
         workerPool.assign(dispatcher);
         // queue processor job
-        workerPool.assign(workerId -> dispatcher.processIOQueue(processor));
+        workerPool.assign((workerId, runStatus) -> dispatcher.processIOQueue(processor));
         // lets go!
         workerPool.start();
-    }
-
-    private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {
-        @Override
-        public void onRequest(int operation, PongConnectionContext context) {
-            switch (operation) {
-                case IOOperation.READ:
-                    context.receivePing();
-                    break;
-                case IOOperation.WRITE:
-                    context.sendPong();
-                    break;
-                default:
-                    context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
-                    break;
-            }
-        }
     }
 
     private static class PongConnectionContext extends AbstractMutableIOContext<PongConnectionContext> {
         private final static String PING = "PING";
         private final static String PONG = "PONG";
-        private final DirectByteCharSequence flyweight = new DirectByteCharSequence();
         private final int bufSize = 1024;
         private final long bufStart = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         private long buf = bufStart;
+        private final DirectByteCharSequence flyweight = new DirectByteCharSequence();
         private int writtenLen;
 
         @Override
@@ -145,6 +128,24 @@ public class PongMain {
                 // handle peer disconnect
                 getDispatcher().disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             }
+        }
+    }
+
+    private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {
+        @Override
+        public boolean onRequest(int operation, PongConnectionContext context) {
+            switch (operation) {
+                case IOOperation.READ:
+                    context.receivePing();
+                    break;
+                case IOOperation.WRITE:
+                    context.sendPong();
+                    break;
+                default:
+                    context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
+                    break;
+            }
+            return true;
         }
     }
 }

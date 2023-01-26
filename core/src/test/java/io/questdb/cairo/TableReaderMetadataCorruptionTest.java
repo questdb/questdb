@@ -28,9 +28,9 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -221,7 +221,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     @Test
     public void testTransitionIndexWhenColumnCountIsBeyondFileSize() throws Exception {
         // this test asserts that validator compares column count to file size, where
-        // file is prepared to be smaller than count. On windows this setup does not work
+        // file is prepared to be smaller than count. On Windows this setup does not work
         // because appender cannot truncate file to size smaller than default page size
         // when reader is open.
         if (Os.type != Os.WINDOWS) {
@@ -235,22 +235,23 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     }
 
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains) throws Exception {
-        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, FilesFacadeImpl.INSTANCE.getPageSize(), -1);
+        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, TestFilesFacadeImpl.INSTANCE.getPageSize(), -1);
         assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, 65536, -1);
     }
 
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains, long pageSize, long trimSize) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
-                path.of(root).concat("x");
+                String tableName = "x";
+                path.of(root).concat(tableName);
                 final int rootLen = path.length();
-                if (FilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
-                    throw CairoException.critical(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
+                if (TestFilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
+                    throw CairoException.critical(TestFilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
                 try (MemoryMA mem = Vm.getMAInstance()) {
                     mem.of(
-                            FilesFacadeImpl.INSTANCE,
+                            TestFilesFacadeImpl.INSTANCE,
                             path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(),
                             pageSize,
                             MemoryTag.MMAP_DEFAULT,
@@ -275,16 +276,16 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 if (trimSize > -1) {
-                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                    long fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
+                    int fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
                     assert fd > -1;
                     ff.truncate(fd, trimSize);
                     ff.close(fd);
                 }
 
-                try {
-                    new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path);
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+                    metadata.load(path);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
@@ -297,15 +298,18 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
-                CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+                CairoTestUtils.createAllTable(engine, PartitionBy.NONE);
 
-                path.of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
+                String tableName = "all";
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
 
-                long len = FilesFacadeImpl.INSTANCE.length(path);
+                long len = TestFilesFacadeImpl.INSTANCE.length(path);
 
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
+                    metadata.load();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                        mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
+                        mem.smallFile(TestFilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);
                         mem.putInt(columnCount);
                         mem.skip(len - 4);

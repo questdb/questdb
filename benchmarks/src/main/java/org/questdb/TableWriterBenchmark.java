@@ -52,11 +52,10 @@ public class TableWriterBenchmark {
     private static TableWriter writer;
     private static TableWriter writer2;
     private static TableWriter writer3;
-    private long ts;
+    private final Rnd rnd = new Rnd();
     @Param({"NOSYNC", "SYNC", "ASYNC"})
     public WriterCommitMode writerCommitMode;
-
-    private final Rnd rnd = new Rnd();
+    private long ts;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -79,9 +78,13 @@ public class TableWriterBenchmark {
 
         LogFactory.haltInstance();
 
-        writer = new TableWriter(configuration, "test1", Metrics.disabled());
-        writer2 = new TableWriter(configuration, "test2", Metrics.disabled());
-        writer3 = new TableWriter(configuration, "test3", Metrics.disabled());
+        TableToken tableToken1 = new TableToken("test1", "test1", 0, false);
+        TableToken tableToken2 = new TableToken("test2", "test2", 0, false);
+        TableToken tableToken3 = new TableToken("test3", "test3", 0, false);
+
+        writer = new TableWriter(configuration, tableToken1, Metrics.disabled());
+        writer2 = new TableWriter(configuration, tableToken2, Metrics.disabled());
+        writer3 = new TableWriter(configuration, tableToken3, Metrics.disabled());
         rnd.reset();
     }
 
@@ -125,6 +128,23 @@ public class TableWriterBenchmark {
     }
 
     @Benchmark
+    public void testWritePartitionedTimestamp() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer3.newRow(ts++ << 8);
+            r.append();
+        }
+        writer3.commit();
+    }
+
+    @Benchmark
+    public void testWritePartitionedTimestampNoCommit() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer3.newRow(ts++ << 8);
+            r.append();
+        }
+    }
+
+    @Benchmark
     public void testWriteTimestamp() {
         for (int i = 0; i < ROWS_PER_ITERATION; i++) {
             TableWriter.Row r = writer2.newRow(ts++ << 8);
@@ -139,23 +159,6 @@ public class TableWriterBenchmark {
             TableWriter.Row r = writer2.newRow(ts++ << 8);
             r.append();
         }
-    }
-
-    @Benchmark
-    public void testWritePartitionedTimestampNoCommit() {
-        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
-            TableWriter.Row r = writer3.newRow(ts++ << 8);
-            r.append();
-        }
-    }
-
-    @Benchmark
-    public void testWritePartitionedTimestamp() {
-        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
-            TableWriter.Row r = writer3.newRow(ts++ << 8);
-            r.append();
-        }
-        writer3.commit();
     }
 
     private void executeDdl(String ddl, CairoConfiguration configuration) {

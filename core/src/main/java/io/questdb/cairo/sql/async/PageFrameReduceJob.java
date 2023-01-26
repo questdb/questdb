@@ -38,6 +38,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -45,11 +46,11 @@ import java.io.Closeable;
 public class PageFrameReduceJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
-    private PageAddressCacheRecord record;
-    private final int[] shards;
-    private final int shardCount;
     private final MessageBus messageBus;
+    private final int shardCount;
+    private final int[] shards;
     private SqlExecutionCircuitBreaker circuitBreaker;
+    private PageAddressCacheRecord record;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
@@ -92,10 +93,10 @@ public class PageFrameReduceJob implements Job, Closeable {
      * true when queue item is not available, false otherwise. Item is reduced using the
      * reducer method provided with each queue item.
      *
-     * @param queue  page frame queue instance
-     * @param subSeq subscriber sequence
-     * @param record instance of record that can be positioned on the frame and each row in that frame
-     * @param circuitBreaker circuit breaker instance
+     * @param queue                 page frame queue instance
+     * @param subSeq                subscriber sequence
+     * @param record                instance of record that can be positioned on the frame and each row in that frame
+     * @param circuitBreaker        circuit breaker instance
      * @param stealingFrameSequence page frame sequence that is stealing work, it is used to identify if
      *                              page frame sequence is stealing its own work or someone else's
      * @return inverted value of queue processing status; true if nothing was processed.
@@ -115,6 +116,49 @@ public class PageFrameReduceJob implements Job, Closeable {
                 circuitBreaker,
                 stealingFrameSequence
         );
+    }
+
+    public static void reduce(
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PageFrameReduceTask task,
+            PageFrameSequence<?> frameSequence,
+            PageFrameSequence<?> stealingFrameSequence
+    ) {
+        reduce(
+                -1,
+                record,
+                circuitBreaker,
+                task,
+                frameSequence,
+                stealingFrameSequence
+        );
+    }
+
+    @Override
+    public void close() {
+        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
+        record = Misc.free(record);
+    }
+
+    @Override
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        // there is job instance per thread, the worker id must never change
+        // for this job
+        boolean useful = false;
+        for (int i = 0; i < shardCount; i++) {
+            final int shard = shards[i];
+            useful = !consumeQueue(
+                    workerId,
+                    messageBus.getPageFrameReduceQueue(shard),
+                    messageBus.getPageFrameReduceSubSeq(shard),
+                    record,
+                    circuitBreaker,
+                    null // this is correct worker processing tasks rather than PageFrameSequence
+                    // helping to steal work
+            ) || useful;
+        }
+        return useful;
     }
 
     private static boolean consumeQueue(
@@ -162,23 +206,6 @@ public class PageFrameReduceJob implements Job, Closeable {
         return true;
     }
 
-    public static void reduce(
-            PageAddressCacheRecord record,
-            SqlExecutionCircuitBreaker circuitBreaker,
-            PageFrameReduceTask task,
-            PageFrameSequence<?> frameSequence,
-            PageFrameSequence<?> stealingFrameSequence
-    ) {
-        reduce(
-                -1,
-                record,
-                circuitBreaker,
-                task,
-                frameSequence,
-                stealingFrameSequence
-        );
-    }
-
     private static void reduce(
             int workerId,
             PageAddressCacheRecord record,
@@ -193,36 +220,10 @@ public class PageFrameReduceJob implements Job, Closeable {
         if (!circuitBreaker.checkIfTripped(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd())) {
             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
             record.setFrameIndex(task.getFrameIndex());
-            assert frameSequence.doneLatch.getCount() == 0;
+            assert !frameSequence.done;
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel();
         }
-    }
-
-    @Override
-    public void close() {
-        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
-        record = Misc.free(record);
-    }
-
-    @Override
-    public boolean run(int workerId) {
-        // there is job instance per thread, the worker id must never change
-        // for this job
-        boolean useful = false;
-        for (int i = 0; i < shardCount; i++) {
-            final int shard = shards[i];
-            useful = !consumeQueue(
-                    workerId,
-                    messageBus.getPageFrameReduceQueue(shard),
-                    messageBus.getPageFrameReduceSubSeq(shard),
-                    record,
-                    circuitBreaker,
-                    null // this is correct worker processing tasks rather than PageFrameSequence
-                    // helping to steal work
-            ) || useful;
-        }
-        return useful;
     }
 }

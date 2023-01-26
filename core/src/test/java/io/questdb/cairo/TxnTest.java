@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -50,35 +48,27 @@ public class TxnTest extends AbstractCairoTest {
     @Test
     public void testFailedTxWriterDoesNotCorruptTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            FilesFacade errorFf = new FilesFacadeImpl() {
+            FilesFacade errorFf = new TestFilesFacadeImpl() {
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     return -1;
                 }
             };
 
-            FilesFacadeImpl cleanFf = new FilesFacadeImpl();
+            FilesFacadeImpl cleanFf = new TestFilesFacadeImpl();
             assertMemoryLeak(() -> {
 
                 String tableName = "txntest";
-                try (Path path = new Path()) {
-                    try (
-                            MemoryMARW mem = Vm.getCMARWInstance();
-                            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    ) {
-                        model.timestamp();
-                        TableUtils.createTable(
-                                configuration,
-                                mem,
-                                path,
-                                model,
-                                1
-                        );
-                    }
+                try (
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                ) {
+                    model.timestamp();
+                    CairoTestUtils.create(model);
                 }
 
                 try (Path path = new Path()) {
-                    path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
+                    TableToken tableToken = engine.getTableToken(tableName);
+                    path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 3000;
                     try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
                         // Add lots of partitions
@@ -129,28 +119,17 @@ public class TxnTest extends AbstractCairoTest {
             AtomicInteger reloadCount = new AtomicInteger();
             int iterations = 1000;
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             String tableName = "testTxReadWriteConcurrent";
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             int maxPartitionCount = Math.max((int) (Files.PAGE_SIZE / 8 / 4), 4096);
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();
 
-            try (Path path = new Path()) {
-                try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                ) {
-                    model.timestamp();
-                    TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            1
-                    );
-                }
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+                model.timestamp();
+                CairoTestUtils.create(model);
             }
             int truncateIteration = 33;
             Thread writerThread = createWriterThread(
@@ -166,7 +145,7 @@ public class TxnTest extends AbstractCairoTest {
                     partitionCountCheck,
                     truncateIteration
             );
-            Rnd readerRnd = TestUtils.generateRandom();
+            Rnd readerRnd = TestUtils.generateRandom(LOG);
 
             Thread[] readers = new Thread[readerThreads];
             for (int th = 0; th < readerThreads; th++) {
@@ -175,7 +154,8 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
+                        TableToken tableToken = engine.getTableToken(tableName);
+                        path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -236,28 +216,17 @@ public class TxnTest extends AbstractCairoTest {
             AtomicInteger reloadCount = new AtomicInteger();
             int iterations = 1000;
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-            Rnd rnd = TestUtils.generateRandom();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             String tableName = "testTxReadWriteConcurrent";
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             int maxPartitionCount = Math.max((int) (Files.PAGE_SIZE / 8 / 4), 4096);
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();
 
-            try (Path path = new Path()) {
-                try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                ) {
-                    model.timestamp();
-                    TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            1
-                    );
-                }
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+                model.timestamp();
+                CairoTestUtils.create(model);
             }
             Thread writerThread = createWriterThread(
                     start,
@@ -273,7 +242,7 @@ public class TxnTest extends AbstractCairoTest {
                     Integer.MAX_VALUE
             );
 
-            Rnd readerRnd = TestUtils.generateRandom();
+            Rnd readerRnd = TestUtils.generateRandom(LOG);
 
             Thread[] readers = new Thread[readerThreads];
             for (int th = 0; th < readerThreads; th++) {
@@ -282,7 +251,8 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
+                        TableToken tableToken = engine.getTableToken(tableName);
+                        path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -298,7 +268,7 @@ public class TxnTest extends AbstractCairoTest {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.txn,
-                                            txReader.structureVersion,
+                                            txReader.structureVersion.get(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );
@@ -312,7 +282,7 @@ public class TxnTest extends AbstractCairoTest {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.txn,
-                                            txReader.structureVersion,
+                                            txReader.structureVersion.get(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );
@@ -383,7 +353,8 @@ public class TxnTest extends AbstractCairoTest {
                     Path path = new Path();
                     TxWriter txWriter = new TxWriter(ff)
             ) {
-                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
+                TableToken tableToken = engine.getTableToken(tableName);
+                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 txWriter.ofRW(path, PartitionBy.HOUR);
 
                 start.await();

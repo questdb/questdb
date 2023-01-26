@@ -31,6 +31,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -58,7 +59,6 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             Function offsetFunc,
             int offsetFuncPos
     ) throws SqlException {
-
         super(
                 configuration,
                 base,
@@ -93,21 +93,18 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         }
     }
 
-    @NotNull
-    static ObjList<Function> createPlaceholderFunctions(
-            ObjList<Function> recordFunctions,
-            IntList recordFunctionPositions
-    ) throws SqlException {
-        final ObjList<Function> placeholderFunctions = new ObjList<>();
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            Function function = recordFunctions.getQuick(i);
-            if (function instanceof GroupByFunction) {
-                placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));
-            } else {
-                placeholderFunctions.add(function);
-            }
-        }
-        return placeholderFunctions;
+    @Override
+    public AbstractNoRecordSampleByCursor getRawCursor() {
+        return cursor;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleBy");
+        sink.attr("fill").val("null");
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", cursor.groupByFunctions, true);
+        sink.child(base);
     }
 
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
@@ -132,13 +129,27 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 return GeoIntConstant.NULL;
             case ColumnType.GEOLONG:
                 return GeoLongConstant.NULL;
+            case ColumnType.UUID:
+                return UuidConstant.NULL;
             default:
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }
     }
 
-    @Override
-    public AbstractNoRecordSampleByCursor getRawCursor() {
-        return cursor;
+    @NotNull
+    static ObjList<Function> createPlaceholderFunctions(
+            ObjList<Function> recordFunctions,
+            IntList recordFunctionPositions
+    ) throws SqlException {
+        final ObjList<Function> placeholderFunctions = new ObjList<>();
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            Function function = recordFunctions.getQuick(i);
+            if (function instanceof GroupByFunction) {
+                placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));
+            } else {
+                placeholderFunctions.add(function);
+            }
+        }
+        return placeholderFunctions;
     }
 }

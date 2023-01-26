@@ -29,19 +29,33 @@ import io.questdb.std.Long256;
 
 public interface MapValue extends Record {
 
+    void addByte(int index, byte value);
+
+    void addDouble(int index, double value);
+
+    void addFloat(int index, float value);
+
+    void addInt(int index, int value);
+
+    void addLong(int index, long value);
+
+    void addLong256(int index, Long256 value);
+
+    void addShort(int index, short value);
+
     long getAddress();
 
     boolean getBool(int index);
 
     byte getByte(int index);
 
+    char getChar(int index);
+
     long getDate(int index);
 
     double getDouble(int index);
 
     float getFloat(int index);
-
-    char getChar(int index);
 
     int getInt(int index);
 
@@ -57,37 +71,25 @@ public interface MapValue extends Record {
 
     void putByte(int index, byte value);
 
-    void addByte(int index, byte value);
+    void putChar(int index, char value);
 
     void putDate(int index, long value);
 
     void putDouble(int index, double value);
 
-    void addDouble(int index, double value);
-
     void putFloat(int index, float value);
-
-    void addFloat(int index, float value);
 
     void putInt(int index, int value);
 
-    void addInt(int index, int value);
-
     void putLong(int index, long value);
 
-    void addLong(int index, long value);
+    void putLong128(int index, long lo, long hi);
+
+    void putLong256(int index, Long256 value);
 
     void putShort(int index, short value);
-
-    void addShort(int index, short value);
-
-    void putChar(int index, char value);
 
     void putTimestamp(int index, long value);
 
     void setMapRecordHere();
-
-    void addLong256(int index, Long256 value);
-
-    void putLong256(int index, Long256 value);
 }

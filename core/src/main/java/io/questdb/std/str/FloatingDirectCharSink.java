@@ -31,20 +31,12 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 public class FloatingDirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
-    private long ptr;
-    private long lo;
     private long hi;
+    private long lo;
+    private long ptr;
 
     public FloatingDirectCharSink() {
         lo = hi = ptr = 0;
-    }
-
-    public FloatingDirectCharSink of(long lo, long hi) {
-        this.ptr = lo;
-        this.lo = lo;
-        this.hi = hi;
-
-        return this;
     }
 
     public FloatingDirectCharSink asCharSequence(long lo, long hi) {
@@ -53,6 +45,11 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
         this.hi = hi;
 
         return this;
+    }
+
+    @Override
+    public char charAt(int index) {
+        return Unsafe.getUnsafe().getChar(ptr + index * 2L);
     }
 
     @Override
@@ -66,18 +63,30 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
     }
 
     @Override
+    public boolean equals(Object obj) {
+        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
+    }
+
+    public long getLo() {
+        return lo;
+    }
+
+    @Override
+    public int hashCode() {
+        return Chars.hashCode(this);
+    }
+
+    @Override
     public int length() {
         return (int) (lo - ptr) / 2;
     }
 
-    @Override
-    public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(ptr + index * 2L);
-    }
+    public FloatingDirectCharSink of(long lo, long hi) {
+        this.ptr = lo;
+        this.lo = lo;
+        this.hi = hi;
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
+        return this;
     }
 
     @Override
@@ -112,23 +121,18 @@ public class FloatingDirectCharSink extends AbstractCharSink implements MutableC
         return this;
     }
 
-    private boolean checkCapacity(int nChars) {
-        return lo + (2L * nChars) <= hi;
-    }
-
     @Override
-    public int hashCode() {
-        return Chars.hashCode(this);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     @NotNull
     @Override
     public String toString() {
         return AbstractCharSequence.getString(this);
+    }
+
+    private boolean checkCapacity(int nChars) {
+        return lo + (2L * nChars) <= hi;
     }
 }

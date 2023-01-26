@@ -29,96 +29,108 @@ import io.questdb.std.str.LPSZ;
 
 public interface NetworkFacade {
 
-    void abortAccept(long fd);
+    void abortAccept(int fd);
 
-    long accept(long serverFd);
+    int accept(int serverFd);
 
-    boolean bindTcp(long fd, int address, int port);
+    boolean bindTcp(int fd, int address, int port);
 
-    boolean bindTcp(long fd, CharSequence ipv4Address, int port);
+    boolean bindTcp(int fd, CharSequence ipv4Address, int port);
 
-    int close(long fd);
+    boolean bindUdp(int fd, int ipv4Address, int port);
 
-    void close(long fd, Log logger);
+    void bumpFdCount(int fd);
 
-    void configureNoLinger(long fd);
+    int close(int fd);
 
-    int configureLinger(long fd, int seconds);
+    void close(int fd, Log logger);
 
-    int configureNonBlocking(long fd);
+    int configureLinger(int fd, int seconds);
 
-    int connect(long fd, long pSockaddr);
+    void configureNoLinger(int fd);
 
-    int connectAddrInfo(long fd, long pAddrInfo);
+    int configureNonBlocking(int fd);
 
-    void freeSockAddr(long pSockaddr);
+    int connect(int fd, long pSockaddr);
 
-    void freeAddrInfo(long pAddrInfo);
-
-    long getPeerIP(long fd);
-
-    void listen(long serverFd, int backlog);
-
-    int recv(long fd, long buffer, int bufferLen);
-
-    int peek(long fd, long buffer, int bufferLen);
-
-    int send(long fd, long buffer, int bufferLen);
+    int connectAddrInfo(int fd, long pAddrInfo);
 
     int errno();
 
-    long sockaddr(int address, int port);
+    void freeAddrInfo(long pAddrInfo);
 
-    int sendTo(long fd, long lo, int len, long socketAddress);
+    void freeMsgHeaders(long msgVec);
 
-    long socketTcp(boolean blocking);
-
-    long socketUdp();
-
-    boolean bindUdp(long fd, int ipv4Address, int port);
-
-    boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
-
-    boolean join(long fd, int bindIPv4, int groupIPv4);
-
-    long sockaddr(CharSequence address, int port);
+    void freeSockAddr(long pSockaddr);
 
     long getAddrInfo(LPSZ host, int port);
 
     long getAddrInfo(CharSequence host, int port);
 
-    int setMulticastInterface(long fd, CharSequence address);
-
-    int setMulticastInterface(long fd, int ipv4Address);
-
-    int setMulticastLoop(long fd, boolean loop);
-
-    int shutdown(long fd, int how);
-
-    int parseIPv4(CharSequence ipv4Address);
-
-    int setReusePort(long fd);
-
-    int setTcpNoDelay(long fd, boolean noDelay);
-
-    int setRcvBuf(long fd, int size);
-
-    void freeMsgHeaders(long msgVec);
-
     long getMMsgBuf(long msg);
 
     long getMMsgBufLen(long msg);
 
+    long getPeerIP(int fd);
+
+    int getSndBuf(int fd);
+
+    boolean join(int fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
+
+    boolean join(int fd, int bindIPv4, int groupIPv4);
+
+    void listen(int serverFd, int backlog);
+
     long msgHeaders(int msgBufferSize, int msgCount);
 
+    int parseIPv4(CharSequence ipv4Address);
+
+    int peek(int fd, long buffer, int bufferLen);
+
+    int recv(int fd, long buffer, int bufferLen);
+
     @SuppressWarnings("SpellCheckingInspection")
-    int recvmmsg(long fd, long msgVec, int msgCount);
+    int recvmmsg(int fd, long msgVec, int msgCount);
 
-    int resolvePort(long fd);
+    int resolvePort(int fd);
 
-    boolean setSndBuf(long fd, int size);
+    int send(int fd, long buffer, int bufferLen);
 
-    int getSndBuf(long fd);
+    int sendTo(int fd, long lo, int len, long socketAddress);
 
-    int setMulticastTtl(long fd, int ttl);
+    int setMulticastInterface(int fd, CharSequence address);
+
+    int setMulticastInterface(int fd, int ipv4Address);
+
+    int setMulticastLoop(int fd, boolean loop);
+
+    int setMulticastTtl(int fd, int ttl);
+
+    int setRcvBuf(int fd, int size);
+
+    int setReusePort(int fd);
+
+    boolean setSndBuf(int fd, int size);
+
+    int setTcpNoDelay(int fd, boolean noDelay);
+
+    int shutdown(int fd, int how);
+
+    long sockaddr(int address, int port);
+
+    long sockaddr(CharSequence address, int port);
+
+    int socketTcp(boolean blocking);
+
+    int socketUdp();
+
+    /**
+     * Returns true if a disconnect happened, false otherwise.
+     *
+     * @param fd         file descriptor
+     * @param buffer     test buffer
+     * @param bufferSize test buffer size
+     * @return true if a disconnect happened, false otherwise
+     */
+    boolean testConnection(int fd, long buffer, int bufferSize);
 }

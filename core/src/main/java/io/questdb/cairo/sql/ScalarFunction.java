@@ -33,12 +33,17 @@ public interface ScalarFunction extends Function {
     }
 
     @Override
-    default CharSequence getStr(Record rec, int arrayIndex) {
+    default Record getRecord(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     default void getStr(Record rec, CharSink sink, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default CharSequence getStr(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -49,21 +54,6 @@ public interface ScalarFunction extends Function {
 
     @Override
     default int getStrLen(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getLong128Lo(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

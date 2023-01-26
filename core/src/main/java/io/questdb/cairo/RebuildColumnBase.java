@@ -41,14 +41,15 @@ import static io.questdb.cairo.TableUtils.lockName;
 
 public abstract class RebuildColumnBase implements Closeable, Mutable {
     static final int REBUILD_ALL_COLUMNS = -1;
+    protected final String unsupportedTableMessage = "Table does not have any indexes";
     private final StringSink tempStringSink = new StringSink();
-    protected Path path = new Path();
     protected CairoConfiguration configuration;
+    protected FilesFacade ff;
+    protected Path path = new Path();
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
-    protected FilesFacade ff;
-    private long lockFd;
     private MillisecondClock clock;
+    private int lockFd;
 
     @Override
     public void clear() {
@@ -117,7 +118,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 tableWriter.getColumnVersionReader(),
                 // this may not be needed, because table writer's column index is the same
                 // as metadata writers' index.
-                metadata.getWriterIndex(columnIndex),
+                columnIndex,
                 columnName,
                 tempStringSink, // partition name
                 partitionNameTxn,
@@ -135,18 +136,26 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         reindex(null, columnName);
     }
 
-    abstract protected void doReindex(
+    public void reindexColumn(
             ColumnVersionReader columnVersionReader,
-            int columnWriterIndex,
-            CharSequence columnName,
+            RecordMetadata metadata,
+            int columnIndex,
             CharSequence partitionName,
             long partitionNameTxn,
-            long partitionSize,
             long partitionTimestamp,
-            int indexValueBlockCapacity
-    );
-
-    protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);
+            long partitionSize
+    ) {
+        doReindex(
+                columnVersionReader,
+                metadata.getWriterIndex(columnIndex),
+                metadata.getColumnName(columnIndex),
+                partitionName,
+                partitionNameTxn,
+                partitionSize,
+                partitionTimestamp,
+                metadata.getIndexValueBlockCapacity(columnIndex)
+        );
+    }
 
     private void lock(FilesFacade ff) {
         try {
@@ -157,7 +166,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             path.trimTo(rootLen);
         }
 
-        if (this.lockFd == -1L) {
+        if (this.lockFd == -1) {
             throw CairoException.nonCritical().put("Cannot lock table: ").put(path.$());
         }
     }
@@ -169,8 +178,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             @Nullable CharSequence columnName // will reindex all columns if name is not provided
     ) {
         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
-        try (TableReaderMetadata metadata = new TableReaderMetadata(ff)) {
-            metadata.deferredInit(path.$(), ColumnType.VERSION);
+        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+            metadata.load(path.$());
             // Resolve column id if the column name specified
             final int columnIndex;
             if (columnName != null) {
@@ -234,27 +243,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    public void reindexColumn(
-            ColumnVersionReader columnVersionReader,
-            RecordMetadata metadata,
-            int columnIndex,
-            CharSequence partitionName,
-            long partitionNameTxn,
-            long partitionTimestamp,
-            long partitionSize
-    ) {
-        doReindex(
-                columnVersionReader,
-                metadata.getWriterIndex(columnIndex),
-                metadata.getColumnName(columnIndex),
-                partitionName,
-                partitionNameTxn,
-                partitionSize,
-                partitionTimestamp,
-                metadata.getIndexValueBlockCapacity(columnIndex)
-        );
-    }
-
     private void reindexOneOrAllColumns(
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
@@ -264,12 +252,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionTimestamp,
             long partitionSize
     ) {
+        boolean isIndexed = false;
         tempStringSink.clear();
         partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);
 
         if (columnIndex == REBUILD_ALL_COLUMNS) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 if (isSupportedColumn(metadata, i)) {
+                    isIndexed = true;
                     reindexColumn(
                             columnVersionReader,
                             metadata,
@@ -280,6 +270,9 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                             partitionSize
                     );
                 }
+            }
+            if (!isIndexed) {
+                throw CairoException.nonCritical().put(unsupportedTableMessage);
             }
         } else {
             if (isSupportedColumn(metadata, columnIndex)) {
@@ -325,7 +318,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     private void releaseLock(FilesFacade ff) {
         if (lockFd != -1L) {
             ff.close(lockFd);
-            lockFd = -1L;
+            lockFd = -1;
             try {
                 path.trimTo(rootLen);
                 lockName(path);
@@ -337,4 +330,17 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             }
         }
     }
+
+    abstract protected void doReindex(
+            ColumnVersionReader columnVersionReader,
+            int columnWriterIndex,
+            CharSequence columnName,
+            CharSequence partitionName,
+            long partitionNameTxn,
+            long partitionSize,
+            long partitionTimestamp,
+            int indexValueBlockCapacity
+    );
+
+    protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);
 }

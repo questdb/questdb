@@ -27,18 +27,17 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
 public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
+    private final ObjList<Function> dynamicRangeList;
     // These 2 are incoming model
     private final LongList intervals;
-    private final ObjList<Function> dynamicRangeList;
-
     // This used to assemble result
     private LongList outIntervals;
 
@@ -50,6 +49,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         this.intervals = staticIntervals;
 
         this.dynamicRangeList = dynamicRangeList;
+    }
+
+    @Override
+    public boolean allIntervalsHitOnePartition(int partitionBy) {
+        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(partitionBy));
     }
 
     @Override
@@ -74,36 +78,18 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public boolean allIntervalsHitOnePartition(int partitionBy) {
-        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(partitionBy));
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("[static=").put(intervals);
-        sink.put(" dynamic=").put(dynamicRangeList).put("]");
-    }
-
-    private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {
-        if (!isStatic()) {
-            return false;
-        }
-        if (intervals.size() == 0) {
-            return true;
-        }
-
-        long floor = floorMethod.floor(intervals.getQuick(0));
-        for (int i = 1, n = intervals.size(); i < n; i++) {
-            if (floor != floorMethod.floor(intervals.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
     public void close() {
         Misc.freeObjList(dynamicRangeList);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        if (intervals != null && intervals.size() > 0) {
+            sink.val("[static=").val(intervals);
+        }
+        if (dynamicRangeList != null && dynamicRangeList.size() > 0) {
+            sink.val(" dynamic=").val(dynamicRangeList).val("]");
+        }
     }
 
     private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlContext) throws SqlException {
@@ -220,25 +206,21 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
-        if (strValue  != null) {
-            try {
-                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);
-                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
-            } catch (SqlException e) {
-                return true;
-            }
+    private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {
+        if (!isStatic()) {
             return false;
         }
-        return true;
-    }
-
-    private void negatedNothing(LongList outIntervals, int divider) {
-        outIntervals.setPos(divider);
-        if (divider == 0) {
-            outIntervals.extendAndSet(1, Long.MAX_VALUE);
-            outIntervals.extendAndSet(0, Long.MIN_VALUE);
+        if (intervals.size() == 0) {
+            return true;
         }
+
+        long floor = floorMethod.floor(intervals.getQuick(0));
+        for (int i = 1, n = intervals.size(); i < n; i++) {
+            if (floor != floorMethod.floor(intervals.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private long getTimestamp(Function dynamicFunction) {
@@ -255,5 +237,26 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     private boolean isStatic() {
         return dynamicRangeList == null || dynamicRangeList.size() == 0;
+    }
+
+    private void negatedNothing(LongList outIntervals, int divider) {
+        outIntervals.setPos(divider);
+        if (divider == 0) {
+            outIntervals.extendAndSet(1, Long.MAX_VALUE);
+            outIntervals.extendAndSet(0, Long.MIN_VALUE);
+        }
+    }
+
+    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
+        if (strValue != null) {
+            try {
+                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);
+                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+            } catch (SqlException e) {
+                return true;
+            }
+            return false;
+        }
+        return true;
     }
 }

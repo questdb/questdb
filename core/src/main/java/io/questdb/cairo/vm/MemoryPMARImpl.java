@@ -33,14 +33,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-//paged mapped appendable readable 
+// paged mapped appendable readable 
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
+    private int fd = -1;
     private FilesFacade ff;
-    private long fd = -1;
-    private long pageAddress = 0;
-    private int mappedPage;
     private int madviseOpts = -1;
+    private int mappedPage;
+    private long pageAddress = 0;
 
     public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
         of(ff, name, pageSize, 0, memoryTag, opts, -1);
@@ -49,22 +49,76 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     public MemoryPMARImpl() {
     }
 
-    @Override
-    public final void close(boolean truncate) {
-        this.close(truncate, Vm.TRUNCATE_TO_PAGE);
-    }
-
     public final void close(boolean truncate, byte truncateMode) {
-        long sz = getAppendOffset();
+        long sz = truncate ? getAppendOffset() : -1L;
         releaseCurrentPage();
         super.close();
         if (fd != -1) {
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, sz, truncateMode);
+                Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);
             } finally {
                 fd = -1;
             }
         }
+    }
+
+    @Override
+    public void close() {
+        close(true);
+    }
+
+    public int getFd() {
+        return fd;
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
+    @Override
+    public long getPageAddress(int page) {
+        if (page == mappedPage) {
+            return pageAddress;
+        }
+        return 0L;
+    }
+
+    public long mapPage(int page) {
+        // set page to "not mapped" in case mapping fails
+        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
+        mappedPage = page;
+        ff.madvise(address, getExtendSegmentSize(), madviseOpts);
+        return address;
+    }
+
+    @Override
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, 0, memoryTag, opts, -1);
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, memoryTag, opts);
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+        close();
+        this.memoryTag = memoryTag;
+        this.madviseOpts = madviseOpts;
+        this.ff = ff;
+        mappedPage = -1;
+        setExtendSegmentSize(extendSegmentSize);
+        fd = TableUtils.openFileRWOrFail(ff, name, opts);
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
+    }
+
+    @Override
+    public void switchTo(int fd, long offset, byte truncateMode) {
+        close(true, truncateMode);
+        this.fd = fd;
+        jumpTo(offset);
     }
 
     public void sync(boolean async) {
@@ -74,16 +128,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
             }
             LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         }
-    }
-
-    @Override
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, 0, memoryTag, opts, -1);
-    }
-
-    @Override
-    public void close() {
-        close(true);
     }
 
     public void truncate() {
@@ -100,11 +144,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public long getPageAddress(int page) {
-        if (page == mappedPage) {
-            return pageAddress;
-        }
-        return 0L;
+    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        of(ff, name, ff.getMapPageSize(), 0, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
     @Override
@@ -116,40 +157,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     protected void release(long address) {
         ff.munmap(address, getPageSize(), memoryTag);
-    }
-
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return ff;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
-        close();
-        this.memoryTag = memoryTag;
-        this.madviseOpts = madviseOpts;
-        this.ff = ff;
-        mappedPage = -1;
-        setExtendSegmentSize(extendSegmentSize);
-        fd = TableUtils.openFileRWOrFail(ff, name, opts);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
-    }
-
-    @Override
-    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), 0, memoryTag, CairoConfiguration.O_NONE, -1);
-    }
-
-    public long mapPage(int page) {
-        // set page to "not mapped" in case mapping fails
-        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
-        mappedPage = page;
-        ff.madvise(address, getExtendSegmentSize(), madviseOpts);
-        return address;
     }
 
     void releaseCurrentPage() {

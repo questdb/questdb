@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -38,6 +39,12 @@ public interface TernaryFunction extends Function {
         getRight().close();
     }
 
+    Function getCenter();
+
+    Function getLeft();
+
+    Function getRight();
+
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeft().init(symbolTableSource, executionContext);
@@ -48,6 +55,11 @@ public interface TernaryFunction extends Function {
     @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getCenter().isConstant() && getRight().isConstant();
+    }
+
+    @Override
+    default boolean isReadThreadSafe() {
+        return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
 
     @Override
@@ -64,8 +76,8 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
+    default void toPlan(PlanSink sink) {
+        sink.val(getName()).val('(').val(getLeft()).val(',').val(getCenter()).val(',').val(getRight()).val(')');
     }
 
     @Override
@@ -74,10 +86,4 @@ public interface TernaryFunction extends Function {
         getCenter().toTop();
         getRight().toTop();
     }
-
-    Function getLeft();
-
-    Function getCenter();
-
-    Function getRight();
 }

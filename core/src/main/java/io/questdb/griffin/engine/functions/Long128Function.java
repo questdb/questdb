@@ -75,6 +75,26 @@ public abstract class Long128Function implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -143,32 +163,6 @@ public abstract class Long128Function implements ScalarFunction {
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public abstract long getLong128Hi(Record rec);
-
-    @Override
-    public abstract long getLong128Lo(Record rec);
 
     @Override
     public final int getType() {

@@ -45,10 +45,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
+    private final ObjList<Function> recordFunctions;
 
     public GroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -77,10 +77,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -105,17 +103,38 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupBy");
+        sink.meta("vectorized").val(false);
+        sink.optAttr("keys", getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", groupByFunctions, true);
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
 
+    static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
+        ObjList<String> keyFuncs = null;
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            if (!(recordFunctions.get(i) instanceof GroupByFunction)) {
+                if (keyFuncs == null) {
+                    keyFuncs = new ObjList<>();
+                }
+                keyFuncs.add(metadata.getColumnName(i));
+            }
+        }
+
+        return keyFuncs;
+    }
+
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("GroupByRecord");
-        sink.meta("vectorized").val(false);
-        sink.attr("groupByFunctions").val(groupByFunctions);
-        sink.attr("recordFunctions").val(recordFunctions);
-        sink.child(base);
+    protected void _close() {
+        Misc.freeObjList(recordFunctions);
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -134,6 +153,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.isOpen = true;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(dataMap);
+                Misc.clearObjList(groupByFunctions);
+                super.close();
+            }
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -158,16 +187,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             } catch (Throwable e) {
                 close();
                 throw e;
-            }
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                Misc.free(dataMap);
-                Misc.clearObjList(groupByFunctions);
-                super.close();
             }
         }
     }

@@ -27,18 +27,31 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.TypeConstant;
-import io.questdb.std.Long128Util;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public final class Constants {
-    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
+    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>();
     private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
 
     public static ConstantFunction getGeoHashConstant(long hash, int bits) {
         final int type = ColumnType.getGeoHashTypeWithBits(bits);
         return getGeoHashConstantWithType(hash, type);
+    }
+
+    @NotNull
+    public static ConstantFunction getGeoHashConstantWithType(long hash, int type) {
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return new GeoByteConstant((byte) hash, type);
+            case ColumnType.GEOSHORT:
+                return new GeoShortConstant((short) hash, type);
+            case ColumnType.GEOINT:
+                return new GeoIntConstant((int) hash, type);
+            default:
+                return new GeoLongConstant(hash, type);
+        }
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
@@ -56,20 +69,6 @@ public final class Constants {
     public static TypeConstant getTypeConstant(int columnType) {
         // GEOHASH takes a different path, no need to extract tag
         return typeConstants.getQuick(columnType);
-    }
-
-    @NotNull
-    public static ConstantFunction getGeoHashConstantWithType(long hash, int type) {
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.GEOBYTE:
-                return new GeoByteConstant((byte) hash, type);
-            case ColumnType.GEOSHORT:
-                return new GeoShortConstant((short) hash, type);
-            case ColumnType.GEOINT:
-                return new GeoIntConstant((int) hash, type);
-            default:
-                return new GeoLongConstant(hash, type);
-        }
     }
 
     static {
@@ -92,6 +91,7 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.GEOINT, GeoIntConstant.NULL);
         nullConstants.extendAndSet(ColumnType.LONG128, Long128Constant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
 
         typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
@@ -110,7 +110,7 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
 
         for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));

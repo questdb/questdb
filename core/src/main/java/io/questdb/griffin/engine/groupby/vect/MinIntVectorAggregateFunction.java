@@ -32,7 +32,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -89,8 +88,23 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
+    public void clear() {
+        accumulator.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return accumulator.intValue();
+    }
+
+    @Override
+    public String getName() {
+        return "min";
     }
 
     @Override
@@ -101,6 +115,11 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NaN);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -117,25 +136,5 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());
-    }
-
-    @Override
-    public void clear() {
-        accumulator.reset();
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return accumulator.intValue();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinIntVector(").put(columnIndex).put(')');
     }
 }

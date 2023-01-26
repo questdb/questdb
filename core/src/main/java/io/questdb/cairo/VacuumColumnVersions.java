@@ -45,18 +45,18 @@ public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;
     private final static Log LOG = LogFactory.getLog(VacuumColumnVersions.class);
     private final CairoEngine engine;
-    private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
     private final FilesFacade ff;
+    private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
     private StringSink fileNameSink;
-    private Path path2;
-    private int tablePathLen;
-    private long partitionTimestamp;
-    private DirectLongList tableFiles;
     private int partitionBy;
+    private long partitionTimestamp;
+    private Path path2;
+    private ColumnPurgeOperator purgeExecution;
+    private DirectLongList tableFiles;
+    private int tablePathLen;
     private TableReader tableReader;
     private final FindVisitor visitTableFiles = this::visitTableFiles;
     private final FindVisitor visitTablePartition = this::visitTablePartition;
-    private ColumnPurgeOperator purgeExecution;
 
     public VacuumColumnVersions(CairoEngine engine) {
         this.engine = engine;
@@ -73,15 +73,16 @@ public class VacuumColumnVersions implements Closeable {
 
     public void run(SqlExecutionContext executionContext, TableReader reader) {
         executionContext.getCairoSecurityContext().checkWritePermission();
-        CharSequence tableName = reader.getTableName();
-        LOG.info().$("processing [table=").$(reader.getTableName()).I$();
+        LOG.info().$("processing [dirName=").utf8(reader.getTableToken().getDirName()).I$();
         fileNameSink = new StringSink();
 
         CairoConfiguration configuration = engine.getConfiguration();
+
+        TableToken tableToken = reader.getTableToken();
         Path path = Path.getThreadLocal(configuration.getRoot());
-        path.concat(tableName);
+        path.concat(tableToken);
         tablePathLen = path.length();
-        path2 = Path.getThreadLocal2(configuration.getRoot()).concat(tableName);
+        path2 = Path.getThreadLocal2(configuration.getRoot()).concat(tableToken);
 
         this.tableReader = reader;
         partitionBy = reader.getPartitionedBy();
@@ -103,7 +104,7 @@ public class VacuumColumnVersions implements Closeable {
     private void purgeColumnVersions(DirectLongList tableFiles, TableReader reader, CairoEngine engine) {
         int columnIndex = -1;
         int writerIndex = -1;
-        int tableId = reader.getMetadata().getId();
+        int tableId = reader.getMetadata().getTableId();
         long truncateVersion = reader.getTxFile().getTruncateVersion();
         TableReaderMetadata metadata = reader.getMetadata();
         long updateTxn = reader.getTxn();
@@ -124,7 +125,7 @@ public class VacuumColumnVersions implements Closeable {
                     writerIndex = metadata.getWriterIndex(newReaderIndex);
                     CharSequence columnName = metadata.getColumnName(newReaderIndex);
                     int columnType = metadata.getColumnType(newReaderIndex);
-                    purgeTask.of(reader.getTableName(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+                    purgeTask.of(reader.getTableToken(), columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
 
                 }
             }
@@ -224,8 +225,8 @@ public class VacuumColumnVersions implements Closeable {
     }
 
     private void visitTablePartition(long pUtf8NameZ, int type) {
-        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-            path2.trimTo(tablePathLen);
+        if (ff.isDirOrSoftLinkDirNoDots(path2, tablePathLen, pUtf8NameZ, type, fileNameSink)) {
+            path2.trimTo(tablePathLen).$();
 
             int dotIndex = Chars.indexOf(fileNameSink, '.');
             if (dotIndex < 0) {

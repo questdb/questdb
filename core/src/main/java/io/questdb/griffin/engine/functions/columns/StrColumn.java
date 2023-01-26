@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -53,13 +54,13 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return rec.getStrB(columnIndex);
+    public void getStr(Record rec, CharSink sink) {
+        rec.getStr(columnIndex, sink);
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-        rec.getStr(columnIndex, sink);
+    public CharSequence getStrB(Record rec) {
+        return rec.getStrB(columnIndex);
     }
 
     @Override
@@ -68,8 +69,13 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("StrColumn(").put(columnIndex).put(')');
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
     }
 
     static {
@@ -77,10 +83,5 @@ public class StrColumn extends StrFunction implements ScalarFunction {
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
             COLUMNS.setQuick(i, new StrColumn(i));
         }
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return true;
     }
 }

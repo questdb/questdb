@@ -33,26 +33,26 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
-    private final LongList columnPageNextAddress = new LongList();
-    private final LongList columnPageAddress = new LongList();
-    private final TableReaderPageFrame frame = new TableReaderPageFrame();
-    private final LongList topsRemaining = new LongList();
-    private final IntList pages = new IntList();
     private final int columnCount;
+    private final IntList columnIndexes;
+    private final LongList columnPageAddress = new LongList();
+    private final LongList columnPageNextAddress = new LongList();
+    private final IntList columnSizes;
+    private final TableReaderPageFrame frame = new TableReaderPageFrame();
+    private final int pageFrameMaxRows;
+    private final int pageFrameMinRows;
     private final LongList pageRowsRemaining = new LongList();
     private final LongList pageSizes = new LongList();
+    private final IntList pages = new IntList();
+    private final LongList topsRemaining = new LongList();
     private final int workerCount;
-    private TableReader reader;
-    private int reenterPartitionIndex;
     private long currentPageFrameRowLimit;
     private DataFrameCursor dataFrameCursor;
-    private long reenterPartitionLo;
-    private long reenterPartitionHi;
+    private TableReader reader;
     private boolean reenterDataFrame = false;
-    private final IntList columnIndexes;
-    private final int pageFrameMinRows;
-    private final int pageFrameMaxRows;
-    private final IntList columnSizes;
+    private long reenterPartitionHi;
+    private int reenterPartitionIndex;
+    private long reenterPartitionLo;
 
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
@@ -75,41 +75,44 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
+    }
+
+    @Override
     public long getUpdateRowId(long rowIndex) {
         return Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo() + rowIndex);
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
+    }
+
+    @Override
     public @Nullable PageFrame next() {
-        if (this.reenterDataFrame) {
+        if (reenterDataFrame) {
             return computeFrame(reenterPartitionLo, reenterPartitionHi);
         }
         DataFrame dataFrame = dataFrameCursor.next();
         if (dataFrame != null) {
-            this.reenterPartitionIndex = dataFrame.getPartitionIndex();
+            reenterPartitionIndex = dataFrame.getPartitionIndex();
             final long lo = dataFrame.getRowLo();
             final long hi = dataFrame.getRowHi();
-            this.currentPageFrameRowLimit = Math.min(
+            currentPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
-                    Math.max(
-                            pageFrameMinRows, (hi - lo) / workerCount
-                    )
+                    Math.max(pageFrameMinRows, (hi - lo) / workerCount)
             );
             return computeFrame(lo, hi);
         }
         return null;
     }
 
-    @Override
-    public void toTop() {
-        this.dataFrameCursor.toTop();
-        pages.setAll(columnCount, 0);
-        topsRemaining.setAll(columnCount, 0);
-        columnPageAddress.setAll(columnCount * 2, 0);
-        columnPageNextAddress.setAll(columnCount * 2, 0);
-        pageRowsRemaining.setAll(columnCount, -1L);
-        pageSizes.setAll(columnCount * 2, -1L);
-        reenterDataFrame = false;
+    public FwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
+        this.reader = dataFrameCursor.getTableReader();
+        this.dataFrameCursor = dataFrameCursor;
+        toTop();
+        return this;
     }
 
     @Override
@@ -118,20 +121,15 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
-    }
-
-    @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
-    }
-
-    public FwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
-        this.reader = dataFrameCursor.getTableReader();
-        this.dataFrameCursor = dataFrameCursor;
-        toTop();
-        return this;
+    public void toTop() {
+        dataFrameCursor.toTop();
+        pages.setAll(columnCount, 0);
+        topsRemaining.setAll(columnCount, 0);
+        columnPageAddress.setAll(columnCount * 2, 0);
+        columnPageNextAddress.setAll(columnCount * 2, 0);
+        pageRowsRemaining.setAll(columnCount, -1L);
+        pageSizes.setAll(columnCount * 2, -1L);
+        reenterDataFrame = false;
     }
 
     private TableReaderPageFrame computeFrame(final long partitionLo, final long partitionHi) {
@@ -206,9 +204,9 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     private class TableReaderPageFrame implements PageFrame {
-        private long partitionLo;
         private long partitionHi;
         private int partitionIndex;
+        private long partitionLo;
 
         @Override
         public void copyColumnAddressesTo(LongList destColumnAddresses) {
@@ -226,18 +224,23 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getPageAddress(int columnIndex) {
-            return columnPageAddress.getQuick(columnIndex * 2);
-        }
-
-        @Override
         public long getIndexPageAddress(int columnIndex) {
             return columnPageAddress.getQuick(columnIndex * 2 + 1);
         }
 
         @Override
+        public long getPageAddress(int columnIndex) {
+            return columnPageAddress.getQuick(columnIndex * 2);
+        }
+
+        @Override
         public long getPageSize(int columnIndex) {
             return pageSizes.getQuick(columnIndex * 2);
+        }
+
+        @Override
+        public long getPartitionHi() {
+            return partitionHi;
         }
 
         @Override
@@ -248,11 +251,6 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
-        }
-
-        @Override
-        public long getPartitionHi() {
-            return partitionHi;
         }
     }
 }

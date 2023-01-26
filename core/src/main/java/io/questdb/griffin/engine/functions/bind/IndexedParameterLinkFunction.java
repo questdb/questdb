@@ -27,23 +27,30 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
 public class IndexedParameterLinkFunction implements ScalarFunction {
-    private final int variableIndex;
     private final int position;
-    private int type;
+    private final int variableIndex;
     private Function base;
+    private int type;
 
     public IndexedParameterLinkFunction(int variableIndex, int type, int position) {
         this.variableIndex = variableIndex;
         this.type = type;
         this.position = position;
+    }
+
+    @Override
+    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        this.type = bindVariableService.define(variableIndex, type, position);
     }
 
     @Override
@@ -92,6 +99,26 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        return getBase().getGeoByte(rec);
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        return getBase().getGeoInt(rec);
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return getBase().getGeoLong(rec);
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        return getBase().getGeoShort(rec);
+    }
+
+    @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
     }
@@ -99,6 +126,16 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+        return getBase().getLong128Hi(rec);
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        return getBase().getLong128Lo(rec);
     }
 
     @Override
@@ -162,38 +199,21 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        return getBase().getGeoByte(rec);
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return getBase().getGeoShort(rec);
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return getBase().getGeoInt(rec);
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return getBase().getGeoLong(rec);
-    }
-
-    @Override
     public int getType() {
         return type;
     }
 
-    @Override
-    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
-        this.type = bindVariableService.define(variableIndex, type, position);
+    public int getVariableIndex() {
+        return variableIndex;
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        base = executionContext.getBindVariableService().getFunction(variableIndex);
+        if (base == null) {
+            throw SqlException.position(0).put("undefined bind variable: ").put(variableIndex);
+        }
+        base.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -208,17 +228,14 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         }
     }
 
-    public int getVariableIndex() {
-        return variableIndex;
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        base = executionContext.getBindVariableService().getFunction(variableIndex);
-        if (base == null) {
-            throw SqlException.position(0).put("undefined bind variable: ").put(variableIndex);
-        }
-        base.init(symbolTableSource, executionContext);
+    public void toPlan(PlanSink sink) {
+        sink.val("$").val(variableIndex).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 
     private Function getBase() {

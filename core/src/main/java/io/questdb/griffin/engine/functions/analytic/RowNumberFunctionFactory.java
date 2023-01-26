@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
@@ -46,10 +47,11 @@ import io.questdb.std.Unsafe;
 public class RowNumberFunctionFactory implements FunctionFactory {
 
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
+    private static final String SIGNATURE = "row_number()";
 
     @Override
     public String getSignature() {
-        return "row_number()";
+        return SIGNATURE;
     }
 
     @Override
@@ -83,6 +85,67 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         return new SequenceRowNumberFunction();
     }
 
+    private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+        private int columnIndex;
+        private long next = 1;
+
+        public OrderRowNumberFunction() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // not called
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
+            next++;
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void reopen() {
+            reset();
+        }
+
+        @Override
+        public void reset() {
+            next = 1;
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
+    }
+
     private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
@@ -108,12 +171,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
         }
 
         @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -133,11 +196,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void preparePass2(RecordCursor cursor) {
+        public void pass2(Record record) {
         }
 
         @Override
-        public void pass2(Record record) {
+        public void preparePass2(RecordCursor cursor) {
         }
 
         @Override
@@ -154,67 +217,16 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
-    }
-
-    private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
-        private long next = 1;
-        private int columnIndex;
-
-        public OrderRowNumberFunction() {
-        }
 
         @Override
-        public void close() {
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
-            next++;
-        }
-
-        @Override
-        public void preparePass2(RecordCursor cursor) {
-        }
-
-        @Override
-        public void pass2(Record record) {
-        }
-
-        @Override
-        public void reopen() {
-            reset();
-        }
-
-        @Override
-        public void reset() {
-            next = 1;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 
     private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
-        private long next = 1;
         private int columnIndex;
+        private long next = 1;
 
         @Override
         public long getLong(Record rec) {
@@ -223,17 +235,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            next = 1;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            toTop();
-        }
-
-        @Override
-        public void reopen() {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             toTop();
         }
 
@@ -247,11 +249,16 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
         public void preparePass2(RecordCursor cursor) {
         }
 
         @Override
-        public void pass2(Record record) {
+        public void reopen() {
+            toTop();
         }
 
         @Override
@@ -262,6 +269,16 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
+
+        @Override
+        public void toTop() {
+            next = 1;
         }
     }
 }

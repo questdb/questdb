@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -39,6 +40,14 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
+    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
+    }
+
     @Override
     public String getSignature() {
         return "in(NV)";
@@ -105,11 +114,37 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return res;
     }
 
-    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
+    private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final LongList inList;
+        private final Function tsFunc;
+
+        public InTimestampConstFunction(Function tsFunc, LongList longList) {
+            this.tsFunc = tsFunc;
+            this.inList = longList;
+        }
+
+        @Override
+        public Function getArg() {
+            return tsFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long ts = tsFunc.getTimestamp(rec);
+            if (ts == Numbers.LONG_NaN) {
+                return negated;
+            }
+
+            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(tsFunc);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(inList);
         }
     }
 
@@ -152,30 +187,15 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             return negated;
         }
-    }
-
-    private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function tsFunc;
-        private final LongList inList;
-
-        public InTimestampConstFunction(Function tsFunc, LongList longList) {
-            this.tsFunc = tsFunc;
-            this.inList = longList;
-        }
 
         @Override
-        public Function getArg() {
-            return tsFunc;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            long ts = tsFunc.getTimestamp(rec);
-            if (ts == Numbers.LONG_NaN) {
-                return negated;
+        public void toPlan(PlanSink sink) {
+            sink.val(args.getQuick(0));
+            if (negated) {
+                sink.val(" not");
             }
-
-            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
+            sink.val(" in ");
+            sink.val(args, 1);
         }
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -38,47 +37,17 @@ import org.junit.Test;
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
-    public void testAddColumnDefaultLong() throws Exception {
-        testAddColumnInteger(ColumnType.LONG, "NaN");
-    }
-
-    @Test
-    public void testAddColumnDefaultInteger() throws Exception {
-        testAddColumnInteger(ColumnType.INT, "NaN");
-    }
-
-    @Test
-    public void testAddColumnDefaultShort() throws Exception {
-        testAddColumnInteger(ColumnType.SHORT, "0");
-    }
-
-    @Test
     public void testAddColumnDefaultByte() throws Exception {
         testAddColumnInteger(ColumnType.BYTE, "0");
     }
 
-    private void testAddColumnInteger(short colType, String nullValue) throws Exception {
-        final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
-                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
-                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
-
-        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
-
-        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
-            @Override
-            public short getDefaultColumnTypeForInteger() {
-                return colType;
-            }
-        });
-
-        try (TableReader reader = new TableReader(configuration, "tab")) {
-            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
-        }
+    @Test
+    public void testAddColumnDefaultDouble() throws Exception {
+        testAddColumnFloat(ColumnType.DOUBLE, "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
+                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
+                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n");
     }
 
     @Test
@@ -91,48 +60,28 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnDefaultDouble() throws Exception {
-        testAddColumnFloat(ColumnType.DOUBLE, "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
-                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
-                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n");
-    }
-
-    private void testAddColumnFloat(short colType, String expected) throws Exception {
-        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
-
-        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
-            @Override
-            public short getDefaultColumnTypeForFloat() {
-                return colType;
-            }
-        });
-
-        try (TableReader reader = new TableReader(configuration, "tab")) {
-            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
-        }
+    public void testAddColumnDefaultInteger() throws Exception {
+        testAddColumnInteger(ColumnType.INT, "NaN");
     }
 
     @Test
-    public void testStr() throws Exception {
-        String expected = "host\tuptime_format\ttimestamp\n" +
-                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n";
-        String lines = "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000";
-        assertThat(expected, lines, "system");
+    public void testAddColumnDefaultLong() throws Exception {
+        testAddColumnInteger(ColumnType.LONG, "NaN");
     }
 
     @Test
-    public void testO3() throws Exception {
-        String expected = "host\tuptime_format\ttimestamp\n" +
-                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n" +
-                "linux-questdb\t 4:38\t2019-12-10T15:06:01.000000Z\n";
-        String lines = "system,host=linux-questdb uptime_format=\" 4:38\" 1575990361000000000\n"
-                + "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000\n";
-        assertThat(expected, lines, "system");
+    public void testAddColumnDefaultShort() throws Exception {
+        testAddColumnInteger(ColumnType.SHORT, "0");
+    }
+
+    @Test
+    public void testAddTag() throws Exception {
+        final String expected = "tag\ttag3\tfield\tf4\tfield2\tfx\ttimestamp\ttag2\n" +
+                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t\n" +
+                "woopsie\t\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
+        final String lines = "tab,tag=abc,tag3=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
+        assertThat(expected, lines, "tab");
     }
 
     @Test
@@ -155,7 +104,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -167,118 +116,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         assertThat(expected, lines, "x", configuration);
-    }
-
-    @Test
-    public void testCharSingleChar() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("char", ColumnType.CHAR)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("char\ttimestamp\n" +
-                        "c\t1970-01-01T00:00:00.000000Z\n",
-                "x char=\"c\"\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
-                    }
-                });
-    }
-
-    @Test
-    public void testCharStringIsProvided() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("char", ColumnType.CHAR)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("char\ttimestamp\n" +
-                        "c\t1970-01-01T00:00:00.000000Z\n",
-                "x char=\"coconut\"\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
-                    }
-                });
-    }
-
-    @Test
-    public void testCharNull() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("char", ColumnType.CHAR)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("char\ttimestamp\n" +
-                        "\t1970-01-01T00:00:00.000000Z\n",
-                "x char=\"\"\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
-                    }
-                });
-    }
-
-    @Test
-    public void testCharMissing() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("char", ColumnType.CHAR)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("char\ttimestamp\n" +
-                        "\t1970-01-01T00:00:00.000000Z\n",
-                "x char=\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
-                    }
-                });
-    }
-
-    @Test
-    public void testCharSingleQuote() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("char", ColumnType.CHAR)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("char\ttimestamp\n",
-                "x char=''\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
-                    }
-                });
-    }
-
-    @Test
-    public void testBinary() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("bin", ColumnType.BINARY)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        assertThat("bin\ttimestamp\n",
-                "x bin=b10101010101\n",
-                "x",
-                new DefaultCairoConfiguration(root) {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return new TestMicroClock(0, 0);
-                    }
-                });
     }
 
     @Test
@@ -392,28 +229,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLong() throws Exception {
-        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
-                "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
-                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
-
-        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
-                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
-                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
-
-        String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
-                "y,asym1=55,asym2=box adouble=5.9 1700000000000\n" +
-                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000000\n" +
-                "y,asym1=66,asym2=box adouble=7.9 1700000000000\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000000\n";
-
-        assertMultiTable(expected1, expected2, lines);
-    }
-
-    @Test
     public void testBadTimestamp1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
@@ -456,6 +271,24 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBinary() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("bin", ColumnType.BINARY)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("bin\ttimestamp\n",
+                "x bin=b10101010101\n",
+                "x",
+                new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
     public void testBusyTable() throws Exception {
         final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n";
 
@@ -474,7 +307,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -486,19 +319,56 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         // open writer so that pool cannot have it
-        try (TableWriter ignored = new TableWriter(configuration, "x", metrics)) {
+        try (TableWriter ignored = newTableWriter(configuration, "x", metrics)) {
             assertThat(expected, lines, "x", configuration);
         }
     }
 
     @Test
+    public void testCannotAutoCreateColumnWhenDisabledInConfiguration() throws Exception {
+        try {
+            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewColumns() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new columns is disabled [table=t_ilp21]");
+        }
+    }
+
+    @Test
+    public void testCannotAutoCreateTableWhenDisabledInConfiguration() throws Exception {
+        try {
+            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewTables() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new tables is disabled [table=t_ilp21]");
+        }
+    }
+
+    @Test
     public void testCannotCreateTable() throws Exception {
+        CharSequence dirName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         TestFilesFacade ff = new TestFilesFacade() {
             boolean called = false;
 
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.endsWith(path, "x" + Files.SEPARATOR)) {
+                if (Chars.endsWith(path, Chars.toString(dirName) + Files.SEPARATOR)) {
                     called = true;
                     return -1;
                 }
@@ -518,7 +388,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
                 "y,sym=zzz double=1.3,int=11i,bool=false,str=\"nice\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -541,6 +411,116 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(ff, path, root, "all"));
         }
+    }
+
+    @Test
+    public void testCharMissing() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n" +
+                        "\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\n",
+                "x",
+                new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharNull() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n" +
+                        "\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"\"\n",
+                "x",
+                new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharSingleChar() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n" +
+                        "c\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"c\"\n",
+                "x",
+                new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharSingleQuote() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n",
+                "x char=''\n",
+                "x",
+                new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharStringIsProvided() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n" +
+                        "c\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"coconut\"\n",
+                "x",
+                new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testColumnConversion1() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT).col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+        assertThat(expected, lines, "t_ilp21");
     }
 
     @Test
@@ -587,6 +567,195 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExistingTableRemovedColumn() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        try (TableWriter writer = getWriter("t_ilp21")) {
+            writer.removeColumn("event");
+        }
+        engine.releaseInactive();
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        assertThat(expected, lines, "t_ilp21");
+    }
+
+    @Test
+    public void testExistingTableRemovedColumnAndAddedBack() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        try (TableWriter writer = getWriter("t_ilp21")) {
+            writer.removeColumn("event");
+            writer.addColumn("event", ColumnType.SHORT);
+        }
+        engine.releaseInactive();
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        assertThat(expected, lines, "t_ilp21");
+    }
+
+    @Test
+    public void testExistingTableWhenAddingNewTablesAndColumnsDisabled() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+        assertThat(expected, lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public boolean getAutoCreateNewColumns() {
+                return false;
+            }
+
+            @Override
+            public boolean getAutoCreateNewTables() {
+                return false;
+            }
+        });
+    }
+
+    @Test
+    public void testFailsToAddAColumnWhenAutoColumnAddDisabled() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        try {
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewColumns() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "column does not exist, creating new columns is disabled [table=t_ilp21, columnName=byte1]");
+        }
+    }
+
+    @Test
+    public void testFailsToAddColumnWithInvalidName() throws Exception {
+        String lines = "t_ilp21 ..event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+        assertThat(
+                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                lines,
+                "t_ilp21",
+                configuration
+        );
+    }
+
+    @Test
+    public void testInvalidTableName() throws Exception {
+        String lines = "..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+        assertThat(
+                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                lines,
+                "t_ilp21",
+                configuration
+        );
+    }
+
+    @Test
+    public void testLong() throws Exception {
+        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
+                "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
+                "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
+                "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+
+        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+
+        String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
+                "y,asym1=55,asym2=box adouble=5.9 1700000000000\n" +
+                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000000\n" +
+                "y,asym1=66,asym2=box adouble=7.9 1700000000000\n" +
+                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000000\n";
+
+        assertMultiTable(expected1, expected2, lines);
+    }
+
+    @Test
+    public void testNoTag() throws Exception {
+        String expected = "uptime_format\ttimestamp\n" +
+                " 1:18\t2019-12-10T15:06:00.000000Z\n";
+        String lines = "system uptime_format=\" 1:18\" 1575990360000000000";
+        assertThat(expected, lines, "system");
+    }
+
+    @Test
+    public void testO3() throws Exception {
+        String expected = "host\tuptime_format\ttimestamp\n" +
+                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n" +
+                "linux-questdb\t 4:38\t2019-12-10T15:06:01.000000Z\n";
+        String lines = "system,host=linux-questdb uptime_format=\" 4:38\" 1575990361000000000\n"
+                + "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000\n";
+        assertThat(expected, lines, "system");
+    }
+
+    @Test
     public void testReservedName() throws Exception {
         final String expected = "sym\tdouble\tint\tbool\tstr\ttimestamp\n" +
                 "ok\t2.1\t11\tfalse\tdone\t2017-10-03T10:00:00.000000Z\n";
@@ -596,7 +765,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
                 "y,sym=ok double=2.1,int=11i,bool=false,str=\"done\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -608,10 +777,19 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         try (Path path = new Path()) {
-            Files.mkdirs(path.of(root).concat("x").slash$(), configuration.getMkDirMode());
+            CharSequence dirName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            Files.mkdirs(path.of(root).concat(dirName).slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
-            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));
+            Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, dirName));
         }
+    }
+
+    @Test
+    public void testStr() throws Exception {
+        String expected = "host\tuptime_format\ttimestamp\n" +
+                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n";
+        String lines = "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000";
+        assertThat(expected, lines, "system");
     }
 
     @Test
@@ -720,228 +898,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertMultiTable(expected1, expected2, lines);
     }
 
-    @Test
-    public void testAddTag() throws Exception {
-        final String expected = "tag\ttag3\tfield\tf4\tfield2\tfx\ttimestamp\ttag2\n" +
-                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t\n" +
-                "woopsie\t\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
-        final String lines = "tab,tag=abc,tag3=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
-        assertThat(expected, lines, "tab");
-    }
-
-    @Test
-    public void testNoTag() throws Exception {
-        String expected = "uptime_format\ttimestamp\n" +
-                " 1:18\t2019-12-10T15:06:00.000000Z\n";
-        String lines = "system uptime_format=\" 1:18\" 1575990360000000000";
-        assertThat(expected, lines, "system");
-    }
-
-    @Test
-    public void testColumnConversion1() throws Exception {
-        try (
-                @SuppressWarnings("resource")
-                TableModel model = new TableModel(configuration, "t_ilp21",
-                        PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT)
-                        .col("int1", ColumnType.INT).col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
-        assertThat(expected, lines, "t_ilp21");
-    }
-
-    @Test
-    public void testCannotAutoCreateColumnWhenDisabledInConfiguration() throws Exception {
-        try {
-            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-
-            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
-                @Override
-                public boolean getAutoCreateNewColumns() {
-                    return false;
-                }
-            });
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new columns is disabled [table=t_ilp21]");
-        }
-    }
-
-    @Test
-    public void testCannotAutoCreateTableWhenDisabledInConfiguration() throws Exception {
-        try {
-            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-
-            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
-                @Override
-                public boolean getAutoCreateNewTables() {
-                    return false;
-                }
-            });
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new tables is disabled [table=t_ilp21]");
-        }
-    }
-
-    @Test
-    public void testExistingTableRemovedColumn() throws Exception {
-        try (
-                TableModel model = new TableModel(configuration, "t_ilp21",
-                        PartitionBy.NONE)
-                        .col("event", ColumnType.SHORT)
-                        .col("id", ColumnType.LONG256)
-                        .col("ts", ColumnType.TIMESTAMP)
-                        .col("float1", ColumnType.FLOAT)
-                        .col("int1", ColumnType.INT)
-                        .col("date1", ColumnType.DATE)
-                        .col("byte1", ColumnType.BYTE)
-                        .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
-            writer.removeColumn("event");
-        }
-        engine.releaseInactive();
-
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
-        assertThat(expected, lines, "t_ilp21");
-    }
-
-    @Test
-    public void testExistingTableRemovedColumnAndAddedBack() throws Exception {
-        try (
-                TableModel model = new TableModel(configuration, "t_ilp21",
-                        PartitionBy.NONE)
-                        .col("event", ColumnType.SHORT)
-                        .col("id", ColumnType.LONG256)
-                        .col("ts", ColumnType.TIMESTAMP)
-                        .col("float1", ColumnType.FLOAT)
-                        .col("int1", ColumnType.INT)
-                        .col("date1", ColumnType.DATE)
-                        .col("byte1", ColumnType.BYTE)
-                        .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
-            writer.removeColumn("event");
-            writer.addColumn("event", ColumnType.SHORT);
-        }
-        engine.releaseInactive();
-
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
-                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
-        assertThat(expected, lines, "t_ilp21");
-    }
-
-    @Test
-    public void testExistingTableWhenAddingNewTablesAndColumnsDisabled() throws Exception {
-        try (
-                TableModel model = new TableModel(configuration, "t_ilp21",
-                        PartitionBy.NONE)
-                        .col("event", ColumnType.SHORT)
-                        .col("id", ColumnType.LONG256)
-                        .col("ts", ColumnType.TIMESTAMP)
-                        .col("float1", ColumnType.FLOAT)
-                        .col("int1", ColumnType.INT)
-                        .col("date1", ColumnType.DATE)
-                        .col("byte1", ColumnType.BYTE)
-                        .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
-                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
-        assertThat(expected, lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
-            @Override
-            public boolean getAutoCreateNewColumns() {
-                return false;
-            }
-
-            @Override
-            public boolean getAutoCreateNewTables() {
-                return false;
-            }
-        });
-    }
-
-    @Test
-    public void testFailsToAddAColumnWhenAutoColumnAddDisabled() throws Exception {
-        try (
-                TableModel model = new TableModel(configuration, "t_ilp21",
-                        PartitionBy.NONE)
-                        .col("event", ColumnType.SHORT)
-                        .col("id", ColumnType.LONG256)
-                        .col("ts", ColumnType.TIMESTAMP)
-                        .col("float1", ColumnType.FLOAT)
-                        .col("int1", ColumnType.INT)
-                        .col("date1", ColumnType.DATE)
-                        .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-        try {
-            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
-                @Override
-                public boolean getAutoCreateNewColumns() {
-                    return false;
-                }
-            });
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "column does not exist, creating new columns is disabled [table=t_ilp21, columnName=byte1]");
-        }
-    }
-
-    @Test
-    public void testFailsToAddColumnWithInvalidName() throws Exception {
-        String lines = "t_ilp21 ..event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-
-        assertThat(
-                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
-                lines,
-                "t_ilp21",
-                configuration
-        );
-    }
-
-    @Test
-    public void testInvalidTableName() throws Exception {
-        String lines = "..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
-                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
-
-        assertThat(
-                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
-                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
-                lines,
-                "t_ilp21",
-                configuration
-        );
-    }
-
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -957,7 +915,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+        refreshTablesInBaseEngine();
+        try (TableReader reader = newTableReader(configuration, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
@@ -994,5 +953,48 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     private void assertThat(String expected, String lines, CharSequence tableName) throws Exception {
         assertThat(expected, lines, tableName, configuration);
+    }
+
+    private void testAddColumnFloat(short colType, String expected) throws Exception {
+        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
+
+        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public short getDefaultColumnTypeForFloat() {
+                return colType;
+            }
+        });
+
+        try (TableReader reader = newTableReader(configuration, "tab")) {
+            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
+        }
+    }
+
+    private void testAddColumnInteger(short colType, String nullValue) throws Exception {
+        final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
+                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
+                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
+
+        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
+
+        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public short getDefaultColumnTypeForInteger() {
+                return colType;
+            }
+        });
+
+        refreshTablesInBaseEngine();
+        try (TableReader reader = newTableReader(configuration, "tab")) {
+            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
+        }
     }
 }

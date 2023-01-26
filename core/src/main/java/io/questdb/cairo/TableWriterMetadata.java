@@ -24,36 +24,81 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.ObjList;
 
-public class TableWriterMetadata extends BaseRecordMetadata {
-    private int id;
-    private int metaFileSize;
-    private int symbolMapCount;
-    private int version;
+class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
     private int maxUncommittedRows;
-    private long commitLag;
+    private long o3MaxLag;
     private long structureVersion;
+    private int symbolMapCount;
+    private int tableId;
+    private TableToken tableToken;
+    private int version;
+    private boolean walEnabled;
 
-    public TableWriterMetadata(MemoryMR metaMem) {
+    public TableWriterMetadata(TableToken tableToken, MemoryMR metaMem) {
+        this.tableToken = tableToken;
         reload(metaMem);
     }
 
-    public void reload(MemoryMR metaMem) {
+    @Override
+    public void close() {
+        // nothing to release
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return o3MaxLag;
+    }
+
+    @Override
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
+    public int getSymbolMapCount() {
+        return symbolMapCount;
+    }
+
+    @Override
+    public int getTableId() {
+        return tableId;
+    }
+
+    @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    public int getTableVersion() {
+        return version;
+    }
+
+    @Override
+    public boolean isWalEnabled() {
+        return walEnabled;
+    }
+
+    public final void reload(MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
+        this.columnNameIndexMap.clear();
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-        this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+        this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+        this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.columnMetadata = new ObjList<>(this.columnCount);
+        this.columnMetadata.clear();
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -67,7 +112,6 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             columnMetadata.add(
                     new TableColumnMetadata(
                             nameStr,
-                            TableUtils.getColumnHash(metaMem, i),
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
@@ -82,84 +126,34 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             }
             offset += Vm.getStorageLength(name);
         }
-        metaFileSize = (int) offset;
-    }
-
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public int getDenseColumnCount() {
-        int count = 0;
-        for (int i = 0; i < columnCount; i++) {
-            if (columnMetadata.getQuick(i).getType() > 0) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
-    }
-
-    public int getFileDataSize() {
-        return metaFileSize;
-    }
-
-    public int getId() {
-        return id;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
     }
 
     public void setMaxUncommittedRows(int rows) {
         this.maxUncommittedRows = rows;
     }
 
-    public long getStructureVersion() {
-        return structureVersion;
+    public void setO3MaxLag(long o3MaxLagUs) {
+        this.o3MaxLag = o3MaxLagUs;
     }
 
     public void setStructureVersion(long value) {
         this.structureVersion = value;
     }
 
-    public int getSymbolMapCount() {
-        return symbolMapCount;
-    }
-
-    public int getTableVersion() {
-        return version;
-    }
-
     public void setTableVersion() {
         version = ColumnType.VERSION;
     }
 
-    public GenericRecordMetadata copyDense() {
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0; i < columnCount; i++) {
-            TableColumnMetadata column = columnMetadata.getQuick(i);
-            if (column.getType() >= 0) {
-                metadata.add(column);
-                if (i == timestampIndex) {
-                    metadata.setTimestampIndex(metadata.getColumnCount() - 1);
-                }
-            }
-        }
-        return metadata;
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 
-    void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
                 new TableColumnMetadata(
                         str,
-                        hash,
                         type,
                         indexFlag,
                         indexValueBlockCapacity,
@@ -174,6 +168,10 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         }
     }
 
+    void clearTimestampIndex() {
+        this.timestampIndex = -1;
+    }
+
     void removeColumn(int columnIndex) {
         TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         if (ColumnType.isSymbol(deletedMeta.getType())) {
@@ -185,13 +183,10 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
     void renameColumn(CharSequence name, CharSequence newName) {
         final int columnIndex = columnNameIndexMap.removeEntry(name);
-        columnNameIndexMap.put(newName, columnIndex);
+        String newNameStr = Chars.toString(newName);
+        columnNameIndexMap.put(newNameStr, columnIndex);
 
         TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
-        oldColumnMetadata.setName(Chars.toString(newName));
-    }
-
-    void setTimestampIndex(int index) {
-        this.timestampIndex = index;
+        oldColumnMetadata.setName(newNameStr);
     }
 }

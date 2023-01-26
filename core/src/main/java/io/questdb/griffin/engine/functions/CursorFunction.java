@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -37,21 +38,6 @@ public class CursorFunction implements ScalarFunction {
 
     public CursorFunction(RecordCursorFactory factory) {
         this.factory = factory;
-    }
-
-    @Override
-    public Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -80,6 +66,11 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
+    public char getChar(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -95,12 +86,57 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -150,31 +186,6 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final int getType() {
         return ColumnType.CURSOR;
     }
@@ -182,5 +193,10 @@ public class CursorFunction implements ScalarFunction {
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("cursor ").child(factory);
     }
 }

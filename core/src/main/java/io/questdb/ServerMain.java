@@ -28,6 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
@@ -48,15 +51,15 @@ import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
-    private final PropServerConfiguration config;
-    private final Log log;
-    private final AtomicBoolean running = new AtomicBoolean();
+    private final String banner;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ObjList<Closeable> freeOnExistList = new ObjList<>();
-    private final WorkerPoolManager workerPoolManager;
+    private final PropServerConfiguration config;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
-    private final String banner;
+    private final ObjList<Closeable> freeOnExitList = new ObjList<>();
+    private final Log log;
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -81,42 +84,63 @@ public class ServerMain implements Closeable {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
 
+        // snapshots
+        final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
+
         // create the worker pool manager, and configure the shared pool
+        final boolean walSupported = config.getCairoConfiguration().isWalSupported();
+        final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
         workerPoolManager = new WorkerPoolManager(config, metrics.health()) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
-                    O3Utils.setupWorkerPool(
-                            sharedPool,
-                            engine,
-                            config.getCairoConfiguration().getCircuitBreakerConfiguration(),
-                            ffCache
-                    );
-                    final MessageBus messageBus = engine.getMessageBus();
 
+                    final MessageBus messageBus = engine.getMessageBus();
                     // register jobs that help parallel execution of queries and column indexing.
                     sharedPool.assign(new ColumnIndexerJob(messageBus));
                     sharedPool.assign(new GroupByJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
 
-                    // text import
-                    TextImportJob.assignToPool(messageBus, sharedPool);
-                    if (cairoConfig.getSqlCopyInputRoot() != null) {
-                        final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                    if (!isReadOnly) {
+                        O3Utils.setupWorkerPool(
+                                sharedPool,
                                 engine,
-                                // save CPU resources for collecting and processing jobs
-                                Math.max(1, sharedPool.getWorkerCount() - 2),
+                                config.getCairoConfiguration().getCircuitBreakerConfiguration(),
                                 ffCache
                         );
-                        sharedPool.assign(textImportRequestJob);
-                        sharedPool.freeOnExit(textImportRequestJob);
+
+                        if (walSupported) {
+                            sharedPool.assign(new CheckWalTransactionsJob(engine));
+                            final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                            snapshotAgent.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
+                            walPurgeJob.delayByHalfInterval();
+                            sharedPool.assign(walPurgeJob);
+                            sharedPool.freeOnExit(walPurgeJob);
+
+                            if (!config.getWalApplyPoolConfiguration().isEnabled()) {
+                                WalUtils.setupWorkerPool(sharedPool, engine, getSharedWorkerCount(), ffCache);
+                            }
+                        }
+
+                        // text import
+                        TextImportJob.assignToPool(messageBus, sharedPool);
+                        if (cairoConfig.getSqlCopyInputRoot() != null) {
+                            final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                                    engine,
+                                    // save CPU resources for collecting and processing jobs
+                                    Math.max(1, sharedPool.getWorkerCount() - 2),
+                                    ffCache
+                            );
+                            sharedPool.assign(textImportRequestJob);
+                            sharedPool.freeOnExit(textImportRequestJob);
+                        }
                     }
 
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                        freeOnExistList.add(telemetryJob);
+                        freeOnExitList.add(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
                         }
@@ -127,8 +151,14 @@ public class ServerMain implements Closeable {
             }
         };
 
-        // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
+        if (!isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
+            WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
+                    config.getWalApplyPoolConfiguration(),
+                    metrics.health(),
+                    WorkerPoolManager.Requester.WAL_APPLY
+            );
+            WalUtils.setupWorkerPool(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount(), ffCache);
+        }
 
         // http
         freeOnExit(Services.createHttpServer(
@@ -158,30 +188,33 @@ public class ServerMain implements Closeable {
                 metrics
         ));
 
-        // ilp/tcp
-        freeOnExit(Services.createLineTcpReceiver(
-                config.getLineTcpReceiverConfiguration(),
-                engine,
-                workerPoolManager,
-                metrics
-        ));
+        if (!isReadOnly) {
+            // ilp/tcp
+            freeOnExit(Services.createLineTcpReceiver(
+                    config.getLineTcpReceiverConfiguration(),
+                    engine,
+                    workerPoolManager,
+                    metrics
+            ));
 
-        // ilp/udp
-        freeOnExit(Services.createLineUdpReceiver(
-                config.getLineUdpReceiverConfiguration(),
-                engine,
-                workerPoolManager
-        ));
+            // ilp/udp
+            freeOnExit(Services.createLineUdpReceiver(
+                    config.getLineUdpReceiverConfiguration(),
+                    engine,
+                    workerPoolManager
+            ));
+        }
 
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
         } catch (Throwable thr) {
             thr.printStackTrace();
+            LogFactory.closeInstance();
             System.exit(55);
         }
     }
@@ -191,10 +224,10 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             workerPoolManager.halt();
             // free instances in reverse order to which we allocated them
-            for (int i = freeOnExistList.size() - 1; i >= 0; i--) {
-                Misc.free(freeOnExistList.getQuick(i));
+            for (int i = freeOnExitList.size() - 1; i >= 0; i--) {
+                Misc.free(freeOnExitList.getQuick(i));
             }
-            freeOnExistList.clear();
+            freeOnExitList.clear();
         }
     }
 
@@ -244,7 +277,7 @@ public class ServerMain implements Closeable {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 System.err.println("QuestDB is shutting down...");
-                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.sum());
+                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
                 close();
                 LogFactory.closeInstance();
             } catch (Error ignore) {
@@ -257,7 +290,7 @@ public class ServerMain implements Closeable {
 
     private <T extends Closeable> T freeOnExit(T closeable) {
         if (closeable != null) {
-            freeOnExistList.add(closeable);
+            freeOnExitList.add(closeable);
         }
         return closeable;
     }

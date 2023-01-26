@@ -33,6 +33,7 @@ public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
     private ExpressionNode ast;
+    private int columnType;
     private boolean includeIntoWildcard = true;
 
     protected QueryColumn() {
@@ -43,22 +44,36 @@ public class QueryColumn implements Mutable {
         alias = null;
         ast = null;
         includeIntoWildcard = true;
+        columnType = -1;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QueryColumn that = (QueryColumn) o;
+        return includeIntoWildcard == that.includeIntoWildcard && Objects.equals(alias, that.alias) && Objects.equals(ast, that.ast);
     }
 
     public CharSequence getAlias() {
         return alias;
     }
 
-    public void setAlias(CharSequence alias) {
-        this.alias = alias;
-    }
-
     public ExpressionNode getAst() {
         return ast;
     }
 
+    public int getColumnType() {
+        return columnType;
+    }
+
     public CharSequence getName() {
         return alias != null ? alias : ast.token;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(alias, ast, includeIntoWildcard);
     }
 
     public boolean isIncludeIntoWildcard() {
@@ -70,22 +85,18 @@ public class QueryColumn implements Mutable {
     }
 
     public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
+        return of(alias, ast, includeIntoWildcard, -1);
+    }
+
+    public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard, int type) {
         this.alias = alias;
         this.ast = ast;
         this.includeIntoWildcard = includeIntoWildcard;
+        this.columnType = type;
         return this;
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QueryColumn that = (QueryColumn) o;
-        return includeIntoWildcard == that.includeIntoWildcard && Objects.equals(alias, that.alias) && Objects.equals(ast, that.ast);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(alias, ast, includeIntoWildcard);
+    public void setAlias(CharSequence alias) {
+        this.alias = alias;
     }
 }

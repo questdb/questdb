@@ -50,6 +50,12 @@ public class PGSecurityTest extends BasePGTest {
             return true;
         }
     };
+    private static final PGWireConfiguration READ_ONLY_USER_CONF = new Port0PGWireConfiguration() {
+        @Override
+        public boolean isReadOnlyUserEnabled() {
+            return true;
+        }
+    };
     @ClassRule
     public static TemporaryFolder backup = new TemporaryFolder();
 
@@ -59,11 +65,24 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testAllowsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
+            executeWithPg("select * from src");
+        });
+    }
+
+    @Test
     public void testDisallowAddNewColumn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
             assertQueryDisallowed("alter table src add column newCol string");
         });
+    }
+
+    @Test
+    public void testDisallowCopy() throws Exception {
+        assertMemoryLeak(() -> assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true"));
     }
 
     @Test
@@ -96,13 +115,6 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    public void testDisallowCopy() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true");
-        });
-    }
-
-    @Test
     public void testDisallowInsert() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
@@ -121,7 +133,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowSnapshotComplete() throws Exception {
-        // snapshot is not supported on windows at all
+        // snapshot is not supported on Windows at all
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
@@ -136,7 +148,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowSnapshotPrepare() throws Exception {
-        // snapshot is not supported on windows at all
+        // snapshot is not supported on Windows at all
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             assertQueryDisallowed("snapshot prepare");
@@ -168,7 +180,7 @@ public class PGSecurityTest extends BasePGTest {
 
             // if this asserts fails then it means UPDATE are already implemented
             // please change this test to check the update throws an exception in the read-only mode
-            // this is in place so we won't forget to test UPDATE honours read-only security context.
+            // this is in place, so we won't forget to test UPDATE honours read-only security context
             assertSql("select * from src", "ts\tname\n" +
                     "2022-04-12T17:30:45.145921Z\tfoo\n");
         });
@@ -233,14 +245,6 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    public void testAllowsSelect() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
-            executeWithPg("select * from src");
-        });
-    }
-
-    @Test
     public void testInitialPropertiesParsedCorrectly() throws Exception {
         // there was a bug where a value of each property was also used as a key for a property created out of thin air.
         // so when a client sends a property with a value set to "user" then a buggy pgwire parser would create
@@ -255,36 +259,44 @@ public class PGSecurityTest extends BasePGTest {
         // 2022-05-17T15:58:38.973955Z I i.q.c.p.PGConnectionContext property [name=user, value=user] <-- client indicates username is "user"
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
         assertMemoryLeak(() -> {
-            try(
+            try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
-                    ) {
+            ) {
                 workerPool.start(LOG);
-                try (
-                        // Postgres JDBC clients ignores unknown properties and does not send them to a server
-                        // so have to use a property which actually exists
-                        final Connection connection = getConnectionWithCustomProperty(
-                                server.getPort(), PGProperty.OPTIONS.getName(), "user");
-                ) {
-                    // no need to assert anything, if we manage to create a connection then it's already a success!
-                }
+                // Postgres JDBC clients ignores unknown properties and does not send them to a server
+                // so have to use a property which actually exists
+                getConnectionWithCustomProperty(server.getPort(), PGProperty.OPTIONS.getName()).close();
             }
         });
     }
 
-    protected Connection getConnectionWithCustomProperty(int port, String key, String value) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", "admin");
-        properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
-        properties.setProperty(key, value);
-
-
-        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        //use this line to switch to local postgres
-        //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
-        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
-        return DriverManager.getConnection(url, properties);
+    @Test
+    public void testReadOnlyUser() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
+            try (
+                    final PGWireServer server = createPGServer(READ_ONLY_USER_CONF);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (
+                        final Connection defaultUserConnection = getConnection(server.getPort(), false, true);
+                        final Connection roUserConnection = getConnectionWithReadOnlyUser(server.getPort())
+                ) {
+                    String query = "drop table src";
+                    try (final Statement statement = roUserConnection.createStatement()) {
+                        statement.execute(query);
+                        fail("Query '" + query + "' must fail for the read-only user!");
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), "Write permission denied");
+                    }
+                    try (final Statement statement = defaultUserConnection.createStatement()) {
+                        statement.execute(query);
+                    }
+                }
+            }
+        });
     }
 
     private void assertQueryDisallowed(String query) throws Exception {
@@ -309,5 +321,34 @@ public class PGSecurityTest extends BasePGTest {
                 statement.execute(query);
             }
         }
+    }
+
+    protected Connection getConnectionWithCustomProperty(int port, String key) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty(key, "user");
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    protected Connection getConnectionWithReadOnlyUser(int port) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "user");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", "true");
+        properties.setProperty("preferQueryMode", Mode.SIMPLE.value);
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 }

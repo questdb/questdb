@@ -24,11 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.O3Utils;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -56,22 +52,20 @@ import static org.junit.Assert.fail;
 
 public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     public static final String AUTH_KEY_ID1 = "testUser1";
+    public static final String AUTH_KEY_ID2 = "testUser2";
     public static final String AUTH_TOKEN_KEY1 = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
     public static final PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY1);
-    public static final String AUTH_KEY_ID2 = "testUser2";
     public static final String AUTH_TOKEN_KEY2 = "AIZc78-On-91DLplVNtyLOmKddY0AL9mnT5onl19Vv_g";
     public static final PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY2);
-    public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
     public static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
-
-    protected static final int WAIT_NO_WAIT = 0x0;
+    public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
+    protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
     protected static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
-    protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
+    protected static final int WAIT_NO_WAIT = 0x0;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
-    private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
         @Override
         public int getBindIPv4Address() {
@@ -83,62 +77,21 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             return bindPort;
         }
     };
-    protected int maxMeasurementSize = 256;
+    private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
-    protected int msgBufferSize = 256 * 1024;
-    protected long minIdleMsBeforeWriterRelease = 30000;
-    protected long maintenanceInterval = 25;
-    protected double commitIntervalFraction = 0.5;
     protected long commitIntervalDefault = 2000;
+    protected double commitIntervalFraction = 0.5;
     protected boolean disconnectOnError = false;
-    protected boolean symbolAsFieldSupported;
+    protected long maintenanceInterval = 25;
+    protected int maxMeasurementSize = 256;
+    protected long minIdleMsBeforeWriterRelease = 30000;
+    protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+    protected int partitionByDefault = PartitionBy.DAY;
+    protected boolean symbolAsFieldSupported;
+    protected boolean autoCreateNewColumns = true;
+
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
-        @Override
-        public boolean getDisconnectOnError() {
-            return disconnectOnError;
-        }
-
-        @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
-            return ioDispatcherConfiguration;
-        }
-
-        @Override
-        public int getNetMsgBufferSize() {
-            return msgBufferSize;
-        }
-
-        @Override
-        public int getMaxMeasurementSize() {
-            return maxMeasurementSize;
-        }
-
-        @Override
-        public int getWriterQueueCapacity() {
-            return 4;
-        }
-
-        @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return testMicrosClock;
-        }
-
-        @Override
-        public long getMaintenanceInterval() {
-            return maintenanceInterval;
-        }
-
-        @Override
-        public double getCommitIntervalFraction() {
-            return commitIntervalFraction;
-        }
-
-        @Override
-        public long getCommitIntervalDefault() {
-            return commitIntervalDefault;
-        }
-
         @Override
         public String getAuthDbPath() {
             if (null == authKeyId) {
@@ -150,8 +103,63 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getCommitIntervalDefault() {
+            return commitIntervalDefault;
+        }
+
+        @Override
+        public double getCommitIntervalFraction() {
+            return commitIntervalFraction;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return partitionByDefault;
+        }
+
+        @Override
+        public boolean getDisconnectOnError() {
+            return disconnectOnError;
+        }
+
+        @Override
+        public IODispatcherConfiguration getDispatcherConfiguration() {
+            return ioDispatcherConfiguration;
+        }
+
+        @Override
+        public long getMaintenanceInterval() {
+            return maintenanceInterval;
+        }
+
+        @Override
+        public int getMaxMeasurementSize() {
+            return maxMeasurementSize;
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return testMicrosClock;
+        }
+
+        @Override
+        public int getNetMsgBufferSize() {
+            return msgBufferSize;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return nf;
+        }
+
+        @Override
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
+        }
+
+        @Override
+        public int getWriterQueueCapacity() {
+            return 4;
         }
 
         @Override
@@ -160,18 +168,61 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public NetworkFacade getNetworkFacade() {
-            return nf;
+        public boolean getAutoCreateNewColumns() {
+            return autoCreateNewColumns;
         }
     };
+
+    public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
+        try (Path path = new Path()) {
+            TableToken tt = engine.getTableTokenIfExists(tableName);
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tt));
+        }
+    }
+
+    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
+        assertEventually(() -> assertTableExists(engine, tableName));
+    }
+
+    public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
+        TestUtils.assertEventually(() -> {
+            assertTableExists(engine, tableName);
+
+            try (TableReader reader = getReader(tableName)) {
+                long size = reader.getCursor().size();
+                assertEquals(expectedSize, size);
+            } catch (EntryLockedException e) {
+                // if table is busy we want to fail this round and have the assertEventually() to retry later
+                fail("table +" + tableName + " is locked");
+            }
+        });
+    }
+
+    public static LineTcpReceiver createLineTcpReceiver(
+            LineTcpReceiverConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool
+    ) {
+        return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
+    }
 
     @After
     public void cleanup() {
         maxMeasurementSize = 256;
+        authKeyId = null;
+        msgBufferSize = 256 * 1024;
+        minIdleMsBeforeWriterRelease = 30000;
+        maintenanceInterval = 25;
+        commitIntervalFraction = 0.5;
+        commitIntervalDefault = 2000;
+        partitionByDefault = PartitionBy.DAY;
+        disconnectOnError = false;
+        symbolAsFieldSupported = false;
+        nf = NetworkFacadeImpl.INSTANCE;
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+        try (TableReader reader = getReader(tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
@@ -188,10 +239,14 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         return socket;
     }
 
+    protected int getWorkerCount() {
+        return 1;
+    }
+
     protected Socket newSocket() {
         final int ipv4address = Net.parseIPv4("127.0.0.1");
         final long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        final long fd = Net.socketTcp(true);
+        final int fd = Net.socketTcp(true);
         final Socket socket = new Socket(sockaddr, fd);
 
         if (TestUtils.connect(fd, sockaddr) != 0) {
@@ -200,19 +255,13 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         return socket;
     }
 
-    protected int getWorkerCount() {
-        return 1;
-    }
-
     protected void runInContext(LineTcpServerAwareContext r) throws Exception {
         runInContext(r, false, 250);
     }
 
-    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+    protected void runInContext(FilesFacade ff, LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
-        assertMemoryLeak(() -> {
-            final Path path = new Path(4096);
-
+        assertMemoryLeak(ff, () -> {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
                 O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
                 if (needMaintenanceJob) {
@@ -231,10 +280,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             } catch (Throwable err) {
                 LOG.error().$("Stopping ILP receiver because of an error").$(err).$();
                 throw err;
-            } finally {
-                Misc.free(path);
             }
         });
+    }
+
+    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+        runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
     }
 
     protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
@@ -243,7 +294,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equals(tableName, name)) {
+                    if (Chars.equalsNc(name.getTableName(), tableName) && Chars.equals(name.getTableName(), tableName)) {
                         if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t)) {
                             releaseLatch.countDown();
                         }
@@ -252,7 +303,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 break;
             case WAIT_ILP_TABLE_RELEASE:
                 receiver.setSchedulerListener((tableName1, event) -> {
-                    if (Chars.equals(tableName1, tableName1)) {
+                    if (Chars.equalsNc(tableName, tableName1.getTableName())) {
                         releaseLatch.countDown();
                     }
                 });
@@ -321,10 +372,10 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected class Socket implements AutoCloseable {
+        private final int fd;
         private final long sockaddr;
-        private final long fd;
 
-        private Socket(long sockaddr, long fd) {
+        private Socket(long sockaddr, int fd) {
             this.sockaddr = sockaddr;
             this.fd = fd;
         }
@@ -335,37 +386,5 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
         }
-    }
-
-    public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
-        TestUtils.assertEventually(() -> {
-            assertTableExists(engine, tableName);
-
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                long size = reader.getCursor().size();
-                assertEquals(expectedSize, size);
-            } catch (EntryLockedException e) {
-                // if table is busy we want to fail this round and have the assertEventually() to retry later
-                fail("table +" + tableName + " is locked");
-            }
-        });
-    }
-
-    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
-        assertEventually(() -> assertTableExists(engine, tableName));
-    }
-
-    public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
-        try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName));
-        }
-    }
-
-    public static LineTcpReceiver createLineTcpReceiver(
-            LineTcpReceiverConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool
-    ) {
-        return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
     }
 }

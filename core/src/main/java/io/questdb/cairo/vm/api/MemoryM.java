@@ -43,7 +43,7 @@ public interface MemoryM extends Closeable {
     @Override
     void close();
 
-    long getFd();
+    int getFd();
 
     FilesFacade getFilesFacade();
 

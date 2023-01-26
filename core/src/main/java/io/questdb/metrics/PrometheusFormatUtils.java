@@ -27,9 +27,27 @@ package io.questdb.metrics;
 import io.questdb.std.str.CharSink;
 
 class PrometheusFormatUtils {
-    static final CharSequence TYPE_PREFIX = "# TYPE questdb_";
-    static final CharSequence METRIC_NAME_PREFIX = "questdb_";
     static final char LF = '\n';
+    static final CharSequence METRIC_NAME_PREFIX = "questdb_";
+    static final CharSequence TYPE_PREFIX = "# TYPE questdb_";
+
+    static void appendCounterNamePrefix(CharSequence name, CharSink sink) {
+        sink.put(METRIC_NAME_PREFIX);
+        sink.put(name);
+        sink.put("_total");
+    }
+
+    static void appendCounterType(CharSequence name, CharSink sink) {
+        sink.put(TYPE_PREFIX);
+        sink.put(name);
+        sink.put("_total counter\n");
+    }
+
+    static void appendLabel(CharSink sink, CharSequence labelName, CharSequence labelValue) {
+        sink.put(labelName);
+        sink.put('=');
+        sink.putQuoted(labelValue);
+    }
 
     static void appendNewLine(CharSink sink) {
         sink.put(LF);
@@ -41,21 +59,9 @@ class PrometheusFormatUtils {
         sink.put(LF);
     }
 
-    static void appendLabel(CharSink sink, CharSequence labelName, CharSequence labelValue) {
-        sink.put(labelName);
-        sink.put('=');
-        sink.putQuoted(labelValue);
-    }
-
-    static void appendCounterType(CharSequence name, CharSink sink) {
-        sink.put(TYPE_PREFIX);
-        sink.put(name);
-        sink.put("_total counter\n");
-    }
-
-    static void appendCounterNamePrefix(CharSequence name, CharSink sink) {
-        sink.put(METRIC_NAME_PREFIX);
-        sink.put(name);
-        sink.put("_total");
+    static void appendSampleLineSuffix(CharSink sink, double value) {
+        sink.put(' ');
+        sink.put(value);
+        sink.put(LF);
     }
 }

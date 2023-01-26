@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -57,7 +58,7 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
         return new EqBooleanCharFunctionFactory.Func(
                 args.getQuick(0),
                 (args.getQuick(1).getChar(null) | 32) == 't'
-                );
+        );
     }
 
     private static class Func extends NegatableBooleanFunction implements UnaryFunction {
@@ -70,13 +71,22 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             return negated != (left.getBool(rec) == right);
         }
 
         @Override
-        public Function getArg() {
-            return left;
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=').val(right);
         }
     }
 }

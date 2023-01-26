@@ -28,20 +28,19 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.junit.rules.TemporaryFolder;
 
@@ -52,20 +51,25 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
-
-    private boolean telemetry;
+    private String copyInputRoot;
+    private FilesFacade filesFacade = new TestFilesFacadeImpl();
+    private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
+    private long maxWriterWaitTimeout = 30_000L;
     private Metrics metrics;
-    private TemporaryFolder temp;
+    private MicrosecondClock microsecondClock;
+    private QueryFutureUpdateListener queryFutureUpdateListener;
+    private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
+    private SqlExecutionContextImpl sqlExecutionContext;
+    private long startWriterWaitTimeout = 500;
+    private boolean telemetry;
+    private TemporaryFolder temp;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
-    private long startWriterWaitTimeout = 500;
-    private long maxWriterWaitTimeout = 30_000L;
-    private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
-    private FilesFacade filesFacade = new FilesFacadeImpl();
-    private QueryFutureUpdateListener queryFutureUpdateListener;
-    private String copyInputRoot;
-    private MicrosecondClock microsecondClock;
+
+    public SqlExecutionContextImpl getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -89,9 +93,36 @@ public class HttpQueryTestBuilder {
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
-                cairoConfiguration = new DefaultCairoConfiguration(baseDir) {
+                cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
+                    @Override
+                    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                        return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public long getTimeout() {
+                                return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
+                                        ? queryTimeout
+                                        : super.getTimeout();
+                            }
+                        };
+                    }
+
                     public FilesFacade getFilesFacade() {
                         return filesFacade;
+                    }
+
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
+                    }
+
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
+                    }
+
+                    @Override
+                    public int getSqlJitMode() {
+                        return jitMode;
                     }
 
                     @Override
@@ -105,18 +136,8 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
-                    public int getSqlJitMode() {
-                        return jitMode;
-                    }
-
-                    @Override
-                    public CharSequence getSqlCopyInputRoot() {
-                        return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
-                    }
-
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
+                    public boolean mangleTableDirNames() {
+                        return false;
                     }
                 };
             }
@@ -130,17 +151,22 @@ public class HttpQueryTestBuilder {
                 }
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return textImportProcessor != null ? textImportProcessor.create(
@@ -149,14 +175,9 @@ public class HttpQueryTestBuilder {
                                 workerPool.getWorkerCount()
                         ) : new TextImportProcessor(engine);
                     }
-
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
                 });
 
-                SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount) {
+                this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount) {
                     @Override
                     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                         return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
@@ -164,6 +185,11 @@ public class HttpQueryTestBuilder {
                 };
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
@@ -173,14 +199,14 @@ public class HttpQueryTestBuilder {
                                 sqlExecutionContext
                         );
                     }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/exp";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new TextQueryProcessor(
@@ -189,34 +215,29 @@ public class HttpQueryTestBuilder {
                                 workerPool.getWorkerCount()
                         );
                     }
-
-                    @Override
-                    public String getUrl() {
-                        return "/exp";
-                    }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-
                     @Override
                     public String getUrl() {
                         return "/chk";
                     }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                    }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
+                    public String getUrl() {
+                        return "/exec";
                     }
 
                     @Override
-                    public String getUrl() {
-                        return "/exec";
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
                     }
                 });
 
@@ -247,6 +268,11 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withCopyInputRoot(String copyInputRoot) {
+        this.copyInputRoot = copyInputRoot;
+        return this;
+    }
+
     public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
         this.textImportProcessor = textQueryProcessor;
         return this;
@@ -262,8 +288,8 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
-        this.telemetry = telemetry;
+    public HttpQueryTestBuilder withJitMode(int jitMode) {
+        this.jitMode = jitMode;
         return this;
     }
 
@@ -272,18 +298,8 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withTempFolder(TemporaryFolder temp) {
-        this.temp = temp;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withCopyInputRoot(String copyInputRoot) {
-        this.copyInputRoot = copyInputRoot;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withWorkerCount(int workerCount) {
-        this.workerCount = workerCount;
+    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
+        this.microsecondClock = clock;
         return this;
     }
 
@@ -292,14 +308,29 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withJitMode(int jitMode) {
-        this.jitMode = jitMode;
+    public HttpQueryTestBuilder withQueryTimeout(long queryTimeout) {
+        this.queryTimeout = queryTimeout;
         return this;
     }
 
-    public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
-        this.microsecondClock = clock;
+    public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
+        this.telemetry = telemetry;
         return this;
+    }
+
+    public HttpQueryTestBuilder withTempFolder(TemporaryFolder temp) {
+        this.temp = temp;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withWorkerCount(int workerCount) {
+        this.workerCount = workerCount;
+        return this;
+    }
+
+    @FunctionalInterface
+    public interface HttpClientCode {
+        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
     }
 
     @FunctionalInterface
@@ -309,10 +340,5 @@ public class HttpQueryTestBuilder {
                 CairoEngine engine,
                 int workerCount
         );
-    }
-
-    @FunctionalInterface
-    public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
     }
 }

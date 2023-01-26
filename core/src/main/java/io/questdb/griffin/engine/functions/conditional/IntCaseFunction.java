@@ -27,12 +27,11 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
-class IntCaseFunction extends IntFunction implements MultiArgFunction {
-    private final CaseFunctionPicker picker;
+class IntCaseFunction extends IntFunction implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public IntCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
         super();

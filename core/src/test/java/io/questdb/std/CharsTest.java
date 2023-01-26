@@ -47,11 +47,6 @@ public class CharsTest {
     }
 
     @Test
-    public void testEmptyString() {
-        TestUtils.assertEquals("", extractor.of(""));
-    }
-
-    @Test
     public void testBase64Encode() {
         final StringSink sink = new StringSink();
         final TestBinarySequence testBinarySequence = new TestBinarySequence();
@@ -67,16 +62,21 @@ public class CharsTest {
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
-        int len = rand.nextInt(100)+1;
+        int len = rand.nextInt(100) + 1;
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
-            bytes[i] = (byte)rand.nextInt(0xFF);
+            bytes[i] = (byte) rand.nextInt(0xFF);
         }
         testBinarySequence.of(bytes);
         sink.clear();
-        Chars.base64Encode(testBinarySequence, (int)testBinarySequence.length(), sink);
+        Chars.base64Encode(testBinarySequence, (int) testBinarySequence.length(), sink);
         byte[] decoded = Base64.getDecoder().decode(sink.toString());
         Assert.assertArrayEquals(bytes, decoded);
+    }
+
+    @Test
+    public void testEmptyString() {
+        TestUtils.assertEquals("", extractor.of(""));
     }
 
     @Test
@@ -92,12 +92,46 @@ public class CharsTest {
     }
 
     @Test
+    public void testIsBlank() {
+        Assert.assertTrue(Chars.isBlank(null));
+        Assert.assertTrue(Chars.isBlank(""));
+        Assert.assertTrue(Chars.isBlank(" "));
+        Assert.assertTrue(Chars.isBlank("      "));
+        Assert.assertTrue(Chars.isBlank("\r\f\n\t"));
+
+        Assert.assertFalse(Chars.isBlank("a"));
+        Assert.assertFalse(Chars.isBlank("0"));
+        Assert.assertFalse(Chars.isBlank("\\"));
+        Assert.assertFalse(Chars.isBlank("\\r"));
+        Assert.assertFalse(Chars.isBlank("ac/dc"));
+    }
+
+    @Test
+    public void testIsNotQuoted() {
+        Assert.assertFalse(Chars.isQuoted("'banana\""));
+        Assert.assertFalse(Chars.isQuoted("banana\""));
+        Assert.assertFalse(Chars.isQuoted("\"banana"));
+        Assert.assertFalse(Chars.isQuoted("\"banana'"));
+        Assert.assertFalse(Chars.isQuoted("'"));
+        Assert.assertFalse(Chars.isQuoted("\""));
+        Assert.assertFalse(Chars.isQuoted("banana"));
+    }
+
+    @Test
     public void testIsOnlyDecimals() {
         Assert.assertTrue(Chars.isOnlyDecimals("9876543210123456789"));
         Assert.assertFalse(Chars.isOnlyDecimals(""));
         Assert.assertFalse(Chars.isOnlyDecimals(" "));
         Assert.assertFalse(Chars.isOnlyDecimals("99 "));
         Assert.assertFalse(Chars.isOnlyDecimals("987654321a123456789"));
+    }
+
+    @Test
+    public void testIsQuoted() {
+        Assert.assertTrue(Chars.isQuoted("'banana'"));
+        Assert.assertTrue(Chars.isQuoted("''"));
+        Assert.assertTrue(Chars.isQuoted("\"banana\""));
+        Assert.assertTrue(Chars.isQuoted("\"\""));
     }
 
     @Test
@@ -166,6 +200,80 @@ public class CharsTest {
     }
 
     @Test
+    public void testUtf8CharDecode() {
+        long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            testUtf8Char("A", p, false); // 1 byte
+            testUtf8Char("Ч", p, false); // 2 bytes
+            testUtf8Char("∆", p, false); // 3 bytes
+            testUtf8Char("\uD83D\uDE00\"", p, true); // fail, cannot store it as one char
+        } finally {
+            Unsafe.free(p, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8CharMalformedDecode() {
+        long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // empty
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p));
+            // one byte
+            Unsafe.getUnsafe().putByte(p, (byte) 0xFF);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC0);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
+            Unsafe.getUnsafe().putByte(p, (byte) 0x80);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 1));
+            // two bytes
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x80);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC1);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xBF);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xC2);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x00);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 2));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0xC0);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xC0);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0xBF);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xE0);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xA0);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0x7F);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+            Unsafe.getUnsafe().putByte(p, (byte) 0xED);
+            Unsafe.getUnsafe().putByte(p + 1, (byte) 0xAE);
+            Unsafe.getUnsafe().putByte(p + 2, (byte) 0x80);
+            Assert.assertEquals(0, Chars.utf8CharDecode(p, p + 3));
+
+        } finally {
+            Unsafe.free(p, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void testUtf8Char(String x, long p, boolean failExpected) {
+        byte[] bytes = x.getBytes(Files.UTF_8);
+        for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
+            Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+        }
+        int res = Chars.utf8CharDecode(p, p + bytes.length);
+        boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);
+        Assert.assertTrue(failExpected != eq);
+    }
+
+    @Test
     public void testUtf8SupportZ() {
 
         StringBuilder expected = new StringBuilder();
@@ -189,44 +297,10 @@ public class CharsTest {
         }
     }
 
-    @Test
-    public void testIsQuoted() {
-        Assert.assertTrue(Chars.isQuoted("'banana'"));
-        Assert.assertTrue(Chars.isQuoted("''"));
-        Assert.assertTrue(Chars.isQuoted("\"banana\""));
-        Assert.assertTrue(Chars.isQuoted("\"\""));
-    }
-
-    @Test
-    public void testIsNotQuoted() {
-        Assert.assertFalse(Chars.isQuoted("'banana\""));
-        Assert.assertFalse(Chars.isQuoted("banana\""));
-        Assert.assertFalse(Chars.isQuoted("\"banana"));
-        Assert.assertFalse(Chars.isQuoted("\"banana'"));
-        Assert.assertFalse(Chars.isQuoted("'"));
-        Assert.assertFalse(Chars.isQuoted("\""));
-        Assert.assertFalse(Chars.isQuoted("banana"));
-    }
-
     private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {
             list.getQuick(i).close();
         }
-    }
-
-    @Test
-    public void testIsBlank() {
-        Assert.assertTrue(Chars.isBlank(null));
-        Assert.assertTrue(Chars.isBlank(""));
-        Assert.assertTrue(Chars.isBlank(" "));
-        Assert.assertTrue(Chars.isBlank("      "));
-        Assert.assertTrue(Chars.isBlank("\r\f\n\t"));
-
-        Assert.assertFalse(Chars.isBlank("a"));
-        Assert.assertFalse(Chars.isBlank("0"));
-        Assert.assertFalse(Chars.isBlank("\\"));
-        Assert.assertFalse(Chars.isBlank("\\r"));
-        Assert.assertFalse(Chars.isBlank("ac/dc"));
     }
 }

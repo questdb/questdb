@@ -36,117 +36,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
     @Test
-    public void testAllNotEqual() throws SqlException {
-        x("ab<>all", "a <> all(b)");
-        x("ab<>all", "a != all(b)");
-    }
-
-    @Test
-    public void testIsGeoHashBitsConstantValid() {
-        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##0"));
-        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##1"));
-        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##111111111100000000001111111111000000000011111111110000000000"));
-    }
-
-    @Test
-    public void testIsGeoHashBitsConstantNotValid() {
-        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#00110")); // missing '#'
-        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#0")); // missing '#'
-    }
-
-    @Test
-    public void testIsGeoHashCharsConstantValid() {
-        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#0"));
-        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#1"));
-        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#sp"));
-        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#sp052w92p1p8"));
-    }
-
-    @Test
-    public void testIsGeoHashCharsConstantNotValid() {
-        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("##"));
-    }
-
-    @Test
-    public void testExtractGeoHashBitsSuffixZero() {
-        Assert.assertThrows("", SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, "#/0"));
-        Assert.assertThrows("", SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, "#/00"));
-    }
-
-    @Test
-    public void testExtractGeoHashBitsSuffixValid() throws SqlException {
-        for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
-                    Numbers.encodeLowHighShorts((short) 2, (short) bits),
-                    ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/d'
-        }
-        for (int bits = 1; bits < 10; bits++) {
-            Assert.assertEquals(
-                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
-                    ExpressionParser.extractGeoHashSuffix(0, "#/0" + bits)); // '/0d'
-        }
-        for (int bits = 10; bits <= 60; bits++) {
-            Assert.assertEquals(
-                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
-                    ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/dd'
-        }
-    }
-
-    @Test
-    public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
-        for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
-            Assert.assertEquals(
-                    Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
-                    ExpressionParser.extractGeoHashSuffix(0, tok));
-        }
-        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1",}) {
-            Assert.assertThrows("[0] invalid bits size for GEOHASH constant",
-                    SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, tok));
-        }
-    }
-
-    @Test
     public void testAllInvalidOperator() {
         assertFail(
                 "a || all(b)",
                 2,
                 "unexpected operator"
-        );
-    }
-
-    @Test
-    public void testUnquotedRegexFail() {
-        assertFail(
-                "s ~ '.*TDF",
-                4,
-                "unclosed quoted string?"
-        );
-    }
-
-    @Test
-    public void testUnquotedStrFail() {
-        assertFail(
-                "s ~ 'TDF",
-                4,
-                "unclosed quoted string?"
-        );
-    }
-
-    @Test
-    public void testUnquotedStrFail2() {
-        assertFail(
-                "s ~ 'TDF''",
-                4,
-                "unclosed quoted string?"
-        );
-    }
-
-    @Test
-    public void testUnquotedStrFail3() {
-        assertFail(
-                "s ~ 'TDF''A''",
-                4,
-                "unclosed quoted string?"
         );
     }
 
@@ -160,8 +54,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllNotEqual() throws SqlException {
+        x("a b <>all", "a <> all(b)");
+        x("a b <>all", "a != all(b)");
+    }
+
+    @Test
     public void testArrayDereferenceExpr() throws SqlException {
-        x("ai10+[]", "a[i+10]");
+        x("a i 10 + []", "a[i+10]");
     }
 
     @Test
@@ -203,7 +103,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testArrayDereferencePriority() throws SqlException {
         x(
-                "nspname'pg_toast'<>nspname'^pg_temp_'!~nspnametruepg_catalog.current_schemas1[]=orand",
+                "nspname 'pg_toast' <> nspname '^pg_temp_' !~ nspname true pg_catalog.current_schemas 1 [] = or and",
                 "nspname <> 'pg_toast' AND (nspname !~ '^pg_temp_'  OR nspname = (pg_catalog.current_schemas(true))[1])"
         );
     }
@@ -219,47 +119,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testBinaryMinus() throws Exception {
-        x("4c-", "4-c");
-    }
-
-    @Test
-    public void testNotIn() throws Exception {
-        x("x'a''b'innot", "x not in ('a','b')");
-    }
-
-    @Test
-    public void testNotInReverseContext() throws Exception {
-        x("ax'a''b'innotand", "a and not x in ('a','b')");
-    }
-
-    @Test
-    public void testIsNull() throws SqlException {
-        x("aNULL=", "a IS NULL");
-        x("tab.aNULL=", "tab.a IS NULL");
-        x("3NULL=", "3 IS NULL");
-        x("nullNULL=", "null IS NULL");
-        x("NULLNULL=", "NULL IS NULL");
-        x("'null'NULL=", "'null' IS NULL");
-        x("''null|NULL=", "('' | null) IS NULL");
-        assertFail("column is 3", 7, "IS must be followed by NULL");
-        assertFail(". is great", 2, "IS [NOT] not allowed here");
-        assertFail("column is $1", 7, "IS must be followed by NULL");
-        assertFail("column is", 7, "IS must be followed by [NOT] NULL");
-    }
-
-    @Test
-    public void testIsNotNull() throws SqlException {
-        x("aNULL!=", "a IS NOT NULL");
-        x("tab.aNULL!=", "tab.a IS NOT NULL");
-        x("3NULL!=", "3 IS NOT NULL");
-        x("nullNULL!=", "null IS NOT NULL");
-        x("NULLNULL!=", "NULL IS NOT NULL");
-        x("'null'NULL!=", "'null' IS NOT NULL");
-        x("''null||NULL!=", "('' || null) IS NOT NULL");
-        assertFail("column is not 3", 7, "IS NOT must be followed by NULL");
-        assertFail(". is not great", 2, "IS [NOT] not allowed here");
-        assertFail("column is not $1", 7, "IS NOT must be followed by NULL");
-        assertFail("column is not", 7, "IS NOT must be followed by NULL");
+        x("4 c -", "4-c");
     }
 
     @Test
@@ -273,14 +133,9 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringConcat() throws SqlException {
-        x("a'b'||c||d||", "a||'b'||c||d");
-    }
-
-    @Test
     public void testCaseAsArrayIndex() throws SqlException {
         x(
-                "ab134case[]",
+                "a b 1 3 4 case []",
                 "a[case b when 1 then 3 else 4 end]"
         );
     }
@@ -288,7 +143,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCaseAsArrayIndexAnotherArray() throws SqlException {
         x(
-                "ab1b3[]4case[]",
+                "a b 1 b 3 [] 4 case []",
                 "a[case b when 1 then b[3] else 4 end]"
         );
     }
@@ -340,7 +195,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseInArithmetic() throws SqlException {
-        x("w11+10='th1'w23*1>'th2'0case5*1+",
+        x(" w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case 5 * 1 +",
                 "case" +
                         " when w1+1=10" +
                         " then 'th1'" +
@@ -353,34 +208,19 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCaseInFunction() throws SqlException {
         x(
-                "xyab+10>'a'ab-3<'b'0case10+zf*",
+                "x y  a b + 10 > 'a' a b - 3 < 'b' 0 case 10 + z f *",
                 "x*f(y,case when (a+b) > 10 then 'a' when (a-b)<3 then 'b' else 0 end + 10,z)"
         );
     }
 
     @Test
-    public void testTypeQualifier() throws SqlException {
-        x("'hello'something::", "'hello'::something");
-    }
-
-    @Test
-    public void testTextArrayQualifier() throws SqlException {
-        x("'{hello}'text[]::", "'{hello}'::text[]");
-    }
-
-    @Test
-    public void testFloatQualifier() throws SqlException {
-        x("'NaN'float::", "'NaN'::float");
-    }
-
-    @Test
     public void testCaseLikeSwitch() throws SqlException {
-        x("x1'a'2'b'case", "case x when 1 then 'a' when 2 then 'b' end");
+        x("x 1 'a' 2 'b' case", "case x when 1 then 'a' when 2 then 'b' end");
     }
 
     @Test
     public void testCaseLowercase() throws SqlException {
-        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
+        x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(CASE" +
                         " WHEN (w1+1)*5=10" +
                         " THEN 'th1'-1" +
@@ -446,7 +286,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseNested() throws SqlException {
-        x("x0>y1='a''b'casex0<'c'case",
+        x(" x 0 >  y 1 = 'a' 'b' case x 0 < 'c' case",
                 "case when x > 0 then case when y = 1 then 'a' else 'b' end when x < 0 then 'c' end");
     }
 
@@ -461,14 +301,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWhenOutsideOfCase() throws SqlException {
-        x("when1+10>",
+        x("when 1 + 10 >",
                 "when + 1 > 10"
         );
     }
 
     @Test
     public void testCaseWithArithmetic() throws SqlException {
-        x("w11+10='th1'w23*1>'th2'0case",
+        x(" w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case",
                 "case" +
                         " when w1+1=10" +
                         " then 'th1'" +
@@ -480,7 +320,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithBraces() throws SqlException {
-        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
+        x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(case" +
                         " when (w1+1)*5=10" +
                         " then 'th1'-1" +
@@ -488,6 +328,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
                         " then 'th2'" +
                         " else 0" +
                         " end + 1)");
+    }
+
+    @Test
+    public void testCaseWithCast() throws SqlException {
+        x("1 int cast  1 'th1' 2 'th2' 0 case 5 * 1 +",
+                "case (cast(1 as int))" +
+                        " when 1" +
+                        " then 'th1'" +
+                        " when 2" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end * 5 + 1");
     }
 
     @Test
@@ -500,30 +352,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCaseWithCast() throws SqlException {
-        x("1intcast1'th1'2'th2'0case5*1+",
-                "case (cast(1 as int))" +
-                        " when 1" +
-                        " then 'th1'" +
-                        " when 2" +
-                        " then 'th2'" +
-                        " else 0" +
-                        " end * 5 + 1");
-    }
-
-    @Test
-    public void testCastFunctionCallMultiSpace() throws SqlException {
-        x("1102030f+shortcast", "cast\t --- this is a comment\n\n(1+f(10,20,30) as short\n)");
-    }
-
-    @Test
-    public void testCastFunctionWithLambdaMultiSpaceNewlineAndComment() throws SqlException {
-        x("(select-choose a, b, c from (x))flongcast", "cast    --- this is a comment\n\n(f(select a,b,c from x) as long\n)");
-    }
-
-    @Test
     public void testCaseWithOuterBraces() throws SqlException {
-        x("10w11+10='th1'w23*1>'th2'0case1+*",
+        x("10  w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(case" +
                         " when w1+1=10" +
                         " then 'th1'" +
@@ -535,22 +365,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastFunctionCall() throws SqlException {
-        x("1102030f+shortcast", "cast(1+f(10,20,30) as short)");
+        x("1 10 20 30 f + short cast", "cast(1+f(10,20,30) as short)");
+    }
+
+    @Test
+    public void testCastFunctionCallMultiSpace() throws SqlException {
+        x("1 10 20 30 f + short cast", "cast\t --- this is a comment\n\n(1+f(10,20,30) as short\n)");
     }
 
     @Test
     public void testCastFunctionWithLambda() throws SqlException {
-        x("(select-choose a, b, c from (x))flongcast", "cast(f(select a,b,c from x) as long)");
+        x(" (select-choose a, b, c from (x)) f long cast", "cast(f(select a,b,c from x) as long)");
     }
 
     @Test
-    public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
-        x("'sp052w92'geohash6ccast", "cast('sp052w92' as geohash(6c))");
-    }
-
-    @Test
-    public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
-        x("'sp052w92'geohash60bcast", "cast('sp052w92' as geohash(60b))");
+    public void testCastFunctionWithLambdaMultiSpaceNewlineAndComment() throws SqlException {
+        x(" (select-choose a, b, c from (x)) f long cast", "cast    --- this is a comment\n\n(f(select a,b,c from x) as long\n)");
     }
 
     @Test
@@ -582,86 +412,33 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeoHash1() throws SqlException {
-        x("geohash6c", "geohash(6c)");
+    public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
+        x("'sp052w92' geohash60b cast", "cast('sp052w92' as geohash(60b))");
     }
 
     @Test
-    public void testGeoHash2() throws SqlException {
-        x("geohash31b", "geohash(31b)");
-    }
-
-    @Test
-    public void testGeoHash3() throws SqlException {
-        x("GEOHASH", "GEOHASH");
-    }
-
-    @Test
-    public void testGeoHash4() throws SqlException {
-        x("geohash6c", "geohash ( 6c" +
-                "-- this is a comment, as you can see" +
-                "\n\n\r)");
-    }
-
-    @Test
-    public void testGeoHash5() throws SqlException {
-        x("geohash6c", " geohash\r\n  (\n 6c\n" +
-                "-- this is a comment, as you can see" +
-                "\n\n\r)-- my tralala");
-    }
-
-    @Test
-    public void testGeoHashFail1() {
-        assertFail("GEOHASH(",
-                7,
-                "invalid GEOHASH, invalid type precision");
-    }
-
-    @Test
-    public void testGeoHashFail2() {
-        assertFail("GEOHASH()",
-                8,
-                "invalid GEOHASH, invalid type precision");
-    }
-
-    @Test
-    public void testGeoHashConstantValid() throws SqlException {
-        x("#sp052w92p1p8/7", " #sp052w92p1p8\r\n  / 7\n 6c\n" +
-                "-- this is a comment, as you can see" +
-                "\n\n\r-- my tralala");
-        x("#sp052w92p1p8/7", "#sp052w92p1p8 / 7");
-        x("#sp052w92p1p8", "#sp052w92p1p8");
-        x("#sp052w92p1p8/0", "#sp052w92p1p8 / 0"); // valid at the expression level
-        x("#sp052w92p1p8/61", "#sp052w92p1p8 / 61"); // valid at the expression level
-    }
-
-    @Test
-    public void testGeoHashConstantNotValid() {
-        assertFail("#sp052w92p1p8/", 13, "missing bits size for GEOHASH constant");
-        assertFail("#sp052w92p1p8/x", 14, "missing bits size for GEOHASH constant");
-        assertFail("#sp052w92p1p8/xx", 14, "missing bits size for GEOHASH constant");
-        assertFail("#sp052w92p1p8/1x", 14, "missing bits size for GEOHASH constant");
-        assertFail("#sp052w92p1p8/x1", 14, "missing bits size for GEOHASH constant");
+    public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
+        x("'sp052w92' geohash6c cast", "cast('sp052w92' as geohash(6c))");
     }
 
     @Test
     public void testCastLambda() throws SqlException {
-        x("(select-choose a, b, c from (x))1+longcast", "cast((select a,b,c from x)+1 as long)");
+        x(" (select-choose a, b, c from (x)) 1 + long cast", "cast((select a,b,c from x)+1 as long)");
     }
 
     @Test
     public void testCastLambda2() throws SqlException {
-        x("(select-choose a, b, c from (x))longcast", "cast((select a,b,c from x) as long)");
+        x(" (select-choose a, b, c from (x)) long cast", "cast((select a,b,c from x) as long)");
     }
 
     @Test
     public void testCastLambdaWithAs() throws SqlException {
-        x("(select-choose x y from (tab))funshortcast", "cast(fun(select x as y from tab order by x) as short)");
+        x(" (select-choose x y from (tab)) fun short cast", "cast(fun(select x as y from tab order by x) as short)");
     }
 
     @Test
     public void testCastLowercase() throws SqlException {
-        x("10shortcast", "CAST(10 AS short)");
+        x("10 short cast", "CAST(10 AS short)");
     }
 
     @Test
@@ -697,7 +474,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastNested() throws SqlException {
-        x("1longcastshortcast", "cast(cast(1 as long) as short)");
+        x("1 long cast short cast", "cast(cast(1 as long) as short)");
     }
 
     @Test
@@ -730,7 +507,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastSimple() throws SqlException {
-        x("10shortcast", "cast(10 as short)");
+        x("10 short cast", "cast(10 as short)");
     }
 
     @Test
@@ -753,22 +530,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCommaExit() throws Exception {
-        x("abxybzc*+", "a + b * c(b(x,y),z),");
+        x("a b x y b z c * +", "a + b * c(b(x,y),z),");
     }
 
     @Test
     public void testComplexUnary1() throws Exception {
-        x("4xyc-^", "4^-c(x,y)");
+        x("4 x y c - ^", "4^-c(x,y)");
     }
 
     @Test
     public void testComplexUnary2() throws Exception {
-        x("a-b^", "-a^b");
+        x("a - b ^", "-a^b");
     }
 
     @Test
     public void testCountStar() throws SqlException {
-        x("*count", "count(*)");
+        x("* count", "count(*)");
     }
 
     @Test
@@ -792,17 +569,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testDotDereference() throws SqlException {
-        x("a.bn.", "(a.b).n");
+        x("a.b n .", "(a.b).n");
     }
 
     @Test
     public void testDotDereferenceExpression() throws SqlException {
-        x("ua.zc.=", "u = (a.z).c");
+        x("u a.z c . =", "u = (a.z).c");
     }
 
     @Test
     public void testDotDereferenceFunction() throws SqlException {
-        x("a.b123f.", "(a.b).f(1,2,3)");
+        x("a.b 1 2 3 f .", "(a.b).f(1,2,3)");
     }
 
     @Test
@@ -885,7 +662,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testDotSpaceStarExpression() throws SqlException {
-        x("a.3*", "a. * 3");
+        x("a. 3 *", "a. * 3");
     }
 
     @Test
@@ -895,7 +672,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleArrayDereference() throws SqlException {
-        x("faj[][]", "f()[a[j]]");
+        x("f a j [] []", "f()[a[j]]");
     }
 
     @Test
@@ -909,7 +686,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testEqualPrecedence() throws Exception {
-        x("abc^^", "a^b^c");
+        x("a b c ^ ^", "a^b^c");
     }
 
     @Test
@@ -922,7 +699,70 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testExprCompiler() throws Exception {
-        x("ac098dzf+1234x+", "a+f(c,d(0,9,8),z)+x(1,2,3,4)");
+        x("a c 0 9 8 d z f + 1 2 3 4 x +", "a+f(c,d(0,9,8),z)+x(1,2,3,4)");
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
+        for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
+                    ExpressionParser.extractGeoHashSuffix(0, tok));
+        }
+        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1",}) {
+            Assert.assertThrows("[0] invalid bits size for GEOHASH constant",
+                    SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, tok));
+        }
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixValid() throws SqlException {
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 2, (short) bits),
+                    ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/d'
+        }
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    ExpressionParser.extractGeoHashSuffix(0, "#/0" + bits)); // '/0d'
+        }
+        for (int bits = 10; bits <= 60; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/dd'
+        }
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixZero() {
+        Assert.assertThrows("", SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, "#/0"));
+        Assert.assertThrows("", SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, "#/00"));
+    }
+
+    @Test
+    public void testFloatLiteralScientific() throws Exception {
+        x("1.234e-10", "1.234e-10");
+        x("1.234E-10", "1.234E-10");
+        x("1.234e+10", "1.234e+10");
+        x("1.234E+10", "1.234E+10");
+        x("1.234e10", "1.234e10");
+        x("1.234E10", "1.234E10");
+        x(".234e-10", ".234e-10");
+        x(".234E-10", ".234E-10");
+        x(".234e+10", ".234e+10");
+        x(".234E+10", ".234E+10");
+        x(".234e10", ".234e10");
+        x(".234E10", ".234E10");
+        x(" i .1e-3 < 90 100 case", "case when i < .1e-3 then 90 else 100 end");
+        x(" i .1e+3 < 90 100 case", "case when i < .1e+3 then 90 else 100 end");
+        x(" i 0.1e-3 < 90 100 case", "case when i < 0.1e-3 then 90 else 100 end");
+        x(" i 0.1e+3 < 90 100 case", "case when i < 0.1e+3 then 90 else 100 end");
+    }
+
+    @Test
+    public void testFloatQualifier() throws SqlException {
+        x("'NaN' float ::", "'NaN'::float");
     }
 
     @Test
@@ -937,22 +777,22 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionArrayArg() throws SqlException {
-        x("abi[]ci[]funcj[]", "func(a,b[i],c[i])[j]");
+        x("a b i [] c i [] func j []", "func(a,b[i],c[i])[j]");
     }
 
     @Test
     public void testFunctionArrayDereference() throws SqlException {
-        x("funci[]", "func()[i]");
+        x("func i []", "func()[i]");
     }
 
     @Test
     public void testFunctionCallOnFloatingPointValues() throws SqlException {
-        x("1.2.0921990.f", "f(1.2,.092,1990.)");
+        x("1.2 .092 1990. f", "f(1.2,.092,1990.)");
     }
 
     @Test
     public void testFunctionCallOnFloatingPointValues2() throws SqlException {
-        x(".25.0921990.f", "f(.25,.092,1990.)");
+        x(".25 .092 1990. f", "f(.25,.092,1990.)");
     }
 
     @Test
@@ -962,37 +802,156 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionWithArgsArrayDereference() throws SqlException {
-        x("1abfunci[]", "func(1,a,b)[i]");
+        x("1 a b func i []", "func(1,a,b)[i]");
+    }
+
+    @Test
+    public void testGeoHash1() throws SqlException {
+        x("geohash6c", "geohash(6c)");
+    }
+
+    @Test
+    public void testGeoHash2() throws SqlException {
+        x("geohash31b", "geohash(31b)");
+    }
+
+    @Test
+    public void testGeoHash3() throws SqlException {
+        x("GEOHASH", "GEOHASH");
+    }
+
+    @Test
+    public void testGeoHash4() throws SqlException {
+        x("geohash6c", "geohash ( 6c" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r)");
+    }
+
+    @Test
+    public void testGeoHash5() throws SqlException {
+        x("geohash6c", " geohash\r\n  (\n 6c\n" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r)-- my tralala");
+    }
+
+    @Test
+    public void testGeoHashConstantNotValid() {
+        assertFail("#sp052w92p1p8/", 13, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/x", 14, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/xx", 14, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/1x", 14, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/x1", 14, "missing bits size for GEOHASH constant");
+    }
+
+    @Test
+    public void testGeoHashConstantValid() throws SqlException {
+        x("#sp052w92p1p8/7", " #sp052w92p1p8\r\n  / 7\n 6c\n" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r-- my tralala");
+        x("#sp052w92p1p8/7", "#sp052w92p1p8 / 7");
+        x("#sp052w92p1p8", "#sp052w92p1p8");
+        x("#sp052w92p1p8/0", "#sp052w92p1p8 / 0"); // valid at the expression level
+        x("#sp052w92p1p8/61", "#sp052w92p1p8 / 61"); // valid at the expression level
+    }
+
+    @Test
+    public void testGeoHashFail1() {
+        assertFail("GEOHASH(",
+                7,
+                "invalid GEOHASH, invalid type precision");
+    }
+
+    @Test
+    public void testGeoHashFail2() {
+        assertFail("GEOHASH()",
+                8,
+                "invalid GEOHASH, invalid type precision");
     }
 
     @Test
     public void testIn() throws Exception {
-        x("abcin", "a in (b,c)");
+        x("a b c in", "a in (b,c)");
     }
 
     @Test
     public void testInOperator() throws Exception {
-        x("a10=bxyinand", "a = 10 and b in (x,y)");
+        x("a 10 = b x y in and", "a = 10 and b in (x,y)");
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantNotValid() {
+        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#00110")); // missing '#'
+        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#0")); // missing '#'
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantValid() {
+        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##0"));
+        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##1"));
+        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##111111111100000000001111111111000000000011111111110000000000"));
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantNotValid() {
+        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("##"));
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantValid() {
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#0"));
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#1"));
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#sp"));
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#sp052w92p1p8"));
+    }
+
+    @Test
+    public void testIsNotNull() throws SqlException {
+        x("a NULL !=", "a IS NOT NULL");
+        x("tab.a NULL !=", "tab.a IS NOT NULL");
+        x("3 NULL !=", "3 IS NOT NULL");
+        x("null NULL !=", "null IS NOT NULL");
+        x("NULL NULL !=", "NULL IS NOT NULL");
+        x("'null' NULL !=", "'null' IS NOT NULL");
+        x("'' null || NULL !=", "('' || null) IS NOT NULL");
+        assertFail("column is not 3", 7, "IS NOT must be followed by NULL");
+        assertFail(". is not great", 2, "IS [NOT] not allowed here");
+        assertFail("column is not $1", 7, "IS NOT must be followed by NULL");
+        assertFail("column is not", 7, "IS NOT must be followed by NULL");
+    }
+
+    @Test
+    public void testIsNull() throws SqlException {
+        x("a NULL =", "a IS NULL");
+        x("tab.a NULL =", "tab.a IS NULL");
+        x("3 NULL =", "3 IS NULL");
+        x("null NULL =", "null IS NULL");
+        x("NULL NULL =", "NULL IS NULL");
+        x("'null' NULL =", "'null' IS NULL");
+        x("'' null | NULL =", "('' | null) IS NULL");
+        assertFail("column is 3", 7, "IS must be followed by NULL");
+        assertFail(". is great", 2, "IS [NOT] not allowed here");
+        assertFail("column is $1", 7, "IS must be followed by NULL");
+        assertFail("column is", 7, "IS must be followed by [NOT] NULL");
     }
 
     @Test
     public void testLambda() throws Exception {
-        x("ablah blahinyand", "a in (`blah blah`) and y");
+        x("a blah blah in y and", "a in (`blah blah`) and y");
     }
 
     @Test
     public void testLambdaInOperator() throws SqlException {
-        x("1(select-choose a, b, c from (x))+", "1 + (select a,b,c from x)");
+        x("1  (select-choose a, b, c from (x)) +", "1 + (select a,b,c from x)");
     }
 
     @Test
     public void testLambdaInOperator2() throws SqlException {
-        x("1(select-choose a, b, c from (x))+", "1 + select a,b,c from x");
+        x("1  (select-choose a, b, c from (x)) +", "1 + select a,b,c from x");
     }
 
     @Test
     public void testLambdaInOperator3() throws SqlException {
-        x("(select-choose a, b, c from (x))1+", "(select a,b,c from x) + 1");
+        x(" (select-choose a, b, c from (x)) 1 +", "(select a,b,c from x) + 1");
     }
 
     @Test
@@ -1006,7 +965,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambdaMiddleParameterBraced() throws SqlException {
-        x("12(select-choose a, b, c, d from (z))4f", "f(1,2,(select a,b,c,d from z), 4)");
+        x("1 2  (select-choose a, b, c, d from (z)) 4 f", "f(1,2,(select a,b,c,d from z), 4)");
     }
 
     @Test
@@ -1028,7 +987,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testLiteralExit() throws Exception {
-        x("abxybzc*+", "a + b * c(b(x,y),z) lit");
+        x("a b x y b z c * +", "a + b * c(b(x,y),z) lit");
     }
 
     @Test
@@ -1058,27 +1017,27 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testNestedFunctions() throws Exception {
-        x("48yfrz", "z(4, r(f(8,y)))");
+        x("4 8 y f r z", "z(4, r(f(8,y)))");
     }
 
     @Test
     public void testNestedOperator() throws Exception {
-        x("ac4*db+", "a + b( c * 4, d)");
+        x("a c 4 * d b +", "a + b( c * 4, d)");
     }
 
     @Test
     public void testNewLambda() throws SqlException {
-        x("x(select-choose a from (tab))in", "x in (select a from tab)");
+        x("x  (select-choose a from (tab)) in", "x in (select a from tab)");
     }
 
     @Test
     public void testNewLambdaMultipleExpressions() throws SqlException {
-        x("x(select-choose a from (tab))iny(select-choose * from (X))inandk10>and", "x in (select a from tab) and y in (select * from X) and k > 10");
+        x("x  (select-choose a from (tab)) in y  (select-choose * from (X)) in and k 10 > and", "x in (select a from tab) and y in (select * from X) and k > 10");
     }
 
     @Test
     public void testNewLambdaNested() throws SqlException {
-        x("x(select-choose a, b from (T where c in (select-choose * from (Y)) and a = b))in", "x in (select a,b from T where c in (select * from Y) and a=b)");
+        x("x  (select-choose a, b from (T where c in (select-choose * from (Y)) and a = b)) in", "x in (select a,b from T where c in (select * from Y) and a=b)");
     }
 
     @Test
@@ -1093,7 +1052,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testNoArgFunction() throws Exception {
-        x("ab4*+", "a+b()*4");
+        x("a b 4 * +", "a+b()*4");
     }
 
     @Test
@@ -1103,6 +1062,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 11,
                 "no function or operator?"
         );
+    }
+
+    @Test
+    public void testNotIn() throws Exception {
+        x("x 'a' 'b' in not", "x not in ('a','b')");
+    }
+
+    @Test
+    public void testNotInReverseContext() throws Exception {
+        x("a x 'a' 'b' in not and", "a and not x in ('a','b')");
     }
 
     @Test
@@ -1125,27 +1094,37 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testPGOperator() throws SqlException {
-        x("c.relnameE'^(movies\\\\.csv)$'~", "c.relname ~ E'^(movies\\\\.csv)$'");
+        x("c.relname E'^(movies\\\\.csv)$' ~", "c.relname ~ E'^(movies\\\\.csv)$'");
     }
 
     @Test
     public void testSimple() throws Exception {
-        x("abxyc*2/+", "a + b * c(x,y)/2");
+        x("a b x y c * 2 / +", "a + b * c(x,y)/2");
     }
 
     @Test
     public void testSimpleArrayDereference() throws SqlException {
-        x("ai[]", "a[i]");
+        x("a i []", "a[i]");
     }
 
     @Test
     public void testSimpleCase() throws SqlException {
-        x("w1th1w2th2elscase", "case when w1 then th1 when w2 then th2 else els end");
+        x(" w1 th1 w2 th2 els case", "case when w1 then th1 when w2 then th2 else els end");
     }
 
     @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
+    }
+
+    @Test
+    public void testStringConcat() throws SqlException {
+        x("a 'b' || c || d ||", "a||'b'||c||d");
+    }
+
+    @Test
+    public void testTextArrayQualifier() throws SqlException {
+        x("'{hello}' text[] ::", "'{hello}'::text[]");
     }
 
     @Test
@@ -1157,8 +1136,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTypeQualifier() throws SqlException {
+        x("'hello' something ::", "'hello'::something");
+    }
+
+    @Test
     public void testUnary() throws Exception {
-        x("4c-*", "4 * -c");
+        x("4 c - *", "4 * -c");
     }
 
     @Test
@@ -1168,33 +1152,48 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testUnbalancedRightBraceExit() throws Exception {
-        x("a5xycb+", "a+b(5,c(x,y)))");
+        x("a 5 x y c b +", "a+b(5,c(x,y)))");
+    }
+
+    @Test
+    public void testUnquotedRegexFail() {
+        assertFail(
+                "s ~ '.*TDF",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail() {
+        assertFail(
+                "s ~ 'TDF",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail2() {
+        assertFail(
+                "s ~ 'TDF''",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail3() {
+        assertFail(
+                "s ~ 'TDF''A''",
+                4,
+                "unclosed quoted string?"
+        );
     }
 
     @Test
     public void testWhacky() {
         assertFail("a-^b", 1, "too few arguments for '-' [found=1,expected=2]");
-    }
-
-    @Test
-    public void testFloatLiteralScientific() throws Exception {
-        x("1.234e-10", "1.234e-10");
-        x("1.234E-10", "1.234E-10");
-        x("1.234e+10", "1.234e+10");
-        x("1.234E+10", "1.234E+10");
-        x("1.234e10", "1.234e10");
-        x("1.234E10", "1.234E10");
-        x(".234e-10", ".234e-10");
-        x(".234E-10", ".234E-10");
-        x(".234e+10", ".234e+10");
-        x(".234E+10", ".234E+10");
-        x(".234e10", ".234e10");
-        x(".234E10", ".234E10");
-        x("i.1e-3<90100case", "case when i < .1e-3 then 90 else 100 end");
-        x("i.1e+3<90100case", "case when i < .1e+3 then 90 else 100 end");
-        x("i0.1e-3<90100case", "case when i < 0.1e-3 then 90 else 100 end");
-        x("i0.1e+3<90100case", "case when i < 0.1e+3 then 90 else 100 end");
-
     }
 
     private void assertFail(String content, int pos, String contains) {

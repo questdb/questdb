@@ -30,8 +30,8 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
@@ -46,24 +46,23 @@ import java.io.File;
 import java.io.IOException;
 
 public class TableBackupTest {
+    private static final int ERRNO_EIO = 5;
     private static final StringSink sink1 = new StringSink();
     private static final StringSink sink2 = new StringSink();
-    private static final int ERRNO_EIO = 5;
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
     private CharSequence backupRoot;
-    private Path path;
     private Path finalBackupPath;
     private int finalBackupPathLen;
-
+    private SqlCompiler mainCompiler;
     private CairoConfiguration mainConfiguration;
     private CairoEngine mainEngine;
-    private SqlCompiler mainCompiler;
     private SqlExecutionContext mainSqlExecutionContext;
-    private int renameErrno;
     private int mkdirsErrno;
     private int mkdirsErrnoCountDown = 0;
+    private Path path;
+    private int renameErrno;
 
     @Before
     public void setup() throws IOException {
@@ -71,7 +70,7 @@ public class TableBackupTest {
         finalBackupPath = new Path();
         mkdirsErrno = -1;
         renameErrno = -1;
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             private int nextErrno = -1;
 
             @Override
@@ -107,10 +106,10 @@ public class TableBackupTest {
         };
         CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
         backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
-        mainConfiguration = new DefaultCairoConfiguration(root) {
+        mainConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
+            public DateFormat getBackupDirTimestampFormat() {
+                return new TimestampFormatCompiler().compile("ddMMMyyyy");
             }
 
             @Override
@@ -119,8 +118,13 @@ public class TableBackupTest {
             }
 
             @Override
-            public DateFormat getBackupDirTimestampFormat() {
-                return new TimestampFormatCompiler().compile("ddMMMyyyy");
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public int getMetadataPoolCapacity() {
+                return 1;
             }
         };
         mainEngine = new CairoEngine(mainConfiguration);
@@ -496,8 +500,9 @@ public class TableBackupTest {
             // @formatter:on
 
             try (Path path = new Path()) {
-                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableName).slash$();
-                int rc = FilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
+                TableToken tableToken = mainEngine.getTableToken(tableName);
+                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableToken).slash$();
+                int rc = TestFilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
                 Assert.assertEquals(0, rc);
             }
             try {
@@ -532,6 +537,15 @@ public class TableBackupTest {
         });
     }
 
+    private void assertConf() {
+        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
+        final int trimLen = finalBackupPath.length();
+        Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("log-file.conf").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
+    }
+
     private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -545,13 +559,26 @@ public class TableBackupTest {
         });
     }
 
+    private void assertTabIndex() {
+        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(path));
+        finalBackupPath.concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(finalBackupPath));
+    }
+
+    private void assertTables(String tb1) throws Exception {
+        selectAll(tb1, false, sink1);
+        selectAll(tb1, true, sink2);
+        TestUtils.assertEquals(sink1, sink2);
+    }
+
     private void selectAll(String tableName, boolean backup, MutableCharSink sink) throws Exception {
         CairoEngine engine = null;
         SqlCompiler compiler = null;
         SqlExecutionContext sqlExecutionContext;
         try {
             if (backup) {
-                final CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
+                final CairoConfiguration backupConfiguration = new DefaultTestCairoConfiguration(finalBackupPath.toString());
                 engine = new CairoEngine(backupConfiguration);
                 sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
                         new BindVariableServiceImpl(backupConfiguration),
@@ -578,6 +605,10 @@ public class TableBackupTest {
         }
     }
 
+    private void setFinalBackupPath() {
+        setFinalBackupPath(0);
+    }
+
     private void setFinalBackupPath(int n) {
         DateFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
         finalBackupPath.of(mainConfiguration.getBackupRoot()).slash();
@@ -589,31 +620,5 @@ public class TableBackupTest {
         finalBackupPath.slash$();
         finalBackupPathLen = finalBackupPath.length();
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.DB_DIRECTORY).slash$();
-    }
-
-    private void setFinalBackupPath() {
-        setFinalBackupPath(0);
-    }
-
-    private void assertTables(String tb1) throws Exception {
-        selectAll(tb1, false, sink1);
-        selectAll(tb1, true, sink2);
-        TestUtils.assertEquals(sink1, sink2);
-    }
-
-    private void assertTabIndex() {
-        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(path));
-        finalBackupPath.concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(finalBackupPath));
-    }
-
-    private void assertConf() {
-        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
-        final int trimLen = finalBackupPath.length();
-        Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
-        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
-        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("log-file.conf").$()));
-        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
     }
 }

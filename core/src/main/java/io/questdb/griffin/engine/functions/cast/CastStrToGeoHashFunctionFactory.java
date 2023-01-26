@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
@@ -95,8 +96,8 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
 
     public static class Func extends GeoByteFunction implements UnaryFunction {
         private final Function arg;
-        private final int position;
         private final int bitsPrecision;
+        private final int position;
 
         public Func(int geoType, Function arg, int position) {
             super(geoType);
@@ -118,12 +119,6 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoShort(Record rec) {
-            assert bitsPrecision >= 8 && bitsPrecision < 16;
-            return (short) getGeoHashLong0(rec);
-        }
-
-        @Override
         public int getGeoInt(Record rec) {
             assert bitsPrecision >= 16 && bitsPrecision < 32;
             return (int) getGeoHashLong0(rec);
@@ -133,6 +128,17 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         public long getGeoLong(Record rec) {
             assert bitsPrecision >= 32;
             return getGeoHashLong0(rec);
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            assert bitsPrecision >= 8 && bitsPrecision < 16;
+            return (short) getGeoHashLong0(rec);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val("::geohash");
         }
 
         private long getGeoHashLong0(Record rec) {

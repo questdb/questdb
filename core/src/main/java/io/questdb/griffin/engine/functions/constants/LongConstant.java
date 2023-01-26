@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 
 public class LongConstant extends LongFunction implements ConstantFunction {
     public final static LongConstant NULL = new LongConstant(Numbers.LONG_NaN);
@@ -55,7 +55,7 @@ public class LongConstant extends LongFunction implements ConstantFunction {
         return value;
     }
 
-    public void toSink(CharSink sink) {
-        sink.put(value).put('L');
+    public void toPlan(PlanSink sink) {
+        sink.val(value).val('L');
     }
 }

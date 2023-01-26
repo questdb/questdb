@@ -38,15 +38,31 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
+import java.io.IOException;
 
 public class TypeManagerTest {
-    private static DirectCharSink utf8Sink;
+    @ClassRule
+    public static TemporaryFolder temp = new TemporaryFolder();
     private static JsonLexer jsonLexer;
+    private static String root;
+    private static DirectCharSink utf8Sink;
 
     @BeforeClass
     public static void setUp() {
         utf8Sink = new DirectCharSink(64);
         jsonLexer = new JsonLexer(1024, 2048);
+    }
+
+    @BeforeClass
+    public static void setUpStatic() {
+        try {
+            root = temp.newFolder("conf").getAbsolutePath();
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError();
+        }
     }
 
     @AfterClass
@@ -111,9 +127,17 @@ public class TypeManagerTest {
     }
 
     @Test
+    public void testDefaultFileName() throws JsonException, IOException {
+        File configFile = temp.newFile("conf/text_loader.json");
+        TestUtils.writeStringToFile(configFile, "{\n}\n");
+        TypeManager typeManager = createTypeManager("/text_loader.json");
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+    }
+
+    @Test
     public void testEmpty() throws JsonException {
         TypeManager typeManager = createTypeManager("/textloader/types/empty.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
     }
 
     @Test
@@ -132,8 +156,16 @@ public class TypeManagerTest {
     }
 
     @Test
+    public void testNonDefaultFileName() throws JsonException, IOException {
+        File configFile = temp.newFile("conf/my_awesome_text_loader.json");
+        TestUtils.writeStringToFile(configFile, "{\n}\n");
+        TypeManager typeManager = createTypeManager("/my_awesome_text_loader.json");
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID]", typeManager.getAllAdapters().toString());
+    }
+
+    @Test
     public void testResourceNotFound() {
-        assertFailure("/textloader/types/not_found.json", 0, "could not find input format config [confRoot=, configFileName=/textloader/types/not_found.json]");
+        assertFailure("/textloader/types/not_found.json", 0, "could not find input format config");
     }
 
     @Test
@@ -209,8 +241,8 @@ public class TypeManagerTest {
                 DateFormatUtils.enLocale
         );
 
-        inputFormatConfiguration.parseConfiguration(jsonLexer, null, fileResource);
-        return new TypeManager(new DefaultTextConfiguration(null, fileResource), utf8Sink);
+        inputFormatConfiguration.parseConfiguration(jsonLexer, root, fileResource);
+        return new TypeManager(new DefaultTextConfiguration(root, fileResource), utf8Sink);
     }
 
     private void testIllegalParameterForGetTypeAdapter(int columnType) {

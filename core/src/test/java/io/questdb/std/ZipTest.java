@@ -56,9 +56,9 @@ public class ZipTest {
 
                     long pIn = 0;
                     long pOut = 0;
-                    long fdIn = Files.openRO(path.of(expected.getAbsolutePath()).$());
+                    int fdIn = Files.openRO(path.of(expected.getAbsolutePath()).$());
                     try {
-                        long fdOut = Files.openRW(path.of(outFile.getAbsolutePath()).$());
+                        int fdOut = Files.openRW(path.of(outFile.getAbsolutePath()).$());
                         try {
                             // header
                             Files.write(fdOut, Zip.gzipHeader, Zip.gzipHeaderLen, pOut);
@@ -116,12 +116,9 @@ public class ZipTest {
                 Unsafe.free(out, available / 2, MemoryTag.NATIVE_DEFAULT);
             }
 
-
             // ok. read what we produced
 
             File actual = temp.newFile();
-
-
             try (
                     GZIPInputStream is = new GZIPInputStream(new FileInputStream(outFile));
                     FileOutputStream fos = new FileOutputStream(actual)

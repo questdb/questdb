@@ -54,17 +54,6 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(this.valueIndex, SymbolTable.VALUE_IS_NULL);
-    }
-
-    @Override
     public Function getArg() {
         return this.arg;
     }
@@ -72,6 +61,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     @Override
     public int getInt(Record rec) {
         return rec.getInt(this.valueIndex);
+    }
+
+    @Override
+    public String getName() {
+        return "first";
     }
 
     @Override
@@ -90,8 +84,21 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public CharSequence valueOf(int key) {
-        return arg.valueOf(key);
+    public @Nullable SymbolTable newSymbolTable() {
+        // this implementation does not have its own symbol table
+        // it fully relies on the argument
+        return arg.newSymbolTable();
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putInt(this.valueIndex, SymbolTable.VALUE_IS_NULL);
     }
 
     @Override
@@ -100,9 +107,7 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public @Nullable SymbolTable newSymbolTable() {
-        // this implementation does not have its own symbol table
-        // it fully relies on the argument
-        return arg.newSymbolTable();
+    public CharSequence valueOf(int key) {
+        return arg.valueOf(key);
     }
 }

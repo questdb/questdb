@@ -33,11 +33,11 @@ import org.jetbrains.annotations.NotNull;
 
 class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
-    private final int columnIndex;
-    private final int symbolKey;
+    protected final int columnIndex;
+    protected final int symbolKey;
     private final Function filter;
-    private boolean hasNext;
     private boolean found;
+    private boolean hasNext;
 
     public LatestByValueIndexedFilteredRecordCursor(
             int columnIndex,
@@ -58,6 +58,11 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
             return true;
         }
         return false;
+    }
+
+    @Override
+    public long size() {
+        return -1;
     }
 
     @Override
@@ -92,11 +97,6 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
                 }
             }
         }
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override

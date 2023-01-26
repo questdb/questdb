@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
@@ -55,7 +56,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
-        return new ToDateFunction(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+        return new ToDateFunction(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale(), pattern);
     }
 
     private static final class ToDateFunction extends DateFunction implements UnaryFunction {
@@ -63,11 +64,13 @@ public class ToDateFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final DateFormat dateFormat;
         private final DateLocale locale;
+        private final CharSequence pattern;
 
-        public ToDateFunction(Function arg, DateFormat dateFormat, DateLocale locale) {
+        public ToDateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
             this.arg = arg;
             this.dateFormat = dateFormat;
             this.locale = locale;
+            this.pattern = pattern;
         }
 
         @Override
@@ -85,6 +88,11 @@ public class ToDateFunctionFactory implements FunctionFactory {
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NaN;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("to_date(").val(arg).val(',').val(pattern).val(')');
         }
     }
 }

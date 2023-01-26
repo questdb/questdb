@@ -51,7 +51,7 @@ public class FanOut implements Barrier {
 
     public FanOut and(Barrier barrier) {
         Holder _new;
-        boolean barrierNotSetUp = true;
+        Barrier root = null;
 
         final long current = this.barrier != null ? this.barrier.current() : -1;
         Unsafe.getUnsafe().loadFence();
@@ -64,14 +64,11 @@ public class FanOut implements Barrier {
                 return this;
             }
 
-            if (this.barrier != null) {
-                if (barrierNotSetUp) {
-                    Barrier b = barrier.root();
-                    b.setBarrier(this.barrier);
-                    b.setCurrent(current);
-                    barrierNotSetUp = false;
-                    Unsafe.getUnsafe().storeFence();
-                }
+            if (root == null && this.barrier != null) {
+                root = barrier.root();
+                root.setBarrier(this.barrier);
+                root.setCurrent(current);
+                Unsafe.getUnsafe().storeFence();
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
@@ -83,12 +80,15 @@ public class FanOut implements Barrier {
             }
             _new.setupWaitStrategy();
             if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {
+                // catch up with others
+                if (root != null && this.barrier != null) {
+                    root.setCurrent(this.barrier.current());
+                }
                 break;
             }
         } while (true);
 
         Unsafe.getUnsafe().storeFence();
-
         return this;
     }
 
@@ -116,39 +116,11 @@ public class FanOut implements Barrier {
     }
 
     @Override
-    public void setCurrent(long value) {
-        ObjList<Barrier> barriers = holder.barriers;
-        for (int i = 0, n = barriers.size(); i < n; i++) {
-            barriers.getQuick(i).setCurrent(value);
-        }
-    }
-
-    @Override
     public WaitStrategy getWaitStrategy() {
         return holder.waitStrategy;
     }
 
-    @Override
-    public Barrier root() {
-        return barrier != null ? barrier.root() : this;
-    }
-
-    public void setBarrier(Barrier barrier) {
-        this.barrier = barrier;
-        ObjList<Barrier> barriers = holder.barriers;
-        for (int i = 0, n = barriers.size(); i < n; i++) {
-            barriers.getQuick(i).root().setBarrier(barrier);
-        }
-    }
-
-    @Override
-    public Barrier then(Barrier barrier) {
-        barrier.setBarrier(this);
-        return barrier;
-    }
-
     public void remove(Barrier barrier) {
-
         Unsafe.getUnsafe().storeFence();
 
         Holder _new;
@@ -185,11 +157,38 @@ public class FanOut implements Barrier {
         } while (true);
     }
 
+    @Override
+    public Barrier root() {
+        return barrier != null ? barrier.root() : this;
+    }
+
+    public void setBarrier(Barrier barrier) {
+        this.barrier = barrier;
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).root().setBarrier(barrier);
+        }
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).setCurrent(value);
+        }
+    }
+
+    @Override
+    public Barrier then(Barrier barrier) {
+        barrier.setBarrier(this);
+        return barrier;
+    }
+
     private static class Holder {
 
         private final ObjList<Barrier> barriers = new ObjList<>();
-        private final ObjList<WaitStrategy> waitStrategies = new ObjList<>();
         private final FanOutWaitStrategy fanOutWaitStrategy = new FanOutWaitStrategy();
+        private final ObjList<WaitStrategy> waitStrategies = new ObjList<>();
         private WaitStrategy waitStrategy;
 
         private void setupWaitStrategy() {

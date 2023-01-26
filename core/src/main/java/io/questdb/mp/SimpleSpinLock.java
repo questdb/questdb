@@ -29,10 +29,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 // Simple, non-reentrant and unfair lock implementation.
 // Don't try to use it for complex cases!
 public class SimpleSpinLock {
-    AtomicBoolean lock = new AtomicBoolean(false);
+    final AtomicBoolean lock = new AtomicBoolean(false);
 
     public void lock() {
         while (true) {
+            //noinspection StatementWithEmptyBody
             while (lock.get()) {
                 // do nothing
             }

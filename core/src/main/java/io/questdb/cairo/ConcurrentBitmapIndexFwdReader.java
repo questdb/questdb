@@ -63,6 +63,12 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
     /**
      * Allows reusing cursor objects, if that's possible.
+     *
+     * @param rowCursor cursor to reuse, or null
+     * @param key       key to search for
+     * @param minValue  minimum value to search for
+     * @param maxValue  maximum value to search for
+     * @return initialised cursor
      */
     public RowCursor initCursor(RowCursor rowCursor, int key, long minValue, long maxValue) {
         Cursor cursor = null;
@@ -92,14 +98,14 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor {
+        protected long next;
         protected long position;
         protected long valueCount;
-        protected long next;
+        private long maxValue;
+        private long nullCount;
+        private long nullPos;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
-        private long maxValue;
-        private long nullPos;
-        private long nullCount;
 
         @Override
         public boolean hasNext() {
@@ -149,6 +155,15 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             return true;
         }
 
+        private ConcurrentBitmapIndexFwdReader owner() {
+            return ConcurrentBitmapIndexFwdReader.this;
+        }
+
+        private void seekValue(long count, long offset) {
+            this.position = count;
+            this.valueBlockOffset = offset;
+        }
+
         void of(int key, long minValue, long maxValue, long keyCount, long nullPos, long nullCount) {
             this.nullPos = nullPos;
             this.nullCount = nullCount;
@@ -195,15 +210,6 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
                 this.maxValue = maxValue;
             }
-        }
-
-        private void seekValue(long count, long offset) {
-            this.position = count;
-            this.valueBlockOffset = offset;
-        }
-
-        private ConcurrentBitmapIndexFwdReader owner() {
-            return ConcurrentBitmapIndexFwdReader.this;
         }
     }
 }

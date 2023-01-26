@@ -26,16 +26,18 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.str.CharSink;
 
 /**
  * Retrieve metadata of a table record (row) such as the column count, the type of column by numeric index,
  * the name of a column by numeric index, the storage block capacity of
  * indexed symbols, and the numeric index of a designated timestamp column.
- *
+ * <p>
  * Types are defined in {@link io.questdb.cairo.ColumnType}
  */
-public interface RecordMetadata extends ColumnTypes {
+public interface RecordMetadata extends ColumnTypes, Plannable {
 
     int COLUMN_NOT_FOUND = -1;
 
@@ -43,15 +45,6 @@ public interface RecordMetadata extends ColumnTypes {
      * @return the number of columns in a record
      */
     int getColumnCount();
-
-    /**
-     * Return the type of column by index. Returns an integer defined
-     * in {@link io.questdb.cairo.ColumnType}
-     *
-     * @param columnIndex numeric index of a column
-     * @return integer value indicating the type of the column
-     */
-    int getColumnType(int columnIndex);
 
     /**
      * Gets the numeric index of a column by name
@@ -83,13 +76,14 @@ public interface RecordMetadata extends ColumnTypes {
      * Will not throw an exception if the column does not exist.
      *
      * @param columnName name of the column
-     * @param lo the low boundary index of the columnName chars, inclusive
-     * @param hi the hi boundary index of the columnName chars, exclusive
+     * @param lo         the low boundary index of the columnName chars, inclusive
+     * @param hi         the hi boundary index of the columnName chars, exclusive
      * @return index of the column
      */
     int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);
 
-    /** Retrieves column name.
+    /**
+     * Retrieves column name.
      *
      * @param columnIndex numeric index of the column
      * @return name of the column
@@ -97,13 +91,13 @@ public interface RecordMetadata extends ColumnTypes {
     String getColumnName(int columnIndex);
 
     /**
-     * Retrieves column hash. Hash augments the name to ensure when column is removed and
-     * then added with the same name the clients do not perceive this event as no-change.
+     * Return the type of column by index. Returns an integer defined
+     * in {@link io.questdb.cairo.ColumnType}
      *
-     * @param columnIndex numeric index of the column
-     * @return hash value
+     * @param columnIndex numeric index of a column
+     * @return integer value indicating the type of the column
      */
-    long getColumnHash(int columnIndex);
+    int getColumnType(int columnIndex);
 
     /**
      * Return the type of column by name
@@ -116,8 +110,8 @@ public interface RecordMetadata extends ColumnTypes {
     }
 
     /**
-     * How many row IDs to store in a single storage block on disk for an indexed column.
-     * Fewer blocks used to store row IDs achieves better performance.
+     * The returned value defines how many row IDs to store in a single storage block on disk
+     * for an indexed column. Fewer blocks used to store row IDs achieves better performance.
      *
      * @param columnIndex numeric index of the column
      * @return number of row IDs per block
@@ -125,14 +119,24 @@ public interface RecordMetadata extends ColumnTypes {
     int getIndexValueBlockCapacity(int columnIndex);
 
     /**
-     * How many row IDs to store in a single storage block on disk for an indexed column.
-     * Fewer blocks used to store row IDs achieves better performance.
+     * The returned value defines how many row IDs to store in a single storage block on disk
+     * for an indexed column. Fewer blocks used to store row IDs achieves better performance.
      *
      * @param columnName name of the column
      * @return number of row IDs per block
      */
     default int getIndexValueBlockCapacity(CharSequence columnName) {
         return getIndexValueBlockCapacity(getColumnIndex(columnName));
+    }
+
+    /**
+     * Access column metadata, i.e. getMetadata(1).getTimestampIndex()
+     *
+     * @param columnIndex numeric index of the column
+     * @return TableReaderMetadata
+     */
+    default RecordMetadata getMetadata(int columnIndex) {
+        return null;
     }
 
     /**
@@ -149,22 +153,10 @@ public interface RecordMetadata extends ColumnTypes {
     int getWriterIndex(int columnIndex);
 
     /**
-     * @param columnName name of the column
-     * @return true if symbol table is static, otherwise false.
+     * @param columnIndex column index
+     * @return true if the column with the given column index is present, otherwise false.
      */
-    default boolean isSymbolTableStatic(CharSequence columnName) {
-        return isSymbolTableStatic(getColumnIndex(columnName));
-    }
-
-    /**
-     * Access column metadata, i.e. getMetadata(1).getTimestampIndex()
-     *
-     * @param columnIndex numeric index of the column
-     * @return TableReaderMetadata
-     */
-    default RecordMetadata getMetadata(int columnIndex) {
-        return null;
-    }
+    boolean hasColumn(int columnIndex);
 
     /**
      * @param columnIndex numeric index of the column
@@ -173,10 +165,25 @@ public interface RecordMetadata extends ColumnTypes {
     boolean isColumnIndexed(int columnIndex);
 
     /**
+     * @param columnName name of the column
+     * @return true if symbol table is static, otherwise false.
+     */
+    default boolean isSymbolTableStatic(CharSequence columnName) {
+        return isSymbolTableStatic(getColumnIndex(columnName));
+    }
+
+    /**
      * @param columnIndex numeric index of the column
      * @return true if symbol table is static, otherwise false.
      */
     boolean isSymbolTableStatic(int columnIndex);
+
+    /**
+     * @return true if the record is from WAL enabled table, otherwise false.
+     */
+    default boolean isWalEnabled() {
+        return false;
+    }
 
     /**
      * Create a JSON object with record metadata
@@ -207,5 +214,15 @@ public interface RecordMetadata extends ColumnTypes {
         sink.put(']');
         sink.put(',').putQuoted("timestampIndex").put(':').put(getTimestampIndex());
         sink.put('}');
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        for (int i = 0, n = getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.val(',');
+            }
+            sink.val(getColumnName(i));
+        }
     }
 }

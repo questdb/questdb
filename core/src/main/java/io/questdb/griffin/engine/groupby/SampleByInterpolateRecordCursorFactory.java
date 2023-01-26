@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -44,22 +45,21 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     protected final RecordCursorFactory base;
     private final SampleByInterpolateRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
+    private final int groupByFunctionCount;
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final int groupByScalarFunctionCount;
     private final ObjList<GroupByFunction> groupByScalarFunctions;
+    private final int groupByTwoPointFunctionCount;
     private final ObjList<GroupByFunction> groupByTwoPointFunctions;
-    private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
-
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
-    private final int timestampIndex;
+    private final ObjList<Function> recordFunctions;
     private final TimestampSampler sampler;
+    private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
+    private final int timestampIndex;
     private final int yDataSize;
-    private final int groupByFunctionCount;
-    private final int groupByScalarFunctionCount;
-    private final int groupByTwoPointFunctionCount;
     private long yData;
 
     public SampleByInterpolateRecordCursorFactory(
@@ -151,11 +151,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        freeYData();
-        Misc.free(base);
-        Misc.free(cursor);
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -388,6 +385,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleBy");
+        sink.attr("fill").val("linear");
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", groupByFunctions, true);
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
@@ -491,6 +497,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    @Override
+    protected void _close() {
+        Misc.freeObjList(recordFunctions);
+        freeYData();
+        Misc.free(base);
+        Misc.free(cursor);
+    }
+
     class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
 
         protected final Map recordKeyMap;
@@ -503,10 +517,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                                @Transient @NotNull ArrayColumnTypes valueTypes) {
             super(functions);
             // this is the map itself, which we must not forget to free when factory closes
-            this.recordKeyMap = MapFactory.createMap(configuration, keyTypes);
+            this.recordKeyMap = MapFactory.createSmallMap(configuration, keyTypes);
             // data map will contain rounded timestamp value as last key column
             keyTypes.add(ColumnType.TIMESTAMP);
-            this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.dataMap = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
             this.isOpen = true;
         }
 

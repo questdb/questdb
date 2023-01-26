@@ -28,19 +28,37 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
+/**
+ * Returns rows from current data frame in order of cursors list :
+ * - first fetches and returns all records from first cursor
+ * - then from second cursors,
+ * until all cursors are exhausted .
+ */
 public class SequentialRowCursorFactory implements RowCursorFactory {
-    private final ObjList<? extends RowCursorFactory> cursorFactories;
-    private final ObjList<RowCursor> cursors;
     private final SequentialRowCursor cursor;
+    private final ObjList<? extends RowCursorFactory> cursorFactories;
+    private final int[] cursorFactoriesIdx;
+    private final ObjList<RowCursor> cursors;
 
-    public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories) {
+    public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
         this.cursors = new ObjList<>();
         this.cursor = new SequentialRowCursor();
+        this.cursorFactoriesIdx = cursorFactoriesIdx;
+    }
+
+    @Override
+    public RowCursor getCursor(DataFrame dataFrame) {
+        for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
+            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
+        }
+        cursor.init();
+        return cursor;
     }
 
     @Override
@@ -49,22 +67,21 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
-        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
-            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
-        }
-        cursor.init();
-        return cursor;
-    }
-
-    @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
         RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Cursor-order scan");//postgres uses 'Append' node  
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            sink.child(cursorFactories.getQuick(i));
+        }
+    }
+
     private class SequentialRowCursor implements RowCursor {
-        private int cursorIndex = 0;
         private RowCursor currentCursor;
+        private int cursorIndex = 0;
 
         @Override
         public boolean hasNext() {
@@ -73,7 +90,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
                 return true;
             }
 
-            while (cursorIndex < cursorFactories.size() - 1) {
+            while (cursorIndex < cursorFactoriesIdx[0] - 1) {
                 currentCursor = cursors.getQuick(++cursorIndex);
                 if (currentCursor.hasNext()) {
                     return true;
@@ -83,16 +100,16 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
-        private void init() {
-            this.cursorIndex = 0;
-            if (cursorIndex < cursorFactories.size()) {
-                currentCursor = cursors.getQuick(cursorIndex);
-            }
-        }
-
         @Override
         public long next() {
             return currentCursor.next();
+        }
+
+        private void init() {
+            this.cursorIndex = 0;
+            if (cursorIndex < cursorFactoriesIdx[0]) {
+                currentCursor = cursors.getQuick(cursorIndex);
+            }
         }
     }
 }

@@ -26,13 +26,20 @@ package io.questdb.cairo;
 
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public interface BitmapIndexReader extends Closeable {
 
-    int DIR_FORWARD = 1;
     int DIR_BACKWARD = 2;
+    int DIR_FORWARD = 1;
+    String NAME_BACKWARD = "backward";
+    String NAME_FORWARD = "forward";
+
+    static CharSequence nameOf(int direction) {
+        return DIR_FORWARD == direction ? NAME_FORWARD : NAME_BACKWARD;
+    }
 
     @Override
     default void close() {
@@ -43,7 +50,7 @@ public interface BitmapIndexReader extends Closeable {
      * minimum and maximum, both of which are inclusive. Order of values is
      * determined by specific implementations of this method.
      *
-     * @param cachedInstance when this parameters is true, index reader may return singleton instance of cursor.
+     * @param cachedInstance when this parameter is true, index reader may return singleton instance of cursor.
      * @param key            index key
      * @param minValue       inclusive minimum value
      * @param maxValue       inclusive maximum value
@@ -51,23 +58,25 @@ public interface BitmapIndexReader extends Closeable {
      */
     RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue);
 
-    int getKeyCount();
-
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();
     }
 
-    boolean isOpen();
-
     long getKeyBaseAddress();
+
+    int getKeyCount();
 
     long getKeyMemorySize();
 
+    long getUnIndexedNullCount();
+
     long getValueBaseAddress();
+
+    int getValueBlockCapacity();
 
     long getValueMemorySize();
 
-    long getUnIndexedNullCount();
+    boolean isOpen();
 
-    int getValueBlockCapacity();
+    void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn);
 }

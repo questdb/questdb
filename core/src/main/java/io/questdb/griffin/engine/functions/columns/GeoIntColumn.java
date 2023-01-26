@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoIntFunction;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -65,6 +65,11 @@ public class GeoIntColumn extends GeoIntFunction {
         return true;
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
+    }
+
     @TestOnly
     int getColumnIndex() {
         return columnIndex;
@@ -79,10 +84,5 @@ public class GeoIntColumn extends GeoIntFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOINT_MIN_BITS] = new GeoIntColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("GeoIntColumn(").put(columnIndex).put(')');
     }
 }

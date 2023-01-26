@@ -30,7 +30,7 @@
 #ifdef __aarch64__
 
 #define DECLARE_DISPATCHER(FUNCNAME)
-#define  DECLARE_DISPATCHER_TYPE(FUNCNAME, ...)  void FUNCNAME(__VA_ARGS__);
+#define DECLARE_DISPATCHER_TYPE(FUNCNAME, ...)  void FUNCNAME(__VA_ARGS__);
 
 #else // __aarch64__
 

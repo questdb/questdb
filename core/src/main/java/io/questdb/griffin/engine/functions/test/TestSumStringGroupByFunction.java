@@ -56,16 +56,6 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return null;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
@@ -73,6 +63,26 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public String getName() {
+        return "sum_t";
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        return null;
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return null;
     }
 
     @Override
@@ -89,10 +99,5 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 }

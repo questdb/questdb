@@ -53,21 +53,6 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setChar(mapValue, (char) 0);
-    }
-
-    public void setChar(MapValue mapValue, char value) {
-        mapValue.putChar(this.valueIndex, value);
-    }
-
-    @Override
     public Function getArg() {
         return this.arg;
     }
@@ -75,5 +60,25 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     @Override
     public char getChar(Record rec) {
         return rec.getChar(this.valueIndex);
+    }
+
+    @Override
+    public String getName() {
+        return "first";
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.SHORT);
+    }
+
+    public void setChar(MapValue mapValue, char value) {
+        mapValue.putChar(this.valueIndex, value);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        setChar(mapValue, (char) 0);
     }
 }

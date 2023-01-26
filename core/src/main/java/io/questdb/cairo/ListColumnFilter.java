@@ -27,6 +27,20 @@ package io.questdb.cairo;
 import io.questdb.std.IntList;
 
 public class ListColumnFilter extends IntList implements ColumnFilter {
+
+    public ListColumnFilter() {
+    }
+
+    public ListColumnFilter(int capacity) {
+        super(capacity);
+    }
+
+    public ListColumnFilter copy() {
+        ListColumnFilter copy = new ListColumnFilter(size());
+        copy.addAll(this);
+        return copy;
+    }
+
     @Override
     public int getColumnCount() {
         return size();

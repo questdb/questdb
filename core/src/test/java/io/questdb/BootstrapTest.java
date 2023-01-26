@@ -25,15 +25,17 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.log.*;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
 
 
 public class BootstrapTest extends AbstractBootstrapTest {
@@ -62,10 +64,44 @@ public class BootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testProcessArgs() {
+        CharSequenceObjHashMap<String> optHash = Bootstrap.processArgs("-d", "folder", "-n", "-f");
+        Assert.assertEquals("folder", optHash.get("-d"));
+        Assert.assertEquals("", optHash.get("-n"));
+        Assert.assertEquals("", optHash.get("-f"));
+        Assert.assertNull(optHash.get("-a"));
+        Assert.assertNull(optHash.get("a"));
+    }
+
+    @Test
+    public void testProcessArgsMissingKey() {
+        CharSequenceObjHashMap<String> optHash = Bootstrap.processArgs("d", "folder", "-f", "-t", "n", "m");
+        Assert.assertNull(optHash.get("d"));
+        Assert.assertNull(optHash.get("-d"));
+        Assert.assertEquals("d", optHash.get("$0"));
+        Assert.assertEquals("folder", optHash.get("$1"));
+        Assert.assertEquals("", optHash.get("-f"));
+        Assert.assertEquals("n", optHash.get("-t"));
+        Assert.assertEquals("m", optHash.get("$5"));
+        Assert.assertNull(optHash.get("-a"));
+        Assert.assertNull(optHash.get("a"));
+    }
+
+    @Test
+    public void testProcessArgsNoArgs() {
+        try {
+            Bootstrap.processArgs();
+            Assert.fail();
+        } catch (Bootstrap.BootstrapException thr) {
+            TestUtils.assertContains(thr.getMessage(), "Arguments expected, non provided");
+        }
+    }
+
+    @Test
     public void testReportCrashFiles() throws IOException {
         final File x = temp.newFile();
         final String logFileName = x.getAbsolutePath();
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(temp.getRoot().getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
@@ -88,7 +124,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
             Bootstrap.reportCrashFiles(configuration, logger);
 
             // wait until sequence is consumed and written to file
-            while (logger.getCriticalSequence().getBarrier().current() < 1) {
+            while (((Logger) logger).getCriticalSequence().getBarrier().current() < 1) {
                 Os.pause();
             }
         }
@@ -98,7 +134,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
             int bufSize = 4096;
             long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             // we should read sub-4k bytes from the file
-            long fd = Files.openRO(path);
+            int fd = TestFilesFacadeImpl.INSTANCE.openRO(path);
             Assert.assertTrue(fd > -1);
             try {
                 while (true) {
@@ -134,43 +170,9 @@ public class BootstrapTest extends AbstractBootstrapTest {
                     }
                 }
             } finally {
-                Files.close(fd);
+                TestFilesFacadeImpl.INSTANCE.close(fd);
                 Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
             }
         }
-    }
-
-    @Test
-    public void testProcessArgsNoArgs() {
-        try {
-            Bootstrap.processArgs();
-            Assert.fail();
-        } catch (Bootstrap.BootstrapException thr) {
-            TestUtils.assertContains(thr.getMessage(), "Arguments expected, non provided");
-        }
-    }
-
-    @Test
-    public void testProcessArgs() {
-        CharSequenceObjHashMap<String> optHash = Bootstrap.processArgs("-d", "folder", "-n", "-f");
-        Assert.assertEquals("folder", optHash.get("-d"));
-        Assert.assertEquals("", optHash.get("-n"));
-        Assert.assertEquals("", optHash.get("-f"));
-        Assert.assertNull(optHash.get("-a"));
-        Assert.assertNull(optHash.get("a"));
-    }
-
-    @Test
-    public void testProcessArgsMissingKey() {
-        CharSequenceObjHashMap<String> optHash = Bootstrap.processArgs("d", "folder", "-f", "-t", "n", "m");
-        Assert.assertNull(optHash.get("d"));
-        Assert.assertNull(optHash.get("-d"));
-        Assert.assertEquals("d", optHash.get("$0"));
-        Assert.assertEquals("folder", optHash.get("$1"));
-        Assert.assertEquals("", optHash.get("-f"));
-        Assert.assertEquals("n", optHash.get("-t"));
-        Assert.assertEquals("m", optHash.get("$5"));
-        Assert.assertNull(optHash.get("-a"));
-        Assert.assertNull(optHash.get("a"));
     }
 }

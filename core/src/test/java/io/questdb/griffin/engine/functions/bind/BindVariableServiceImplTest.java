@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
@@ -38,7 +38,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class BindVariableServiceImplTest {
-    private final static BindVariableService bindVariableService = new BindVariableServiceImpl(new DefaultCairoConfiguration(null));
+    private final static BindVariableService bindVariableService = new BindVariableServiceImpl(new DefaultTestCairoConfiguration(null));
 
     @Before
     public void setUp() {
@@ -454,17 +454,6 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
-    public void testSetGeoByteToLessAccurateGeoByte() throws SqlException {
-        bindVariableService.define(0, ColumnType.getGeoHashTypeWithBits(5), 0);
-        try {
-            bindVariableService.setGeoHash(0, 3, ColumnType.getGeoHashTypeWithBits(3));
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: GEOHASH(3b) -> GEOHASH(1c) [varIndex=0]");
-        }
-    }
-
-    @Test
     public void testSetBooleanToLong256() throws SqlException {
         bindVariableService.define(0, ColumnType.BOOLEAN, 0);
         try {
@@ -604,6 +593,17 @@ public class BindVariableServiceImplTest {
         Assert.assertEquals(10.2f, bindVariableService.getFunction(0).getFloat(null), 0.00001);
         bindVariableService.setShort(0, (short) 5);
         Assert.assertEquals(5f, bindVariableService.getFunction(0).getFloat(null), 0.00001);
+    }
+
+    @Test
+    public void testSetGeoByteToLessAccurateGeoByte() throws SqlException {
+        bindVariableService.define(0, ColumnType.getGeoHashTypeWithBits(5), 0);
+        try {
+            bindVariableService.setGeoHash(0, 3, ColumnType.getGeoHashTypeWithBits(3));
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: GEOHASH(3b) -> GEOHASH(1c) [varIndex=0]");
+        }
     }
 
     @Test

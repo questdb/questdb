@@ -41,7 +41,7 @@ public final class FastFloatParser {
     /**
      * Convenience method for calling {@link #parseFloat(CharSequence, int, int, boolean)}.
      *
-     * @param str the string to be parsed
+     * @param str            the string to be parsed
      * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value
      * @throws NumericException if the string can not be parsed
@@ -56,9 +56,9 @@ public final class FastFloatParser {
      * <p>
      * See {@link io.questdb.std.fastdouble} for the syntax of {@code FloatingPointLiteral}.
      *
-     * @param str    the string to be parsed
-     * @param offset the start offset of the {@code FloatingPointLiteral} in {@code str}
-     * @param length the length of {@code FloatingPointLiteral} in {@code str}
+     * @param str            the string to be parsed
+     * @param offset         the start offset of the {@code FloatingPointLiteral} in {@code str}
+     * @param length         the length of {@code FloatingPointLiteral} in {@code str}
      * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value
      * @throws NumericException if the string can not be parsed
@@ -70,8 +70,8 @@ public final class FastFloatParser {
     /**
      * Convenience method for calling {@link #parseFloat(byte[], int, int, boolean)}.
      *
-     * @param str the string to be parsed, a byte array with characters
-     *            in ISO-8859-1, ASCII or UTF-8 encoding
+     * @param str            the string to be parsed, a byte array with characters
+     *                       in ISO-8859-1, ASCII or UTF-8 encoding
      * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value
      * @throws NumericException if the string can not be parsed
@@ -86,10 +86,10 @@ public final class FastFloatParser {
      * <p>
      * See {@link io.questdb.std.fastdouble} for the syntax of {@code FloatingPointLiteral}.
      *
-     * @param str    the string to be parsed, a byte array with characters
-     *               in ISO-8859-1, ASCII or UTF-8 encoding
-     * @param offset The index of the first byte to parse
-     * @param length The number of bytes to parse
+     * @param str            the string to be parsed, a byte array with characters
+     *                       in ISO-8859-1, ASCII or UTF-8 encoding
+     * @param offset         The index of the first byte to parse
+     * @param length         The number of bytes to parse
      * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value
      * @throws NumericException if the string can not be parsed
@@ -102,7 +102,7 @@ public final class FastFloatParser {
     /**
      * Convenience method for calling {@link #parseFloat(char[], int, int, boolean)}.
      *
-     * @param str the string to be parsed
+     * @param str            the string to be parsed
      * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value
      * @throws NumericException if the string can not be parsed
@@ -117,10 +117,10 @@ public final class FastFloatParser {
      * <p>
      * See {@link io.questdb.std.fastdouble} for the syntax of {@code FloatingPointLiteral}.
      *
-     * @param str    the string to be parsed, a byte array with characters
-     *               in ISO-8859-1, ASCII or UTF-8 encoding
-     * @param offset The index of the first character to parse
-     * @param length The number of characters to parse
+     * @param str            the string to be parsed, a byte array with characters
+     *                       in ISO-8859-1, ASCII or UTF-8 encoding
+     * @param offset         The index of the first character to parse
+     * @param length         The number of characters to parse
      * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value
      * @throws NumericException if the string can not be parsed

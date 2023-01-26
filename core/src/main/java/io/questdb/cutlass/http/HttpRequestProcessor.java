@@ -26,30 +26,40 @@ package io.questdb.cutlass.http;
 
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
 
 public interface HttpRequestProcessor {
+    // after this callback is invoked the server will disconnect the client
+    // if processor desires to write a goodbye letter to the client
+    // it must also send TCP FIN by invoking socket.shutdownWrite()
+    default void failRequest(
+            HttpConnectionContext context,
+            HttpException exception
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    }
+
     default void onHeadersReady(HttpConnectionContext context) {
     }
 
-    default void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    default void onRequestComplete(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    }
+
+    default void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    }
+
+    default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
     }
 
     default void resumeRecv(HttpConnectionContext context) {
     }
 
-    default void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-    }
-
-    default void onRequestRetry(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-    }
-
-    default void parkRequest(HttpConnectionContext context) {
-    }
-
-    // after this callback is invoked the server will disconnect the client
-    // if processor desires to write a goodbye letter to the client
-    // it must also send TCP FIN by invoking socket.shutdownWrite()
-    default void failRequest(HttpConnectionContext context, HttpException exception) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    default void resumeSend(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
     }
 }

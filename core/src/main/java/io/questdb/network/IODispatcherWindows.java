@@ -30,11 +30,10 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
-    private static final int M_OPERATION = 2;
-    private final FDSet readFdSet;
-    private final FDSet writeFdSet;
     private final LongIntHashMap fds = new LongIntHashMap();
+    private final FDSet readFdSet;
     private final SelectFacade sf;
+    private final FDSet writeFdSet;
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
@@ -42,9 +41,9 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
+        this.sf = configuration.getSelectFacade();
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());
-        this.sf = configuration.getSelectFacade();
         readFdSet.add(serverFd);
         readFdSet.setCount(1);
         writeFdSet.setCount(0);
@@ -59,34 +58,30 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         LOG.info().$("closed").$();
     }
 
-    @Override
-    protected void pendingAdded(int index) {
-        pending.set(index, M_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
-    }
-
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
         while ((cursor = interestSubSeq.next()) > -1) {
-            useful = true;
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
             interestSubSeq.done(cursor);
 
+            useful = true;
+
             int r = pending.addRow();
-            pending.set(r, M_TIMESTAMP, timestamp);
-            pending.set(r, M_FD, context.getFd());
-            pending.set(r, M_OPERATION, operation);
+            pending.set(r, OPM_TIMESTAMP, timestamp);
+            pending.set(r, OPM_FD, context.getFd());
+            pending.set(r, OPM_OPERATION, operation);
             pending.set(r, context);
         }
         return useful;
     }
 
     private void queryFdSets(long timestamp) {
+        // collect reads into hash map
         for (int i = 0, n = readFdSet.getCount(); i < n; i++) {
-            long fd = readFdSet.get(i);
-
+            final long fd = readFdSet.get(i);
             if (fd == serverFd) {
                 accept(timestamp);
             } else {
@@ -107,8 +102,17 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     }
 
     @Override
-    protected boolean runSerially() {
+    protected void pendingAdded(int index) {
+        pending.set(index, OPM_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
+    }
 
+    @Override
+    protected void registerListenerFd() {
+        listenerRegistered = true;
+    }
+
+    @Override
+    protected boolean runSerially() {
         final long timestamp = clock.getTicks();
         processDisconnects(timestamp);
 
@@ -116,7 +120,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         if (readFdSet.getCount() > 0 || writeFdSet.getCount() > 0) {
             count = sf.select(readFdSet.address, writeFdSet.address, 0);
             if (count < 0) {
-                LOG.error().$("Error in select(): ").$(nf.errno()).$();
+                LOG.error().$("select failure [err=").$(nf.errno()).I$();
                 return false;
             }
         } else {
@@ -133,7 +137,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         }
 
         // process returned fds
-        useful = processRegistrations(timestamp) | useful;
+        useful |= processRegistrations(timestamp);
 
         // re-arm select() fds
         int readFdCount = 0;
@@ -142,23 +146,42 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         writeFdSet.reset();
         long deadline = timestamp - idleConnectionTimeout;
         for (int i = 0, n = pending.size(); i < n; ) {
-            final long ts = pending.get(i, M_TIMESTAMP);
-            final long fd = pending.get(i, M_FD);
-            final int _new_op = fds.get(fd);
-            assert fd != serverFd;
-            
-            if (_new_op == -1) {
+            final C context = pending.get(i);
 
-                // check if expired
+            // check if the context is waiting for a suspend event
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {
+                    // the event has been triggered or expired already, clear it and proceed
+                    context.clearSuspendEvent();
+                }
+            }
+
+            final long ts = pending.get(i, OPM_TIMESTAMP);
+            final int fd = (int) pending.get(i, OPM_FD);
+            final int newOp = fds.get(fd);
+            assert fd != serverFd;
+
+            if (newOp == -1) {
+                // new operation case
+
+                // check if the connection was idle for too long
                 if (ts < deadline) {
-                    doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
+                    doDisconnect(context, DISCONNECT_SRC_IDLE);
                     pending.deleteRow(i);
                     n--;
                     useful = true;
                     continue;
                 }
 
-                if (pending.get(i++, M_OPERATION) == IOOperation.READ) {
+                int operation = (int) pending.get(i, OPM_OPERATION);
+                i++;
+                if (suspendEvent != null) {
+                    // if the operation was suspended, we request a read to be able to detect a client disconnect
+                    operation = IOOperation.READ;
+                }
+
+                if (operation == IOOperation.READ) {
                     readFdSet.add(fd);
                     readFdCount++;
                 } else {
@@ -166,39 +189,55 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     writeFdCount++;
                 }
             } else {
-                // this fd just has fired
-                // publish event
-                // and remove from pending
-                final C context = pending.get(i);
+                // select()'ed operation case
+                if (suspendEvent != null) {
+                    // the event is still pending, check if we have a client disconnect
+                    if (testConnection(context.getFd())) {
+                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
+                        pending.deleteRow(i);
+                        n--;
+                    } else {
+                        i++; // just skip to the next operation
+                    }
+                    continue;
+                }
 
-                if ((_new_op & SelectAccessor.FD_READ) > 0) {
+                // publish event and remove from pending
+                useful = true;
+
+                if ((newOp & SelectAccessor.FD_READ) > 0) {
                     publishOperation(IOOperation.READ, context);
                 }
-
-                if ((_new_op & SelectAccessor.FD_WRITE) > 0) {
+                if ((newOp & SelectAccessor.FD_WRITE) > 0) {
                     publishOperation(IOOperation.WRITE, context);
                 }
+
                 pending.deleteRow(i);
                 n--;
             }
         }
 
         if (listenerRegistered) {
-             assert serverFd >= 0;
-             readFdSet.add(serverFd);
-             readFdCount++;
+            assert serverFd >= 0;
+            readFdSet.add(serverFd);
+            readFdCount++;
         }
-        
+
         readFdSet.setCount(readFdCount);
         writeFdSet.setCount(writeFdCount);
         return useful;
     }
 
+    @Override
+    protected void unregisterListenerFd() {
+        listenerRegistered = false;
+    }
+
     private static class FDSet {
-        private long address;
-        private int size;
         private long _wptr;
+        private long address;
         private long lim;
+        private int size;
 
         private FDSet(int size) {
             int l = SelectAccessor.ARRAY_OFFSET + 8 * size;
@@ -208,7 +247,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             this.lim = address + l;
         }
 
-        private void add(long fd) {
+        private void add(int fd) {
             if (_wptr == lim) {
                 resize();
             }
@@ -219,8 +258,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         private void close() {
             if (address != 0) {
-                Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-                address = 0;
+                address = Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             }
         }
 
@@ -230,10 +268,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         private int getCount() {
             return Unsafe.getUnsafe().getInt(address + SelectAccessor.COUNT_OFFSET);
-        }
-
-        private void setCount(int count) {
-            Unsafe.getUnsafe().putInt(address + SelectAccessor.COUNT_OFFSET, count);
         }
 
         private void reset() {
@@ -251,16 +285,10 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             _wptr = _addr + (_wptr - address);
             address = _addr;
         }
-    }
 
-    @Override
-    protected void registerListenerFd() {
-        listenerRegistered = true;
-    }
-
-    @Override
-    protected void unregisterListenerFd() {
-        listenerRegistered = false;
+        private void setCount(int count) {
+            Unsafe.getUnsafe().putInt(address + SelectAccessor.COUNT_OFFSET, count);
+        }
     }
 }
 

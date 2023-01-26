@@ -29,19 +29,22 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final RecordSink masterSink;
-    private final RecordSink slaveKeySink;
     private final HashOuterJoinRecordCursor cursor;
+    private final JoinContext joinContext;
+    private final RecordCursorFactory masterFactory;
+    private final RecordSink masterSink;
+    private final RecordCursorFactory slaveFactory;
+    private final RecordSink slaveKeySink;
 
     public HashOuterJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -53,7 +56,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
             RecordSink masterSink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
-            int columnSplit
+            int columnSplit,
+            JoinContext joinContext
 
     ) {
         super(metadata);
@@ -70,6 +74,39 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 slaveChain,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata())
         );
+
+        this.joinContext = joinContext;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
+        try {
+            cursor.of(executionContext, slaveCursor);
+            return cursor;
+        } catch (Throwable e) {
+            Misc.free(slaveCursor);
+            Misc.free(cursor);
+            throw e;
+        }
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Hash Outer Join");
+        sink.optAttr("condition", joinContext);
+        sink.child(masterFactory);
+        sink.child("Hash", slaveFactory);
     }
 
     static void buildMap(
@@ -105,36 +142,13 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         cursor.close();
     }
 
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
-        try {
-            cursor.of(executionContext, slaveCursor);
-            return cursor;
-        } catch (Throwable e) {
-            Misc.free(slaveCursor);
-            Misc.free(cursor);
-            throw e;
-        }
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
-    }
-
     private class HashOuterJoinRecordCursor extends AbstractJoinCursor {
+        private final Map joinKeyMap;
         private final OuterJoinRecord record;
         private final RecordChain slaveChain;
-        private final Map joinKeyMap;
+        private boolean isOpen;
         private Record masterRecord;
         private boolean useSlaveCursor;
-        private boolean isOpen;
 
         public HashOuterJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain, Record nullRecord) {
             super(columnSplit);
@@ -145,8 +159,13 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
-        public long size() {
-            return -1;
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                slaveChain.close();
+                super.close();
+            }
         }
 
         @Override
@@ -181,6 +200,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public void toTop() {
             masterCursor.toTop();
             useSlaveCursor = false;
@@ -210,16 +234,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
             } catch (Throwable e) {
                 this.masterCursor = Misc.free(masterCursor);
                 throw e;
-            }
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                joinKeyMap.close();
-                slaveChain.close();
-                super.close();
             }
         }
     }

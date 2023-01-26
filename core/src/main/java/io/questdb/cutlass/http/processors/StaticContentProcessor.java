@@ -40,13 +40,13 @@ import java.io.Closeable;
 public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
-    private final MimeTypesCache mimeTypes;
-    private final HttpRangeParser rangeParser = new HttpRangeParser();
-    private final PrefixedPath prefixedPath;
-    private final CharSequence indexFileName;
     private final FilesFacade ff;
-    private final String keepAliveHeader;
     private final String httpProtocolVersion;
+    private final CharSequence indexFileName;
+    private final String keepAliveHeader;
+    private final MimeTypesCache mimeTypes;
+    private final PrefixedPath prefixedPath;
+    private final HttpRangeParser rangeParser = new HttpRangeParser();
 
     public StaticContentProcessor(HttpServerConfiguration configuration) {
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
@@ -55,10 +55,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
-    }
-
-    private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        context.simpleResponse().sendStatusWithDefaultMessage(code);
     }
 
     @Override
@@ -107,6 +103,8 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             return;
         }
 
+        context.resumeResponseSend();
+
         final HttpRawSocket socket = context.getRawResponseSocket();
         long address = socket.getBufferAddress();
         int size = socket.getBufferSize();
@@ -120,6 +118,10 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             state.bytesSent += l;
             socket.send((int) l);
         }
+    }
+
+    private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        context.simpleResponse().sendStatusWithDefaultMessage(code);
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -216,7 +218,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             LPSZ path, CharSequence contentType,
             boolean asAttachment
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        long fd = ff.openRO(path);
+        int fd = ff.openRO(path);
         if (fd == -1) {
             LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();
             sendStatusWithDefaultMessage(context, 404);

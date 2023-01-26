@@ -44,31 +44,29 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
 import static io.questdb.cutlass.text.TextImportTask.getStatusName;
 
 public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
-
-    private final RingQueue<TextImportRequestTask> requestQueue;
-    private final Sequence requestSubSeq;
-    private final CharSequence statusTableName;
     private final MicrosecondClock clock;
+    private final CairoEngine engine;
     private final int logRetentionDays;
     private final LongList partitionsToRemove = new LongList();
-    private final TextImportExecutionContext textImportExecutionContext;
+    private final RingQueue<TextImportRequestTask> requestQueue;
+    private final Sequence requestSubSeq;
+    private final TableToken statusTableToken;
     private final StringSink stringSink = new StringSink();
-    private TableWriter writer;
+    private final TextImportExecutionContext textImportExecutionContext;
+    private ParallelCsvFileImporter parallelImporter;
+    private Path path;
+    private SerialCsvFileImporter serialImporter;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
+    private TableWriter writer;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
-    private Path path;
-    private ParallelCsvFileImporter parallelImporter;
-    private final CairoEngine engine;
-    private SerialCsvFileImporter serialImporter;
 
     public TextImportRequestJob(
             final CairoEngine engine,
@@ -82,11 +80,11 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
 
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
-        this.statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
 
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+        final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
                         "ts timestamp, " + // 0
@@ -102,7 +100,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         ") timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
-        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
+        this.statusTableToken = engine.getTableToken(statusTableName);
+        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();
         this.path = new Path();
@@ -111,13 +110,78 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         this.parallelImporter = Misc.free(parallelImporter);
         this.serialImporter = Misc.free(serialImporter);
         this.writer = Misc.free(this.writer);
         this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.path = Misc.free(path);
+    }
+
+    private void updateStatus(
+            byte phase,
+            byte status,
+            final CharSequence msg,
+            long rowsHandled,
+            long rowsImported,
+            long errors
+    ) {
+        if (writer != null) {
+            stringSink.clear();
+            Numbers.appendHex(stringSink, task.getImportId(), true);
+            try {
+                TableWriter.Row row = writer.newRow(clock.getTicks());
+                row.putStr(1, stringSink);
+                row.putSym(2, task.getTableName());
+                row.putSym(3, task.getFileName());
+                row.putSym(4, TextImportTask.getPhaseName(phase));
+                row.putSym(5, TextImportTask.getStatusName(status));
+                row.putStr(6, msg);
+                row.putLong(7, rowsHandled);
+                row.putLong(8, rowsImported);
+                row.putLong(9, errors);
+                row.append();
+                writer.commit();
+            } catch (Throwable th) {
+                LOG.error()
+                        .$("could not update status table [importId=").$hexPadded(task.getImportId())
+                        .$(", statusTableName=").$(statusTableToken)
+                        .$(", tableName=").$(task.getTableName())
+                        .$(", fileName=").$(task.getFileName())
+                        .$(", phase=").$(getPhaseName(phase))
+                        .$(", status=").$(getStatusName(phase))
+                        .$(", msg=").$(msg)
+                        .$(", rowsHandled=").$(rowsHandled)
+                        .$(", rowsImported=").$(rowsImported)
+                        .$(", errors=").$(errors)
+                        .$(", error=`").$(th).$('`')
+                        .I$();
+                writer = Misc.free(writer);
+            }
+
+            // if we closed the writer, we need to reopen it again
+            if (writer == null) {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, "QuestDB system");
+                } catch (Throwable e) {
+                    LOG.error()
+                            .$("could not re-open writer [table=").$(statusTableToken)
+                            .$(", error=`").$(e).$('`')
+                            .I$();
+                }
+            }
+        }
+    }
+
+    private boolean useParallelImport() {
+        TableToken tableToken = engine.getTableTokenIfExists(task.getTableName());
+        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, tableToken) != TableUtils.TABLE_EXISTS) {
+            return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
+        }
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
+            return PartitionBy.isPartitioned(reader.getPartitionedBy());
+        }
     }
 
     void enforceLogRetention() {
@@ -136,15 +200,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                     writer.removePartition(partitionsToRemove.getQuick(i));
                 }
             }
-        }
-    }
-
-    private boolean useParallelImport() {
-        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
-            return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
-        }
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
-            return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }
     }
 
@@ -201,60 +256,5 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             return true;
         }
         return false;
-    }
-
-    private void updateStatus(
-            byte phase,
-            byte status,
-            final CharSequence msg,
-            long rowsHandled,
-            long rowsImported,
-            long errors
-    ) {
-        if (writer != null) {
-            stringSink.clear();
-            Numbers.appendHex(stringSink, task.getImportId(), true);
-            try {
-                TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putStr(1, stringSink);
-                row.putSym(2, task.getTableName());
-                row.putSym(3, task.getFileName());
-                row.putSym(4, TextImportTask.getPhaseName(phase));
-                row.putSym(5, TextImportTask.getStatusName(status));
-                row.putStr(6, msg);
-                row.putLong(7, rowsHandled);
-                row.putLong(8, rowsImported);
-                row.putLong(9, errors);
-                row.append();
-                writer.commit();
-            } catch (Throwable th) {
-                LOG.error()
-                        .$("could not update status table [importId=").$hexPadded(task.getImportId())
-                        .$(", statusTableName=").$(statusTableName)
-                        .$(", tableName=").$(task.getTableName())
-                        .$(", fileName=").$(task.getFileName())
-                        .$(", phase=").$(getPhaseName(phase))
-                        .$(", status=").$(getStatusName(phase))
-                        .$(", msg=").$(msg)
-                        .$(", rowsHandled=").$(rowsHandled)
-                        .$(", rowsImported=").$(rowsImported)
-                        .$(", errors=").$(errors)
-                        .$(", error=`").$(th).$('`')
-                        .I$();
-                writer = Misc.free(writer);
-            }
-
-            // if we closed the writer, we need to reopen it again
-            if (writer == null) {
-                try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
-                } catch (Throwable e) {
-                    LOG.error()
-                            .$("could not re-open writer [table=").$(statusTableName)
-                            .$(", error=`").$(e).$('`')
-                            .I$();
-                }
-            }
-        }
     }
 }

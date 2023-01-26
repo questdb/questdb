@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
@@ -53,7 +54,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
                                 SqlExecutionContext sqlExecutionContext
     ) {
 
-        if (configuration.getSimulateCrashEnabled())  {
+        if (configuration.getSimulateCrashEnabled()) {
             char killType = args.get(0).getChar(null);
             switch (killType) {
                 case '0':
@@ -65,21 +66,6 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         return Dummy;
     }
 
-    private static class SimulateCrashFunction extends BooleanFunction {
-        @Override
-        public boolean getBool(Record rec) {
-            Unsafe.getUnsafe().getLong(0L);
-            return true;
-        }
-    }
-
-    private static class OutOfMemoryFunction extends BooleanFunction {
-        @Override
-        public boolean getBool(Record rec) {
-            throw new OutOfMemoryError("simulate_crash('M')");
-        }
-    }
-
     private static class DoNothingInstance extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
@@ -89,6 +75,36 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("simulate_crash(jvm)");
+        }
+    }
+
+    private static class OutOfMemoryFunction extends BooleanFunction {
+        @Override
+        public boolean getBool(Record rec) {
+            throw new OutOfMemoryError("simulate_crash('M')");
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("simulate_crash(oom)");
+        }
+    }
+
+    private static class SimulateCrashFunction extends BooleanFunction {
+        @Override
+        public boolean getBool(Record rec) {
+            Unsafe.getUnsafe().getLong(0L);
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("simulate_crash(dummy)");
         }
     }
 }

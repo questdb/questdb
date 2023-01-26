@@ -32,10 +32,10 @@ public class FunctionFactoryDescriptor {
     private static final int ARRAY_MASK = 1 << 31;
     private static final int CONST_MASK = 1 << 30;
     private static final int TYPE_MASK = ~(ARRAY_MASK | CONST_MASK);
-    private final FunctionFactory factory;
     private final long[] argTypes;
-    private final int sigArgCount;
+    private final FunctionFactory factory;
     private final int openBraceIndex;
+    private final int sigArgCount;
 
     public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {
         this.factory = factory;
@@ -87,10 +87,6 @@ public class FunctionFactoryDescriptor {
         }
         this.argTypes = types;
         this.sigArgCount = typeCount;
-    }
-
-    private static long toUnsignedLong(int type) {
-        return ((long) type) & 0xffffffffL;
     }
 
     public static int getArgType(char c) {
@@ -165,6 +161,9 @@ public class FunctionFactoryDescriptor {
             case 'j':
                 sigArgType = ColumnType.LONG128;
                 break;
+            case 'z':
+                sigArgType = ColumnType.UUID;
+                break;
             default:
                 sigArgType = -1;
                 break;
@@ -178,6 +177,31 @@ public class FunctionFactoryDescriptor {
 
     public static boolean isConstant(int mask) {
         return (mask & CONST_MASK) != 0;
+    }
+
+    public static String replaceSignatureName(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put(signature, openBraceIndex, signature.length());
+        return signatureBuilder.toString();
+    }
+
+    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put('(');
+        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
+            char curr = signature.charAt(i);
+            if (curr == '[') {
+                signatureBuilder.put("[]");
+            } else if (curr != ']') {
+                signatureBuilder.put(curr);
+            }
+        }
+        signatureBuilder.put(')');
+        return signatureBuilder.toString();
     }
 
     public static short toType(int mask) {
@@ -220,31 +244,6 @@ public class FunctionFactoryDescriptor {
         return openBraceIndex;
     }
 
-    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
-        signatureBuilder.put(name);
-        signatureBuilder.put('(');
-        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
-            char curr = signature.charAt(i);
-            if (curr == '[') {
-                signatureBuilder.put("[]");
-            } else if (curr != ']') {
-                signatureBuilder.put(curr);
-            }
-        }
-        signatureBuilder.put(')');
-        return signatureBuilder.toString();
-    }
-
-    public static String replaceSignatureName(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
-        signatureBuilder.put(name);
-        signatureBuilder.put(signature, openBraceIndex, signature.length());
-        return signatureBuilder.toString();
-    }
-
     public int getArgTypeMask(int index) {
         int arrayIndex = index / 2;
         long mask = argTypes[arrayIndex];
@@ -261,5 +260,9 @@ public class FunctionFactoryDescriptor {
 
     public int getSigArgCount() {
         return sigArgCount;
+    }
+
+    private static long toUnsignedLong(int type) {
+        return ((long) type) & 0xffffffffL;
     }
 }

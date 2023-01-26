@@ -31,24 +31,21 @@ import io.questdb.cairo.sql.RecordCursor;
 final class StringLongTuplesRecordCursor implements RecordCursor {
     private final TableWriterMetricsRecord record = new TableWriterMetricsRecord();
     private String[] keys;
-    private long[] values;
     private int pos;
-
-    public void of(String[] keys, long[] values) {
-        assert keys.length == values.length;
-        this.keys = keys;
-        this.values = values;
-        toTop();
-    }
+    private long[] values;
 
     @Override
     public void close() {
-
     }
 
     @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public Record getRecordB() {
+        throw new UnsupportedOperationException("RecordB not supported");
     }
 
     @Override
@@ -60,9 +57,11 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
         return false;
     }
 
-    @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException("RecordB not supported");
+    public void of(String[] keys, long[] values) {
+        assert keys.length == values.length;
+        this.keys = keys;
+        this.values = values;
+        toTop();
     }
 
     @Override
@@ -71,16 +70,24 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        pos = -1;
-    }
-
-    @Override
     public long size() {
         return keys.length;
     }
 
+    @Override
+    public void toTop() {
+        pos = -1;
+    }
+
     private class TableWriterMetricsRecord implements Record {
+        @Override
+        public long getLong(int col) {
+            if (col != 1) {
+                throw CairoException.nonCritical().put("unsupported long column number [column=").put(col).put("]");
+            }
+            return values[pos];
+        }
+
         @Override
         public CharSequence getStr(int col) {
             if (col != 0) {
@@ -100,14 +107,6 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
                 throw CairoException.nonCritical().put("unsupported string column number [column=").put(col).put("]");
             }
             return getStr(col).length();
-        }
-
-        @Override
-        public long getLong(int col) {
-            if (col != 1) {
-                throw CairoException.nonCritical().put("unsupported long column number [column=").put(col).put("]");
-            }
-            return values[pos];
         }
     }
 }

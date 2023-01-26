@@ -32,11 +32,12 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 public class DirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
-    private long ptr;
-    private long capacity;
     private final long initialCapacity;
-    private long lo;
+    private long capacity;
     private long hi;
+    private long lo;
+    private long ptr;
+    private FloatingCharSequence subSequence;
 
     public DirectCharSink(long capacity) {
         ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
@@ -44,6 +45,11 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         this.initialCapacity = capacity;
         this.lo = ptr;
         this.hi = ptr + capacity;
+    }
+
+    @Override
+    public char charAt(int index) {
+        return Unsafe.getUnsafe().getChar(ptr + index * 2L);
     }
 
     @Override
@@ -56,29 +62,9 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
     }
 
-    public void resetCapacity() {
-        resize(initialCapacity);
-        clear();
-    }
-
     @Override
     public int length() {
         return (int) (lo - ptr) / 2;
-    }
-
-    @TestOnly
-    long getCapacity() {
-        return capacity;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(ptr + index * 2L);
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -125,6 +111,19 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         return this;
     }
 
+    public void resetCapacity() {
+        resize(initialCapacity);
+        clear();
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        if (subSequence == null) {
+            subSequence = new FloatingCharSequence();
+        }
+        return subSequence.of(start, end - start);
+    }
+
     @NotNull
     @Override
     public String toString() {
@@ -138,5 +137,32 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
         this.capacity = cap;
         this.lo = ptr + len;
         this.hi = ptr + cap;
+    }
+
+    @TestOnly
+    long getCapacity() {
+        return capacity;
+    }
+
+    private class FloatingCharSequence extends AbstractCharSequence {
+
+        private int len;
+        private int startIndex;
+
+        @Override
+        public char charAt(int index) {
+            return Unsafe.getUnsafe().getChar(ptr + (startIndex + index) * 2L);
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
+
+        CharSequence of(int startIndex, int len) {
+            this.startIndex = startIndex;
+            this.len = len;
+            return this;
+        }
     }
 }

@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -88,13 +88,13 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     "from long_sequence(10000)" +
                     "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean remove(LPSZ path) {
                     if (Chars.endsWith(path, ".v") || Chars.endsWith(path, ".k")) {
                         return false;
                     }
-                    return Files.remove(path);
+                    return super.remove(path);
                 }
             };
 
@@ -156,30 +156,32 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testNonPartitionedWithColumnTopAddedLast() throws Exception {
-        String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                ");" +
-                "alter table xxx add column sym1 symbol index;" +
-                "alter table xxx add column sym2 symbol index";
+        assertMemoryLeak(() -> {
+            String createAlterInsertSql = "create table xxx as (" +
+                    "select " +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    ");" +
+                    "alter table xxx add column sym1 symbol index;" +
+                    "alter table xxx add column sym2 symbol index";
 
-        checkRebuildIndexes(createAlterInsertSql,
-                tablePath -> {
-                },
-                IndexBuilder::rebuildAll);
+            checkRebuildIndexes(createAlterInsertSql,
+                    tablePath -> {
+                    },
+                    IndexBuilder::rebuildAll);
 
-        engine.releaseAllWriters();
-        compiler
-                .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
-                .getInsertOperation()
-                .execute(sqlExecutionContext)
-                .await();
-        int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
-        Assert.assertEquals(1, sym1D);
-        int sym2I2 = countByFullScan("select * from xxx where sym2 = 'I2'");
-        Assert.assertEquals(1, sym2I2);
+            engine.releaseAllWriters();
+            compiler
+                    .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
+                    .getInsertOperation()
+                    .execute(sqlExecutionContext)
+                    .await();
+            int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
+            Assert.assertEquals(1, sym1D);
+            int sym2I2 = countByFullScan("select * from xxx where sym2 = 'I2'");
+            Assert.assertEquals(1, sym2I2);
+        });
     }
 
     @Test
@@ -362,7 +364,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             tempWriter = null;
             try {
                 checkRebuildIndexes(createTableSql,
-                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
+                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"), "test lock"),
                         indexBuilder -> {
                             try {
                                 indexBuilder.reindexColumn("sym2");
@@ -413,13 +415,15 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
             AtomicInteger count = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
-                    if (Chars.contains(name, "sym2.k") && count.incrementAndGet() == 29) {
-                        return -1;
+                public int openRW(LPSZ name, long opts) {
+                    if (Chars.contains(name, "sym2.k")) {
+                        if (count.incrementAndGet() == 29) {
+                            return -1;
+                        }
                     }
-                    return Files.openRW(name, opts);
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -449,7 +453,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
             AtomicInteger count = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean touch(LPSZ path) {
                     if (Chars.contains(path, "sym2.v") && count.incrementAndGet() == 17) {
@@ -490,7 +494,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 indexBuilder -> indexBuilder.reindexAllInPartition("1970-01-01"));
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
@@ -526,6 +530,31 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0, -1L);
                 },
                 indexBuilder -> indexBuilder.reindexAllInPartition("1970-01-01"));
+    }
+
+    @Test
+    public void testRebuildTableWithNoIndex() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "rnd_symbol(4,4,4,2) as sym3," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                ")";
+
+        try {
+            checkRebuildIndexes(
+                    createTableSql,
+                    (tablePath) -> {
+                    },
+                    IndexBuilder::rebuildAll
+            );
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "Table does not have any indexes");
+        }
     }
 
     @Test
@@ -571,7 +600,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         );
 
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), engine.getTableToken("xxx"))) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 int columnIndex = metadata.getColumnIndex("sym1");
                 Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
@@ -611,7 +640,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + "xxx";
+            TableToken xxx = engine.getTableToken("xxx");
+            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             indexBuilder.clear();

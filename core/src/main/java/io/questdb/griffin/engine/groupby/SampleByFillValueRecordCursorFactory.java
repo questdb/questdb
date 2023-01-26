@@ -31,6 +31,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -104,6 +105,38 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         }
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleBy");
+        sink.attr("fill").val("value");
+        sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("values", cursor.groupByFunctions, true);
+        sink.child(base);
+    }
+
+    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {
+        try {
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.INT:
+                    return IntConstant.newInstance(Numbers.parseInt(fillNode.token));
+                case ColumnType.LONG:
+                    return LongConstant.newInstance(Numbers.parseLong(fillNode.token));
+                case ColumnType.FLOAT:
+                    return FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
+                case ColumnType.DOUBLE:
+                    return DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
+                case ColumnType.SHORT:
+                    return ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
+                case ColumnType.BYTE:
+                    return ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
+                default:
+                    throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+            }
+        } catch (NumericException e) {
+            throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);
+        }
+    }
+
     @NotNull
     static ObjList<Function> createPlaceholderFunctions(
             ObjList<GroupByFunction> groupByFunctions,
@@ -143,29 +176,6 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             }
         }
         return placeholderFunctions;
-    }
-
-    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {
-        try {
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT:
-                    return IntConstant.newInstance(Numbers.parseInt(fillNode.token));
-                case ColumnType.LONG:
-                    return LongConstant.newInstance(Numbers.parseLong(fillNode.token));
-                case ColumnType.FLOAT:
-                    return FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
-                case ColumnType.DOUBLE:
-                    return DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
-                case ColumnType.SHORT:
-                    return ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
-                case ColumnType.BYTE:
-                    return ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
-                default:
-                    throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
-            }
-        } catch (NumericException e) {
-            throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);
-        }
     }
 
     @Override

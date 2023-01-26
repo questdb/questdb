@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
@@ -32,8 +33,6 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -43,120 +42,48 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
-    private final IntStack timestampRequiredStack = new IntStack();
-    private final int workerCount;
-    private final int sharedWorkerCount;
+    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    private final MicrosecondClock clock;
-    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
-    private final RingQueue<TelemetryTask> telemetryQueue;
-    private Sequence telemetryPubSeq;
-    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
+    private final int sharedWorkerCount;
+    private final Telemetry<TelemetryTask> telemetry;
+    private final TelemetryFacade telemetryFacade;
+    private final IntStack timestampRequiredStack = new IntStack();
+    private final int workerCount;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private MicrosecondClock clock;
+    private boolean cloneSymbolTables = false;
+    private boolean columnPreTouchEnabled = true;
+    private int jitMode;
+    private long now;
+    private final MicrosecondClock nowClock = () -> now;
     private Rnd random;
     private long requestFd = -1;
-    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-    private long now;
-    private int jitMode;
-    private boolean cloneSymbolTables = false;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
-        this.cairoConfiguration = cairoEngine.getConfiguration();
         assert workerCount > 0;
         this.workerCount = workerCount;
         assert sharedWorkerCount > 0;
         this.sharedWorkerCount = sharedWorkerCount;
         this.cairoEngine = cairoEngine;
-        this.clock = cairoConfiguration.getMicrosecondClock();
-        this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
-        this.jitMode = cairoConfiguration.getSqlJitMode();
 
-        this.telemetryQueue = cairoEngine.getTelemetryQueue();
-        if (telemetryQueue != null) {
-            this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
-            this.telemetryMethod = this::doStoreTelemetry;
-        }
+        cairoConfiguration = cairoEngine.getConfiguration();
+        clock = cairoConfiguration.getMicrosecondClock();
+        cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
+        jitMode = cairoConfiguration.getSqlJitMode();
+        telemetry = cairoEngine.getTelemetry();
+        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
-       this(cairoEngine, workerCount, workerCount);
+        this(cairoEngine, workerCount, workerCount);
     }
 
     @Override
-    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
-    }
-
-    @Override
-    public BindVariableService getBindVariableService() {
-        return bindVariableService;
-    }
-
-    @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return cairoSecurityContext;
-    }
-
-    @Override
-    public boolean isTimestampRequired() {
-        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
-    }
-
-    @Override
-    public void popTimestampRequiredFlag() {
-        timestampRequiredStack.pop();
-    }
-
-    @Override
-    public void pushTimestampRequiredFlag(boolean flag) {
-        timestampRequiredStack.push(flag ? 1 : 0);
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return workerCount;
-    }
-
-    @Override
-    public int getSharedWorkerCount() {
-        return sharedWorkerCount;
-    }
-
-    @Override
-    public Rnd getRandom() {
-        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
-    }
-
-    @Override
-    public void setRandom(Rnd rnd) {
-        this.random = rnd;
-    }
-
-    @Override
-    public @NotNull CairoEngine getCairoEngine() {
-        return cairoEngine;
-    }
-
-    @Override
-    public long getRequestFd() {
-        return requestFd;
-    }
-
-    @Override
-    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return circuitBreaker;
-    }
-
-    @Override
-    public void storeTelemetry(short event, short origin) {
-        telemetryMethod.store(event, origin);
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return analyticContext;
+    public void clearAnalyticContext() {
+        analyticContext.clear();
     }
 
     @Override
@@ -177,18 +104,33 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void clearAnalyticContext() {
-        analyticContext.clear();
+    public AnalyticContext getAnalyticContext() {
+        return analyticContext;
     }
 
     @Override
-    public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     @Override
-    public long getNow() {
-        return now;
+    public @NotNull CairoEngine getCairoEngine() {
+        return cairoEngine;
+    }
+
+    @Override
+    public CairoSecurityContext getCairoSecurityContext() {
+        return cairoSecurityContext;
+    }
+
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    @Override
+    public boolean getCloneSymbolTables() {
+        return cloneSymbolTables;
     }
 
     @Override
@@ -197,8 +139,99 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getMicrosecondTimestamp() {
+        return clock.getTicks();
+    }
+
+    @Override
+    public long getNow() {
+        return now;
+    }
+
+    @Override
+    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return QueryFutureUpdateListener.EMPTY;
+    }
+
+    @Override
+    public Rnd getRandom() {
+        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+    }
+
+    @Override
+    public long getRequestFd() {
+        return requestFd;
+    }
+
+    @Override
+    public int getSharedWorkerCount() {
+        return sharedWorkerCount;
+    }
+
+    @Override
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
+    @Override
+    public void initNow() {
+        now = clock.getTicks();
+    }
+
+    @Override
+    public boolean isColumnPreTouchEnabled() {
+        return columnPreTouchEnabled;
+    }
+
+    @Override
+    public boolean isTimestampRequired() {
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
+    }
+
+    @Override
+    public boolean isWalApplication() {
+        return false;
+    }
+
+    @Override
+    public void popTimestampRequiredFlag() {
+        timestampRequiredStack.pop();
+    }
+
+    @Override
+    public void pushTimestampRequiredFlag(boolean flag) {
+        timestampRequiredStack.push(flag ? 1 : 0);
+    }
+
+    @Override
+    public void setCloneSymbolTables(boolean cloneSymbolTables) {
+        this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
+        this.columnPreTouchEnabled = columnPreTouchEnabled;
+    }
+
+    @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setNowAndFixClock(long now) {
+        this.now = now;
+        clock = nowClock;
+    }
+
+    @Override
+    public void setRandom(Rnd rnd) {
+        this.random = rnd;
+    }
+
+    @Override
+    public void storeTelemetry(short event, short origin) {
+        telemetryFacade.store(event, origin);
     }
 
     public SqlExecutionContextImpl with(
@@ -212,16 +245,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
-    @Override
-    public void setCloneSymbolTables(boolean cloneSymbolTables) {
-        this.cloneSymbolTables = cloneSymbolTables;
-    }
-
-    public SqlExecutionContextImpl with(
-            long requestFd
-    ) {
+    public void with(long requestFd) {
         this.requestFd = requestFd;
-        return this;
     }
 
     public SqlExecutionContextImpl with(
@@ -235,19 +260,19 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
-        this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         return this;
     }
 
     private void doStoreTelemetry(short event, short origin) {
-        TelemetryTask.store(telemetryQueue, telemetryPubSeq, event, origin, clock);
+        TelemetryTask.store(telemetry, origin, event);
     }
 
     private void storeTelemetryNoop(short event, short origin) {
     }
 
-    @Override
-    public boolean getCloneSymbolTables() {
-        return cloneSymbolTables;
+    @FunctionalInterface
+    private interface TelemetryFacade {
+        void store(short event, short origin);
     }
 }

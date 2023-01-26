@@ -103,17 +103,17 @@ public class MetricsIODispatcherTest {
     }
 
     private static class TestMetrics implements Scrapable {
-        private static final short QUERY_CANCELLED = 0;
-        private static final short SYNTAX_ERROR = 1;
-        private static final CharSequence[] REASON_ID_TO_NAME = new CharSequence[2];
         private static final short INSERT = 0;
-        private static final short SELECT = 1;
+        private static final short QUERY_CANCELLED = 0;
         private static final CharSequence[] QUERY_TYPE_ID_TO_NAME = new CharSequence[2];
-        private final Counter queriesCounter;
-        private final CounterWithOneLabel failedQueriesCounter;
+        private static final CharSequence[] REASON_ID_TO_NAME = new CharSequence[2];
+        private static final short SELECT = 1;
+        private static final short SYNTAX_ERROR = 1;
         private final CounterWithTwoLabels failedCompiledQueriesCounter;
-        private final Gauge runningQueries;
+        private final CounterWithOneLabel failedQueriesCounter;
         private final MetricsRegistry metricsRegistry;
+        private final Counter queriesCounter;
+        private final LongGauge runningQueries;
 
         public TestMetrics(MetricsRegistry metricsRegistry) {
             this.queriesCounter = metricsRegistry.newCounter("test_json_queries");
@@ -122,17 +122,17 @@ public class MetricsIODispatcherTest {
                     "type", QUERY_TYPE_ID_TO_NAME,
                     "reason", REASON_ID_TO_NAME
             );
-            this.runningQueries = metricsRegistry.newGauge("test_json_queries_running");
+            this.runningQueries = metricsRegistry.newLongGauge("test_json_queries_running");
             this.metricsRegistry = metricsRegistry;
+        }
+
+        public void markInsertCancelled() {
+            failedCompiledQueriesCounter.inc(INSERT, QUERY_CANCELLED);
         }
 
         public void markQueryStart() {
             runningQueries.inc();
             queriesCounter.inc();
-        }
-
-        public void markInsertCancelled() {
-            failedCompiledQueriesCounter.inc(INSERT, QUERY_CANCELLED);
         }
 
         public void markSyntaxError() {

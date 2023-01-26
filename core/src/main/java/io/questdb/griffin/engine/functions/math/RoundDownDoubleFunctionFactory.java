@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -62,59 +63,6 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
             return DoubleConstant.NULL;
         }
         return new Func(args.getQuick(0), args.getQuick(1));
-    }
-
-    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncPosConst(Function arg, int r) {
-            this.arg = arg;
-            this.scale = r;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundDownPosScale(l, scale);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-    }
-
-
-    private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncNegConst(Function arg, int r) {
-            this.arg = arg;
-            this.scale = r;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundDownNegScale(l, scale);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
     }
 
     private static class Func extends DoubleFunction implements BinaryFunction {
@@ -153,6 +101,71 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("round_down(").val(left).val(",-").val(right).val(')');
+        }
+    }
+
+    private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncNegConst(Function arg, int r) {
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundDownNegScale(l, scale);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("round_down(").val(arg).val(",-").val(scale).val(')');
+        }
+    }
+
+    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncPosConst(Function arg, int r) {
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundDownPosScale(l, scale);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("round_down(").val(arg).val(',').val(scale).val(')');
         }
     }
 }

@@ -65,6 +65,16 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "to_char";
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+            Chars.toSink(arg.getBin(rec), sink);
+        }
+
+        @Override
         public CharSequence getStr(Record rec) {
             return toSink(rec, sink1);
         }
@@ -72,11 +82,6 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return toSink(rec, sink2);
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            Chars.toSink(arg.getBin(rec), sink);
         }
 
         @Override

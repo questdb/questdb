@@ -25,26 +25,28 @@
 package io.questdb;
 
 import io.questdb.cairo.TableWriterMetrics;
-import io.questdb.metrics.HealthMetricsImpl;
+import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 public class Metrics implements Scrapable {
     private final boolean enabled;
     private final GCMetrics gcMetrics;
-    private final JsonQueryMetrics jsonQuery;
-    private final PGWireMetrics pgWire;
     private final HealthMetricsImpl healthCheck;
-    private final TableWriterMetrics tableWriter;
+    private final JsonQueryMetrics jsonQuery;
     private final MetricsRegistry metricsRegistry;
+    private final PGWireMetrics pgWire;
     private final Runtime runtime = Runtime.getRuntime();
-    private final VirtualGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
-    private final VirtualGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
-    private final VirtualGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
+    private final VirtualLongGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
+    private final VirtualLongGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
+    private final VirtualLongGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
+    private final TableWriterMetrics tableWriter;
+    private final WalMetrics walMetrics;
 
     Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
@@ -53,30 +55,25 @@ public class Metrics implements Scrapable {
         this.pgWire = new PGWireMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
         this.tableWriter = new TableWriterMetrics(metricsRegistry);
+        this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
     }
 
-    private void createMemoryGauges(MetricsRegistry metricsRegistry) {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            metricsRegistry.newGauge(i);
-        }
-
-        metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
-        metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
-        metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
-        metricsRegistry.newVirtualGauge("memory_realloc_count", Unsafe::getReallocCount);
-        metricsRegistry.newVirtualGauge("memory_jvm_free", jvmFreeMemRef);
-        metricsRegistry.newVirtualGauge("memory_jvm_total", jvmTotalMemRef);
-        metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
+    public static Metrics disabled() {
+        return new Metrics(false, new NullMetricsRegistry());
     }
 
     public static Metrics enabled() {
         return new Metrics(true, new MetricsRegistryImpl());
     }
 
-    public static Metrics disabled() {
-        return new Metrics(false, new NullMetricsRegistry());
+    public WalMetrics getWalMetrics() {
+        return walMetrics;
+    }
+
+    public HealthMetricsImpl health() {
+        return healthCheck;
     }
 
     public boolean isEnabled() {
@@ -91,19 +88,30 @@ public class Metrics implements Scrapable {
         return pgWire;
     }
 
-    public HealthMetricsImpl health() {
-        return healthCheck;
-    }
-
-    public TableWriterMetrics tableWriter() {
-        return tableWriter;
-    }
-
     @Override
     public void scrapeIntoPrometheus(CharSink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
             gcMetrics.scrapeIntoPrometheus(sink);
         }
+    }
+
+    public TableWriterMetrics tableWriter() {
+        return tableWriter;
+    }
+
+    private void createMemoryGauges(MetricsRegistry metricsRegistry) {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            metricsRegistry.newLongGauge(i);
+        }
+
+        metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
+        metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
+        metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
+        metricsRegistry.newVirtualGauge("memory_realloc_count", Unsafe::getReallocCount);
+        metricsRegistry.newVirtualGauge("memory_rss", Os::getRss);
+        metricsRegistry.newVirtualGauge("memory_jvm_free", jvmFreeMemRef);
+        metricsRegistry.newVirtualGauge("memory_jvm_total", jvmTotalMemRef);
+        metricsRegistry.newVirtualGauge("memory_jvm_max", jvmMaxMemRef);
     }
 }

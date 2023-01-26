@@ -26,13 +26,12 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
-class TimestampCaseFunction extends TimestampFunction implements MultiArgFunction {
-    private final CaseFunctionPicker picker;
+class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
@@ -44,9 +45,34 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("dump-thread-stacks");
 
+    private static final String SIGNATURE = "dump_thread_stacks()";
+
+    public static void dumpThreadStacks() {
+        final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+        final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
+        // Each thread stack on its own LOG message to avoid overrunning log buffer
+        // Generally overrun will truncate the log message. We are likely to overrun considering how
+        // many threads we could be running
+        for (ThreadInfo threadInfo : threadInfos) {
+            // it turns out it is possible to have null "infos"
+            if (threadInfo != null) {
+                final LogRecord record = LOG.advisory();
+                final Thread.State state = threadInfo.getThreadState();
+                record.$('\n');
+                record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+                for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                    record.$("\n\t\tat ").$(stackTraceElement);
+                }
+                record.$("\n\n");
+                record.$();
+            }
+        }
+    }
+
     @Override
     public String getSignature() {
-        return "dump_thread_stacks()";
+        return SIGNATURE;
     }
 
     @Override
@@ -70,28 +96,10 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return true;
         }
-    }
 
-    public static void dumpThreadStacks() {
-        final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
-        final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
-        // Each thread stack on its own LOG message to avoid overrunning log buffer
-        // Generally overrun will truncate the log message. We are likely to overrun considering how
-        // many threads we could be running
-        for (ThreadInfo threadInfo : threadInfos) {
-            // it turns out it is possible to have null "infos"
-            if (threadInfo != null) {
-                final LogRecord record = LOG.advisory();
-                final Thread.State state = threadInfo.getThreadState();
-                record.$('\n');
-                record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
-                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-                for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                    record.$("\n\t\tat ").$(stackTraceElement);
-                }
-                record.$("\n\n");
-                record.$();
-            }
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

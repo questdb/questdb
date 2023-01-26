@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.DoubleAdder;
@@ -39,14 +38,14 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class AvgIntVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction, Closeable {
 
-    private final DoubleAdder sum = new DoubleAdder();
-    private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final DoubleAdder sum = new DoubleAdder();
     private final int workerCount;
-    private int valueOffset;
     private long counts;
+    private int valueOffset;
 
     public AvgIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
@@ -86,8 +85,37 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
+    public void clear() {
+        sum.reset();
+        count.reset();
+    }
+
+    @Override
+    public void close() {
+        if (counts != 0) {
+            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+            counts = 0;
+        }
+        super.close();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        final long count = this.count.sum();
+        if (count > 0) {
+            return sum.sum() / count;
+        }
+        return Double.NaN;
+    }
+
+    @Override
+    public String getName() {
+        return "avg";
     }
 
     @Override
@@ -101,6 +129,11 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
         // we will have to replace them with doubles
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -118,39 +151,5 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
-    }
-
-    @Override
-    public void clear() {
-        sum.reset();
-        count.reset();
-    }
-
-    @Override
-    public void close() {
-        if (counts != 0) {
-            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
-            counts = 0;
-        }
-        super.close();
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        final long count = this.count.sum();
-        if (count > 0) {
-            return sum.sum() / count;
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("AvgIntVector(").put(columnIndex).put(')');
     }
 }

@@ -25,8 +25,9 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.log.Log;
@@ -41,18 +42,8 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
-    private TemporaryFolder temp;
     private Scrapable scrapable;
-
-    public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
-        this.temp = temp;
-        return this;
-    }
-
-    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
-        this.scrapable = scrapable;
-        return this;
-    }
+    private TemporaryFolder temp;
 
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
@@ -63,7 +54,7 @@ public class HttpMinTestBuilder {
 
             final WorkerPool workerPool = new TestWorkerPool(1);
 
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
@@ -71,13 +62,13 @@ public class HttpMinTestBuilder {
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable);
+                    public String getUrl() {
+                        return "/metrics";
                     }
 
                     @Override
-                    public String getUrl() {
-                        return "/metrics";
+                    public HttpRequestProcessor newInstance() {
+                        return new PrometheusMetricsProcessor(scrapable);
                     }
                 });
 
@@ -92,5 +83,15 @@ public class HttpMinTestBuilder {
                 }
             }
         });
+    }
+
+    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
+        this.scrapable = scrapable;
+        return this;
+    }
+
+    public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
+        this.temp = temp;
+        return this;
     }
 }

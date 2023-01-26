@@ -39,7 +39,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -60,8 +60,6 @@ import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 public class ImportIODispatcherTest {
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
-    private static final String RequestFooter = "\r\n" +
-            "--------------------------27d997ca93d2689d--";
     private static final String PostHeader = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -70,6 +68,13 @@ public class ImportIODispatcherTest {
             "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
             "Expect: 100-continue\r\n" +
             "\r\n";
+    private static final String REQUEST_FOOTER = "\r\n" +
+            "--------------------------27d997ca93d2689d--";
+    private static final String Request1DataHeader = "--------------------------27d997ca93d2689d\r\n" +
+            "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "\r\n" +
+            "Col1,Pickup_DateTime,DropOff_datetime\r\n";
     private static final String Request1SchemaPart = "--------------------------27d997ca93d2689d\r\n" +
             "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
@@ -90,11 +95,6 @@ public class ImportIODispatcherTest {
             "  }\r\n" +
             "]\r\n" +
             "\r\n";
-    private static final String Request1DataHeader = "--------------------------27d997ca93d2689d\r\n" +
-            "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-            "Content-Type: application/octet-stream\r\n" +
-            "\r\n" +
-            "Col1,Pickup_DateTime,DropOff_datetime\r\n";
     private static final String Request1Header = PostHeader +
             Request1SchemaPart +
             Request1DataHeader;
@@ -123,7 +123,7 @@ public class ImportIODispatcherTest {
             "B00014,2017-02-01 14:58:00,\r\n" +
             "B00014,2017-02-01 15:33:00,\r\n" +
             "B00014,2017-02-01 15:45:00,\r\n" +
-            RequestFooter;
+            REQUEST_FOOTER;
     private static final String Request2Header = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -190,7 +190,9 @@ public class ImportIODispatcherTest {
             "B00014,,,,2017-02-01 14:58:00\r\n" +
             "B00014,,,,2017-02-01 15:33:00\r\n" +
             "B00014,,,,2017-02-01 15:45:00\r\n" +
-            RequestFooter;
+            REQUEST_FOOTER;
+    private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
+    private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -281,9 +283,6 @@ public class ImportIODispatcherTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-    private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
-    private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
-
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
@@ -307,7 +306,7 @@ public class ImportIODispatcherTest {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getTableName())) {
                             waitForData.countDown();
                         }
                     });
@@ -387,7 +386,9 @@ public class ImportIODispatcherTest {
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
+
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false);
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(2, meta.getTimestampIndex());
@@ -555,9 +556,10 @@ public class ImportIODispatcherTest {
                 .run((engine) -> {
                     AtomicBoolean locked = new AtomicBoolean(false);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name, tableName)) {
+                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name.getTableName(), tableName)) {
                             try (Path path = new Path()) {
-                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+                                TableToken tt = engine.getTableTokenIfExists(tableName);
+                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tt) == TableUtils.TABLE_RESERVED) {
                                     locked.set(true);
                                 }
                             }
@@ -590,7 +592,7 @@ public class ImportIODispatcherTest {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getTableName())) {
                             waitForData.countDown();
                         }
                     });
@@ -669,7 +671,9 @@ public class ImportIODispatcherTest {
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
+
+                    TableToken tableToken = new TableToken("syms", "syms", 0, false);
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
@@ -777,7 +781,7 @@ public class ImportIODispatcherTest {
         // I i.q.c.TableReader open partition /tmp/junit5370415536490581256/xyz/1970-01-01 [rowCount=1, partitionNameTxn=-1, transientRowCount=10000000, partitionIndex=0, partitionCount=1]
         // E i.q.c.h.p.JsonQueryProcessorState [27] internal error [q=`select count(*) from xyz where x > 0;`, ex=io.questdb.cairo.CairoException: [0] File not found: /tmp/junit5370415536490581256/xyz/1970-01-01/x.d
         AtomicLong count = new AtomicLong();
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 if (Chars.endsWith(path, "x.d") && count.incrementAndGet() == 4) {
@@ -814,8 +818,9 @@ public class ImportIODispatcherTest {
 
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
                     CairoConfiguration configuration = engine.getConfiguration();
+                    TableToken tableToken = engine.getTableToken("xyz");
                     try (
-                            Path path = new Path().concat(configuration.getRoot()).concat("xyz");
+                            Path path = new Path().concat(configuration.getRoot()).concat(tableToken);
                             TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
                     ) {
                         Assert.assertEquals(2, txnScoreboard.getMin());
@@ -955,7 +960,7 @@ public class ImportIODispatcherTest {
                                         String requestTemplate =
                                                 headers[tableIndex].replace("POST /upload?name=trips ", "POST /upload?name=" + tableName + " ")
                                                         + generateImportCsv(low, hi, csvTemplate[tableIndex])
-                                                        + RequestFooter;
+                                                        + REQUEST_FOOTER;
 
                                         new SendAndReceiveRequestBuilder()
                                                 .withCompareLength(15)

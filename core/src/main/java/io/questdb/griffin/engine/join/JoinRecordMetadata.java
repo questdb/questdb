@@ -30,12 +30,14 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable {
+public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
 
     private final static ColumnTypes keyTypes;
     private final static ColumnTypes valueTypes;
@@ -46,15 +48,12 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
         this.timestampIndex = -1;
         this.columnCount = 0;
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
-        this.columnMetadata = new ObjList<>(columnCount);
         this.refCount = 1;
     }
 
     public void add(
             CharSequence tableAlias,
             CharSequence columnName,
-            long columnHash,
             int columnType,
             boolean indexFlag,
             int indexValueBlockCapacity,
@@ -67,7 +66,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         if (dot == -1) {
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
-                    columnHash,
                     columnType,
                     indexFlag,
                     indexValueBlockCapacity,
@@ -77,7 +75,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         } else {
             cm = new TableColumnMetadata(
                     Chars.toString(columnName),
-                    columnHash,
                     columnType,
                     indexFlag,
                     indexValueBlockCapacity,
@@ -96,7 +93,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         if (dot == -1) {
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
-                    m.getHash(),
                     m.getType(),
                     m.isIndexed(),
                     m.getIndexValueBlockCapacity(),
@@ -117,16 +113,15 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
     }
 
     public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
-        if (fromMetadata instanceof BaseRecordMetadata) {
+        if (fromMetadata instanceof AbstractRecordMetadata) {
             for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-                add(alias, ((BaseRecordMetadata) fromMetadata).getColumnQuick(i));
+                add(alias, ((AbstractRecordMetadata) fromMetadata).getColumnMetadata(i));
             }
         } else {
             for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
                 add(
                         alias,
                         fromMetadata.getColumnName(i),
-                        fromMetadata.getColumnHash(i),
                         fromMetadata.getColumnType(i),
                         fromMetadata.isColumnIndexed(i),
                         fromMetadata.getIndexValueBlockCapacity(i),
@@ -142,7 +137,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         final MapKey key = map.withKey();
         final int dot = Chars.indexOf(columnName, lo, '.');
         if (dot == -1) {
-            key.putStrLowerCase(null);
+            key.putStr(null);
             key.putStrLowerCase(columnName, lo, hi);
         } else {
             key.putStrLowerCase(columnName, 0, dot);
@@ -183,20 +178,18 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
             throw CairoException.duplicateColumn(columnName, tableAlias);
         }
 
-        value.putLong(0, columnCount++);
+        value.putInt(0, columnCount++);
         return dot;
     }
 
     private void addToMap(CharSequence columnName, int dot, TableColumnMetadata cm) {
-        MapKey key;
-        MapValue value;
-        this.columnMetadata.add(cm);
+        columnMetadata.add(cm);
 
-        key = map.withKey();
+        final MapKey key = map.withKey();
         key.putStr(null);
         key.putStrLowerCase(columnName, dot + 1, columnName.length());
 
-        value = key.createValue();
+        final MapValue value = key.createValue();
         if (value.isNew()) {
             value.putInt(0, columnCount - 1);
         } else {

@@ -47,7 +47,7 @@ public class CsvLexerBenchmark {
         long buf = Unsafe.malloc(BUF_SIZE, MemoryTag.NATIVE_DEFAULT);
         try {
             try (Path path = new Path().of(pathToCsv).$()) {
-                long fd = Files.openRO(path);
+                int fd = Files.openRO(path);
                 assert fd > 0;
                 AtomicInteger counter = new AtomicInteger();
 

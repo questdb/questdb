@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.std.ObjList;
 
-final public class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordCursor {
+public final class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordCursor {
     public static final EmptyTableNoSizeRecordCursor INSTANCE = new EmptyTableNoSizeRecordCursor();
 
     private final Record record = new VirtualRecordNoRowid(new ObjList<>());
@@ -46,21 +46,21 @@ final public class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordC
     }
 
     @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-    }
-
-    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return EmptySymbolMapReader.INSTANCE;
     }
 
     @Override
+    public boolean hasNext() {
+        return false;
+    }
+
+    @Override
     public long size() {
         return -1;
+    }
+
+    @Override
+    public void toTop() {
     }
 }

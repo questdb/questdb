@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
@@ -33,7 +34,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 
 /**
  * Functions used by both data_trunc() and timestamp_floor() as these functions have overlapping behaviour.
- *
  */
 final class TimestampFloorFunctions {
     private TimestampFloorFunctions() {
@@ -53,12 +53,35 @@ final class TimestampFloorFunctions {
         }
 
         @Override
-        final public long getTimestamp(Record rec) {
+        public final long getTimestamp(Record rec) {
             long micros = arg.getTimestamp(rec);
             return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : floor(micros);
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("timestamp_floor('").val(getUnit()).val("',").val(getArg()).val(')');
+        }
+
         abstract protected long floor(long timestamp);
+
+        abstract CharSequence getUnit();
+    }
+
+    static class TimestampFloorCenturyFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
+        public TimestampFloorCenturyFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorCentury(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "century";
+        }
     }
 
     static class TimestampFloorDDFunction extends AbstractTimestampFloorFunction {
@@ -70,71 +93,10 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorDD(timestamp);
         }
-    }
-
-    static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorMMFunction(Function arg) {
-            super(arg);
-        }
 
         @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMM(timestamp);
-        }
-    }
-
-    static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorYYYYFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorYYYY(timestamp);
-        }
-    }
-
-    static class TimestampFloorHHFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorHHFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorHH(timestamp);
-        }
-    }
-
-    static class TimestampFloorMIFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorMIFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMI(timestamp);
-        }
-    }
-
-    static class TimestampFloorSSFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorSSFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorSS(timestamp);
-        }
-    }
-
-    static class TimestampFloorMSFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorMSFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMS(timestamp);
+        CharSequence getUnit() {
+            return "day";
         }
     }
 
@@ -147,16 +109,10 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorDOW(timestamp);
         }
-    }
-
-    static class TimestampFloorQuarterFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
-        public TimestampFloorQuarterFunction(Function arg) {
-            super(arg);
-        }
 
         @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorQuarter(timestamp);
+        CharSequence getUnit() {
+            return "week";
         }
     }
 
@@ -169,16 +125,74 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return Timestamps.floorDecade(timestamp);
         }
+
+        @Override
+        CharSequence getUnit() {
+            return "decade";
+        }
     }
 
-    static class TimestampFloorCenturyFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
-        public TimestampFloorCenturyFunction(Function arg) {
+    static class TimestampFloorHHFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorHHFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorCentury(timestamp);
+            return Timestamps.floorHH(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "hour";
+        }
+    }
+
+    static class TimestampFloorMIFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorMIFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorMI(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "minute";
+        }
+    }
+
+    static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorMMFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorMM(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "month";
+        }
+    }
+
+    static class TimestampFloorMSFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorMSFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorMS(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "millisecond";
         }
     }
 
@@ -190,6 +204,75 @@ final class TimestampFloorFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorMillennium(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "millennium";
+        }
+    }
+
+    static class TimestampFloorQuarterFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
+        public TimestampFloorQuarterFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorQuarter(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "quarter";
+        }
+    }
+
+    static class TimestampFloorSSFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorSSFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorSS(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "second";
+        }
+    }
+
+    static class TimestampFloorWWFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorWWFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorWW(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "week";
+        }
+    }
+
+    static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorYYYYFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorYYYY(timestamp);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "year";
         }
     }
 }

@@ -32,26 +32,25 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class ColumnPurgeOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
+    private final LongList completedRowIds = new LongList();
+    private final FilesFacade ff;
+    private final MicrosecondClock microClock;
     private final Path path = new Path();
     private final int pathRootLen;
-    private final FilesFacade ff;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
-    private final LongList completedRowIds = new LongList();
-    private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
-    private TxnScoreboard txnScoreboard;
-    private TxReader txReader;
     private long longBytes;
     private int pathTableLen;
+    private int purgeLogPartitionFd = -1;
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
-    private long purgeLogPartitionFd = -1L;
+    private TxReader txReader;
+    private TxnScoreboard txnScoreboard;
 
     public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
         this.ff = configuration.getFilesFacade();
@@ -80,7 +79,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (longBytes != 0L) {
             Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
             longBytes = 0;
@@ -146,7 +145,7 @@ public class ColumnPurgeOperator implements Closeable {
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
-                    .$(task.getTableName())
+                    .utf8(task.getTableName().getTableName())
                     .$(", txn=").$(updateTxn)
                     .$(", error=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno()).I$();
@@ -155,10 +154,9 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private void closePurgeLogCompleteFile() {
-        if (purgeLogPartitionFd != -1L) {
-            ff.close(purgeLogPartitionFd);
+        if (ff.close(purgeLogPartitionFd)) {
             LOG.info().$("closed purge log complete file [fd=").$(purgeLogPartitionFd).I$();
-            purgeLogPartitionFd = -1L;
+            purgeLogPartitionFd = -1;
         }
     }
 
@@ -172,7 +170,7 @@ public class ColumnPurgeOperator implements Closeable {
         if (scoreboardUseMode == ScoreboardUseMode.INTERNAL || scoreboardUseMode == ScoreboardUseMode.EXCLUSIVE) {
             int tableId = readTableId(path);
             if (tableId != task.getTableId()) {
-                LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
+                LOG.info().$("cannot purge orphan table [path=").utf8(path.trimTo(pathTableLen)).I$();
                 return false;
             }
 
@@ -190,8 +188,8 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
 
-        LOG.info().$("purging [table=").$(task.getTableName())
-                .$(", column=").$(task.getColumnName())
+        LOG.info().$("purging [table=").utf8(task.getTableName().getTableName())
+                .$(", column=").utf8(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
                 .I$();
 
@@ -248,6 +246,16 @@ public class ColumnPurgeOperator implements Closeable {
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
                     setupScoreboard = false;
+                }
+
+                if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                    // txReader is either open because scoreboardMode == ScoreboardUseMode.EXTERNAL
+                    // or it was open by openScoreboardAndTxn
+                    LOG.info().$("skipping purge of read-only partition [path=").utf8(path.$())
+                            .$(", column=").utf8(task.getColumnName())
+                            .I$();
+                    completedRowIds.add(updateRowId);
+                    continue;
                 }
 
                 if (columnVersion < minUnlockedTxnRangeStarts) {
@@ -309,7 +317,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private int readTableId(Path path) {
         final int INVALID_TABLE_ID = Integer.MIN_VALUE;
-        long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
+        int fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
         if (fd < 0) {
             return INVALID_TABLE_ID;
         }
@@ -325,7 +333,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private void reopenPurgeLogPartition(int partitionIndex, long partitionTimestamp) {
         path.trimTo(pathRootLen);
-        path.concat(purgeLogWriter.getTableName());
+        path.concat(purgeLogWriter.getTableToken());
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
         TableUtils.setPathForPartition(
                 path,
@@ -380,7 +388,7 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private void setTablePath(String tableName) {
+    private void setTablePath(TableToken tableName) {
         path.trimTo(pathRootLen).concat(tableName);
         pathTableLen = path.length();
     }

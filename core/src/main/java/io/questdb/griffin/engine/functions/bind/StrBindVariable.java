@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -34,9 +36,9 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
+    private final int floatScale;
     private final StringSink sink = new StringSink();
     private boolean isNull = true;
-    private final int floatScale;
 
     public StrBindVariable(int floatScale) {
         this.floatScale = floatScale;
@@ -58,6 +60,16 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     }
 
     @Override
+    public CharSequence getStr(Record rec) {
+        return isNull ? null : sink;
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return isNull ? null : sink;
+    }
+
+    @Override
     public int getStrLen(Record rec) {
         if (isNull) {
             return -1;
@@ -66,13 +78,23 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return isNull ? null : sink;
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return isNull ? null : sink;
+    public void setTimestamp(long value) {
+        isNull = value == Numbers.LONG_NaN;
+        if (!isNull) {
+            sink.clear();
+            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+        }
+    }
+
+    public void setUuidValue(long lo, long hi) {
+        sink.clear();
+        if (SqlUtil.implicitCastUuidAsStr(lo, hi, sink)) {
+            isNull = false;
+        }
     }
 
     public void setValue(char value) {
@@ -115,14 +137,6 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
         }
     }
 
-    public void setTimestamp(long value) {
-        isNull = value == Numbers.LONG_NaN;
-        if (!isNull) {
-            sink.clear();
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
-        }
-    }
-
     public void setValue(double value) {
         isNull = value == Numbers.LONG_NaN;
         if (!isNull) {
@@ -130,6 +144,7 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
             sink.put(value);
         }
     }
+
     public void setValue(float value) {
         isNull = value == Numbers.LONG_NaN;
         if (!isNull) {
@@ -149,7 +164,7 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.val("?::string");
     }
 }

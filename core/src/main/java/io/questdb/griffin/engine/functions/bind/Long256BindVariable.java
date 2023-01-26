@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -35,6 +36,11 @@ import io.questdb.std.str.CharSink;
 
 class Long256BindVariable extends Long256Function implements ScalarFunction, Mutable {
     final Long256Impl value = new Long256Impl();
+
+    @Override
+    public void clear() {
+        value.copyFrom(Long256Impl.NULL_LONG256);
+    }
 
     @Override
     public void getLong256(Record rec, CharSink sink) {
@@ -56,6 +62,11 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
         return value;
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
     public void setValue(long l0, long l1, long l2, long l3) {
         this.value.setAll(l0, l1, l2, l3);
     }
@@ -65,12 +76,7 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     }
 
     @Override
-    public void clear() {
-        value.copyFrom(Long256Impl.NULL_LONG256);
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.val("?::long256");
     }
 }

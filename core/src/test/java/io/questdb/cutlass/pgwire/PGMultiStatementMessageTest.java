@@ -24,7 +24,11 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.Misc;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -35,8 +39,9 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.sql.*;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS;
 import static org.junit.Assert.*;
 
 /**
@@ -44,8 +49,8 @@ import static org.junit.Assert.*;
  */
 public class PGMultiStatementMessageTest extends BasePGTest {
 
-    //https://github.com/questdb/questdb/issues/1777
-    //all of these commands are no-op (at the moment)
+    // https://github.com/questdb/questdb/issues/1777
+    // all of these commands are no-op (at the moment)
     @Test
     public void testAsyncPGCommandBlockDoesntProduceError() throws Exception {
         assertMemoryLeak(() -> {
@@ -198,7 +203,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //explicit transaction + rollback on two tables
+    @Test // explicit transaction + rollback on two tables
     public void testBeginCreateInsertRollbackOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -232,7 +237,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -249,17 +254,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     pstmt.close();
                 }
 
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), true, -1);
                      PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable")) {
 
                     boolean hasResult = pstmt.execute();
                     assertResults(pstmt, hasResult, data(row(1L, "a")));
                 }
-
             }
         });
-
-
     }
 
     @Test
@@ -270,7 +272,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -289,8 +291,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, 1);
-                     Statement stmt = connection.createStatement()) {
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), true, 1);
+                     Statement ignored = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
                     ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
@@ -409,8 +411,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test//this test confirms that command is parsed and executed properly
+    @Test
     public void testCreateInsertAlterTableAttachPartitionListAndSelectFromTableInBlockFails() throws Exception {
+        // this test confirms that command is parsed and executed properly
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
                 try {
@@ -422,8 +425,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "SELECT l from TEST;");
                     fail("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: failed to attach partition '2020': " + ATTACH_ERR_PARTITION_EXISTS.name() + '\n' +
-                            "  Position: 203", e.getMessage());
+                    TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
                 }
             }
         });
@@ -688,7 +690,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         statement.execute("CREATE TABLE test(l long,s string); " +
                                 "INSERT INTO test VALUES (19, 'k'); " +
                                 "ROLLBACK TRANSACTION; " +
-                                "INSERT INTO test VALUES (27, 'f');" +
+                                "INSERT INTO test VALUES (27, 'f'); " +
                                 "SELECT * from test;");
 
                 assertResults(statement, hasResult, count(0), count(1), count(0),
@@ -707,14 +709,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult =
                         statement.execute("CREATE TABLE testA(l long,s string); " +
-                                "CREATE TABLE testB(c char, d double);" +
+                                "CREATE TABLE testB(c char, d double); " +
                                 "INSERT INTO testA VALUES (198, 'cop'); " +
                                 "INSERT INTO testB VALUES ('q', 2.0); " +
                                 "ROLLBACK TRANSACTION; " +
-                                "INSERT INTO testA VALUES (-27, 'o');" +
-                                "INSERT INTO testB VALUES ('z', 1.0);" +
-                                "SELECT * from testA;" +
-                                "SELECT * from testB;");
+                                "INSERT INTO testA VALUES (-27, 'o'); " +
+                                "INSERT INTO testB VALUES ('z', 1.0); " +
+                                "SELECT * from testA; " +
+                                "SELECT * from testB; ");
 
                 assertResults(statement, hasResult, count(0), count(0),
                         count(1), count(1), count(0),
@@ -739,7 +741,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("alter table throws error while trying to acquire lock taken by prior transactional insert")
-    @Test //alter table isn't transactional so we commit transaction right before it
+    @Test // alter table isn't transactional, so we commit transaction right before it
     public void testCreateInsertThenAlterTableRenameThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -761,14 +763,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Ignore("Drop conflicts with earlier insert in the same transaction")
     @Test
-    public void testCreateInsertThenDropDoesntSelfLock() throws Exception {
+    public void testCreateInsertThenDropDoesNotSelfLock() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
                 test.connection.setAutoCommit(false);
                 Statement statement = test.statement;
 
                 boolean hasResult =
-                        statement.execute("CREATE TABLE mytable(l long);" +
+                        statement.execute("CREATE TABLE mytable(l long); " +
                                 "INSERT INTO mytable values(1); " +
                                 "DROP TABLE mytable; ");
 
@@ -777,7 +779,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //running statements in block should create implicit transaction so first insert should be rolled back
+    @Test // running statements in block should create implicit transaction so first insert should be rolled back
     public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransaction() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -800,7 +802,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //running statements in block should create implicit transaction so first insert should be rolled back
+    @Test // running statements in block should create implicit transaction so first insert should be rolled back
     public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransactionOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -840,7 +842,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("alter table throws error while trying to acquire lock taken by prior transactional insert")
-    @Test //alter table isn't transactional so we commit transaction right before it
+    @Test // alter table isn't transactional, so we commit transaction right before it
     public void testCreateNormalInsertThenAlterAddColumnTableThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -861,7 +863,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("Truncate table times out trying to acquire lock taken by earlier insert in the same transaction")
-    @Test//truncate commits existing transaction and is non-transactional
+    @Test // truncate commits existing transaction and is non-transactional
     public void testCreateNormalInsertThenTruncateThenRollbackLeavesEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -896,7 +898,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("Insert as select times out trying to acquire lock taken by earlier insert in the same transaction")
-    @Test//insert as select is not transactional. It commits existing transaction and right after inserting data.
+    @Test // Insert as select is not transactional. It commits existing transaction and right after inserting data.
     public void testCreateTableInsertThenInsertAsSelectThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -917,15 +919,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test//test interleaved extended query execution they don't spill bind formats
-    public void testDifferentExtendedQueriesExecutedInExtendedModeDontSpillFormats() throws Exception {
+    @Test // test interleaved extended query execution they don't spill bind formats
+    public void testDifferentExtendedQueriesExecutedInExtendedModeDoNotSpillFormats() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, -1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, -1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -944,8 +946,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
-                     Statement stmt = connection.createStatement()) {
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), true, -1);
+                     Statement ignored = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
                     PreparedStatement pstmt1 = connection.prepareStatement("SELECT l FROM mytable where 1=1");
@@ -974,15 +976,63 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test//edge case - run the same query with binary protocol in extended mode and then the same in query block
-    public void testQueryExecutedInBatchModeDoesntUseCachedStatementBinaryFormat() throws Exception {
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup(true, 100)) {
+                AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+                try {
+                    test.statement.execute("select * from test_data_unavailable(1, 10); " +
+                            "select * from test_data_unavailable(1, 10);");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                } finally {
+                    // Make sure to close the event on the producer side.
+                    Misc.free(eventRef.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                int totalRows = 3;
+                int backoffCount = 10;
+
+                final AtomicInteger totalEvents = new AtomicInteger();
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                    event.trigger();
+                    event.close();
+                    totalEvents.incrementAndGet();
+                };
+
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("select * from test_data_unavailable(" + totalRows + ", " + backoffCount + "); " +
+                        "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ");");
+                // TODO(puzpuzpuz): the second query get ignored here since batch statement execution doesn't
+                //  support proper pause/resume on insufficient buffer size or data in cold storage.
+                assertResults(statement, hasResult,
+                        data(row(1L, 1L, 1L), row(2L, 2L, 2L), row(3L, 3L, 3L)));
+
+                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+            }
+        });
+    }
+
+    @Test // edge case - run the same query with binary protocol in extended mode and then the same in query block
+    public void testQueryExecutedInBatchModeDoesNotUseCachedStatementBinaryFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), false, 1);
+                try (Connection connection = getConnection(Mode.EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
                      Statement stmt = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
@@ -1544,7 +1594,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-
+    // TODOs:
     //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
     //test when there's rollback/commit in middle and rest is wrapped in transaction
     //test when there's error in the middle then implicit transaction is rolled back 
@@ -1553,28 +1603,41 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     //test if there's begin in the middle then this piece of block is not committed
     //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
 
-    static Row row(Object... cols) {
-        return new Row(cols);
-    }
+    private static void assertResultSet(Statement s, Row[] rows) throws SQLException {
+        ResultSet set = s.getResultSet();
 
-    static Result data(Row... rows) {
-        return new Result(rows);
-    }
+        for (int rownum = 0; rownum < rows.length; rownum++) {
+            Row row = rows[rownum];
+            assertTrue("result set should have row #" + rownum + " with data " + row, set.next());
 
-    static Result count(int updatedRows) {
-        return new Result(updatedRows);
-    }
+            for (int colnum = 0; colnum < row.length(); colnum++) {
+                Object col = row.get(colnum);
+                try {
+                    if (col instanceof String) {
+                        assertEquals(col, set.getString(colnum + 1));
+                    } else if (col instanceof Long) {
+                        assertEquals(col, set.getLong(colnum + 1));
+                    } else if (col instanceof Byte) {
+                        assertEquals(col, set.getByte(colnum + 1));
+                    } else if (col instanceof Short) {
+                        assertEquals(col, set.getShort(colnum + 1));
+                    } else if (col instanceof Double) {
+                        assertEquals(col, set.getDouble(colnum + 1));
+                    } else {
+                        assertEquals(col, set.getObject(colnum + 1));
+                    }
+                } catch (AssertionError ae) {
+                    throw new AssertionError("row#" + rownum + " col#" + colnum + " " + ae.getMessage());
+                }
+            }
+        }
 
-    static Result zero() {
-        return Result.ZERO;
-    }
+        int rowsLeft = 0;
+        while (set.next()) {
+            rowsLeft++;
+        }
 
-    static Result one() {
-        return Result.ONE;
-    }
-
-    static Result empty() {
-        return Result.EMPTY;
+        assertEquals("No more rows expected!", 0, rowsLeft);
     }
 
     private static void assertResults(Statement s, boolean hasFirstResult, Result... results) throws SQLException {
@@ -1614,41 +1677,51 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertEquals("No more results expected but got update count", -1, s.getUpdateCount());
     }
 
-    private static void assertResultSet(Statement s, Row[] rows) throws SQLException {
-        ResultSet set = s.getResultSet();
+    static Result count(int updatedRows) {
+        return new Result(updatedRows);
+    }
 
-        for (int rownum = 0; rownum < rows.length; rownum++) {
-            Row row = rows[rownum];
-            assertTrue("result set should have row #" + rownum + " with data " + row, set.next());
+    static Result data(Row... rows) {
+        return new Result(rows);
+    }
 
-            for (int colnum = 0; colnum < row.length(); colnum++) {
-                Object col = row.get(colnum);
-                try {
-                    if (col instanceof String) {
-                        assertEquals(col, set.getString(colnum + 1));
-                    } else if (col instanceof Long) {
-                        assertEquals(col, set.getLong(colnum + 1));
-                    } else if (col instanceof Byte) {
-                        assertEquals(col, set.getByte(colnum + 1));
-                    } else if (col instanceof Short) {
-                        assertEquals(col, set.getShort(colnum + 1));
-                    } else if (col instanceof Double) {
-                        assertEquals(col, set.getDouble(colnum + 1));
-                    } else {
-                        assertEquals(col, set.getObject(colnum + 1));
-                    }
-                } catch (AssertionError ae) {
-                    throw new AssertionError("row#" + rownum + " col#" + colnum + " " + ae.getMessage());
-                }
-            }
+    static Result empty() {
+        return Result.EMPTY;
+    }
+
+    static Result one() {
+        return Result.ONE;
+    }
+
+    static Row row(Object... cols) {
+        return new Row(cols);
+    }
+
+    static Result zero() {
+        return Result.ZERO;
+    }
+
+    static class Result {
+        //jdbc result with empty result set
+        static final Result EMPTY = new Result();
+        //jdbc result with no result set and update count = 1
+        static final Result ONE = new Result(1);
+        //jdbc result with no result set and update count = 0
+        static final Result ZERO = new Result(0);
+        Row[] rows;
+        int updateCount;
+
+        Result(Row... rows) {
+            this.rows = rows;
         }
 
-        int rowsLeft = 0;
-        while (set.next()) {
-            rowsLeft++;
+        Result(int updateCount) {
+            this.updateCount = updateCount;
         }
 
-        assertEquals("No more rows expected!", 0, rowsLeft);
+        boolean hasData() {
+            return rows != null;
+        }
     }
 
     static class Row {
@@ -1672,50 +1745,20 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         }
     }
 
-    static class Result {
-        //jdbc result with empty result set
-        static final Result EMPTY = new Result();
-        //jdbc result with no result set and update count = 0
-        static final Result ZERO = new Result(0);
-        //jdbc result with no result set and update count = 1
-        static final Result ONE = new Result(1);
-
-        Row[] rows;
-        int updateCount;
-
-        Result(Row... rows) {
-            this.rows = rows;
-        }
-
-        Result(int updateCount) {
-            this.updateCount = updateCount;
-        }
-
-        boolean hasData() {
-            return rows != null;
-        }
-    }
-
     class PGTestSetup implements Closeable {
-        final PGWireServer server;
         final Connection connection;
+        final PGWireServer server;
         final Statement statement;
 
-        PGTestSetup(boolean useSimpleMode) throws SQLException {
-            server = createPGServer(2);
+        PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException {
+            server = createPGServer(2, queryTimeout);
             server.getWorkerPool().start(LOG);
             connection = getConnection(server.getPort(), useSimpleMode, true);
             statement = connection.createStatement();
         }
 
-        PGTestSetup(Mode mode, int prepareThreshold) throws SQLException {
-            server = createPGServer(2);
-            connection = getConnection(mode, server.getPort(), true, prepareThreshold);
-            statement = connection.createStatement();
-        }
-
         PGTestSetup() throws SQLException {
-            this(true);
+            this(true, Long.MAX_VALUE);
         }
 
         @Override

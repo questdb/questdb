@@ -39,22 +39,13 @@ public class MutableIOContextFactory<C extends MutableIOContext<C>>
     private volatile boolean closed = false;
 
     public MutableIOContextFactory(ObjectFactory<C> factory, int poolSize) {
+        // todo: this is very slow, refactor
         this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(factory, poolSize));
     }
 
     @Override
     public void close() {
         closed = true;
-    }
-
-    public void freeThreadLocal() {
-        // helper call, it will free only thread-local instance and not others
-        Misc.free(this.contextPool);
-    }
-
-    @Override
-    public C newInstance(long fd, IODispatcher<C> dispatcher) {
-        return contextPool.get().pop().of(fd, dispatcher);
     }
 
     @Override
@@ -65,6 +56,16 @@ public class MutableIOContextFactory<C extends MutableIOContext<C>>
             context.of(-1, null);
             contextPool.get().push(context);
         }
+    }
+
+    public void freeThreadLocal() {
+        // helper call, it will free only thread-local instance and not others
+        Misc.free(this.contextPool);
+    }
+
+    @Override
+    public C newInstance(int fd, IODispatcher<C> dispatcher) {
+        return contextPool.get().pop().of(fd, dispatcher);
     }
 
     @Override

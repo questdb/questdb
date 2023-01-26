@@ -28,11 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -44,7 +41,7 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function arg0 = args.getQuick(0);
         if (arg0.isConstant()) {
             return resolveBoolean(arg0.getStr(null)) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
@@ -56,16 +53,9 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
         return str != null && SqlKeywords.isTrueKeyword(str);
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractCastToBooleanFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

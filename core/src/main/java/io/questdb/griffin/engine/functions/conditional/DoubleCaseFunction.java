@@ -27,12 +27,11 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
-class DoubleCaseFunction extends DoubleFunction implements MultiArgFunction {
-    private final CaseFunctionPicker picker;
+class DoubleCaseFunction extends DoubleFunction implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public DoubleCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
@@ -40,12 +39,12 @@ class DoubleCaseFunction extends DoubleFunction implements MultiArgFunction {
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return picker.pick(rec).getDouble(rec);
+    public ObjList<Function> getArgs() {
+        return args;
     }
 
     @Override
-    public ObjList<Function> getArgs() {
-        return args;
+    public double getDouble(Record rec) {
+        return picker.pick(rec).getDouble(rec);
     }
 }

@@ -32,18 +32,17 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
-    private final LongAdder sum = new LongAdder();
-    private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final LongAdder sum = new LongAdder();
     private int valueOffset;
 
     public SumLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -78,8 +77,27 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
+    public void clear() {
+        sum.reset();
+        count.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        if (count.sum() > 0) {
+            return sum.sum();
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    @Override
+    public String getName() {
+        return "sum";
     }
 
     @Override
@@ -91,6 +109,11 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -108,29 +131,5 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
-    }
-
-    @Override
-    public void clear() {
-        sum.reset();
-        count.reset();
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        if (count.sum() > 0) {
-            return sum.sum();
-        }
-        return Numbers.LONG_NaN;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("SumLongVector(").put(columnIndex).put(')');
     }
 }

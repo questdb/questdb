@@ -37,7 +37,7 @@ public class CountLongGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "count(l)";
+        return "count(L)";
     }
 
     @Override
@@ -55,13 +55,14 @@ public class CountLongGroupByFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            int val = arg.getInt(null);
-            // NULL expression would lead to zero matched rows, so it makes
-            // no sense to support it until we support count(expression).
-            if (val == Numbers.INT_NaN) {
+            long val = arg.getLong(null);
+            if (val == Numbers.LONG_NaN) {
                 throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
             }
+            return new CountLongConstGroupByFunction();
+        } else {
+            return new CountLongGroupByFunction(arg);
         }
-        return new CountLongGroupByFunction();
+
     }
 }

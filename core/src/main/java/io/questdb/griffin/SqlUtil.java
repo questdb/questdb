@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
@@ -45,9 +46,9 @@ public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
     private static final DateFormat[] DATE_FORMATS;
-    private static final int DATE_FORMATS_SIZE;
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
+    private static final int DATE_FORMATS_SIZE;
 
     public static void addSelectStar(
             QueryModel model,
@@ -481,6 +482,26 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
+    public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
+        if (str == null || str.length() == 0) {
+            uuid.ofNull();
+            return;
+        }
+        try {
+            uuid.of(str);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
+        }
+    }
+
+    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
+        if (Uuid.isNull(lo, hi)) {
+            return false;
+        }
+        Numbers.appendUuid(lo, hi, sink);
+        return true;
+    }
+
     /**
      * Parses partial representation of timestamp with time zone.
      *
@@ -496,10 +517,6 @@ public class SqlUtil {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);
         }
-    }
-
-    static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
-        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
     }
 
     static CharSequence createColumnAlias(
@@ -554,15 +571,6 @@ public class SqlUtil {
                 return alias;
             }
         }
-    }
-
-    static QueryColumn nextColumn(
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<ExpressionNode> sqlNodePool,
-            CharSequence alias,
-            CharSequence column
-    ) {
-        return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));
     }
 
     static long expectMicros(CharSequence tok, int position) throws SqlException {
@@ -635,10 +643,24 @@ public class SqlUtil {
         throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
     }
 
+    static QueryColumn nextColumn(
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> sqlNodePool,
+            CharSequence alias,
+            CharSequence column
+    ) {
+        return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));
+    }
+
+    static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
+        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
+    }
+
     static {
         for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
             SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
         }
+        SqlUtil.disallowedAliases.add("");
 
         final DateFormatCompiler milliCompiler = new DateFormatCompiler();
         final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");

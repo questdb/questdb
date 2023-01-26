@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
@@ -38,9 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestMatchFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "test_match()";
+    private static final AtomicInteger closeCount = new AtomicInteger();
     private static final AtomicInteger openCounter = new AtomicInteger();
     private static final AtomicInteger topCounter = new AtomicInteger();
-    private static final AtomicInteger closeCount = new AtomicInteger();
 
     public static boolean assertAPI(SqlExecutionContext executionContext) {
         return openCounter.get() > 0 && openCounter.get() >= closeCount.get() && topCounter.get() > 0
@@ -60,7 +62,7 @@ public class TestMatchFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "test_match()";
+        return SIGNATURE;
     }
 
     @Override
@@ -81,6 +83,11 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) {
+            openCounter.incrementAndGet();
+        }
+
+        @Override
         public boolean isConstant() {
             return false;
         }
@@ -91,14 +98,14 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            assert openCounter.get() > 0;
-            topCounter.incrementAndGet();
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) {
-            openCounter.incrementAndGet();
+        public void toTop() {
+            assert openCounter.get() > 0;
+            topCounter.incrementAndGet();
         }
     }
 }

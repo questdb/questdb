@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory {
 
@@ -45,10 +47,11 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordSink recordSink,
-            ColumnTypes valueTypes
+            @Transient @NotNull ColumnTypes mapKeyTypes,
+            @Transient @NotNull ColumnTypes mapValueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        Map map = MapFactory.createMap(configuration, metadata, valueTypes);
+        Map map = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         if (castFunctionsA == null && castFunctionsB == null) {
             this.cursor = new IntersectRecordCursor(map, recordSink);
         } else {
@@ -61,5 +64,15 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
     protected void _close() {
         Misc.free(this.cursor);
         super._close();
+    }
+
+    @Override
+    protected CharSequence getOperation() {
+        return "Intersect";
+    }
+
+    @Override
+    protected boolean isSecondFactoryHashed() {
+        return true;
     }
 }

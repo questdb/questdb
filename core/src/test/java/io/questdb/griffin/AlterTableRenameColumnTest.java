@@ -25,9 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -72,34 +70,6 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRenameColumnEndsWithSemicolon() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
-            compile("alter table x rename column i to i1;", sqlExecutionContext);
-            engine.clear();
-        });
-    }
-
-    @Test
-    public void testRenameColumnEndsWithSemicolonEndingWithWhitesace() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
-            compile("alter table x rename column i to i1; \n", sqlExecutionContext);
-            engine.clear();
-        });
-    }
-
-    @Test
-    public void testRenameWithSemicolonHalfWay() throws Exception {
-        assertFailure("alter table x rename column l; to b", 29, "'to' expected");
-    }
-
-    @Test
-    public void testRenameWithSemicolonHalfWay2() throws Exception {
-        assertFailure("alter table x rename column l to l2; c to d", 35, "',' expected");
-    }
-
-    @Test
     public void testRenameColumn() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
@@ -109,7 +79,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                         Assert.assertEquals(ALTER, compile("alter table x rename column e to z", sqlExecutionContext).getType());
 
                         String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION)) {
+                        try (TableReader reader = getReader("x")) {
                             sink.clear();
                             reader.getMetadata().toJson(sink);
                             TestUtils.assertEquals(expected, sink);
@@ -128,10 +98,10 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table x1 (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x1")) {
+            try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals("b", reader.getMetadata().getColumnName(1));
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing")) {
+                try (TableWriter writer = getWriter("x1")) {
                     Assert.assertEquals("b", writer.getMetadata().getColumnName(1));
                     writer.renameColumn("b", "bb");
                     Assert.assertEquals("bb", writer.getMetadata().getColumnName(1));
@@ -174,12 +144,12 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createX();
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            try (TableReader reader = getReader("x")) {
                 Assert.assertEquals("b", reader.getMetadata().getColumnName(4));
                 //check cursor before renaming column
                 TestUtils.assertReader(expectedBefore, reader, sink);
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                try (TableWriter writer = getWriter("x")) {
                     writer.renameColumn("b", "bb");
                     writer.renameColumn("c", "cc");
                     Assert.assertEquals("bb", writer.getMetadata().getColumnName(4));
@@ -198,13 +168,31 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRenameColumnEndsWithSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX();
+            compile("alter table x rename column i to i1;", sqlExecutionContext);
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testRenameColumnEndsWithSemicolonEndingWithWhitesace() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX();
+            compile("alter table x rename column i to i1; \n", sqlExecutionContext);
+            engine.clear();
+        });
+    }
+
+    @Test
     public void testRenameColumnExistingReader() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
                     try {
                         createX();
 
-                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                        try (TableReader reader = getReader("x")) {
                             Assert.assertEquals(ALTER, compile("alter table x rename column e to z", sqlExecutionContext).getType());
                             String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
                             sink.clear();
@@ -298,12 +286,12 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createX();
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            try (TableReader reader = getReader("x")) {
                 Assert.assertEquals("timestamp", reader.getMetadata().getColumnName(3));
                 //check cursor before renaming column
                 TestUtils.assertReader(expectedBefore, reader, sink);
 
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                try (TableWriter writer = getWriter("x")) {
                     writer.renameColumn("timestamp", "ts");
                     Assert.assertEquals("ts", writer.getMetadata().getColumnName(3));
                 }
@@ -317,6 +305,16 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals("ts", reader.getMetadata().getColumnName(3));
             }
         });
+    }
+
+    @Test
+    public void testRenameWithSemicolonHalfWay() throws Exception {
+        assertFailure("alter table x rename column l; to b", 29, "'to' expected");
+    }
+
+    @Test
+    public void testRenameWithSemicolonHalfWay2() throws Exception {
+        assertFailure("alter table x rename column l to l2; c to d", 35, "',' expected");
     }
 
     @Test

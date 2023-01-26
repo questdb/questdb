@@ -43,16 +43,6 @@ abstract class AbstractFloatHandPickedTest {
         testLegalInput("-Infinity", "-Infinity");
     }
 
-    @Test
-    public void testHexFloatLiteralNumericOverflow() {
-        testOverflowInput("0x1.fffffeP+250f");
-        testOverflowInput("-0x1.fffffeP+250f");
-        testOverflowInput("0x0.0000000000001p-1200");
-        testLegalInput("0.00000000d", "0x00000000p0");
-        testLegalInput("-0.00000000d", "-0x00000000p0");
-    }
-
-
     /**
      * Tests input classes that execute different code branches in
      * method {@link FastDoubleMath#tryHexFloatToDouble(boolean, long, int)}.
@@ -64,6 +54,15 @@ abstract class AbstractFloatHandPickedTest {
         testLegalInput("Outside Clinger fast path (max_clinger_significand + 1, max_clinger_exponent)", "0x20000000000000p74", 0x20000000000000p74f);
         testLegalInput("Inside Clinger fast path (min_clinger_significand + 1, min_clinger_exponent)", "0x1p-74", 0x1p-74f);
         testLegalInput("Outside Clinger fast path (min_clinger_significand + 1, min_clinger_exponent - 1)", "0x1p-75", 0x1p-75f);
+    }
+
+    @Test
+    public void testHexFloatLiteralNumericOverflow() {
+        testOverflowInput("0x1.fffffeP+250f");
+        testOverflowInput("-0x1.fffffeP+250f");
+        testOverflowInput("0x0.0000000000001p-1200");
+        testLegalInput("0.00000000d", "0x00000000p0");
+        testLegalInput("-0.00000000d", "-0x00000000p0");
     }
 
     @Test
@@ -167,6 +166,7 @@ abstract class AbstractFloatHandPickedTest {
         testLegalHexInput(Math.nextDown(0.0f));
         testLegalInput("Just above MAX_VALUE: 0x1.fffffffffffff8p1023", "0x1.fffffffffffff8p1023", Float.POSITIVE_INFINITY);
         testLegalInput("Just below MIN_VALUE: 0x0.00000000000008p-1022", "0x0.00000000000008p-1022", 0.0f);
+        testLegalInput("0X.2P102481", Float.POSITIVE_INFINITY);
     }
 
     @Test
@@ -184,10 +184,6 @@ abstract class AbstractFloatHandPickedTest {
         IntStream.range(-307, 309).mapToObj(i -> "1e" + i)
                 .forEach(d -> testLegalInput(d, Float.parseFloat(d)));
     }
-
-    abstract float parse(CharSequence str, boolean rejectOverflow) throws NumericException;
-
-    protected abstract float parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException;
 
     private void testIllegalInput(String s) {
         try {
@@ -253,4 +249,8 @@ abstract class AbstractFloatHandPickedTest {
         } catch (NumericException ignored) {
         }
     }
+
+    abstract float parse(CharSequence str, boolean rejectOverflow) throws NumericException;
+
+    protected abstract float parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException;
 }

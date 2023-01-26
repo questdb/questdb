@@ -30,8 +30,8 @@ import io.questdb.std.Mutable;
 import java.io.Closeable;
 
 class StaticContentProcessorState implements Mutable, Closeable {
-    long fd = -1;
     long bytesSent;
+    int fd = -1;
     long sendMax;
 
     @Override

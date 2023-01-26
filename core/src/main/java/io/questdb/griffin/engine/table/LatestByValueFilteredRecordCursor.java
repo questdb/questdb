@@ -28,16 +28,18 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
 
     private final int columnIndex;
-    private final int symbolKey;
     private final Function filter;
+    private final int symbolKey;
     private boolean empty;
     private boolean hasNext;
 
@@ -59,12 +61,6 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        hasNext = !empty;
-        filter.toTop();
-    }
-
-    @Override
     public boolean hasNext() {
         if (hasNext) {
             hasNext = false;
@@ -79,13 +75,16 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        filter.init(this, executionContext);
-        findRecord(executionContext);
+    public void toPlan(PlanSink sink) {
+        sink.type("Row backward scan");
+        sink.attr("symbolFilter").putColumnName(columnIndex).val('=').val(symbolKey);
+        sink.attr("filter").val(filter);
+    }
+
+    @Override
+    public void toTop() {
         hasNext = !empty;
+        filter.toTop();
     }
 
     private void findRecord(SqlExecutionContext executionContext) {
@@ -110,5 +109,15 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
                 }
             }
         }
+    }
+
+    @Override
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        filter.init(this, executionContext);
+        findRecord(executionContext);
+        hasNext = !empty;
     }
 }

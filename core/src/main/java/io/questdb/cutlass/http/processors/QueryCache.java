@@ -29,9 +29,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.Gauge;
+import io.questdb.metrics.LongGauge;
 import io.questdb.std.AssociativeCache;
-import io.questdb.std.ThreadLocal;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -39,23 +39,41 @@ public final class QueryCache implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(QueryCache.class);
     private static ThreadLocal<QueryCache> TL_QUERY_CACHE;
+    private static HttpServerConfiguration httpServerConfiguration;
+    private static Metrics metrics;
     private final AssociativeCache<RecordCursorFactory> cache;
 
-    public QueryCache(int blocks, int rows, Gauge cachedQueriesGauge) {
+    public QueryCache(int blocks, int rows, LongGauge cachedQueriesGauge) {
         this.cache = new AssociativeCache<>(blocks, rows, cachedQueriesGauge);
     }
 
     public static void configure(HttpServerConfiguration configuration, Metrics metrics) {
-        final boolean enableQueryCache = configuration.isQueryCacheEnabled();
-        final int blockCount = enableQueryCache ? configuration.getQueryCacheBlockCount() : 1;
-        final int rowCount = enableQueryCache ? configuration.getQueryCacheRowCount() : 1;
-        TL_QUERY_CACHE = new ThreadLocal<>(
-                () -> new QueryCache(blockCount, rowCount, metrics.jsonQuery().cachedQueriesGauge())
-        );
+        TL_QUERY_CACHE = new ThreadLocal<>();
+        httpServerConfiguration = configuration;
+        QueryCache.metrics = metrics;
     }
 
-    public static QueryCache getThreadLocalInstance() {
-        return TL_QUERY_CACHE.get();
+    public static @NotNull QueryCache getThreadLocalInstance() {
+        QueryCache cache = TL_QUERY_CACHE.get();
+        if (cache == null) {
+            final boolean enableQueryCache = httpServerConfiguration.isQueryCacheEnabled();
+            final int blockCount = enableQueryCache ? httpServerConfiguration.getQueryCacheBlockCount() : 1;
+            final int rowCount = enableQueryCache ? httpServerConfiguration.getQueryCacheRowCount() : 1;
+            TL_QUERY_CACHE.set(cache = new QueryCache(blockCount, rowCount, metrics.jsonQuery().cachedQueriesGauge()));
+        }
+        return cache;
+    }
+
+    public static QueryCache getWeakThreadLocalInstance() {
+        if (TL_QUERY_CACHE != null) {
+            return TL_QUERY_CACHE.get();
+        }
+        return null;
+    }
+
+    public void clear() {
+        cache.clear();
+        LOG.info().$("cleared").$();
     }
 
     @Override
@@ -75,11 +93,6 @@ public final class QueryCache implements Closeable {
             cache.put(sql, factory);
             log("push", sql);
         }
-    }
-
-    public void clear() {
-        cache.clear();
-        LOG.info().$("cleared").$();
     }
 
     private void log(CharSequence action, CharSequence sql) {

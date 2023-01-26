@@ -29,12 +29,12 @@ import io.questdb.std.IntStack;
 
 import java.util.ArrayDeque;
 
-final public class PostOrderTreeTraversalAlgo {
-    private final ArrayDeque<ExpressionNode> stackBackup = new ArrayDeque<>();
-    private final IntStack indexStackBackup = new IntStack();
+public final class PostOrderTreeTraversalAlgo {
     private final IntStack backupDepth = new IntStack();
-    private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final IntStack indexStack = new IntStack();
+    private final IntStack indexStackBackup = new IntStack();
+    private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
+    private final ArrayDeque<ExpressionNode> stackBackup = new ArrayDeque<>();
 
     public void backup() {
         int size = stack.size();
@@ -107,13 +107,11 @@ final public class PostOrderTreeTraversalAlgo {
 
     public interface Visitor {
 
-        void visit(ExpressionNode node) throws SqlException;
-
         /**
          * Called on each node in the top-down, left-right descent order. When
          * this method returns false, the algorithm does not visit the current
          * node, nor its children nodes.
-         *
+         * <p>
          * Example. For the tree like
          * <pre>
          *     A
@@ -126,11 +124,13 @@ final public class PostOrderTreeTraversalAlgo {
          * </pre>
          *
          * @param node tree node to validate or abort the descent
-         * @throws SqlException to allow error reporting from descend validator
          * @return true to allow descent and false otherwise
+         * @throws SqlException to allow error reporting from descend validator
          */
         default boolean descend(ExpressionNode node) throws SqlException {
             return true;
         }
+
+        void visit(ExpressionNode node) throws SqlException;
     }
 }

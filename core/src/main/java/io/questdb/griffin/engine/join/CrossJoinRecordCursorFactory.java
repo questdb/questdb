@@ -25,19 +25,22 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.std.Misc;
 
+//This plan is actually filter-less Nested Loop  
 public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final CrossJoinRecordCursor cursor;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
-    private final CrossJoinRecordCursor cursor;
 
     public CrossJoinRecordCursorFactory(
             RecordMetadata metadata,
@@ -50,13 +53,6 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.cursor = new CrossJoinRecordCursor(columnSplit);
-    }
-
-    @Override
-    protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
     }
 
     @Override
@@ -86,8 +82,22 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return masterFactory.supportsUpdateRowId(tableName);
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return masterFactory.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Cross Join");
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
+    }
+
+    @Override
+    protected void _close() {
+        ((JoinRecordMetadata) getMetadata()).close();
+        masterFactory.close();
+        slaveFactory.close();
     }
 
     private static class CrossJoinRecordCursor extends AbstractJoinCursor {
@@ -104,17 +114,6 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long size() {
-            long sizeA = masterCursor.size();
-            long sizeB = slaveCursor.size();
-            if (sizeA == -1 || sizeB == -1) {
-                return -1;
-            }
-            final long result = sizeA * sizeB;
-            return result < sizeA ? Long.MAX_VALUE : result;
-        }
-
-        @Override
         public boolean hasNext() {
 
             if (slaveCursor.hasNext()) {
@@ -127,6 +126,17 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             return false;
+        }
+
+        @Override
+        public long size() {
+            long sizeA = masterCursor.size();
+            long sizeB = slaveCursor.size();
+            if (sizeA == -1 || sizeB == -1) {
+                return -1;
+            }
+            final long result = sizeA * sizeB;
+            return result < sizeA ? Long.MAX_VALUE : result;
         }
 
         @Override

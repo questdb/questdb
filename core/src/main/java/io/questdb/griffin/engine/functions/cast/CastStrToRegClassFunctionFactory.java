@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -63,7 +64,7 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
             }
             throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(arg.getStr(null)).put(']');
         }
-            return new CastStrToRegClassFunction(arg);
+        return new CastStrToRegClassFunction(arg);
     }
 
     private static class CastStrToRegClassFunction extends IntFunction implements UnaryFunction {
@@ -85,6 +86,11 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
                 return valueMap.get(val);
             }
             return Numbers.INT_NaN;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val("::regclass");
         }
     }
 

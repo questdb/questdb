@@ -48,45 +48,17 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
-    public void testMissingInterval() {
-        assertFailure(92, "missing interval", null, 92);
-    }
-
-    @Test
-    public void testNoQualifier() {
-        assertFailure(100, "expected interval qualifier", "45", 98);
-    }
-
-    @Test
-    public void testMinutes() throws NumericException, SqlException {
+    public void testMicros() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
         final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
-        for (int k = 0; k < 61; k++) {
-            final TimestampSampler sampler = createTimestampSampler(k, 'm', sink);
-            final long bucketSize = Timestamps.MINUTE_MICROS * (k == 0 ? 1 : k);
+        final Rnd rand = new Rnd();
+        for (int j = 0; j < 1000; j++) {
+            final int k = rand.nextInt(1000001);
+            final TimestampSampler sampler = createTimestampSampler(k, 'U', sink);
+            final long bucketSize = (k == 0 ? 1 : k);
             final long expectedTs = ts - ts % bucketSize;
-            for (int i = 0; i < (int)(bucketSize / Timestamps.SECOND_MICROS); i+=4) {
-                long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
-                if (expectedTs != actualTs) {
-                    Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
-                    );
-                }
-            }
-        }
-    }
-
-    @Test
-    public void testSeconds() throws NumericException, SqlException {
-        final StringSink sink = new StringSink();
-        final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
-        for (int k = 0; k < 61; k++) {
-            final TimestampSampler sampler = createTimestampSampler(k, 's', sink);
-            final long bucketSize = Timestamps.SECOND_MICROS * (k == 0 ? 1 : k);
-            final long expectedTs = ts - ts % bucketSize;
-            for (int i = 0; i < (int)(bucketSize / Timestamps.SECOND_MICROS); i++) {
-                long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
+            for (int i = 0; i < bucketSize; i += 4) {
+                long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
                             "Failed at: %s, i: %d. Expected: %s, actual: %s",
@@ -105,7 +77,7 @@ public class TimestampSamplerFactoryTest {
             final TimestampSampler sampler = createTimestampSampler(k, 'T', sink);
             final long bucketSize = Timestamps.MILLI_MICROS * (k == 0 ? 1 : k);
             final long expectedTs = ts - ts % bucketSize;
-            for (int i = 0; i < bucketSize; i+=40) {
+            for (int i = 0; i < bucketSize; i += 40) {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
@@ -118,17 +90,45 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
-    public void testMicros() throws NumericException, SqlException {
+    public void testMinutes() throws NumericException, SqlException {
         final StringSink sink = new StringSink();
         final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
-        final Rnd rand = new Rnd();
-        for (int j = 0; j < 1000; j++) {
-            final int k = rand.nextInt(1000001);
-            final TimestampSampler sampler = createTimestampSampler(k, 'U', sink);
-            final long bucketSize = (k == 0 ? 1 : k);
+        for (int k = 0; k < 61; k++) {
+            final TimestampSampler sampler = createTimestampSampler(k, 'm', sink);
+            final long bucketSize = Timestamps.MINUTE_MICROS * (k == 0 ? 1 : k);
             final long expectedTs = ts - ts % bucketSize;
-            for (int i = 0; i < bucketSize; i+=4) {
-                long actualTs = sampler.round(expectedTs + i);
+            for (int i = 0; i < (int) (bucketSize / Timestamps.SECOND_MICROS); i += 4) {
+                long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
+                if (expectedTs != actualTs) {
+                    Assert.fail(String.format(
+                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                    );
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testMissingInterval() {
+        assertFailure(92, "missing interval", null, 92);
+    }
+
+    @Test
+    public void testNoQualifier() {
+        assertFailure(100, "expected interval qualifier", "45", 98);
+    }
+
+    @Test
+    public void testSeconds() throws NumericException, SqlException {
+        final StringSink sink = new StringSink();
+        final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
+        for (int k = 0; k < 61; k++) {
+            final TimestampSampler sampler = createTimestampSampler(k, 's', sink);
+            final long bucketSize = Timestamps.SECOND_MICROS * (k == 0 ? 1 : k);
+            final long expectedTs = ts - ts % bucketSize;
+            for (int i = 0; i < (int) (bucketSize / Timestamps.SECOND_MICROS); i++) {
+                long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
                             "Failed at: %s, i: %d. Expected: %s, actual: %s",
@@ -154,16 +154,6 @@ public class TimestampSamplerFactoryTest {
         assertFailure(132, "unsupported interval qualifier", "21K", 130);
     }
 
-    private void assertFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
-        try {
-            TimestampSamplerFactory.getInstance(sampleBy, position);
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(expectedPosition, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-        }
-    }
-
     private static TimestampSampler createTimestampSampler(int bucketSize, char units, StringSink sink) throws SqlException {
         sink.clear();
         if (bucketSize > 0) {
@@ -173,5 +163,15 @@ public class TimestampSamplerFactoryTest {
         TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 120);
         Assert.assertNotNull(sampler);
         return sampler;
+    }
+
+    private void assertFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
+        try {
+            TimestampSamplerFactory.getInstance(sampleBy, position);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(expectedPosition, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
     }
 }

@@ -43,22 +43,22 @@ public class PrefixedPgLocksFunctionFactory extends AbstractEmptyCatalogueFuncti
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("locktype", 1, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("database", 2, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("relation", 3, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("page", 4, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("tuple", 5, ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("virtualxid", 6, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("transactionid", 7, ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("classid", 8, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("objid", 9, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("objsubid", 10, ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("virtualtransaction", 11, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("pid", 12, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("mode", 13, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("granted", 14, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("fastpath", 15, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("waitstart", 16, ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("locktype", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("database", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relation", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("page", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("tuple", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("virtualxid", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("transactionid", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("classid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("objid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("virtualtransaction", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("pid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("mode", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("granted", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("fastpath", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("waitstart", ColumnType.TIMESTAMP));
         METADATA = metadata;
     }
 }

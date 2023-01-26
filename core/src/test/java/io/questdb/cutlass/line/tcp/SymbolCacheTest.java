@@ -25,12 +25,13 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
@@ -38,11 +39,13 @@ import io.questdb.mp.SPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,6 +54,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class SymbolCacheTest extends AbstractGriffinTest {
+
+    private static final long DBCS_MAX_SIZE = 256;
 
     @Test
     public void testAddSymbolColumnConcurrent() throws Throwable {
@@ -64,11 +69,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             int rowsAdded = 1000;
 
             String tableName = "tbl_symcache_test";
-            createTable(tableName, PartitionBy.DAY);
+            createTable(tableName);
             Rnd rnd = new Rnd();
 
             Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                try (TableWriter writer = getWriter(tableName)) {
                     start.await();
                     for (int i = 0; i < totalColAddCount; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
@@ -98,15 +103,17 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
             Thread readerThread = new Thread(() -> {
                 ObjList<SymbolCache> symbolCacheObjList = new ObjList<>();
-
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (Path path = new Path();
                      TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
-                             path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                             path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                              PartitionBy.DAY
                      );
-                     TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)
+                     TableReader rdr = getReader(tableName)
                 ) {
-                    path.of(configuration.getRoot()).concat(tableName);
+                    path.of(configuration.getRoot()).concat(tableToken);
                     start.await();
                     int colAdded = 0, newColsAdded;
                     while (colAdded < totalColAddCount) {
@@ -116,6 +123,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                             symbolCache.of(
                                     engine.getConfiguration(),
+                                    new TestTableWriterAPI(),
+                                    col,
                                     path,
                                     "col" + col,
                                     col,
@@ -126,10 +135,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                         }
 
                         int symCount = symbolCacheObjList.size();
-                        String value = "val" + ((newColsAdded - 1) * rowsAdded);
+                        copyUtf8StringChars("val" + ((newColsAdded - 1) * rowsAdded), mem, dbcs);
                         boolean found = false;
                         for (int sym = 0; sym < symCount; sym++) {
-                            if (symbolCacheObjList.getQuick(sym).keyOf(value) != SymbolTable.VALUE_NOT_FOUND) {
+                            if (symbolCacheObjList.getQuick(sym).keyOf(dbcs) != SymbolTable.VALUE_NOT_FOUND) {
                                 found = true;
                             }
                         }
@@ -143,6 +152,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     LOG.error().$(e).$();
                 } finally {
                     Misc.freeObjList(symbolCacheObjList);
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             });
             writerThread.start();
@@ -166,7 +176,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     public void testCloseResetsCapacity() throws Exception {
         final int N = 1024;
         final String tableName = "tb1";
-        final FilesFacade ff = new FilesFacadeImpl();
+        final FilesFacade ff = new TestFilesFacadeImpl();
 
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
@@ -180,10 +190,13 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -191,7 +204,9 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
                     cache.of(
                             configuration,
-                            path.of(configuration.getRoot()).concat(tableName),
+                            writer,
+                            symColIndex,
+                            path.of(configuration.getRoot()).concat(tableToken),
                             "symCol",
                             symColIndex,
                             txReader,
@@ -209,7 +224,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
 
                     for (int i = 0; i < N; i++) {
-                        int rc = cache.keyOf("sym" + i);
+                        copyUtf8StringChars("sym" + i, mem, dbcs);
+                        int rc = cache.keyOf(dbcs);
                         Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     }
 
@@ -221,6 +237,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     // Close should shrink cache back to initial capacity.
                     Assert.assertEquals(0, cache.getCacheValueCount());
                     Assert.assertEquals(initialCapacity, cache.getCacheCapacity());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -230,106 +248,180 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     public void testConcurrency() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rndCache = new Rnd();
-            final int N = 1_000_000;
+            final int N = 500_000;
             long ts = TimestampFormatUtils.parseTimestamp("2020-09-10T20:00:00.000000Z");
-            final long incrementUs = 10000;
+            final long incrementUs = 10_000;
             final String constValue = "hello";
-            FilesFacade ff = new FilesFacadeImpl();
+            long constMem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+            DirectByteCharSequence constDbcs = new DirectByteCharSequence();
+            copyUtf8StringChars(constValue, constMem, constDbcs);
+            FilesFacade ff = new TestFilesFacadeImpl();
 
             compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
-
+            TableToken tableToken = engine.getTableToken("x");
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                     Path path = new Path();
                     TxReader txReader = new TxReader(ff).ofRO(
-                            path.of(configuration.getRoot()).concat("x").concat(TXN_FILE_NAME).$(),
+                            path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                             PartitionBy.DAY
                     )
             ) {
-                path.of(configuration.getRoot()).concat("x");
-                symbolCache.of(configuration, path, "b", 1, txReader, -1);
+                path.of(configuration.getRoot()).concat(tableToken);
+                symbolCache.of(configuration, new TestTableWriterAPI(), 1, path, "b", 1, txReader, -1);
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 final AtomicBoolean cacheInError = new AtomicBoolean(false);
 
-                RingQueue<Holder> wheel = new RingQueue<>(Holder::new, 256);
-                SPSequence pubSeq = new SPSequence(wheel.getCycle());
-                SCSequence subSeq = new SCSequence();
-                pubSeq.then(subSeq).then(pubSeq);
+                try (RingQueue<Holder> wheel = new RingQueue<>(Holder::new, 256)) {
+                    SPSequence pubSeq = new SPSequence(wheel.getCycle());
+                    SCSequence subSeq = new SCSequence();
+                    pubSeq.then(subSeq).then(pubSeq);
 
-                new Thread(() -> {
-                    try {
-                        barrier.await();
-                        for (int i = 0; i < N; i++) {
-                            // All keys should not be found, but we keep looking them up because
-                            // we pretend we don't know this upfront. The aim is to cause
-                            // race condition between lookup and table writer
-                            final CharSequence value2 = rndCache.nextString(5);
-                            symbolCache.keyOf(constValue);
-                            symbolCache.keyOf(value2);
-                            final long cursor = pubSeq.nextBully();
-                            final Holder h = wheel.get(cursor);
-                            // publish the value2 to the table writer
-                            h.value1 = constValue;
-                            h.value2 = Chars.toString(value2);
-                            pubSeq.done(cursor);
-                        }
-                    } catch (Throwable e) {
-                        cacheInError.set(true);
-                        e.printStackTrace();
-                    } finally {
-                        haltLatch.countDown();
-                    }
-                }).start();
-
-
-                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
-                    barrier.await();
-
-                    OUT:
-                    for (int i = 0; i < N; i++) {
-                        long cursor;
-                        while (true) {
-                            cursor = subSeq.next();
-                            if (cursor < 0) {
-                                // we should exist main loop even if we did not receive N values
-                                // the publishing thread could get successful cache lookups and not publish value
-                                // due to random generator producing duplicate strings
-                                if (haltLatch.getCount() < 1) {
-                                    break OUT;
-                                }
-                            } else {
-                                break;
+                    new Thread(() -> {
+                        long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                        DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                        try {
+                            barrier.await();
+                            for (int i = 0; i < N; i++) {
+                                // All keys should not be found, but we keep looking them up because
+                                // we pretend we don't know this upfront. The aim is to cause
+                                // race condition between lookup and table writer
+                                copyUtf8StringChars(rndCache.nextString(5), mem, dbcs);
+                                symbolCache.keyOf(constDbcs);
+                                symbolCache.keyOf(dbcs);
+                                final long cursor = pubSeq.nextBully();
+                                final Holder h = wheel.get(cursor);
+                                // publish the value2 to the table writer
+                                h.value1 = constValue;
+                                h.value2 = Chars.toString(dbcs);
+                                pubSeq.done(cursor);
                             }
+                        } catch (Throwable e) {
+                            cacheInError.set(true);
+                            e.printStackTrace();
+                        } finally {
+                            Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                            haltLatch.countDown();
                         }
-                        Holder h = wheel.get(cursor);
-                        TableWriter.Row r = w.newRow(ts);
-                        r.putSym(0, h.value1);
-                        r.putInt(1, 0);
-                        r.putSym(2, h.value2);
-                        r.append();
-                        subSeq.done(cursor);
+                    }).start();
 
-                        if (i % 256 == 0) {
-                            w.commit();
+                    try (TableWriter w = getWriter("x")) {
+                        barrier.await();
+
+                        OUT:
+                        for (int i = 0; i < N; i++) {
+                            long cursor;
+                            while (true) {
+                                cursor = subSeq.next();
+                                if (cursor < 0) {
+                                    // we should exist main loop even if we did not receive N values
+                                    // the publishing thread could get successful cache lookups and not publish value
+                                    // due to random generator producing duplicate strings
+                                    if (haltLatch.getCount() < 1) {
+                                        break OUT;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            Holder h = wheel.get(cursor);
+                            TableWriter.Row r = w.newRow(ts);
+                            r.putSym(0, h.value1);
+                            r.putInt(1, 0);
+                            r.putSym(2, h.value2);
+                            r.append();
+                            subSeq.done(cursor);
+
+                            if (i % 256 == 0) {
+                                w.commit();
+                            }
+                            ts += incrementUs;
                         }
-                        ts += incrementUs;
+                        w.commit();
+                    } finally {
+                        haltLatch.await();
                     }
-                    w.commit();
-                } finally {
-                    haltLatch.await();
+                    Assert.assertFalse(cacheInError.get());
                 }
-                Assert.assertFalse(cacheInError.get());
+            } finally {
+                Unsafe.free(constMem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
             compiler.compile("drop table x", sqlExecutionContext);
         });
     }
 
     @Test
+    public void testNonAsciiChars() throws Exception {
+        final int N = 1024;
+        final String tableName = "tb1";
+        final String symbolPrefix = "аз_съм_грут";
+        final FilesFacade ff = new FilesFacadeImpl();
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path();
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                         .col("symCol", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
+            ) {
+                CairoTestUtils.create(model);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                TableToken tableToken = engine.getTableToken(tableName);
+                try (
+                        TableWriter writer = new TableWriter(configuration, tableToken, metrics);
+                        TxReader txReader = new TxReader(ff).ofRO(
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                PartitionBy.DAY
+                        )
+                ) {
+                    int symColIndex = writer.getColumnIndex("symCol");
+
+                    cache.of(
+                            configuration,
+                            writer,
+                            symColIndex,
+                            path.of(configuration.getRoot()).concat(tableToken),
+                            "symCol",
+                            symColIndex,
+                            txReader,
+                            -1
+                    );
+
+                    final int initialCapacity = cache.getCacheCapacity();
+                    Assert.assertTrue(N > initialCapacity);
+
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow();
+                        r.putSym(symColIndex, symbolPrefix + i);
+                        r.append();
+                    }
+                    writer.commit();
+
+                    for (int i = 0; i < N; i++) {
+                        copyUtf8StringChars(symbolPrefix + i, mem, dbcs);
+                        int rc = cache.keyOf(dbcs);
+                        Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    }
+
+                    Assert.assertEquals(N, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleInteraction() throws Exception {
         String tableName = "tb1";
-        FilesFacade ff = new FilesFacadeImpl();
+        FilesFacade ff = new TestFilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
                  TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -343,11 +435,14 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  })
             ) {
                 CairoTestUtils.create(model);
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                TableToken tableToken = engine.getTableToken(tableName);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
-                                path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
                         )
                 ) {
@@ -365,7 +460,9 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
                     cache.of(
                             configuration,
-                            path.of(configuration.getRoot()).concat(tableName),
+                            new TestTableWriterAPI(),
+                            symColIndex2,
+                            path.of(configuration.getRoot()).concat(tableToken),
                             "symCol2",
                             symColIndex2,
                             txReader,
@@ -383,10 +480,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
 
-                    int rc = cache.keyOf("missing");
+                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym21");
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -397,10 +494,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.keyOf("missing");
+                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym21");
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -413,10 +510,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(2, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.keyOf("sym21");
+                    rc = cache.keyOf(copyUtf8StringChars("sym21", mem, dbcs));
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym22");
+                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dbcs));
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
 
@@ -435,10 +532,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     r.putSym(symColIndex2, "sym25");
                     r.append();
 
-                    rc = cache.keyOf("sym22");
+                    rc = cache.keyOf(copyUtf8StringChars("sym22", mem, dbcs));
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
-                    rc = cache.keyOf("sym24");
+                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dbcs));
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(3, cache.getCacheValueCount());
                     writer.commit();
@@ -447,51 +544,205 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.removeColumn("symCol1");
                     cache.close();
                     txMem.close();
-                    path.of(configuration.getRoot()).concat(tableName);
+                    path.of(configuration.getRoot()).concat(tableToken);
 
                     cache.of(
                             configuration,
-                            path.of(configuration.getRoot()).concat(tableName),
+                            new TestTableWriterAPI(),
+                            0,
+                            path,
                             "symCol2",
                             0,
                             txReader,
                             -1
                     );
 
-                    rc = cache.keyOf("sym24");
+                    rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dbcs));
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
                     r = writer.newRow();
                     r.putSym(symColIndex2, "sym26");
                     r.append();
-                    rc = cache.keyOf("sym26");
+                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dbcs));
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
                     writer.commit();
-                    rc = cache.keyOf("sym26");
+                    rc = cache.keyOf(copyUtf8StringChars("sym26", mem, dbcs));
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
     }
 
-    private void createTable(String tableName, int partitionBy) {
-        try (Path path = new Path()) {
-            try (
-                    MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, partitionBy)
+    @Test
+    public void testSymbolCountNonZeroWatermark() throws Exception {
+        String tableName = "tb1";
+        FilesFacade ff = new TestFilesFacadeImpl();
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path();
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                         .col("symCol", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
             ) {
-                model.timestamp();
-                TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        model,
-                        1
-                );
+                CairoTestUtils.create(model);
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                TableToken tableToken = engine.getTableToken(tableName);
+                try (
+                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        MemoryMR txMem = Vm.getMRInstance();
+                        TxReader txReader = new TxReader(ff).ofRO(
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                PartitionBy.DAY
+                        )
+                ) {
+                    int symColIndex = writer.getColumnIndex("symCol");
+                    long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex);
+
+                    txMem.of(
+                            configuration.getFilesFacade(),
+                            path,
+                            transientSymCountOffset + Integer.BYTES,
+                            transientSymCountOffset + Integer.BYTES,
+                            MemoryTag.MMAP_DEFAULT
+                    );
+
+                    TableWriter.Row r = writer.newRow();
+                    r.putSym(symColIndex, "sym1");
+                    r.append();
+                    writer.commit();
+                    txReader.unsafeLoadAll();
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolCount(0));
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
+
+                    cache.of(
+                            configuration,
+                            new TestTableWriterAPI(1),
+                            symColIndex,
+                            path.of(configuration.getRoot()).concat(tableToken),
+                            "symCol",
+                            symColIndex,
+                            txReader,
+                            -1
+                    );
+
+                    int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    Assert.assertEquals(0, cache.getCacheValueCount());
+                    rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dbcs));
+                    Assert.assertEquals(0, rc);
+                    Assert.assertEquals(1, cache.getCacheValueCount());
+
+                    r = writer.newRow();
+                    r.putSym(symColIndex, "sym2");
+                    r.append();
+                    writer.commit();
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolCount(0));
+                    Assert.assertEquals(2, txReader.unsafeReadSymbolTransientCount(0));
+                    rc = cache.keyOf(copyUtf8StringChars("missing", mem, dbcs));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    Assert.assertEquals(1, cache.getCacheValueCount());
+                    rc = cache.keyOf(copyUtf8StringChars("sym2", mem, dbcs));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    Assert.assertEquals(1, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
             }
+        });
+    }
+
+    @Test
+    public void testSymbolCountZeroWatermark() throws Exception {
+        String tableName = "tb1";
+        FilesFacade ff = new TestFilesFacadeImpl();
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path();
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                         .col("symCol", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
+            ) {
+                CairoTestUtils.create(model);
+                long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                DirectByteCharSequence dbcs = new DirectByteCharSequence();
+                TableToken tableToken = engine.getTableToken(tableName);
+                try (
+                        TableWriter writer = newTableWriter(configuration, tableName, metrics);
+                        MemoryMR txMem = Vm.getMRInstance();
+                        TxReader txReader = new TxReader(ff).ofRO(
+                                path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
+                                PartitionBy.DAY
+                        )
+                ) {
+                    int symColIndex = writer.getColumnIndex("symCol");
+                    long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex);
+
+                    txMem.of(
+                            configuration.getFilesFacade(),
+                            path,
+                            transientSymCountOffset + Integer.BYTES,
+                            transientSymCountOffset + Integer.BYTES,
+                            MemoryTag.MMAP_DEFAULT
+                    );
+
+                    TableWriter.Row r = writer.newRow();
+                    r.putSym(symColIndex, "sym1");
+                    r.append();
+                    writer.commit();
+                    txReader.unsafeLoadAll();
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolCount(0));
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
+
+                    cache.of(
+                            configuration,
+                            new TestTableWriterAPI(0),
+                            symColIndex,
+                            path.of(configuration.getRoot()).concat(tableToken),
+                            "symCol",
+                            symColIndex,
+                            txReader,
+                            -1
+                    );
+
+                    int rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dbcs));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    Assert.assertEquals(0, cache.getCacheValueCount());
+                } finally {
+                    Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    private static DirectByteCharSequence copyUtf8StringChars(String value, long mem, DirectByteCharSequence dbcs) {
+        byte[] utf8Bytes = value.getBytes(StandardCharsets.UTF_8);
+        Assert.assertTrue(utf8Bytes.length <= DBCS_MAX_SIZE);
+        for (int i = 0, n = utf8Bytes.length; i < n; i++) {
+            Unsafe.getUnsafe().putByte(mem + i, utf8Bytes[i]);
+        }
+        return dbcs.of(mem, mem + utf8Bytes.length);
+    }
+
+    private void createTable(String tableName) {
+        try (
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+        ) {
+            model.timestamp();
+            CairoTestUtils.create(model, engine);
         }
     }
 
@@ -503,6 +754,102 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         public void clear() {
             value1 = null;
             value2 = null;
+        }
+    }
+
+    private static class TestTableWriterAPI implements TableWriterAPI {
+
+        private final int watermark;
+
+        public TestTableWriterAPI() {
+            this(-1);
+        }
+
+        public TestTableWriterAPI(int watermark) {
+            this.watermark = watermark;
+        }
+
+        @Override
+        public void addColumn(CharSequence columnName, int columnType) {
+        }
+
+        @Override
+        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity) {
+        }
+
+        @Override
+        public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+            return 0;
+        }
+
+        @Override
+        public long apply(UpdateOperation operation) {
+            return 0;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long commit() {
+            return 0;
+        }
+
+        @Override
+        public TableRecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public long getStructureVersion() {
+            return 0;
+        }
+
+        @Override
+        public int getSymbolCountWatermark(int columnIndex) {
+            return watermark;
+        }
+
+        @Override
+        public TableToken getTableToken() {
+            return null;
+        }
+
+        @Override
+        public long getUncommittedRowCount() {
+            return 0;
+        }
+
+        @Override
+        public void ic() {
+        }
+
+        @Override
+        public void ic(long o3MaxLag) {
+        }
+
+        @Override
+        public TableWriter.Row newRow() {
+            return null;
+        }
+
+        @Override
+        public TableWriter.Row newRow(long timestamp) {
+            return null;
+        }
+
+        @Override
+        public void rollback() {
+        }
+
+        @Override
+        public boolean supportsMultipleWriters() {
+            return true;
+        }
+
+        @Override
+        public void truncate() {
         }
     }
 }

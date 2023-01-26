@@ -53,21 +53,6 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.BYTE);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setByte(mapValue, (byte) 0);
-    }
-
-    public void setByte(MapValue mapValue, byte value) {
-        mapValue.putByte(this.valueIndex, value);
-    }
-
-    @Override
     public Function getArg() {
         return this.arg;
     }
@@ -75,5 +60,25 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     @Override
     public byte getByte(Record rec) {
         return rec.getByte(this.valueIndex);
+    }
+
+    @Override
+    public String getName() {
+        return "first";
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.BYTE);
+    }
+
+    public void setByte(MapValue mapValue, byte value) {
+        mapValue.putByte(this.valueIndex, value);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        setByte(mapValue, (byte) 0);
     }
 }

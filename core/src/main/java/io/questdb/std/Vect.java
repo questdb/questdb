@@ -26,17 +26,20 @@ package io.questdb.std;
 
 public final class Vect {
 
+    public static native double avgDoubleAcc(long pInt, long count, long pCount);
+
     public static native double avgIntAcc(long pInt, long count, long pCount);
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
 
-    public static native double avgDoubleAcc(long pInt, long count, long pCount);
-
+    // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
+    // Note: high is inclusive!
     public static native long binarySearchIndexT(long pData, long value, long low, long high, int scanDirection);
 
     public static long boundedBinarySearch64Bit(long pData, long value, long low, long high, int scanDirection) {
+        // Note: high is inclusive!
         long index = binarySearch64Bit(pData, value, low, high, scanDirection);
         if (index < 0) {
             return (-index - 1) - 1;
@@ -45,6 +48,7 @@ public final class Vect {
     }
 
     public static long boundedBinarySearchIndexT(long pData, long value, long low, long high, int scanDirection) {
+        // Note: high is inclusive!
         long index = binarySearchIndexT(pData, value, low, high, scanDirection);
         if (index < 0) {
             return (-index - 1) - 1;
@@ -54,11 +58,13 @@ public final class Vect {
 
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
+    public static native long countDouble(long pDouble, long count);
+
+    public static native long countInt(long pLong, long count);
+
+    public static native long countLong(long pLong, long count);
+
     public static native void flattenIndex(long pIndex, long count);
-
-    public static native void sort3LongAscInPlace(long address, long count);
-
-    private static native void freeMergedIndex(long pIndex);
 
     public static void freeMergedIndex(long pIndex, long indexSize) {
         freeMergedIndex(pIndex);
@@ -88,6 +94,8 @@ public final class Vect {
         return " [" + base + "," + Vect.getSupportedInstructionSet() + "]";
     }
 
+    public static native void indexReshuffle128Bit(long pSrc, long pDest, long pIndex, long count);
+
     public static native void indexReshuffle16Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native void indexReshuffle256Bit(long pSrc, long pDest, long pIndex, long count);
@@ -116,6 +124,16 @@ public final class Vect {
         }
     }
 
+    public static boolean memeq(long a, long b, long len) {
+        // the split length was determined experimentally
+        // using 'MemEqBenchmark' bench
+        if (len < 128) {
+            return memeq0(a, b, len);
+        } else {
+            return memcmp(a, b, len) == 0;
+        }
+    }
+
     public static native void memmove(long dst, long src, long len);
 
     public static native void memset(long dst, long len, int value);
@@ -128,8 +146,7 @@ public final class Vect {
         mergeLongIndexesAscInner(pIndexStructArray, count, mergedIndexAddr);
     }
 
-    // accept externally allocated memory for merged index of proper size
-    private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
+    public static native void mergeShuffle128Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
@@ -178,6 +195,8 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
+    public static native void radixSortABLongIndexAscInA(long pDataA, long countA, long pDataB, long countB, long pDataCpy);
+
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
 
@@ -210,6 +229,8 @@ public final class Vect {
      */
     public static native void sort128BitAscInPlace(long pLongData, long count);
 
+    public static native void sort3LongAscInPlace(long address, long count);
+
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void sortULongAscInPlace(long pLongData, long count);
@@ -233,5 +254,33 @@ public final class Vect {
 
     public static native long sumLong(long pLong, long count);
 
+    private static native void freeMergedIndex(long pIndex);
+
+    private static native int memcmp(long src, long dst, long len);
+
     private static native void memcpy0(long src, long dst, long len);
+
+    private static boolean memeq0(long a, long b, long len) {
+        int i = 0;
+        for (; i + 7 < len; i += 8) {
+            if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
+                return false;
+            }
+        }
+        if (i + 3 < len) {
+            if (Unsafe.getUnsafe().getInt(a + i) != Unsafe.getUnsafe().getInt(b + i)) {
+                return false;
+            }
+            i += 4;
+        }
+        for (; i < len; i++) {
+            if (Unsafe.getUnsafe().getByte(a + i) != Unsafe.getUnsafe().getByte(b + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // accept externally allocated memory for merged index of proper size
+    private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
 }

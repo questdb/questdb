@@ -32,27 +32,25 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
     // We're using two double values per worker, hence +1 element in the padding.
     private static final int SUM_PADDING = (Misc.CACHE_LINE_SIZE / Double.BYTES) + 1;
-    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
-
     private final int columnIndex;
-    private final double[] sum;
     private final long[] count;
-    private final int workerCount;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
-    private int valueOffset;
-    private double transientSum;
+    private final double[] sum;
+    private final int workerCount;
     private double transientC;
     private long transientCount;
+    private double transientSum;
+    private int valueOffset;
 
     public NSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
@@ -100,8 +98,25 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public void clear() {
+        Arrays.fill(sum, 0);
+        Arrays.fill(count, 0);
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        computeSum();
+        return transientCount > 0 ? transientSum + transientC : Double.NaN;
+    }
+
+    @Override
+    public String getName() {
+        return "nsum";
     }
 
     @Override
@@ -114,6 +129,11 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -135,23 +155,6 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         return Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
     }
 
-    @Override
-    public void clear() {
-        Arrays.fill(sum, 0);
-        Arrays.fill(count, 0);
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        computeSum();
-        return transientCount > 0 ? transientSum + transientC : Double.NaN;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
     private void computeSum() {
         double sum = 0;
         long count = 0;
@@ -170,10 +173,5 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         this.transientSum = sum;
         this.transientCount = count;
         this.transientC = c;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("NSumDoubleVector(").put(columnIndex).put(')');
     }
 }

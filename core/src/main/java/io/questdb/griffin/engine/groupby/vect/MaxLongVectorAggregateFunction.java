@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -41,12 +40,12 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 public class MaxLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MAX = Math::max;
-    private final LongAccumulator max = new LongAccumulator(
-            MAX, Long.MIN_VALUE
-    );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final LongAccumulator max = new LongAccumulator(
+            MAX, Long.MIN_VALUE
+    );
     private int valueOffset;
 
     public MaxLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -77,8 +76,23 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
+    public void clear() {
+        max.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return max.longValue();
+    }
+
+    @Override
+    public String getName() {
+        return "max";
     }
 
     @Override
@@ -89,6 +103,11 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -105,25 +124,5 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
-    }
-
-    @Override
-    public void clear() {
-        max.reset();
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return max.longValue();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("MaxLongVector(").put(columnIndex).put(')');
     }
 }

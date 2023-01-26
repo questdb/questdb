@@ -27,21 +27,29 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include "../share/sysutil.h"
 
-#if defined(__APPLE__)
+#ifdef __APPLE__
+
 #include <copyfile.h>
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
+
 #else
+
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/param.h>
 #include <sys/mount.h>
+#include <sys/time.h>
+#include <sys/stat.h>
+
 #endif
 
 static inline jlong _io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     int prot = 0;
 
     if (flags == com_questdb_std_Files_MAP_RO) {
@@ -56,33 +64,149 @@ static inline jlong _io_questdb_std_Files_mremap0
         munmap(orgAddr, (size_t) previousLen);
     }
     if (newAddr == MAP_FAILED) {
-	return -1;
+	    return -1;
     }
     return (jlong) newAddr;
 }
 
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
-        (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
+        (JNIEnv *e, jclass cl, jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
-#if defined(__APPLE__)
+size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
+    char buf[4096 * 4]; // 16K
+    size_t read_sz;
+    off_t rd_off = fromOffset;
+    off_t wrt_off = 0;
+    off_t len;
+
+    if (length < 0) {
+        len = LONG_MAX - fromOffset;
+    } else {
+        len = length;
+    }
+    off_t hi = fromOffset + len;
+
+    for (;;) {
+        RESTARTABLE(pread(inFd, buf, sizeof buf, rd_off), read_sz);
+        if (read_sz <= 0) {
+            break;
+        }
+        char *out_ptr = buf;
+
+        if (rd_off + read_sz > hi) {
+            read_sz = hi - rd_off;
+        }
+
+        long wrtn;
+        do {
+            RESTARTABLE(pwrite(outFd, out_ptr, read_sz, wrt_off), wrtn);
+            if (wrtn >= 0) {
+                read_sz -= wrtn;
+                out_ptr += wrtn;
+                wrt_off += wrtn;
+            } else {
+                break;
+            }
+        } while (read_sz > 0);
+
+        if (read_sz > 0) {
+            // error
+            return -1;
+        }
+
+        rd_off += wrtn;
+        if (rd_off >= hi) {
+            /* Success! */
+            break;
+        }
+    }
+
+    return rd_off - fromOffset;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jint srcFd, jint dstFd, jlong srcOffset, jlong length) {
+    return (jlong) copyData0((int) srcFd, (int) dstFd, srcOffset, length);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {
+    struct statfs buf;
+    if (statfs((const char *) lpszPath, &buf) == 0) {
+        return (jlong)buf.f_bavail * (jlong)buf.f_bsize;
+    }
+    return -1;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
+    struct timeval t[2];
+    gettimeofday(&t[0], NULL);
+    t[1].tv_sec = millis / 1000;
+#ifdef __APPLE__    
+    t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
+#else
+    t[1].tv_usec = ((millis % 1000) * 1000);
+#endif    
+    return (jboolean) (utimes((const char *) lpszName, t) == 0);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
+        (JNIEnv *e, jclass cl, jlong pchar) {
+    struct stat st;
+    int r = stat((const char *) pchar, &st);
+#ifdef __APPLE__
+    return r == 0 ? ((1000 * st.st_mtimespec.tv_sec) + (st.st_mtimespec.tv_nsec / 1000000)) : r;
+#else
+    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
+#endif
+}
+
+#ifdef __APPLE__
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jint fd, jlong len) {
+    // MACOS allocates additional space. Check what size the file currently is
+    struct stat st;
+    int _fd = (int) fd;
+    if (fstat(_fd, &st) != 0) {
+        return JNI_FALSE;
+    }
+    const jlong fileLen = st.st_blksize * st.st_blocks;
+    jlong deltaLen = len - fileLen;
+    if (deltaLen > 0) {
+        // F_ALLOCATECONTIG - try to allocate continuous space.
+        fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, deltaLen, 0};
+        int result = fcntl(_fd, F_PREALLOCATE, &flags);
+        if (result == -1) {
+            // F_ALLOCATEALL - try to allocate non-continuous space.
+            flags.fst_flags = F_ALLOCATEALL;
+            result = fcntl((int) fd, F_PREALLOCATE, &flags);
+            if (result == -1) {
+                return JNI_FALSE;
+            }
+        }
+    }
+    return ftruncate((int) fd, len) == 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
-    const char* from = (const char *) lpszFrom;
-    const char* to = (const char *) lpszTo;
+    const char *from = (const char *) lpszFrom;
+    const char *to = (const char *) lpszTo;
     const int input = open(from, O_RDONLY);
-    if (-1 ==  (input )) {
+    if (-1 == (input)) {
         return -1;
     }
 
     const int output = creat(to, 0644);
-    if (-1 == (output )) {
+    if (-1 == (output)) {
         close(input);
         return -1;
     }
@@ -115,14 +239,34 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
 
 #else
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jint fd, jlong len) {
+    int rc = posix_fallocate(fd, 0, len);
+    if (rc == 0) {
+        return JNI_TRUE;
+    }
+    if (rc == EINVAL) {
+        // Some file systems (such as ZFS) do not support posix_fallocate
+        struct stat st;
+        rc = fstat((int) fd, &st);
+        if (rc != 0) {
+            return JNI_FALSE;
+        }
+        if (st.st_size < len) {
+            rc = ftruncate(fd, len);
+            if (rc != 0) {
+                return JNI_FALSE;
+            }
+        }
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
     const char* from = (const char *) lpszFrom;
     const char* to = (const char *) lpszTo;
-
-    char buf[4096];
-    size_t read_sz;
-    off_t wrt_off = 0;
 
     const int input = open(from, O_RDONLY);
     if (-1 ==  (input)) {
@@ -135,37 +279,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         return -1;
     }
 
-    while ((read_sz = pread(input, buf, sizeof buf, wrt_off)) > 0) {
-        char *out_ptr = buf;
-        long wrtn;
+    int result = copyData0(input, output, 0, -1);
+    close(input);
+    close(output);
 
-        do {
-            wrtn = pwrite(output, out_ptr, read_sz, wrt_off);
-            if (wrtn >= 0) {
-                read_sz -= wrtn;
-                out_ptr += wrtn;
-                wrt_off += wrtn;
-            } else if (errno != EINTR) {
-                break;
-            }
-        } while (read_sz > 0);
-
-        if (read_sz > 0) {
-            // error
-            close(input);
-            close(output);
-
-            return -1;
-        }
-    }
-
-    if (read_sz == 0) {
-        close(input);
-        close(output);
-
-        /* Success! */
-        return 1;
-    }
+    return result;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus

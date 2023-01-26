@@ -29,12 +29,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Sinkable;
 
 public class RndSymbolListFunctionFactory implements FunctionFactory {
     @Override
@@ -60,8 +62,8 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
     }
 
     private static final class Func extends SymbolFunction implements Function {
-        private final ObjList<String> symbols;
         private final int count;
+        private final ObjList<String> symbols;
         private Rnd rnd;
 
         public Func(ObjList<String> symbols) {
@@ -95,13 +97,18 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(symbolKey);
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_symbol(").val((Sinkable) symbols).val(')');
         }
 
         @Override
         public CharSequence valueBOf(int key) {
             return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(symbolKey);
         }
 
         private int next() {

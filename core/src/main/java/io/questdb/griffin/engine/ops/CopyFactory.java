@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.cutlass.text.TextImportRequestTask;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
@@ -51,21 +52,19 @@ import io.questdb.std.str.StringSink;
 public class CopyFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-
-    private final MessageBus messageBus;
-    private final TextImportExecutionContext textImportExecutionContext;
-    private final String tableName;
+    private final int atomicity;
+    private final byte delimiter;
     private final String fileName;
     private final boolean headerFlag;
-    private final String timestampColumn;
-    private final String timestampFormat;
-    private final byte delimiter;
-    private final int partitionBy;
-    private final int atomicity;
-
     private final StringSink importIdSink = new StringSink();
+    private final MessageBus messageBus;
+    private final int partitionBy;
     private final ImportIdRecord record = new ImportIdRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
+    private final String tableName;
+    private final TextImportExecutionContext textImportExecutionContext;
+    private final String timestampColumn;
+    private final String timestampFormat;
 
     public CopyFactory(
             MessageBus messageBus,
@@ -138,12 +137,13 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Copy");
+    }
+
     private static class ImportIdRecord implements Record {
         private CharSequence value;
-
-        public void setValue(CharSequence value) {
-            this.value = value;
-        }
 
         @Override
         public CharSequence getStr(int col) {
@@ -151,18 +151,22 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public int getStrLen(int col) {
-            return value.length();
-        }
-
-        @Override
         public CharSequence getStrB(int col) {
             // the sink is immutable
             return getStr(col);
         }
+
+        @Override
+        public int getStrLen(int col) {
+            return value.length();
+        }
+
+        public void setValue(CharSequence value) {
+            this.value = value;
+        }
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("id", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("id", ColumnType.STRING));
     }
 }

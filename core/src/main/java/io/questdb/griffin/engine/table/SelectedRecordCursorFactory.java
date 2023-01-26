@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -44,13 +46,18 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean followedLimitAdvice() {
+        return base.followedLimitAdvice();
+    }
+
+    @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
     }
 
     @Override
-    protected void _close() {
-        base.close();
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -59,9 +66,29 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         return cursor;
     }
 
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
+    }
+
+    @Override
+    public boolean implementsLimit() {
+        return base.implementsLimit();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+        return base.supportsUpdateRowId(tableToken);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SelectedRecord");
+        sink.child(base);
     }
 
     @Override
@@ -70,11 +97,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return base.supportsUpdateRowId(tableName);
-    }
-
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    protected void _close() {
+        base.close();
     }
 }

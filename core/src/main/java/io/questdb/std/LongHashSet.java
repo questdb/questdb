@@ -36,19 +36,13 @@ public class LongHashSet extends AbstractLongHashSet {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    @SuppressWarnings("CopyConstructorMissesField")
-    public LongHashSet(LongHashSet that) {
-        this(that.capacity, that.loadFactor, noEntryKey);
-        addAll(that);
-    }
-
     public LongHashSet(int initialCapacity) {
         this(initialCapacity, 0.4, noEntryKey);
     }
 
     public LongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
         super(initialCapacity, loadFactor, noKeyValue);
-        this.list = new LongList(free);
+        list = new LongList(free);
         clear();
     }
 
@@ -56,20 +50,16 @@ public class LongHashSet extends AbstractLongHashSet {
      * Adds key to hash set preserving key uniqueness.
      *
      * @param key immutable sequence of characters.
+     * @return false if key is already in the set and true otherwise.
      */
-    public void add(long key) {
+    public boolean add(long key) {
         int index = keyIndex(key);
         if (index < 0) {
-            return;
+            return false;
         }
 
         addAt(index, key);
-    }
-
-    public final void addAll(LongHashSet that) {
-        for (int i = 0, k = that.size(); i < k; i++) {
-            add(that.get(i));
-        }
+        return true;
     }
 
     public void addAt(int index, long key) {
@@ -82,36 +72,33 @@ public class LongHashSet extends AbstractLongHashSet {
 
     public final void clear() {
         free = capacity;
-        Arrays.fill(keys, noEntryKeyValue
-        );
+        Arrays.fill(keys, noEntryKeyValue);
         list.clear();
-    }
-
-    public boolean excludes(long key) {
-        return keyIndex(key) > -1;
-    }
-
-    public void removeAt(int index) {
-        if (index < 0) {
-            long key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
     }
 
     public boolean contains(long key) {
         return keyIndex(key) < 0;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LongHashSet that = (LongHashSet) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (int i = 0, n = list.size(); i < n; i++) {
+            long key = list.getQuick(i);
+            if (key != noEntryKeyValue && that.excludes(key)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public boolean excludes(long key) {
+        return keyIndex(key) > -1;
     }
 
     public long get(int index) {
@@ -120,6 +107,25 @@ public class LongHashSet extends AbstractLongHashSet {
 
     public long getLast() {
         return list.getLast();
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKeyValue) {
+                hashCode += keys[i];
+            }
+        }
+        return hashCode;
+    }
+
+    public void removeAt(int index) {
+        if (index < 0) {
+            long key = keys[-index - 1];
+            super.removeAt(index);
+            list.remove(key);
+        }
     }
 
     @Override
@@ -141,5 +147,16 @@ public class LongHashSet extends AbstractLongHashSet {
             int keyIndex = keyIndex(key);
             keys[keyIndex] = key;
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        erase(from);
     }
 }

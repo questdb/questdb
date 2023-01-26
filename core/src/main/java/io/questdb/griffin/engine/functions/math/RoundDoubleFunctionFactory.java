@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -103,30 +104,10 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
-    }
-
-    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncPosConst(Function arg, int r) {
-            this.arg = arg;
-            this.scale = r;
-        }
 
         @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundHalfUpPosScale(l, scale);
+        public void toPlan(PlanSink sink) {
+            sink.val("round(").val(left).val(',').val(right).val(')');
         }
     }
 
@@ -152,6 +133,43 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.roundHalfUpNegScale(l, scale);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("round(").val(arg).val(',').val(scale).val(')');
+        }
+    }
+
+    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncPosConst(Function arg, int r) {
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundHalfUpPosScale(l, scale);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            int i = -scale;
+            PlanSink planSink = sink.val("round(").val(arg).val(',').val(i);
+            planSink.val(')');
         }
     }
 }

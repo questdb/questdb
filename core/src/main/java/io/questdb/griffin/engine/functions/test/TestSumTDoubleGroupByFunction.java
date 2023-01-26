@@ -52,11 +52,6 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
@@ -64,6 +59,21 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return rec.getDouble(valueIndex);
+    }
+
+    @Override
+    public String getName() {
+        return "sum_t";
     }
 
     @Override
@@ -80,10 +90,5 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 }

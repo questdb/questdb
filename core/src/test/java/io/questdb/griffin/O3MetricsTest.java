@@ -25,14 +25,17 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class O3MetricsTest extends AbstractO3Test {
-    private static final long MICROS_IN_MINUTE = 60000000L;
-    private static final long MICROS_IN_HOUR = 3600000000L;
     private static final long MICROS_IN_DAY = 86400000000L;
+    private static final long MICROS_IN_HOUR = 3600000000L;
+    private static final long MICROS_IN_MINUTE = 60000000L;
     private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
 
     @Test
@@ -42,8 +45,8 @@ public class O3MetricsTest extends AbstractO3Test {
 
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(13));
                 r.putInt(0, 9);
@@ -77,8 +80,8 @@ public class O3MetricsTest extends AbstractO3Test {
             final long initRowCount = 2;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(2, 0, 0));
                 r.putInt(0, 4);
@@ -103,8 +106,8 @@ public class O3MetricsTest extends AbstractO3Test {
             // Appended to new partition.
             Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getPhysicallyWrittenRows());
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(1, 0, 0));
                 r.putInt(0, 3);
@@ -138,8 +141,8 @@ public class O3MetricsTest extends AbstractO3Test {
 
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(4));
                 r.putInt(0, 0);
@@ -176,8 +179,8 @@ public class O3MetricsTest extends AbstractO3Test {
 
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(8, 30));
                 r.putInt(0, 100);
@@ -213,8 +216,8 @@ public class O3MetricsTest extends AbstractO3Test {
             final long initRowCount = 24;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(23, 30));
                 r.putInt(0, 101);
@@ -228,15 +231,15 @@ public class O3MetricsTest extends AbstractO3Test {
                 r.putInt(0, 103);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 04, 45));
+                r = w.newRow(millenniumTimestamp(1, 4, 45));
                 r.putInt(0, 201);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 04, 30));
+                r = w.newRow(millenniumTimestamp(1, 4, 30));
                 r.putInt(0, 202);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 04, 15));
+                r = w.newRow(millenniumTimestamp(1, 4, 15));
                 r.putInt(0, 203);
                 r.append();
 
@@ -292,8 +295,8 @@ public class O3MetricsTest extends AbstractO3Test {
             final long initRowCount = 2;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(-1));
                 r.putInt(0, -1);
@@ -319,7 +322,7 @@ public class O3MetricsTest extends AbstractO3Test {
     }
 
     @Test
-    public void testWithCommitLag() throws Exception {
+    public void testWithO3MaxLag() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
@@ -327,85 +330,36 @@ public class O3MetricsTest extends AbstractO3Test {
             Metrics metrics = engine.getMetrics();
 
             long rowCount = initRowCount;
-            long expectedPhysicallyWritten = initRowCount;
-            Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
 
-            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+            try (TableWriter w = getWriterX(sqlExecutionContext)) {
                 TableWriter.Row r = w.newRow(millenniumTimestamp(0));
                 r.putInt(0, 100);
                 r.append();
+                ++rowCount;
 
                 r = w.newRow(millenniumTimestamp(7));
                 r.putInt(0, 200);
                 r.append();
+                ++rowCount;
 
                 r = w.newRow(millenniumTimestamp(8));
                 r.putInt(0, 300);
                 r.append();
+                ++rowCount;
 
-                w.commitWithLag(30 * MICROS_IN_MINUTE);
-
-                {
-                    printSqlResult(compiler, sqlExecutionContext, "x");
-                    final String expected = "i\tts\n" +
-                            "100\t2000-01-01T00:00:00.000000Z\n" +  // new row
-                            "1\t2000-01-01T05:00:00.000000Z\n" +
-                            "2\t2000-01-01T06:00:00.000000Z\n" +
-                            "200\t2000-01-01T07:00:00.000000Z\n";  // new row
-                    // "300\t2000-01-01T08:00:00.000000Z\n"  // skipped due to lag.
-                    TestUtils.assertEquals(expected, sink);
-                }
-
-                Assert.assertEquals(rowCount + 2, metrics.tableWriter().getCommittedRows());
-
-                // Partition rewritten with two new records.
-                expectedPhysicallyWritten += rowCount + 2;
-                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
-
-                rowCount += 2;
+                w.ic();
 
                 r = w.newRow(millenniumTimestamp(7, 45));
                 r.putInt(0, 400);
                 r.append();
-                w.commitWithLag(10 * MICROS_IN_MINUTE);
-
-                {
-                    printSqlResult(compiler, sqlExecutionContext, "x");
-                    final String expected = "i\tts\n" +
-                            "100\t2000-01-01T00:00:00.000000Z\n" +
-                            "1\t2000-01-01T05:00:00.000000Z\n" +
-                            "2\t2000-01-01T06:00:00.000000Z\n" +
-                            "200\t2000-01-01T07:00:00.000000Z\n" +
-                            "400\t2000-01-01T07:45:00.000000Z\n";  // skipped due to lag.
-                    // "300\t2000-01-01T08:00:00.000000Z\n"  // skipped due to lag.
-                    TestUtils.assertEquals(expected, sink);
-                }
-
-                // Appends one row.
-                Assert.assertEquals(rowCount + 1, metrics.tableWriter().getCommittedRows());
-                ++expectedPhysicallyWritten;
-                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
                 ++rowCount;
+
+                w.ic();
 
                 w.commit();
-
-                {
-                    printSqlResult(compiler, sqlExecutionContext, "x");
-                    final String expected = "i\tts\n" +
-                            "100\t2000-01-01T00:00:00.000000Z\n" +
-                            "1\t2000-01-01T05:00:00.000000Z\n" +
-                            "2\t2000-01-01T06:00:00.000000Z\n" +
-                            "200\t2000-01-01T07:00:00.000000Z\n" +
-                            "400\t2000-01-01T07:45:00.000000Z\n" +
-                            "300\t2000-01-01T08:00:00.000000Z\n"; // new row
-                    TestUtils.assertEquals(expected, sink);
-                }
-
-                Assert.assertEquals(rowCount + 1, metrics.tableWriter().getCommittedRows());
-                ++expectedPhysicallyWritten;
-                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
-
-                ++rowCount;
+                Assert.assertEquals(rowCount, metrics.tableWriter().getCommittedRows());
+                Assert.assertEquals(rowCount + 2, metrics.tableWriter().getPhysicallyWrittenRows());
 
             }
         });
@@ -455,4 +409,9 @@ public class O3MetricsTest extends AbstractO3Test {
         Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
     }
 
+    private TableWriter getWriterX(SqlExecutionContext sqlExecutionContext) {
+        CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+        TableToken token = cairoEngine.getTableToken("x");
+        return cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), token, "testing");
+    }
 }

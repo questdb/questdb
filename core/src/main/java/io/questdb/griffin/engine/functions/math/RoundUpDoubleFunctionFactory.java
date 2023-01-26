@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -41,9 +42,12 @@ import io.questdb.std.ObjList;
 
 public class RoundUpDoubleFunctionFactory implements FunctionFactory {
 
+    private static final String SYMBOL = "round_up";
+    private static final String SIGNATURE = SYMBOL + "(DI)";
+
     @Override
     public String getSignature() {
-        return "round_up(DI)";
+        return SIGNATURE;
     }
 
     @Override
@@ -63,60 +67,6 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         }
         return new Func(args.getQuick(0), args.getQuick(1));
     }
-
-
-    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncPosConst(Function arg, int r) {
-            this.arg = arg;
-            this.scale = r;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundUpPosScale(l, scale);
-        }
-
-    }
-
-    private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncNegConst(Function arg, int r) {
-            this.arg = arg;
-            this.scale = r;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundUpNegScale(l, scale);
-        }
-
-    }
-
 
     private static class Func extends DoubleFunction implements BinaryFunction {
         private final Function left;
@@ -152,8 +102,73 @@ public class RoundUpDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return SYMBOL;
+        }
+
+        @Override
         public Function getRight() {
             return right;
+        }
+    }
+
+    private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncNegConst(Function arg, int r) {
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundUpNegScale(l, scale);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
+        }
+    }
+
+    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncPosConst(Function arg, int r) {
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundUpPosScale(l, scale);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
         }
     }
 }

@@ -30,12 +30,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import org.junit.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-
-import static org.hamcrest.Matchers.*;
-
-import org.junit.Test;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
 
 /**
  * Check that hash join factory doesn't allocate substantial amounts of memory prior to- and after cursor execution.
@@ -69,7 +68,7 @@ public class HashJoinTest extends AbstractGriffinTest {
             //allocate readers eagerly (at least one for each join) so that final getMem() doesn't report them as diff
             TableReader[] readers = new TableReader[10];
             for (int i = 0; i < readers.length; i++) {
-                readers[i] = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "weather_data_historical");
+                readers[i] = getReader("weather_data_historical");
             }
             for (int i = 0; i < readers.length; i++) {
                 readers[i].close();

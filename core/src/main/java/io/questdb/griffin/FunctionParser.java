@@ -33,10 +33,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
@@ -54,23 +51,21 @@ import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
-
+    private static final int MATCH_EXACT_MATCH = 3;
+    private static final int MATCH_FUZZY_MATCH = 1;
     // order of values matters here, partial match must have greater value than fuzzy match
     private static final int MATCH_NO_MATCH = 0;
-    private static final int MATCH_FUZZY_MATCH = 1;
     private static final int MATCH_PARTIAL_MATCH = 2;
-    private static final int MATCH_EXACT_MATCH = 3;
-
-    private final ObjList<Function> mutableArgs = new ObjList<>();
-    private final IntList mutableArgPositions = new IntList();
+    private final CairoConfiguration configuration;
+    private final FunctionFactoryCache functionFactoryCache;
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
+    private final Long256Impl long256Sink = new Long256Impl();
+    private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
+    private final IntList mutableArgPositions = new IntList();
+    private final ObjList<Function> mutableArgs = new ObjList<>();
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    private final CairoConfiguration configuration;
-    private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
-    private final FunctionFactoryCache functionFactoryCache;
     private final IntList undefinedVariables = new IntList();
-    private final Long256Impl long256Sink = new Long256Impl();
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -136,6 +131,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return Long256Column.newInstance(index);
             case ColumnType.LONG128:
                 return Long128Column.newInstance(index);
+            case ColumnType.UUID:
+                return UuidColumn.newInstance(index);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")
@@ -148,10 +145,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         this.sqlExecutionContext = null;
     }
 
-    public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name) throws SqlException {
+    public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
         this.sqlExecutionContext = sqlExecutionContext;
         if (name != null) {
-            if(name.length() > 0) {
+            if (name.length() > 0) {
+                if (expressionType != ExpressionNode.BIND_VARIABLE) {
+                    return new StrConstant(name);
+                }
                 switch (name.charAt(0)) {
                     case ':':
                         return createNamedParameter(position, name);
@@ -160,8 +160,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     default:
                         return new StrConstant(name);
                 }
-            }
-            else return StrConstant.EMPTY;
+            } else return StrConstant.EMPTY;
         }
         return NullConstant.NULL;
     }
@@ -180,7 +179,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return cast;
     }
 
-    public boolean findNoArgFunction(ExpressionNode node) throws SqlException {
+    public boolean findNoArgFunction(ExpressionNode node) {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (overload != null) {
             for (int i = 0, n = overload.size(); i < n; i++) {
@@ -238,7 +237,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             this.metadata = metadata;
             try {
                 traverseAlgo.traverse(node, this);
-            } catch (SqlException e) {
+            } catch (Exception e) {
                 // release parsed functions
                 for (int i = functionStack.size(); i > 0; i--) {
                     Misc.free(functionStack.poll());
@@ -314,25 +313,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         positionStack.push(node.position);
     }
 
-    private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put("unknown function name");
-        ex.put(": ");
-        ex.put(node.token);
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-            }
-        }
-        ex.put(')');
-        Misc.freeObjList(args);
-        return ex;
-    }
-
     private static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, FunctionFactoryDescriptor descriptor) {
         SqlException ex = SqlException.position(node.position);
         ex.put("unexpected argument for function: ");
@@ -366,6 +346,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (arg.isConstant()) {
                     ex.put(" constant");
                 }
+            }
+        }
+        ex.put(')');
+        Misc.freeObjList(args);
+        return ex;
+    }
+
+    private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put("unknown function name");
+        ex.put(": ");
+        ex.put(node.token);
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
             }
         }
         ex.put(')');
@@ -485,6 +484,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.REGCLASS
                         || columnType == ColumnType.REGPROCEDURE
                         || columnType == ColumnType.ARRAY_STRING
+                        || columnType == ColumnType.UUID
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -513,7 +513,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+        // Make sure to override timestamp required flag from base query.
+        sqlExecutionContext.pushTimestampRequiredFlag(false);
+        try {
+            return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+        } finally {
+            sqlExecutionContext.popTimestampRequiredFlag();
+        }
     }
 
     private Function createFunction(
@@ -618,34 +624,42 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         continue;
                     }
 
-                    int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
-                    sigArgTypeSum += overloadDistance;
-                    // Overload with cast to higher precision
-                    boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
+                    boolean overloadPossible = false;
+                    // we do not want to use any overload when checking the output of a cast() function.
+                    // the output must be the exact type as specified by a user. that's the whole point of casting. 
+                    // for all other functions else we want to explore possible casting opportunities
+                    //
+                    // output of a cast() function is always the 2nd argument in a function signature
+                    if (k != 1 || !Chars.equals("cast", node.token)) {
+                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
+                        sigArgTypeSum += overloadDistance;
+                        // Overload with cast to higher precision
+                        overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
 
-                    // Overload when arg is double NaN to func which accepts INT, LONG
-                    overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
-                            arg.isConstant() &&
-                            Double.isNaN(arg.getDouble(null)) &&
-                            (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
+                        // Overload when arg is double NaN to func which accepts INT, LONG
+                        overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
+                                arg.isConstant() &&
+                                Double.isNaN(arg.getDouble(null)) &&
+                                (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
-                    // Implicit cast from CHAR to STRING
-                    overloadPossible |= argTypeTag == ColumnType.CHAR &&
-                            sigArgTypeTag == ColumnType.STRING;
+                        // Implicit cast from CHAR to STRING
+                        overloadPossible |= argTypeTag == ColumnType.CHAR &&
+                                sigArgTypeTag == ColumnType.STRING;
 
-                    // Implicit cast from STRING to TIMESTAMP
-                    overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
-                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                        // Implicit cast from STRING to TIMESTAMP
+                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
+                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
-                    // Implicit cast from STRING to GEOHASH
-                    overloadPossible |= argTypeTag == ColumnType.STRING &&
-                            sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
+                        // Implicit cast from STRING to GEOHASH
+                        overloadPossible |= argTypeTag == ColumnType.STRING &&
+                                sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
-                    // Implicit cast from SYMBOL to TIMESTAMP
-                    overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
-                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                        // Implicit cast from SYMBOL to TIMESTAMP
+                        overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
+                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
-                    overloadPossible |= arg.isUndefined();
+                        overloadPossible |= arg.isUndefined();
+                    }
 
                     // can we use overload mechanism?
                     if (overloadPossible) {
@@ -752,8 +766,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
                     }
-                    args.set(k, castFn);
+                    args.setQuick(k, castFn);
                 }
+            } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
+                args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
@@ -765,11 +781,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         switch (fromType) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
+                if (toType == ColumnType.UUID) {
+                    return new CastStrToUuidFunctionFactory.Func(function);
+                }
                 if (toType == ColumnType.TIMESTAMP) {
                     return new CastStrToTimestampFunctionFactory.Func(function);
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
+                }
+                break;
+            case ColumnType.UUID:
+                if (toType == ColumnType.STRING) {
+                    return new CastUuidToStrFunctionFactory.Func(function);
                 }
                 break;
             default:
@@ -915,6 +939,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return function;
                 } else {
                     return TimestampConstant.newInstance(function.getTimestamp(null));
+                }
+            case ColumnType.UUID:
+                if (function instanceof UuidConstant) {
+                    return function;
+                } else {
+                    return new UuidConstant(function.getLong128Lo(null), function.getLong128Hi(null));
                 }
             default:
                 return function;

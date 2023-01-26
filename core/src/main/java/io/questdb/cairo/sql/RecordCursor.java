@@ -28,7 +28,7 @@ import java.io.Closeable;
 
 /**
  * A cursor for managing position of operations over multiple records.
- *
+ * <p>
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
  */
@@ -45,6 +45,13 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     Record getRecord();
 
     /**
+     * May be used to compare references with getRecord
+     *
+     * @return record at current position
+     */
+    Record getRecordB();
+
+    /**
      * Cached instance of symbol table for the given column. The method
      * guarantees that symbol table instance is reused across multiple invocations.
      *
@@ -56,8 +63,23 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
+     * @return true if more records may be accessed, otherwise false
+     */
+    boolean hasNext();
+
+    /**
+     * Returns true if the cursor is using an index, false otherwise
+     *
+     * @return true if the cursor is using an index, false otherwise
+     */
+    default boolean isUsingIndex() {
+        return false;
+    }
+
+    /**
      * Creates new instance of symbol table, usually returned by {@link #getSymbolTable(int)}. Symbol table clones are
      * used in concurrent SQL execution. They are assigned to individual threads.
+     *
      * @param columnIndex numeric index of the column
      * @return clone of symbol table or the same instance when instance is immutable(empty column)
      */
@@ -66,28 +88,12 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * @return true if more records may be accessed, otherwise false
-     */
-    boolean hasNext();
-
-    /**
-     * May be used to compare references with getRecord
-     * @return record at current position
-     */
-    Record getRecordB();
-
-    /**
      * Positions record at given rowid. The rowid must have been previously obtained from Record instance.
-     * @param record to position
+     *
+     * @param record  to position
      * @param atRowId rowid of the desired record
      */
     void recordAt(Record record, long atRowId);
-
-    /**
-     * Return the cursor to the beginning of the page frame.
-     * Sets location to first column.
-     */
-    void toTop();
 
     /**
      * Not every record cursor has a size, may return -1, in this case, keep going until hasNext()
@@ -99,7 +105,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
 
     /**
      * Skips to record given row count to skip. Rows are counted top of table.
-     *
+     * <p>
      * Some implementations that support random access (e.g. tables ordered by designated timestamp)
      * have special/faster implementations.
      *
@@ -112,9 +118,8 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
-     * Returns true if the cursor is using an index, false otherwise
+     * Return the cursor to the beginning of the page frame.
+     * Sets location to first column.
      */
-    default boolean isUsingIndex() {
-        return false;
-    }
+    void toTop();
 }

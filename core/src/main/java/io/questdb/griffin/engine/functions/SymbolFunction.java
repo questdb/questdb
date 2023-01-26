@@ -81,7 +81,37 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -110,6 +140,11 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
         throw new UnsupportedOperationException();
     }
 
+    @Nullable
+    public StaticSymbolTable getStaticSymbolTable() {
+        return null;
+    }
+
     @Override
     public CharSequence getStr(Record rec) {
         return getSymbol(rec);
@@ -136,50 +171,26 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final int getType() {
         return ColumnType.SYMBOL;
     }
 
-    @Nullable
-    public StaticSymbolTable getStaticSymbolTable() {
-        return null;
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
+
+    public abstract boolean isSymbolTableStatic();
 
     /**
      * A clone of function's symbol table to enable concurrent SQL execution.
      * During such execution symbol table clones will be assigned to individual executing
      * thread.
+     *
      * @return clone of symbol table
      */
     @Nullable
     public SymbolTable newSymbolTable() {
         return null;
-    }
-
-    public abstract boolean isSymbolTableStatic();
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
     }
 }

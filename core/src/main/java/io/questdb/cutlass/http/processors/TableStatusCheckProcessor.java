@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -40,23 +41,12 @@ import java.io.Closeable;
 public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeable {
 
     private final CairoEngine cairoEngine;
-    private final Path path = new Path();
     private final String keepAliveHeader;
+    private final Path path = new Path();
 
     public TableStatusCheckProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         this.cairoEngine = cairoEngine;
         this.keepAliveHeader = Chars.toString(configuration.getKeepAliveHeader());
-    }
-
-    private static String toResponse(int existenceCheckResult) {
-        switch (existenceCheckResult) {
-            case TableUtils.TABLE_EXISTS:
-                return "Exists";
-            case TableUtils.TABLE_DOES_NOT_EXIST:
-                return "Does not exist";
-            default:
-                return "Reserved name";
-        }
     }
 
     @Override
@@ -70,7 +60,8 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
         if (tableName == null) {
             context.simpleResponse().sendStatus(200, "table name missing");
         } else {
-            int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableName);
+            TableToken tableToken = cairoEngine.getTableTokenIfExists(tableName);
+            int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableToken);
             if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");
@@ -83,6 +74,17 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
             } else {
                 context.simpleResponse().sendStatus(200, toResponse(check));
             }
+        }
+    }
+
+    private static String toResponse(int existenceCheckResult) {
+        switch (existenceCheckResult) {
+            case TableUtils.TABLE_EXISTS:
+                return "Exists";
+            case TableUtils.TABLE_DOES_NOT_EXIST:
+                return "Does not exist";
+            default:
+                return "Reserved name";
         }
     }
 }

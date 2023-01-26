@@ -29,6 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -62,12 +63,82 @@ public class LeftFunctionFactory implements FunctionFactory {
         return new LeftStrFunction(strFunc, countFunc);
     }
 
-    private static class LeftStrFunction extends StrFunction implements BinaryFunction {
+    private static int getPos(int len, int count) {
+        return count > -1 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
+    }
 
+    private static class LeftStrConstCountFunction extends StrFunction implements UnaryFunction {
+
+        private final int count;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
+
+        public LeftStrConstCountFunction(Function strFunc, int count) {
+            this.strFunc = strFunc;
+            this.count = count;
+        }
+
+        @Override
+        public Function getArg() {
+            return strFunc;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink);
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+            CharSequence str = strFunc.getStr(rec);
+            if (str != null) {
+                final int len = str.length();
+                final int pos = getPos(len);
+                sink.put(str, 0, pos);
+            }
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr0(rec, sinkB);
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            int len = strFunc.getStrLen(rec);
+            return len != TableUtils.NULL_LEN ? getPos(len) : TableUtils.NULL_LEN;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("left(").val(strFunc).val(',').val(count).val(')');
+        }
+
+        private int getPos(int len) {
+            return LeftFunctionFactory.getPos(len, count);
+        }
+
+        @Nullable
+        private StringSink getStr0(Record rec, StringSink sink) {
+            CharSequence str = strFunc.getStr(rec);
+            if (str != null) {
+                final int len = str.length();
+                final int pos = getPos(len);
+                sink.clear();
+                sink.put(str, 0, pos);
+                return sink;
+            }
+            return null;
+        }
+    }
+
+    private static class LeftStrFunction extends StrFunction implements BinaryFunction {
+
         private final Function countFunc;
+        private final StringSink sink = new StringSink();
+        private final StringSink sinkB = new StringSink();
+        private final Function strFunc;
 
         public LeftStrFunction(Function strFunc, Function countFunc) {
             this.strFunc = strFunc;
@@ -80,18 +151,13 @@ public class LeftFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "left";
+        }
+
+        @Override
         public Function getRight() {
             return countFunc;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB);
         }
 
         @Override
@@ -103,6 +169,16 @@ public class LeftFunctionFactory implements FunctionFactory {
                 final int pos = getPos(len, count);
                 sink.put(str, 0, pos);
             }
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr0(rec, sinkB);
         }
 
         @Override
@@ -128,71 +204,6 @@ public class LeftFunctionFactory implements FunctionFactory {
             }
             return null;
         }
-    }
-
-    private static class LeftStrConstCountFunction extends StrFunction implements UnaryFunction {
-
-        private final StringSink sink = new StringSink();
-        private final StringSink sinkB = new StringSink();
-        private final Function strFunc;
-        private final int count;
-
-        public LeftStrConstCountFunction(Function strFunc, int count) {
-            this.strFunc = strFunc;
-            this.count = count;
-        }
-
-        @Override
-        public Function getArg() {
-            return strFunc;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB);
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            CharSequence str = strFunc.getStr(rec);
-            if (str != null) {
-                final int len = str.length();
-                final int pos = getPos(len);
-                sink.put(str, 0, pos);
-            }
-        }
-
-        private int getPos(int len) {
-            return LeftFunctionFactory.getPos(len, count);
-        }
-
-        @Override
-        public int getStrLen(Record rec) {
-            int len = strFunc.getStrLen(rec);
-            return len != TableUtils.NULL_LEN ? getPos(len) : TableUtils.NULL_LEN;
-        }
-
-        @Nullable
-        private StringSink getStr0(Record rec, StringSink sink) {
-            CharSequence str = strFunc.getStr(rec);
-            if (str != null) {
-                final int len = str.length();
-                final int pos = getPos(len);
-                sink.clear();
-                sink.put(str, 0, pos);
-                return sink;
-            }
-            return null;
-        }
-    }
-
-    private static int getPos(int len, int count) {
-        return count > -1 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
     }
 
 }

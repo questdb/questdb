@@ -29,17 +29,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 public class NowFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "now()";
+
     @Override
     public String getSignature() {
-        return "now()";
+        return SIGNATURE;
     }
 
     @Override
@@ -61,8 +63,9 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isRuntimeConstant() {
-            return true;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            executionContext.initNow();
+            context = executionContext;
         }
 
         @Override
@@ -71,14 +74,13 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
+        public boolean isRuntimeConstant() {
+            return true;
         }
 
         @Override
-        public void toSink(CharSink sink) {
-            sink.put("NowFunction");
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

@@ -45,10 +45,9 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class CairoMemoryTest {
-    private static final int N = 1000000;
+    private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(CairoMemoryTest.class);
-    private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
-
+    private static final int N = 1000000;
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
@@ -66,7 +65,7 @@ public class CairoMemoryTest {
             boolean force = true;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (force || rnd.nextBoolean()) {
                     force = false;
                     return super.mmap(fd, len, offset, flags, memoryTag);
@@ -106,11 +105,11 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
 
         class X extends FilesFacadeImpl {
-            int count = 2;
             boolean allClear = false;
+            int count = 2;
 
             @Override
-            public boolean allocate(long fd, long size) {
+            public boolean allocate(int fd, long size) {
                 if (allClear || --count > 0) {
                     return super.allocate(fd, size);
                 }
@@ -146,7 +145,7 @@ public class CairoMemoryTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 int n = name.length();
                 if (n > 5 && Chars.equals(".fail", name, n - 5, n)) {
                     return -1;
@@ -217,7 +216,7 @@ public class CairoMemoryTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public int openRW(LPSZ name, long opts) {
                 int n = name.length();
                 if (n > 5 && Chars.equals(".fail", name, n - 5, n)) {
                     return -1;
@@ -362,11 +361,11 @@ public class CairoMemoryTest {
                 final int N = 100000;
                 final Rnd rnd = new Rnd();
 
-                FilesFacade ff = new FilesFacadeImpl() {
+                FilesFacade ff = new TestFilesFacadeImpl() {
                     int counter = 2;
 
                     @Override
-                    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                         if (flags == Files.MAP_RO && --counter == 0) {
                             return -1;
                         }
@@ -475,7 +474,7 @@ public class CairoMemoryTest {
             }
 
             @Override
-            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (rnd.nextBoolean()) {
                     return -1;
                 }

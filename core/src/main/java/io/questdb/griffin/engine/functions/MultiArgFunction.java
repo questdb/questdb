@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -39,23 +40,30 @@ public interface MultiArgFunction extends Function {
         Misc.freeObjList(getArgs());
     }
 
+    ObjList<Function> getArgs();
+
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         Function.init(getArgs(), symbolTableSource, executionContext);
     }
 
     @Override
-    default void toTop() {
-        GroupByUtils.toTop(getArgs());
-    }
-
-    ObjList<Function> getArgs();
-
-    @Override
     default boolean isConstant() {
         ObjList<Function> args = getArgs();
-        for(int i = 0, n = args.size(); i < n; i++) {
+        for (int i = 0, n = args.size(); i < n; i++) {
             if (!args.getQuick(i).isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default boolean isReadThreadSafe() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.isReadThreadSafe()) {
                 return false;
             }
         }
@@ -75,14 +83,12 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (!function.isReadThreadSafe()) {
-                return false;
-            }
-        }
-        return true;
+    default void toPlan(PlanSink sink) {
+        sink.val(getName()).val('(').val(getArgs()).val(')');
+    }
+
+    @Override
+    default void toTop() {
+        GroupByUtils.toTop(getArgs());
     }
 }

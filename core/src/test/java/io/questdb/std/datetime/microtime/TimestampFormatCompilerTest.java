@@ -42,9 +42,9 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 public class TimestampFormatCompilerTest {
 
     private static final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+    private final static DateFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
     private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
     private final static StringSink sink = new StringSink();
-    private final static DateFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
 
     @BeforeClass
     public static void setUp() {
@@ -506,8 +506,10 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatYearIsoFourDigits() throws Exception {
+        assertFormat("53, 2020", "ww, YYYY", "2021-01-02T00:00:00.000Z");
         assertFormat("2020", "YYYY", "2021-01-02T00:00:00.000Z");
 
+        assertFormat("01, 1970", "ww, YYYY", "1970-01-01T00:00:00.000Z");
         assertFormat("1970", "YYYY", "1970-01-01T00:00:00.000Z");
     }
 

@@ -30,7 +30,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -55,7 +54,7 @@ public class LPadFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final Function strFunc = args.getQuick(0);
         final Function lenFunc = args.getQuick(1);
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
@@ -64,11 +63,11 @@ public class LPadFunctionFactory implements FunctionFactory {
 
     public static class LPadFunc extends StrFunction implements BinaryFunction {
 
-        private final Function strFunc;
         private final Function lenFunc;
         private final int maxLength;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
+        private final Function strFunc;
 
         public LPadFunc(Function strFunc, Function lenFunc, int maxLength) {
             this.strFunc = strFunc;
@@ -82,8 +81,23 @@ public class LPadFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "lpad";
+        }
+
+        @Override
         public Function getRight() {
             return lenFunc;
+        }
+
+        @Override
+        public CharSequence getStr(final Record rec) {
+            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sink);
+        }
+
+        @Override
+        public CharSequence getStrB(final Record rec) {
+            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sinkB);
         }
 
         @Override
@@ -95,16 +109,6 @@ public class LPadFunctionFactory implements FunctionFactory {
             } else {
                 return TableUtils.NULL_LEN;
             }
-        }
-
-        @Override
-        public CharSequence getStr(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sink);
-        }
-
-        @Override
-        public CharSequence getStrB(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sinkB);
         }
 
         @Nullable
@@ -130,4 +134,5 @@ public class LPadFunctionFactory implements FunctionFactory {
             return null;
         }
     }
+
 }

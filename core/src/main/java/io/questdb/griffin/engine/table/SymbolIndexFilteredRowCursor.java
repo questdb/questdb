@@ -33,14 +33,14 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.IntList;
 
 class SymbolIndexFilteredRowCursor implements RowCursor {
-    private final Function filter;
-    private final TableReaderSelectedColumnRecord record;
-    private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
-    private int symbolKey;
+    private final int columnIndex;
+    private final Function filter;
+    private final int indexDirection;
+    private final TableReaderSelectedColumnRecord record;
     private RowCursor rowCursor;
     private long rowid;
-    private final int indexDirection;
+    private int symbolKey;
 
     public SymbolIndexFilteredRowCursor(
             int columnIndex,
@@ -96,6 +96,22 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
         record.jumpTo(dataFrame.getPartitionIndex(), 0);
         return this;
+    }
+
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
+    Function getFilter() {
+        return filter;
+    }
+
+    int getIndexDirection() {
+        return indexDirection;
+    }
+
+    int getSymbolKey() {
+        return symbolKey;
     }
 
     void prepare(TableReader tableReader) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -73,8 +74,8 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
     private static final class Func extends StrFunction implements Function {
         private final int count;
-        private final RndStringMemory strMem;
         private final int nullRate;
+        private final RndStringMemory strMem;
         private Rnd rnd;
 
         public Func(RndStringMemory strMem, int count, int nullRate) {
@@ -108,6 +109,11 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
             strMem.init(rnd);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("rnd_str(").val(count).val(',').val(strMem.getLo()).val(',').val(strMem.getHi()).val(',').val(nullRate).val(')');
         }
     }
 }

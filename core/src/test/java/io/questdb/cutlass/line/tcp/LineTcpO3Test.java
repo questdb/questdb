@@ -45,20 +45,37 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Properties;
 import java.util.zip.GZIPInputStream;
 
+@RunWith(Parameterized.class)
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
+    private final boolean walEnabled;
     private LineTcpReceiverConfiguration lineConfiguration;
-    private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
+    private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
+
+    public LineTcpO3Test(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -81,7 +98,13 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
         PropServerConfiguration serverConf;
         Properties properties = new Properties();
-        try (InputStream is = LineTcpO3Test.class.getResourceAsStream(LineTcpO3Test.class.getSimpleName() + ".server.conf")) {
+        String name;
+        if (walEnabled) {
+            name = LineTcpO3Test.class.getSimpleName() + ".wal.server.conf";
+        } else {
+            name = LineTcpO3Test.class.getSimpleName() + ".server.conf";
+        }
+        try (InputStream is = LineTcpO3Test.class.getResourceAsStream(name)) {
             File mimeTypesFile = new File(new File(root.toString(), PropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
             if (!mimeTypesFile.exists()) {
                 mimeTypesFile.getParentFile().mkdirs();
@@ -118,6 +141,12 @@ public class LineTcpO3Test extends AbstractCairoTest {
     @Test
     public void testO3() throws Exception {
         test("ilp.outOfOrder1");
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     private void readGzResource(String rname) {
@@ -158,7 +187,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void test(String ilpResourceName) throws Exception {
         assertMemoryLeak(() -> {
-            long clientFd = Net.socketTcp(true);
+            int clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
 
             long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
@@ -170,8 +199,10 @@ public class LineTcpO3Test extends AbstractCairoTest {
             ) {
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
-                        haltLatch.countDown();
+                    if (factoryType == PoolListener.SRC_WRITER) {
+                        if (event == PoolListener.EV_RETURN && Chars.equalsNc(name.getTableName(), "cpu")) {
+                            haltLatch.countDown();
+                        }
                     }
                 });
 
@@ -184,15 +215,17 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 haltLatch.await();
                 // stop pool twice and this is ok
                 sharedWorkerPool.halt();
+                mayDrainWalQueue();
 
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
+                Assert.assertEquals(walEnabled, isWalTable("cpu"));
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from cpu", sink);
                 readGzResource("selectAll1");
                 DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
                 expectedSink.clear(resourceSize);
                 TestUtils.assertEquals(expectedSink.toString(), sink);
                 Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
             } finally {
-                engine.setPoolListener(null);
+                engine.clear();
                 Net.close(clientFd);
                 Net.freeSockAddr(ilpSockAddr);
                 sharedWorkerPool.halt();

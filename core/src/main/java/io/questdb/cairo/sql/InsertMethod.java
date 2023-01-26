@@ -24,24 +24,23 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.TableWriterAPI;
 
 import java.io.Closeable;
 
 public interface InsertMethod extends Closeable {
-    /**
-     * @return inserted row count
-     */
-    long execute() throws SqlException;
+    @Override
+    void close();
 
     void commit();
 
     /**
+     * @return inserted row count
+     */
+    long execute();
+
+    /**
      * @return sets writer to null
      */
-    TableWriter popWriter();
-
-    @Override
-    void close();
+    TableWriterAPI popWriter();
 }

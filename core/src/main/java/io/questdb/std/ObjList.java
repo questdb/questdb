@@ -66,7 +66,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         buffer[pos++] = value;
     }
 
-    public void addAll(ObjList<T> that) {
+    public void addAll(ReadOnlyObjList<? extends T> that) {
         int n = that.size();
         ensureCapacity(pos + n);
         for (int i = 0; i < n; i++) {
@@ -107,6 +107,14 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof ObjList && equals((ObjList<?>) that);
+    }
+
     public void extendAndSet(int index, T value) {
         ensureCapacity(index + 1);
         if (index >= pos) {
@@ -132,7 +140,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public T getAndSetQuick(int index, T value) {
-        assert index < pos;
+        assert index < pos : "index out of bounds, " + index + " >= " + pos;
         T v = buffer[index];
         buffer[index] = value;
         return v;
@@ -162,7 +170,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
      */
     @Override
     public T getQuick(int index) {
-        assert index < pos;
+        assert index < pos : "index out of bounds, " + index + " >= " + pos;
         return buffer[index];
     }
 
@@ -195,36 +203,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return hashCode;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof ObjList && equals((ObjList<?>) that);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        StringBuilder b = new StringBuilder();
-
-        b.setLength(0);
-        b.append('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                b.append(',');
-            }
-            b.append(getQuick(i));
-        }
-        b.append(']');
-        return b.toString();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public int indexOf(Object o) {
         if (o == null) {
@@ -260,7 +238,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void remove(int from, int to) {
-        assert from <= to;
+        assert from <= to : "start index is greater than end index, " + from + " > " + to;
         int move = pos - from - (to - from) - 1;
         if (move > 0) {
             System.arraycopy(buffer, to + 1, buffer, from, move);
@@ -301,7 +279,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void setQuick(int index, T value) {
-        assert index < pos;
+        assert index < pos : "index out of bounds, " + index + " >= " + pos;
         buffer[index] = value;
     }
 
@@ -323,9 +301,17 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     @Override
     public void toSink(CharSink sink) {
+        toSink(sink, 0, size());
+    }
+
+    public void toSink(CharSink sink, int from) {
+        toSink(sink, from, size());
+    }
+
+    public void toSink(CharSink sink, int from, int to) {
         sink.put('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
+        for (int i = from; i < to; i++) {
+            if (i > from) {
                 sink.put(',');
             }
             T obj = getQuick(i);
@@ -338,6 +324,25 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             }
         }
         sink.put(']');
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        StringBuilder b = new StringBuilder();
+
+        b.setLength(0);
+        b.append('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                b.append(',');
+            }
+            b.append(getQuick(i));
+        }
+        b.append(']');
+        return b.toString();
     }
 
     private boolean equals(ObjList<?> that) {

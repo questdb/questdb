@@ -45,10 +45,6 @@ public class RenameTableModel implements Mutable, ExecutionModel {
         return from;
     }
 
-    public void setFrom(ExpressionNode from) {
-        this.from = from;
-    }
-
     @Override
     public int getModelType() {
         return ExecutionModel.RENAME_TABLE;
@@ -56,6 +52,10 @@ public class RenameTableModel implements Mutable, ExecutionModel {
 
     public ExpressionNode getTo() {
         return to;
+    }
+
+    public void setFrom(ExpressionNode from) {
+        this.from = from;
     }
 
     public void setTo(ExpressionNode to) {

@@ -37,8 +37,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor implements Reopenable {
-    private final Map map;
     private final RecordSink keyMapSink;
+    private final Map map;
     private final RecordCursor mapCursor;
     private boolean isOpen;
 
@@ -71,6 +71,15 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         this.mapCursor = map.getCursor();
         this.record.of(map.getRecord());
         this.isOpen = true;
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
+        }
     }
 
     @Override
@@ -178,14 +187,5 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         final MapKey key = map.withKey();
         keyMapSink.copy(baseRecord, key);
         super.updateValueWhenClockMovesBack(key.createValue());
-    }
-
-    @Override
-    public void close() {
-        if (isOpen) {
-            map.close();
-            super.close();
-            isOpen = false;
-        }
     }
 }

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -44,7 +43,7 @@ public class CastShortToTimestampFunctionFactory implements FunctionFactory {
         return new CastShortToTimestampFunction(args.getQuick(0));
     }
 
-    public static class CastShortToTimestampFunction extends AbstractUnaryTimestampFunction {
+    public static class CastShortToTimestampFunction extends AbstractCastToTimestampFunction {
         public CastShortToTimestampFunction(Function arg) {
             super(arg);
         }

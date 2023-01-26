@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -56,18 +54,12 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
         return new CastShortToStrFunction(args.getQuick(0));
     }
 
-    public static class CastShortToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastShortToStrFunction extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public CastShortToStrFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -78,15 +70,15 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            sink.put(arg.getShort(rec));
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
             sinkB.put(arg.getShort(rec));
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            sink.put(arg.getShort(rec));
         }
     }
 }

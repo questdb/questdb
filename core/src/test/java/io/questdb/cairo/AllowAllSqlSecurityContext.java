@@ -40,69 +40,7 @@ public final class AllowAllSqlSecurityContext {
     public static SqlExecutionContext instance(@NotNull CairoEngine engine) {
         return new SqlExecutionContext() {
             @Override
-            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                return QueryFutureUpdateListener.EMPTY;
-            }
-
-            @Override
-            public BindVariableService getBindVariableService() {
-                return null;
-            }
-
-            @Override
-            public CairoSecurityContext getCairoSecurityContext() {
-                return AllowAllCairoSecurityContext.INSTANCE;
-            }
-
-            @Override
-            public boolean isTimestampRequired() {
-                return false;
-            }
-
-            @Override
-            public void popTimestampRequiredFlag() {
-            }
-
-            @Override
-            public void pushTimestampRequiredFlag(boolean flag) {
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 0;
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return null;
-            }
-
-            @Override
-            public void setRandom(Rnd rnd) {
-            }
-
-            @Override
-            public @NotNull CairoEngine getCairoEngine() {
-                return engine;
-            }
-
-            @Override
-            public long getRequestFd() {
-                return 0;
-            }
-
-            @Override
-            public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-                return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-            }
-
-            @Override
-            public void storeTelemetry(short event, short origin) {
-            }
-
-            @Override
-            public AnalyticContext getAnalyticContext() {
-                return null;
+            public void clearAnalyticContext() {
             }
 
             @Override
@@ -116,16 +54,33 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
-            public void clearAnalyticContext() {
+            public AnalyticContext getAnalyticContext() {
+                return null;
             }
 
             @Override
-            public void initNow() {
+            public BindVariableService getBindVariableService() {
+                return null;
             }
 
             @Override
-            public long getNow() {
-                return 0;
+            public @NotNull CairoEngine getCairoEngine() {
+                return engine;
+            }
+
+            @Override
+            public CairoSecurityContext getCairoSecurityContext() {
+                return AllowAllCairoSecurityContext.INSTANCE;
+            }
+
+            @Override
+            public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            }
+
+            @Override
+            public boolean getCloneSymbolTables() {
+                return false;
             }
 
             @Override
@@ -134,7 +89,60 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
-            public void setJitMode(int jitMode) {
+            public long getMicrosecondTimestamp() {
+                return 0L;
+            }
+
+            @Override
+            public long getNow() {
+                return 0L;
+            }
+
+            @Override
+            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                return QueryFutureUpdateListener.EMPTY;
+            }
+
+            @Override
+            public Rnd getRandom() {
+                return null;
+            }
+
+            @Override
+            public long getRequestFd() {
+                return 0L;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 0;
+            }
+
+            @Override
+            public void initNow() {
+            }
+
+            @Override
+            public boolean isColumnPreTouchEnabled() {
+                return false;
+            }
+
+            @Override
+            public boolean isTimestampRequired() {
+                return false;
+            }
+
+            @Override
+            public boolean isWalApplication() {
+                return false;
+            }
+
+            @Override
+            public void popTimestampRequiredFlag() {
+            }
+
+            @Override
+            public void pushTimestampRequiredFlag(boolean flag) {
             }
 
             @Override
@@ -142,8 +150,19 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
-            public boolean getCloneSymbolTables() {
-                return false;
+            public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
+            }
+
+            @Override
+            public void setJitMode(int jitMode) {
+            }
+
+            @Override
+            public void setNowAndFixClock(long now) {
+            }
+
+            @Override
+            public void setRandom(Rnd rnd) {
             }
         };
     }

@@ -24,110 +24,90 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.ObjList;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
- * Gathers important query execution plan details and prints them in a readable format.
+ * Sink used to generate query execution plan.
+ * Note: methods like attr(), meta(), child() etc. expect a complete value while
+ * calls to val() can be chained to produce a single entry.
  */
-public class PlanSink {
+public interface PlanSink {
 
-    private final StringSink sink;
-    private int depth;
-    private String childIndent;
-    private String attrIndent;
+    PlanSink attr(CharSequence name);
 
-    public PlanSink() {
-        this.sink = new StringSink();
-        this.depth = 0;
-        this.attrIndent = "  ";
-        this.childIndent = "    ";
-    }
+    PlanSink child(CharSequence outer, Plannable inner);
 
-    public void reset() {
-        this.sink.clear();
-        this.depth = 0;
-        this.attrIndent = "  ";
-        this.childIndent = "    ";
-    }
+    PlanSink child(Plannable p, int order);
 
-    public PlanSink type(CharSequence type) {
-        sink.put(type);
-        return this;
-    }
+    PlanSink child(Plannable p);
 
-    public PlanSink meta(CharSequence name) {
-        sink.put(" ");
-        sink.put(name).put('=');
-        return this;
-    }
+    void clear();
 
-    public PlanSink attr(CharSequence name) {
-        newLine();
-        sink.put(attrIndent);
-        sink.put(name).put('=');
-        return this;
-    }
+    void end();
 
-    public PlanSink val(char c) {
-        sink.put(c);
-        return this;
-    }
+    SqlExecutionContext getExecutionContext();
 
-    public PlanSink val(int i) {
-        sink.put(i);
-        return this;
-    }
+    CharSequence getLine(int idx);
 
-    public PlanSink val(long l) {
-        sink.put(l);
-        return this;
-    }
+    int getLineCount();
 
-    public PlanSink val(float f) {
-        sink.put(f);
-        return this;
-    }
+    int getOrder();
 
-    public PlanSink val(double d) {
-        sink.put(d);
-        return this;
-    }
+    @TestOnly
+    StringSink getSink();
 
-    public PlanSink val(boolean b) {
-        sink.put(b);
-        return this;
-    }
+    PlanSink meta(CharSequence name);
 
-    public PlanSink val(CharSequence cs) {
-        sink.put(cs);
-        return this;
-    }
+    void of(RecordCursorFactory factory, SqlExecutionContext executionContext);
 
-    public PlanSink val(Sinkable s) {
-        if (s != null) {
-            sink.put(s);
-        }
-        return this;
-    }
+    PlanSink optAttr(CharSequence name, Sinkable value);
 
-    public PlanSink child(Plannable p) {
-        depth++;
-        newLine();
-        p.toPlan(this);
-        depth--;
+    PlanSink optAttr(CharSequence name, Plannable value);
 
-        return this;
-    }
+    PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata);
 
-    private void newLine() {
-        sink.put("\n");
-        for (int i = 0; i < depth; i++) {
-            sink.put(childIndent);
-        }
-    }
+    PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value);
 
-    public CharSequence getText() {
-        return sink;
-    }
+    PlanSink putBaseColumnName(int columnIdx);
+
+    PlanSink putBaseColumnNameNoRemap(int columnIdx);
+
+    PlanSink putColumnName(int columnIdx);
+
+    PlanSink type(CharSequence type);
+
+    PlanSink val(ObjList<?> list);
+
+    PlanSink val(ObjList<?> list, int from);
+
+    PlanSink val(ObjList<?> list, int from, int to);
+
+    PlanSink val(char c);
+
+    PlanSink val(int i);
+
+    PlanSink val(long l);
+
+    PlanSink val(float f);
+
+    PlanSink val(double d);
+
+    PlanSink val(boolean b);
+
+    PlanSink val(CharSequence cs);
+
+    PlanSink val(Sinkable s);
+
+    PlanSink val(Plannable s);
+
+    PlanSink val(long long0, long long1, long long2, long long3);
+
+    PlanSink val(long hash, int geoHashBits);
+
+    PlanSink valUuid(long lo, long hi);
+
 }

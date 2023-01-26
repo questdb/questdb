@@ -31,7 +31,6 @@ import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -41,30 +40,18 @@ import java.util.function.Consumer;
 
 public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
-    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration();
     protected static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
+    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration();
     protected static final int PORT = RCVR_CONF.getPort();
 
-    protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
-        AbstractLineProtoUdpReceiver lpr;
-        if (Os.type == Os.LINUX_AMD64) {
-            lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
-        } else {
-            lpr = new LineUdpReceiver(RCVR_CONF, engine, null);
-        }
-        return lpr;
-    }
-
-    protected static AbstractLineSender createLineProtoSender() {
-        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 80, 1);
-    }
-
     protected static void assertReader(String tableName, String expected) {
+        refreshTablesInBaseEngine();
         assertReader(tableName, expected, (String[]) null);
     }
 
     protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
-        try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
+        refreshTablesInBaseEngine();
+        try (TableReader reader = newTableReader(new DefaultTestCairoConfiguration(root), tableName)) {
             TestUtils.assertReader(expected, reader, sink);
             if (expectedExtraStringColumns != null) {
                 TableReaderMetadata meta = reader.getMetadata();
@@ -86,14 +73,15 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
+                    if (event == PoolListener.EV_RETURN && name.getTableName().equals(tableName)
+                            && name.equals(engine.getTableToken(tableName))) {
                         waitForData.countDown();
                     }
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
                         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
+                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
                         }
                     }
                     receiver.start();
@@ -112,5 +100,19 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 assertReader(tableName, expected, expectedExtraStringColumns);
             }
         });
+    }
+
+    protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
+        AbstractLineProtoUdpReceiver lpr;
+        if (Os.type == Os.LINUX_AMD64) {
+            lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
+        } else {
+            lpr = new LineUdpReceiver(RCVR_CONF, engine, null);
+        }
+        return lpr;
+    }
+
+    protected static AbstractLineSender createLineProtoSender() {
+        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 80, 1);
     }
 }

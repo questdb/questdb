@@ -37,6 +37,12 @@ public class TextLexerWrapper implements QuietCloseable {
         this.csvLexer = new CsvTextLexer(configuration);
     }
 
+    @Override
+    public void close() {
+        Misc.free(csvLexer);
+        genericTextLexer = Misc.free(genericTextLexer);
+    }
+
     public AbstractTextLexer getLexer(byte delimiter) {
         if (delimiter == ',') {
             csvLexer.clear();
@@ -49,11 +55,5 @@ public class TextLexerWrapper implements QuietCloseable {
             this.genericTextLexer.of(delimiter);
             return this.genericTextLexer;
         }
-    }
-
-    @Override
-    public void close() {
-        Misc.free(csvLexer);
-        genericTextLexer = Misc.free(genericTextLexer);
     }
 }

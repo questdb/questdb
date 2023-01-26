@@ -27,37 +27,15 @@ package io.questdb.cutlass.text;
 import io.questdb.std.Mutable;
 
 public class TextImportRequestTask implements Mutable {
-    private long importId;
-    private String tableName;
+    private int atomicity;
+    private byte delimiter;
     private String fileName;
     private boolean headerFlag;
-    private String timestampColumnName;
-    private byte delimiter;
-    private String timestampFormat;
+    private long importId;
     private int partitionBy;
-    private int atomicity;
-
-    public void of(long importId,
-                   String tableName,
-                   String fileName,
-                   boolean headerFlag,
-                   String timestampColumnName,
-                   byte delimiter,
-                   String timestampFormat,
-                   int partitionBy,
-                   int atomicity
-    ) {
-        this.clear();
-        this.importId = importId;
-        this.tableName = tableName;
-        this.fileName = fileName;
-        this.headerFlag = headerFlag;
-        this.timestampColumnName = timestampColumnName;
-        this.delimiter = delimiter;
-        this.timestampFormat = timestampFormat;
-        this.partitionBy = partitionBy;
-        this.atomicity = atomicity;
-    }
+    private String tableName;
+    private String timestampColumnName;
+    private String timestampFormat;
 
     @Override
     public void clear() {
@@ -72,8 +50,8 @@ public class TextImportRequestTask implements Mutable {
         this.atomicity = -1;
     }
 
-    public long getImportId() {
-        return importId;
+    public int getAtomicity() {
+        return atomicity;
     }
 
     public byte getDelimiter() {
@@ -82,6 +60,10 @@ public class TextImportRequestTask implements Mutable {
 
     public String getFileName() {
         return fileName;
+    }
+
+    public long getImportId() {
+        return importId;
     }
 
     public int getPartitionBy() {
@@ -104,7 +86,26 @@ public class TextImportRequestTask implements Mutable {
         return headerFlag;
     }
 
-    public int getAtomicity() {
-        return atomicity;
+    public void of(
+            long importId,
+            String tableName,
+            String fileName,
+            boolean headerFlag,
+            String timestampColumnName,
+            byte delimiter,
+            String timestampFormat,
+            int partitionBy,
+            int atomicity
+    ) {
+        this.clear();
+        this.importId = importId;
+        this.tableName = tableName;
+        this.fileName = fileName;
+        this.headerFlag = headerFlag;
+        this.timestampColumnName = timestampColumnName;
+        this.delimiter = delimiter;
+        this.timestampFormat = timestampFormat;
+        this.partitionBy = partitionBy;
+        this.atomicity = atomicity;
     }
 }

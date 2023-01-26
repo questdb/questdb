@@ -24,16 +24,21 @@
 
 package io.questdb.cairo;
 
-import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
-import io.questdb.TelemetryConfiguration;
+import io.questdb.QuestDBNode;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.wal.*;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -41,104 +46,143 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
+import org.junit.runner.Description;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
-public class AbstractCairoTest {
+public abstract class AbstractCairoTest {
 
-    protected static final PlanSink planSink = new PlanSink();
-    protected static final StringSink sink = new StringSink();
-    protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
+
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
-    private static final MicrosecondClock defaultMicrosecondClock = new X();
+    protected static final PlanSink planSink = new TextPlanSink();
+    protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
+    protected static final StringSink sink = new StringSink();
+    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
+    public static long dataAppendPageSize = -1;
+    public static int recreateDistressedSequencerAttempts = 3;
+    public static long spinLockTimeout = -1;
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+    public static int walTxnNotificationQueueCapacity = -1;
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
-    protected static CharSequence root;
-    protected static CairoConfiguration configuration;
-    protected static MessageBus messageBus;
-    protected static long currentMicros = -1;
-    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
-    protected static CairoEngine engine;
-    protected static DatabaseSnapshotAgent snapshotAgent;
-    protected static String inputRoot = null;
-    protected static String inputWorkRoot = null;
-    protected static int sqlCopyBufferSize = 1024 * 1024;
-    protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
-    protected static FilesFacade ff;
+    protected static String attachableDirSuffix = null;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
-    protected static long configOverrideCommitLagMicros = -1;
-    protected static int configOverrideMaxUncommittedRows = -1;
-    protected static Metrics metrics;
-    protected static int capacity = -1;
-    protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
-    protected static CharSequence defaultMapType;
-    protected static int pageFrameMaxRows = -1;
-    protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
-    protected static int rndFunctionMemoryPageSize = -1;
-    protected static int rndFunctionMemoryMaxPages = -1;
-    protected static String snapshotInstanceId = null;
-    protected static Boolean snapshotRecoveryEnabled = null;
-    protected static Boolean enableParallelFilter = null;
-    protected static Boolean enableColumnPreTouch = null;
-    protected static int queryCacheEventQueueCapacity = -1;
-    protected static int pageFrameReduceShardCount = -1;
-    protected static int pageFrameReduceQueueCapacity = -1;
-    protected static int columnVersionTaskPoolCapacity = -1;
-    protected static RostiAllocFacade rostiAllocFacade = null;
-    protected static int parallelImportStatusLogKeepNDays = -1;
-    protected static Boolean ioURingEnabled = null;
-
-    @Rule
-    public TestName testName = new TestName();
-    public static long spinLockTimeout = -1;
-    protected static boolean hideTelemetryTable = false;
-    protected static int writerCommandQueueCapacity = 4;
-    protected static long writerCommandQueueSlotSize = 2048L;
-    protected static double columnPurgeRetryDelayMultiplier = -1;
+    protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
-    protected static int defaultTableWriteMode = -1;
-    protected static Boolean copyPartitionOnAttach = null;
-    protected static String attachableDirSuffix = null;
-
-    private static TelemetryConfiguration telemetryConfiguration;
-
+    protected static CairoConfiguration configuration;
+    protected static long currentMicros = -1;
+    protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
+    protected static CairoEngine engine;
+    protected static FilesFacade ff;
+    protected static String inputRoot = null;
+    protected static String inputWorkRoot = null;
+    protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
+    protected static MessageBus messageBus;
+    protected static Metrics metrics;
+    protected static QuestDBNode node1;
+    protected static ObjList<QuestDBNode> nodes = new ObjList<>();
+    protected static int pageFrameMaxRows = -1;
+    protected static int pageFrameReduceQueueCapacity = -1;
+    protected static int pageFrameReduceShardCount = -1;
+    protected static int queryCacheEventQueueCapacity = -1;
+    protected static CharSequence root;
+    protected static DatabaseSnapshotAgent snapshotAgent;
+    protected static String snapshotInstanceId = null;
+    protected static Boolean snapshotRecoveryEnabled = null;
+    protected static int sqlCopyBufferSize = 1024 * 1024;
+    protected static int writerCommandQueueCapacity = 4;
+    protected static long writerCommandQueueSlotSize = 2048L;
+    static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    private static long memoryUsage = -1;
+    @Rule
+    public final TestWatcher flushLogsOnFailure = new TestWatcher() {
+        @Override
+        protected void failed(Throwable e, Description description) {
+            LogFactory.getInstance().flushJobs();
+        }
+    };
+    @Rule
+    public TestName testName = new TestName();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
 
-    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
-    private static long memoryUsage = -1;
+    public static void configOverrideMangleTableDirNames(boolean mangle) {
+        node1.getConfigurationOverrides().setMangleTableDirNames(mangle);
+    }
 
-    static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    //ignores:
+    // o3, mmap - because they're usually linked with table readers that are kept in pool
+    // join map memory - because it's usually a small and can't really be released until factory is closed
+    // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
+    public static long getMemUsedByFactories() {
+        long memUsed = 0;
 
-    static {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-            FACTORY_TAGS[i] = !Chars.startsWith(MemoryTag.nameOf(i), "MMAP");
+            if (FACTORY_TAGS[i]) {
+                memUsed += Unsafe.getMemUsedByTag(i);
+            }
         }
 
-        FACTORY_TAGS[MemoryTag.NATIVE_O3] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_JOIN_MAP] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
-        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
+        return memUsed;
+    }
+
+    public static void printFactoryMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (!FACTORY_TAGS[i]) {
+                continue;
+            }
+
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.out.println(MemoryTag.nameOf(i) + ":" + value);
+            }
+        }
+    }
+
+    @SuppressWarnings("unused")
+    public static void printMemoryUsage() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            System.err.print(MemoryTag.nameOf(i));
+            System.err.print(":");
+            System.err.println(Unsafe.getMemUsedByTag(i));
+        }
+    }
+
+    @SuppressWarnings("unused")
+    public static void printMemoryUsageDiff() {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
+
+            if (value != 0L) {
+                System.err.print(MemoryTag.nameOf(i));
+                System.err.print(":");
+                System.err.println(value);
+            }
+        }
+    }
+
+    public static void refreshTablesInBaseEngine() {
+        engine.reloadTableNames();
     }
 
     @BeforeClass
@@ -148,261 +192,28 @@ public class AbstractCairoTest {
         // which causes memory leak detector to fail should logger be
         // created mid-test
         LOG.info().$("begin").$();
-        try {
-            root = temp.newFolder("dbRoot").getAbsolutePath();
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
+
+        node1 = newNode(1, "dbRoot", new StaticOverrides());
+        root = node1.getRoot();
+        configuration = node1.getConfiguration();
+        metrics = node1.getMetrics();
+        engine = node1.getEngine();
+        snapshotAgent = node1.getSnapshotAgent();
+        messageBus = node1.getMessageBus();
+    }
+
+    public static void snapshotMemoryUsage() {
+        memoryUsage = getMemUsedByFactories();
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
         }
-
-        telemetryConfiguration = new DefaultTelemetryConfiguration() {
-            @Override
-            public boolean hideTables() {
-                return hideTelemetryTable;
-            }
-        };
-
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public DateFormat getBackupDirTimestampFormat() {
-                if (backupDirTimestampFormat != null) {
-                    return backupDirTimestampFormat;
-                }
-                return super.getBackupDirTimestampFormat();
-            }
-
-            @Override
-            public CharSequence getBackupRoot() {
-                if (backupDir != null) {
-                    return backupDir;
-                }
-                return super.getBackupRoot();
-            }
-
-            @Override
-            public int getBinaryEncodingMaxLength() {
-                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
-            }
-
-            @Override
-            public double getColumnPurgeRetryDelayMultiplier() {
-                return columnPurgeRetryDelayMultiplier > 0 ? columnPurgeRetryDelayMultiplier : 2.0;
-            }
-
-            @Override
-            public long getColumnPurgeRetryDelay() {
-                return columnPurgeRetryDelay > 0 ? columnPurgeRetryDelay : 10;
-            }
-
-            @Override
-            public CharSequence getSnapshotInstanceId() {
-                if (snapshotInstanceId == null) {
-                    return super.getSnapshotInstanceId();
-                }
-                return snapshotInstanceId;
-            }
-
-            @Override
-            public boolean isSnapshotRecoveryEnabled() {
-                return snapshotRecoveryEnabled == null ? super.isSnapshotRecoveryEnabled() : snapshotRecoveryEnabled;
-            }
-
-            @Override
-            public int getCopyPoolCapacity() {
-                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
-            }
-
-            @Override
-            public CharSequence getDefaultMapType() {
-                if (defaultMapType == null) {
-                    return super.getDefaultMapType();
-                }
-                return defaultMapType;
-            }
-
-            @Override
-            public FilesFacade getFilesFacade() {
-                if (ff != null) {
-                    return ff;
-                }
-                return super.getFilesFacade();
-            }
-
-            @Override
-            public CharSequence getSqlCopyInputRoot() {
-                return inputRoot;
-            }
-
-            @Override
-            public CharSequence getSqlCopyInputWorkRoot() {
-                return inputWorkRoot;
-            }
-
-            @Override
-            public long getCommitLag() {
-                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
-            }
-
-            @Override
-            public long getSpinLockTimeout() {
-                if (spinLockTimeout > -1) {
-                    return spinLockTimeout;
-                }
-                return 5_000;
-            }
-
-            @Override
-            public int getMaxUncommittedRows() {
-                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
-                return super.getMaxUncommittedRows();
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return testMicrosClock;
-            }
-
-            @Override
-            public MillisecondClock getMillisecondClock() {
-                return () -> testMicrosClock.getTicks() / 1000L;
-            }
-
-            @Override
-            public int getPartitionPurgeListCapacity() {
-                // Bump it to high number so that test doesn't fail with memory leak if LongList
-                // re-allocates
-                return 512;
-            }
-
-            @Override
-            public int getSampleByIndexSearchPageSize() {
-                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
-            }
-
-            @Override
-            public int getRndFunctionMemoryPageSize() {
-                return rndFunctionMemoryPageSize < 0 ? super.getRndFunctionMemoryPageSize() : rndFunctionMemoryPageSize;
-            }
-
-            @Override
-            public int getRndFunctionMemoryMaxPages() {
-                return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
-            }
-
-            @Override
-            public int getSqlJitMode() {
-                return jitMode;
-            }
-
-            @Override
-            public int getSqlPageFrameMaxRows() {
-                return pageFrameMaxRows < 0 ? super.getSqlPageFrameMaxRows() : pageFrameMaxRows;
-            }
-
-            @Override
-            public TelemetryConfiguration getTelemetryConfiguration() {
-                return telemetryConfiguration;
-            }
-
-            @Override
-            public long getWriterAsyncCommandBusyWaitTimeout() {
-                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
-            }
-
-            @Override
-            public long getWriterAsyncCommandMaxTimeout() {
-                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
-            }
-
-            @Override
-            public int getWriterCommandQueueCapacity() {
-                return writerCommandQueueCapacity;
-            }
-
-            @Override
-            public long getWriterCommandQueueSlotSize() {
-                return writerCommandQueueSlotSize;
-            }
-
-            @Override
-            public int getQueryCacheEventQueueCapacity() {
-                return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
-            }
-
-            @Override
-            public int getPageFrameReduceShardCount() {
-                return pageFrameReduceShardCount < 0 ? super.getPageFrameReduceShardCount() : pageFrameReduceShardCount;
-            }
-
-            @Override
-            public int getPageFrameReduceQueueCapacity() {
-                return pageFrameReduceQueueCapacity < 0 ? super.getPageFrameReduceQueueCapacity() : pageFrameReduceQueueCapacity;
-            }
-
-            @Override
-            public int getColumnPurgeQueueCapacity() {
-                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
-            }
-
-            @Override
-            public boolean isSqlParallelFilterEnabled() {
-                return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
-            }
-
-            @Override
-            public boolean isSqlParallelFilterPreTouchEnabled() {
-                return enableColumnPreTouch != null ? enableColumnPreTouch : super.isSqlParallelFilterPreTouchEnabled();
-            }
-
-            @Override
-            public int getColumnPurgeTaskPoolCapacity() {
-                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
-            }
-
-            @Override
-            public int getSqlCopyLogRetentionDays() {
-                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
-            }
-
-            @Override
-            public RostiAllocFacade getRostiAllocFacade() {
-                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
-            }
-
-            @Override
-            public boolean getWallEnabledDefault() {
-                return defaultTableWriteMode < 0 ? super.getWallEnabledDefault() : defaultTableWriteMode == 1;
-            }
-
-            @Override
-            public boolean isIOURingEnabled() {
-                return ioURingEnabled != null ? ioURingEnabled : super.isIOURingEnabled();
-            }
-
-            @Override
-            public int getSqlCopyBufferSize() {
-                return sqlCopyBufferSize;
-            }
-
-            @Override
-            public boolean attachPartitionCopy() {
-                return copyPartitionOnAttach == null ? super.attachPartitionCopy() : copyPartitionOnAttach;
-            }
-
-            @Override
-            public String getAttachPartitionSuffix() {
-                return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
-            }
-        };
-        metrics = Metrics.enabled();
-        engine = new CairoEngine(configuration, metrics);
-        snapshotAgent = new DatabaseSnapshotAgent(engine);
-        messageBus = engine.getMessageBus();
     }
 
     @AfterClass
     public static void tearDownStatic() {
-        snapshotAgent = Misc.free(snapshotAgent);
-        engine = Misc.free(engine);
+        forEachNode(QuestDBNode::closeCairo);
+        nodes.clear();
         backupDir = null;
         backupDirTimestampFormat = null;
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
@@ -412,10 +223,11 @@ public class AbstractCairoTest {
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        TestUtils.createTestPath(root);
-        engine.getTableIdGenerator().open();
-        engine.getTableIdGenerator().reset();
+        forEachNode(QuestDBNode::setUpCairo);
+        engine.resetNameRegistryMemory();
+        refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
+        TestFilesFacadeImpl.resetTracking();
         memoryUsage = -1;
     }
 
@@ -426,53 +238,29 @@ public class AbstractCairoTest {
 
     public void tearDown(boolean removeDir) {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        snapshotAgent.clear();
-        engine.getTableIdGenerator().close();
-        engine.clear();
-        if (removeDir) {
-            TestUtils.removeTestPath(root);
-        }
-        configOverrideMaxUncommittedRows = -1;
-        configOverrideCommitLagMicros = -1;
-        currentMicros = -1;
-        testMicrosClock = defaultMicrosecondClock;
-        sampleByIndexSearchPageSize = -1;
-        defaultMapType = null;
-        writerAsyncCommandBusyWaitTimeout = -1;
-        writerAsyncCommandMaxTimeout = -1;
-        pageFrameMaxRows = -1;
-        jitMode = SqlJitMode.JIT_MODE_ENABLED;
-        rndFunctionMemoryPageSize = -1;
-        rndFunctionMemoryMaxPages = -1;
-        spinLockTimeout = -1;
-        snapshotInstanceId = null;
-        snapshotRecoveryEnabled = null;
-        enableParallelFilter = null;
-        enableColumnPreTouch = null;
-        hideTelemetryTable = false;
-        writerCommandQueueCapacity = 4;
-        queryCacheEventQueueCapacity = -1;
-        pageFrameReduceShardCount = -1;
-        pageFrameReduceQueueCapacity = -1;
-        columnPurgeRetryDelayMultiplier = -1;
-        columnVersionPurgeQueueCapacity = -1;
-        columnVersionTaskPoolCapacity = -1;
-        rostiAllocFacade = null;
-        sqlCopyBufferSize = 1024 * 1024;
+        forEachNode(node -> node.tearDownCairo(removeDir));
+
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
-        ioURingEnabled = null;
-        parallelImportStatusLogKeepNDays = -1;
-        defaultTableWriteMode = -1;
-        copyPartitionOnAttach = null;
-        attachableDirSuffix = null;
         sink.clear();
-        ff = null;
         memoryUsage = -1;
     }
 
-    protected static void configureForBackups() throws IOException {
-        backupDir = temp.newFolder().getAbsolutePath();
-        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
+    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
+        addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
+        writer.apply(addColumnC.build(), true);
+    }
+
+    protected static void assertFactoryMemoryUsage() {
+        if (memoryUsage > -1) {
+            long memAfterCursorClose = getMemUsedByFactories();
+            long limit = memoryUsage + 50 * 1024;
+            if (memAfterCursorClose > limit) {
+                dumpMemoryUsage();
+                printFactoryMemoryUsageDiff();
+                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+            }
+        }
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
@@ -486,14 +274,254 @@ public class AbstractCairoTest {
             AbstractCairoTest.ff = ff2;
             try {
                 code.run();
-                engine.releaseInactive();
-                Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
-                Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+                forEachNode(node -> releaseInactive(node.getEngine()));
             } finally {
-                engine.clear();
+                forEachNode(node -> node.getEngine().clear());
                 AbstractCairoTest.ff = ffBefore;
             }
         });
+    }
+
+    protected static void configOverrideColumnPreTouchEnabled(Boolean columnPreTouchEnabled) {
+        node1.getConfigurationOverrides().setColumnPreTouchEnabled(columnPreTouchEnabled);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideColumnVersionTaskPoolCapacity(int columnVersionTaskPoolCapacity) {
+        node1.getConfigurationOverrides().setColumnVersionTaskPoolCapacity(columnVersionTaskPoolCapacity);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideCopyPartitionOnAttach(Boolean copyPartitionOnAttach) {
+        node1.getConfigurationOverrides().setCopyPartitionOnAttach(copyPartitionOnAttach);
+    }
+
+    protected static void configOverrideDefaultMapType(CharSequence defaultMapType) {
+        node1.getConfigurationOverrides().setDefaultMapType(defaultMapType);
+    }
+
+    protected static void configOverrideDefaultTableWriteMode(int defaultTableWriteMode) {
+        node1.getConfigurationOverrides().setDefaultTableWriteMode(defaultTableWriteMode);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideHideTelemetryTable(boolean hideTelemetryTable) {
+        node1.getConfigurationOverrides().setHideTelemetryTable(hideTelemetryTable);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideIoURingEnabled(Boolean ioURingEnabled) {
+        node1.getConfigurationOverrides().setIoURingEnabled(ioURingEnabled);
+    }
+
+    protected static void configOverrideJitMode(int jitMode) {
+        node1.getConfigurationOverrides().setJitMode(jitMode);
+    }
+
+    protected static void configOverrideMaxUncommittedRows(int maxUncommittedRows) {
+        node1.getConfigurationOverrides().setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    protected static void configOverrideO3ColumnMemorySize(int size) {
+        node1.getConfigurationOverrides().setO3ColumnMemorySize(size);
+    }
+
+    protected static void configOverrideO3MaxLag(int o3MaxLag) {
+        node1.getConfigurationOverrides().setO3MaxLag(o3MaxLag);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideO3QuickSortEnabled(boolean o3QuickSortEnabled) {
+        node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
+    }
+
+    protected static void configOverrideParallelFilterEnabled(Boolean parallelFilterEnabled) {
+        node1.getConfigurationOverrides().setParallelFilterEnabled(parallelFilterEnabled);
+    }
+
+    protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {
+        node1.getConfigurationOverrides().setParallelImportStatusLogKeepNDays(parallelImportStatusLogKeepNDays);
+    }
+
+    protected static void configOverrideRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages) {
+        node1.getConfigurationOverrides().setRndFunctionMemoryMaxPages(rndFunctionMemoryMaxPages);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideRndFunctionMemoryPageSize(int rndFunctionMemoryPageSize) {
+        node1.getConfigurationOverrides().setRndFunctionMemoryPageSize(rndFunctionMemoryPageSize);
+    }
+
+    protected static void configOverrideRostiAllocFacade(RostiAllocFacade rostiAllocFacade) {
+        node1.getConfigurationOverrides().setRostiAllocFacade(rostiAllocFacade);
+    }
+
+    protected static void configOverrideSampleByIndexSearchPageSize(int sampleByIndexSearchPageSize) {
+        node1.getConfigurationOverrides().setSampleByIndexSearchPageSize(sampleByIndexSearchPageSize);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideSqlJoinMetadataMaxResizes(int sqlJoinMetadataMaxResizes) {
+        node1.getConfigurationOverrides().setSqlJoinMetadataMaxResizes(sqlJoinMetadataMaxResizes);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize) {
+        node1.getConfigurationOverrides().setSqlJoinMetadataPageSize(sqlJoinMetadataPageSize);
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    protected static void configOverrideWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
+        node1.getConfigurationOverrides().setWalSegmentRolloverRowCount(walSegmentRolloverRowCount);
+    }
+
+    protected static void configureForBackups() throws IOException {
+        backupDir = temp.newFolder().getAbsolutePath();
+        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
+    }
+
+    protected static ApplyWal2TableJob createWalApplyJob(QuestDBNode node) {
+        return new ApplyWal2TableJob(node.getEngine(), 1, 1, null);
+    }
+
+    protected static ApplyWal2TableJob createWalApplyJob() {
+        return new ApplyWal2TableJob(engine, 1, 1, null);
+    }
+
+    protected static void drainWalQueue(QuestDBNode node) {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob(node)) {
+            drainWalQueue(walApplyJob, node.getEngine());
+        }
+    }
+
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
+        drainWalQueue(walApplyJob, engine);
+    }
+
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
+        walApplyJob.drain(0);
+        new CheckWalTransactionsJob(engine).run(0);
+        // run once again as there might be notifications to handle now
+        walApplyJob.drain(0);
+    }
+
+    protected static void drainWalQueue() {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            drainWalQueue(walApplyJob);
+        }
+    }
+
+    protected static void dumpMemoryUsage() {
+        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+            LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
+        }
+    }
+
+    protected static void forEachNode(QuestDBNodeTask task) {
+        for (int i = 0; i < nodes.size(); i++) {
+            task.run(nodes.get(i));
+        }
+    }
+
+    protected static TableReader getReader(CairoEngine engine, CharSequence tableName) {
+        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableReader getReader(CharSequence tableName) {
+        return engine.getReader(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriterAPI getTableWriterAPI(CharSequence tableName) {
+        return engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "test");
+    }
+
+    @NotNull
+    protected static WalWriter getWalWriter(CharSequence tableName) {
+        return engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriter getWriter(CharSequence tableName) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+    }
+
+    protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, engine.getTableToken(tableName), "testing");
+    }
+
+    protected static TableWriter getWriter(TableToken tt) {
+        return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt, "testing");
+    }
+
+    protected static QuestDBNode newNode(int nodeId) {
+        return newNode(nodeId, "dbRoot" + nodeId, new Overrides());
+    }
+
+    protected static QuestDBNode newNode(int nodeId, String dbRoot, ConfigurationOverrides overrides) {
+        final QuestDBNode node = new QuestDBNode(nodeId);
+        node.initCairo(dbRoot, overrides);
+        nodes.add(node);
+        return node;
+    }
+
+    protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
+        return new TableReader(configuration, engine.getTableToken(tableName));
+    }
+
+    protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        return new TableWriter(configuration, engine.getTableToken(tableName), metrics);
+    }
+
+    protected static void releaseInactive(CairoEngine engine) {
+        engine.releaseInactive();
+        engine.releaseInactiveTableSequencers();
+        engine.resetNameRegistryMemory();
+        Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
+        Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+    }
+
+    protected static void replicate(String tableName, String wal, QuestDBNode srcNode, QuestDBNode dstNode) {
+        TableToken srcTableToken = srcNode.getEngine().getTableToken(tableName);
+        TableToken dstTableToken = dstNode.getEngine().getTableToken(tableName);
+
+        dstNode.getEngine().getTableSequencerAPI().closeSequencer(dstTableToken);
+        dstNode.getEngine().getTableSequencerAPI().releaseInactive();
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int mkdirMode = configuration.getMkDirMode();
+
+        final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal).$();
+        final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal).$();
+        if (ff.exists(dstWal)) {
+            Assert.assertEquals(0, ff.rmdir(dstWal));
+        }
+        Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
+        Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
+
+        final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR).$();
+        final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR).$();
+        Assert.assertEquals(0, ff.rmdir(dstTxnLog));
+        Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
+
+        dstNode.getEngine().getTableSequencerAPI().openSequencer(srcTableToken);
+    }
+
+    protected static void replicateAndApplyToAllNodes(String tableName, String walName) {
+        for (int i = 1, n = nodes.size(); i < n; i++) {
+            final QuestDBNode node = nodes.get(i);
+            replicate(tableName, walName, node1, node);
+            drainWalQueue(node);
+        }
+    }
+
+    protected static void runWalPurgeJob(FilesFacade ff) {
+        try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+            job.drain(0);
+        }
+    }
+
+    protected static void runWalPurgeJob() {
+        runWalPurgeJob(engine.getConfiguration().getFilesFacade());
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
@@ -506,98 +534,52 @@ public class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
     }
 
-    private static class X implements MicrosecondClock {
-        @Override
-        public long getTicks() {
-            return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-        }
+    protected boolean isWalTable(CharSequence tableName) {
+        return engine.isWalTable(engine.getTableToken(tableName));
     }
 
-    protected static void assertFactoryMemoryUsage() {
-        if (memoryUsage > -1) {
-            long memAfterCursorClose = getMemUsedByFactories();
-            long limit = memoryUsage + 50 * 1024;
-            if (memAfterCursorClose > limit) {
-                printFactoryMemoryUsageDiff();
-                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
-            }
-        }
+    protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
+        return new TableWriter(configuration, engine.getTableToken(tableName), messageBus, metrics);
     }
 
-    @TestOnly
-    public static void printMemoryUsage() {
+    protected TableToken registerTableName(CharSequence tableName) {
+        TableToken token = engine.lockTableName(tableName, false);
+        if (token != null) {
+            engine.registerTableToken(token);
+        }
+        return token;
+    }
+
+    protected enum StringAsTagMode {
+        WITH_STRINGS_AS_TAG, NO_STRINGS_AS_TAG
+    }
+
+    protected enum SymbolAsFieldMode {
+        WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
+    }
+
+    protected enum WalMode {
+        WITH_WAL, NO_WAL
+    }
+
+    @FunctionalInterface
+    protected interface QuestDBNodeTask {
+        void run(QuestDBNode node);
+    }
+
+    static {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-            System.err.print(MemoryTag.nameOf(i));
-            System.err.print(":");
-            System.err.println(Unsafe.getMemUsedByTag(i));
-        }
-    }
-
-    @TestOnly
-    public static void snapshotMemoryUsage() {
-        memoryUsage = getMemUsedByFactories();
-
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
-        }
-    }
-
-    @TestOnly
-    public static void printMemoryUsageDiff() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
-
-            if (value != 0L) {
-                System.err.print(MemoryTag.nameOf(i));
-                System.err.print(":");
-                System.err.println(value);
-            }
-        }
-    }
-
-    @TestOnly
-    public static void printFactoryMemoryUsageDiff() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (!FACTORY_TAGS[i]) {
-                continue;
-            }
-
-            long value = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
-
-            if (value != 0L) {
-                System.err.print(MemoryTag.nameOf(i));
-                System.err.print(":");
-                System.err.println(value);
-            }
-        }
-    }
-
-    //ignores:
-    // o3, mmap - because they're usually linked with table readers that are kept in pool 
-    // join map memory - because it's usually a small and can't really be released until factory is closed
-    // native sample by long list - because it doesn't seem to grow beyond initial size (10kb)
-    @TestOnly
-    public static long getMemUsedByFactories() {
-        long tags = 0;
-
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (!FACTORY_TAGS[i]) {
-                tags = tags | 1L << i;
-            }
+            FACTORY_TAGS[i] = !Chars.startsWith(MemoryTag.nameOf(i), "MMAP");
         }
 
-        return getMemUsedExcept(tags);
-    }
-
-    @TestOnly
-    public static long getMemUsedExcept(long tagsToIgnore) {
-        long memUsed = 0;
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if ((tagsToIgnore & 1L << i) == 0) {
-                memUsed += Unsafe.getMemUsedByTag(i);
-            }
-        }
-
-        return memUsed;
+        FACTORY_TAGS[MemoryTag.NATIVE_O3] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_JOIN_MAP] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_OFFLOAD] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_READER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_TABLE_WRITER] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_IMPORT] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_PARALLEL_IMPORT] = false;
+        FACTORY_TAGS[MemoryTag.NATIVE_REPL] = false;
     }
 }

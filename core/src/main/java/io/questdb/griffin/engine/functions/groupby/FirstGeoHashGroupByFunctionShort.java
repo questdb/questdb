@@ -59,22 +59,6 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
-    }
-
-    @Override
-    public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(this.valueIndex, value);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setShort(mapValue, GeoHashes.SHORT_NULL);
-    }
-
-    @Override
     public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -85,12 +69,33 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public short getGeoShort(Record rec) {
         return rec.getGeoShort(this.valueIndex);
     }
 
     @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
+    public String getName() {
+        return "first";
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.SHORT);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        setShort(mapValue, GeoHashes.SHORT_NULL);
+    }
+
+    @Override
+    public void setShort(MapValue mapValue, short value) {
+        mapValue.putShort(this.valueIndex, value);
     }
 }

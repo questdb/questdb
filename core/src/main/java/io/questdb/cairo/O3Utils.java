@@ -49,16 +49,20 @@ public class O3Utils {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
-        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
-
         workerPool.assign(purgeDiscoveryJob);
-        workerPool.assign(columnPurgeJob);
+
+        // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
+        if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
+            final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
+            workerPool.freeOnExit(columnPurgeJob);
+            workerPool.assign(columnPurgeJob);
+        }
+
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnExit(purgeDiscoveryJob);
-        workerPool.freeOnExit(columnPurgeJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
@@ -76,12 +80,28 @@ public class O3Utils {
         }
     }
 
-    static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
-        return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
+    static void close(FilesFacade ff, int fd) {
+        if (fd > 0) {
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+            ff.close(fd);
+        }
+    }
+
+    static void copyFromTimestampIndex(
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
     }
 
     static long findVarOffset(long srcFixAddr, long srcLo) {
         return Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+    }
+
+    static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
+        return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
     }
 
     static void shiftCopyFixedSizeColumnData(
@@ -94,30 +114,14 @@ public class O3Utils {
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi, dstAddr);
     }
 
-    static void copyFromTimestampIndex(
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        Vect.copyFromTimestampIndex(src, srcLo, srcHi, dstAddr);
-    }
-
-    static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
-        unmap(ff, dstFixAddr, dstFixSize);
-        close(ff, dstFixFd);
-    }
-
     static void unmap(FilesFacade ff, long addr, long size) {
         if (addr != 0 && size > 0) {
             ff.munmap(addr, size, MemoryTag.MMAP_O3);
         }
     }
 
-    static void close(FilesFacade ff, long fd) {
-        if (fd > 0) {
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
-            ff.close(fd);
-        }
+    static void unmapAndClose(FilesFacade ff, int dstFixFd, long dstFixAddr, long dstFixSize) {
+        unmap(ff, dstFixAddr, dstFixSize);
+        close(ff, dstFixFd);
     }
 }

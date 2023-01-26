@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -56,13 +58,20 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        prefixes.close();
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestByAllIndexed");
+        sink.child((Plannable) cursor);
+        sink.child(dataFrameCursorFactory);
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        prefixes.close();
     }
 }

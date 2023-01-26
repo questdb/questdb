@@ -25,41 +25,41 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.metrics.Counter;
-import io.questdb.metrics.Gauge;
+import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import org.jetbrains.annotations.TestOnly;
 
 public class JsonQueryMetrics {
 
-    private final Counter startedQueriesCounter;
+    private final LongGauge cachedQueriesGauge;
     private final Counter completedQueriesCounter;
-    private final Gauge cachedQueriesGauge;
+    private final Counter startedQueriesCounter;
 
     public JsonQueryMetrics(MetricsRegistry metricsRegistry) {
         this.startedQueriesCounter = metricsRegistry.newCounter("json_queries");
         this.completedQueriesCounter = metricsRegistry.newCounter("json_queries_completed");
-        this.cachedQueriesGauge = metricsRegistry.newGauge("json_queries_cached");
+        this.cachedQueriesGauge = metricsRegistry.newLongGauge("json_queries_cached");
     }
 
-    public void markStart() {
-        startedQueriesCounter.inc();
+    public LongGauge cachedQueriesGauge() {
+        return cachedQueriesGauge;
+    }
+
+    @TestOnly
+    public long completedQueriesCount() {
+        return completedQueriesCounter.getValue();
     }
 
     public void markComplete() {
         completedQueriesCounter.inc();
     }
 
-    public Gauge cachedQueriesGauge() {
-        return cachedQueriesGauge;
+    public void markStart() {
+        startedQueriesCounter.inc();
     }
 
     @TestOnly
     public long startedQueriesCount() {
         return startedQueriesCounter.getValue();
-    }
-
-    @TestOnly
-    public long completedQueriesCount() {
-        return completedQueriesCounter.getValue();
     }
 }

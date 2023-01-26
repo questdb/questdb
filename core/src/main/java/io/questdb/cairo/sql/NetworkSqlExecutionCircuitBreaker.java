@@ -32,18 +32,18 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import java.io.Closeable;
 
 public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable {
-    private final NetworkFacade nf;
-    private final int throttle;
     private final int bufferSize;
     private final MillisecondClock clock;
-    private final long defaultMaxTime;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
-    private long timeout;
-    private long buffer;
-    private int testCount;
-    private long fd = -1;
-    private long powerUpTime = Long.MAX_VALUE;
+    private final long defaultMaxTime;
     private final int memoryTag;
+    private final NetworkFacade nf;
+    private final int throttle;
+    private long buffer;
+    private int fd = -1;
+    private long powerUpTime = Long.MAX_VALUE;
+    private int testCount;
+    private long timeout;
 
     public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
         this.configuration = configuration;
@@ -51,7 +51,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.bufferSize = configuration.getBufferSize();
         this.memoryTag = memoryTag;
-        this.buffer = Unsafe.malloc(bufferSize, this.memoryTag);
+        this.buffer = Unsafe.malloc(this.bufferSize, this.memoryTag);
         this.clock = configuration.getClock();
         long timeout = configuration.getTimeout();
         if (timeout > 0) {
@@ -65,9 +65,21 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public boolean checkIfTripped() {
+        return checkIfTripped(powerUpTime, fd);
+    }
+
+    @Override
+    public boolean checkIfTripped(long millis, int fd) {
+        if (clock.getTicks() - timeout > millis) {
+            return true;
+        }
+        return testConnection(fd);
+    }
+
+    @Override
     public void close() {
-        Unsafe.free(buffer, bufferSize, this.memoryTag);
-        buffer = 0;
+        buffer = Unsafe.free(buffer, bufferSize, this.memoryTag);
         fd = -1;
     }
 
@@ -77,13 +89,8 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public long getFd() {
+    public int getFd() {
         return fd;
-    }
-
-    @Override
-    public void unsetTimer() {
-        powerUpTime = Long.MAX_VALUE;
     }
 
     @Override
@@ -91,8 +98,25 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return powerUpTime < Long.MAX_VALUE;
     }
 
+    public NetworkSqlExecutionCircuitBreaker of(int fd) {
+        assert buffer != 0;
+        testCount = 0;
+        this.fd = fd;
+        return this;
+    }
+
     public void resetMaxTimeToDefault() {
         this.timeout = defaultMaxTime;
+    }
+
+    @Override
+    public void resetTimer() {
+        powerUpTime = clock.getTicks();
+    }
+
+    @Override
+    public void setFd(int fd) {
+        this.fd = fd;
     }
 
     public void setTimeout(long timeout) {
@@ -118,67 +142,20 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean checkIfTripped() {
-        return checkIfTripped(powerUpTime, fd);
-    }
-
-    @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        if (clock.getTicks() - timeout > millis) {
-            return true;
-        }
-        return testConnection(fd);
-    }
-
-    @Override
-    public void setFd(long fd) {
-        this.fd = fd;
-    }
-
-    @Override
-    public void resetTimer() {
-        powerUpTime = clock.getTicks();
-    }
-
-    public NetworkSqlExecutionCircuitBreaker of(long fd) {
-        assert buffer != 0;
-        testCount = 0;
-        this.fd = fd;
-        return this;
-    }
-
-    protected boolean testConnection(long fd) {
-        assert fd != -1;
-        final int nRead = nf.peek(fd, buffer, bufferSize);
-
-        if (nRead == 0) {
-            return false;
-        }
-
-        if (nRead < 0) {
-            return true;
-        }
-
-        int index = 0;
-        long ptr = buffer;
-        while (index < nRead) {
-            byte b = Unsafe.getUnsafe().getByte(ptr + index);
-            if (b != (byte) '\r' && b != (byte) '\n') {
-                break;
-            }
-            index++;
-        }
-
-        if (index > 0) {
-            nf.recv(fd, buffer, index);
-        }
-
-        return false;
+    public void unsetTimer() {
+        powerUpTime = Long.MAX_VALUE;
     }
 
     private void testTimeout() {
         if (clock.getTicks() - timeout > powerUpTime) {
             throw CairoException.nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
+    }
+
+    protected boolean testConnection(int fd) {
+        if (!configuration.checkConnection()) {
+            return false;
+        }
+        return nf.testConnection(fd, buffer, bufferSize);
     }
 }

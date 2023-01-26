@@ -36,18 +36,18 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
     }
 
     @Override
+    public final void close() {
+        assert !closed;
+        _close();
+        closed = true;
+    }
+
+    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
 
     protected void _close() {
         // nothing to do
-    }
-
-    @Override
-    final public void close() {
-        assert !closed;
-        _close();
-        closed = true;
     }
 }

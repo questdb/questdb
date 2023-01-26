@@ -166,7 +166,7 @@ public class CompactMapTest extends AbstractCairoTest {
             CairoTestUtils.createTestTable(10, new Rnd(), binarySequence);
             SingleColumnType columnTypes = new SingleColumnType();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 try {
                     new CompactMap(1024, reader.getMetadata(), columnTypes.of(ColumnType.LONG), 16, 0.75, 1, Integer.MAX_VALUE);
                     Assert.fail();
@@ -192,7 +192,7 @@ public class CompactMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
             final int N = 1000;
             final Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newTableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
@@ -203,7 +203,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -312,13 +312,13 @@ public class CompactMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader keyReader = newTableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+                entityColumnFilter.of(keyReader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
-                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new SymbolAsStrTypes(keyReader.getMetadata()),
                         new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
@@ -329,19 +329,20 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
                         ,
                         N,
                         0.9,
                         1, Integer.MAX_VALUE)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, keyReader.getMetadata(), entityColumnFilter, true);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
+                    RecordCursor cursor = keyReader.getCursor();
                     populateMap(map, rnd2, cursor, sink);
 
                     try (RecordCursor mapCursor = map.getCursor()) {
@@ -423,7 +424,7 @@ public class CompactMapTest extends AbstractCairoTest {
         // To make hash consistent we will assume that first character of
         // string is always a number and this number will be hash code of string.
         class MockHash implements CompactMap.HashFunction {
-            MemoryR mem;
+            final MemoryR mem;
 
             public MockHash(MemoryR mem) {
                 this.mem = mem;
@@ -529,7 +530,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -546,6 +547,7 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
                                 .add(ColumnType.getGeoHashTypeWithBits(5))
                                 .add(ColumnType.getGeoHashTypeWithBits(10))
                                 .add(ColumnType.getGeoHashTypeWithBits(20))
@@ -581,10 +583,12 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-                        Assert.assertEquals((byte) Math.abs(rnd2.nextByte()), value.getGeoByte(9));
-                        Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(10));
-                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(11));
-                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoLong(12));
+                        Assert.assertEquals(rnd2.nextLong(), value.getLong128Lo(9));
+                        Assert.assertEquals(rnd2.nextLong(), value.getLong128Hi(9));
+                        Assert.assertEquals((byte) Math.abs(rnd2.nextByte()), value.getGeoByte(10));
+                        Assert.assertEquals((short) Math.abs(rnd2.nextShort()), value.getGeoShort(11));
+                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(12));
+                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoLong(13));
                     }
                 }
             }
@@ -603,7 +607,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = newTableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -704,6 +708,8 @@ public class CompactMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9));
+            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -770,6 +776,14 @@ public class CompactMapTest extends AbstractCairoTest {
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
 
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Lo(keyColumnOffset + 12));
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong128Hi(keyColumnOffset + 12));
+            } else {
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(keyColumnOffset + 12));
+            }
+
         }
         Assert.assertEquals(5000, c);
     }
@@ -787,10 +801,10 @@ public class CompactMapTest extends AbstractCairoTest {
         }
     }
 
-    private void populateMap(CompactMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+    private void populateMap(CompactMap map, Rnd rnd2, RecordCursor keyCursor, RecordSink sink) {
         long counter = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
+        final Record record = keyCursor.getRecord();
+        while (keyCursor.hasNext()) {
             MapKey key = map.withKey();
             key.put(record, sink);
             MapValue value = key.createValue();
@@ -804,6 +818,7 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
+            value.putLong128(9, rnd2.nextLong(), rnd2.nextLong());
         }
     }
 
@@ -824,10 +839,11 @@ public class CompactMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
-            value.putByte(9, (byte) Math.abs(rnd2.nextByte()));
-            value.putShort(10, (short) Math.abs(rnd2.nextShort()));
-            value.putInt(11, Math.abs(rnd2.nextInt()));
-            value.putLong(12, Math.abs(rnd2.nextLong()));
+            value.putLong128(9, rnd2.nextLong(), rnd2.nextLong());
+            value.putByte(10, (byte) Math.abs(rnd2.nextByte()));
+            value.putShort(11, (short) Math.abs(rnd2.nextShort()));
+            value.putInt(12, Math.abs(rnd2.nextInt()));
+            value.putLong(13, Math.abs(rnd2.nextLong()));
         }
     }
 

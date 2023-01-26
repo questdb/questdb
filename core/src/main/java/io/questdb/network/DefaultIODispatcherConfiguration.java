@@ -30,11 +30,6 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
 
     @Override
-    public int getLimit() {
-        return 64;
-    }
-
-    @Override
     public int getBindIPv4Address() {
         return 0;
     }
@@ -50,23 +45,8 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public long getTimeout() {
-        return 5 * 60 * 1000L;
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
     public EpollFacade getEpollFacade() {
         return EpollFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public SelectFacade getSelectFacade() {
-        return SelectFacadeImpl.INSTANCE;
     }
 
     @Override
@@ -75,13 +55,23 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getSndBufSize() {
-        return -1; // use system default
+    public KqueueFacade getKqueueFacade() {
+        return KqueueFacadeImpl.INSTANCE;
     }
 
     @Override
-    public int getRcvBufSize() {
-        return -1; // use system default
+    public int getLimit() {
+        return 64;
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public boolean getPeerNoLinger() {
+        return false;
     }
 
     @Override
@@ -90,7 +80,27 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public boolean getPeerNoLinger() {
-        return false;
+    public int getRcvBufSize() {
+        return -1; // use system default
+    }
+
+    @Override
+    public SelectFacade getSelectFacade() {
+        return SelectFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getSndBufSize() {
+        return -1; // use system default
+    }
+
+    @Override
+    public int getTestConnectionBufferSize() {
+        return 64;
+    }
+
+    @Override
+    public long getTimeout() {
+        return 5 * 60 * 1000L;
     }
 }

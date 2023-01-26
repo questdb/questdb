@@ -44,20 +44,20 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
-    private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
-    private final MemoryCMR charMem = Vm.getCMRInstance();
-    private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final ObjList<String> cache = new ObjList<>();
-    private int maxHash;
-    private boolean cached;
-    private int symbolCount;
-    private long maxOffset;
-    private int symbolCapacity;
-    private boolean nullValue;
-    private CairoConfiguration configuration;
-    private final Path path = new Path();
+    private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
+    private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
+    private final MemoryCMR offsetMem = Vm.getCMRInstance();
+    private final Path path = new Path();
+    private boolean cached;
     private long columnNameTxn;
+    private CairoConfiguration configuration;
+    private int maxHash;
+    private long maxOffset;
+    private boolean nullValue;
+    private int symbolCapacity;
+    private int symbolCount;
 
     public SymbolMapReaderImpl() {
     }
@@ -71,10 +71,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         Misc.free(indexReader);
         Misc.free(charMem);
         this.cache.clear();
-        long fd = this.offsetMem.getFd();
+        int fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
         LOG.debug().$("closed [fd=").$(fd).$(']').$();
+    }
+
+    @Override
+    public boolean containsNullValue() {
+        return nullValue;
     }
 
     @Override
@@ -83,13 +88,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
-    public boolean isCached() {
-        return cached;
+    public int getSymbolCount() {
+        return symbolCount;
     }
 
-    @TestOnly
-    int getCacheSize() {
-        return cache.size();
+    @Override
+    public boolean isCached() {
+        return cached;
     }
 
     @Override
@@ -98,21 +103,23 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
-    public void updateSymbolCount(int symbolCount) {
-        if (symbolCount > this.symbolCount) {
-            this.symbolCount = symbolCount;
-            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-            // offset mem contains offsets of symbolCount + 1
-            // we need to make sure we have access to the last element
-            // which will indicate size of the char column
-            this.offsetMem.extend(maxOffset + Long.BYTES);
-            this.charMem.extend(this.offsetMem.getLong(maxOffset));
-        } else if (symbolCount < this.symbolCount) {
-            cache.remove(symbolCount + 1, this.symbolCount);
-            this.symbolCount = symbolCount;
+    public int keyOf(CharSequence value) {
+        if (value != null) {
+            int hash = Hash.boundedHash(value, maxHash);
+            final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
+            while (cursor.hasNext()) {
+                final long offsetOffset = cursor.next();
+                if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+                    return SymbolMapWriter.offsetToKey(offsetOffset);
+                }
+            }
+            return SymbolTable.VALUE_NOT_FOUND;
         }
-        // Refresh index reader to avoid memory remapping on keyOf() calls.
-        this.indexReader.of(configuration, path, columnNameSink, columnNameTxn, 0, -1);
+        return SymbolTable.VALUE_IS_NULL;
+    }
+
+    public StaticSymbolTable newSymbolTableView() {
+        return new SymbolTableView();
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount) {
@@ -143,7 +150,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount) + Long.SIZE;
+            final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount) + Long.BYTES;
             LOG.debug().$("offsetMem.of [columnName=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
             this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             this.symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
@@ -163,7 +170,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // we use index hash maximum equals to half of symbol capacity, which
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
-            this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
+            this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
             if (cached) {
                 this.cache.setPos(symbolCapacity);
             }
@@ -178,40 +185,21 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
-    public int getSymbolCount() {
-        return symbolCount;
-    }
-
-    @Override
-    public int keyOf(CharSequence value) {
-        if (value != null) {
-            int hash = Hash.boundedHash(value, maxHash);
-            final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
-            while (cursor.hasNext()) {
-                final long offsetOffset = cursor.next();
-                if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
-                    return SymbolMapWriter.offsetToKey(offsetOffset);
-                }
-            }
-            return SymbolTable.VALUE_NOT_FOUND;
+    public void updateSymbolCount(int symbolCount) {
+        if (symbolCount > this.symbolCount) {
+            this.symbolCount = symbolCount;
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
+            // offset mem contains offsets of symbolCount + 1
+            // we need to make sure we have access to the last element
+            // which will indicate size of the char column
+            this.offsetMem.extend(maxOffset + Long.BYTES);
+            this.charMem.extend(this.offsetMem.getLong(maxOffset));
+        } else if (symbolCount < this.symbolCount) {
+            cache.remove(symbolCount + 1, this.symbolCount);
+            this.symbolCount = symbolCount;
         }
-        return SymbolTable.VALUE_IS_NULL;
-    }
-
-    @Override
-    public boolean containsNullValue() {
-        return nullValue;
-    }
-
-    @Override
-    public CharSequence valueOf(int key) {
-        if (key > -1 && key < symbolCount) {
-            if (cached) {
-                return cachedValue(key);
-            }
-            return uncachedValue(key);
-        }
-        return null;
+        // Refresh index reader to avoid memory remapping on keyOf() calls.
+        this.indexReader.of(configuration, path, columnNameSink, columnNameTxn, 0, -1);
     }
 
     @Override
@@ -225,8 +213,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
-    public StaticSymbolTable newSymbolTableView() {
-        return new SymbolTableView();
+    @Override
+    public CharSequence valueOf(int key) {
+        if (key > -1 && key < symbolCount) {
+            if (cached) {
+                return cachedValue(key);
+            }
+            return uncachedValue(key);
+        }
+        return null;
     }
 
     private CharSequence cachedValue(int key) {
@@ -248,6 +243,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue2(int key) {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    }
+
+    @TestOnly
+    int getCacheSize() {
+        return cache.size();
     }
 
     private class SymbolTableView implements StaticSymbolTable {
@@ -283,17 +283,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         @Override
-        public CharSequence valueOf(int key) {
+        public CharSequence valueBOf(int key) {
             if (key > -1 && key < symbolCount) {
-                return uncachedValue(key);
+                return uncachedValue2(key);
             }
             return null;
         }
 
         @Override
-        public CharSequence valueBOf(int key) {
+        public CharSequence valueOf(int key) {
             if (key > -1 && key < symbolCount) {
-                return uncachedValue2(key);
+                return uncachedValue(key);
             }
             return null;
         }

@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
@@ -58,14 +57,8 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.CHAR);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putChar(valueIndex, (char) 0);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
@@ -74,12 +67,18 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public String getName() {
+        return "max";
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MaxChar(").put(arg).put(')');
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.CHAR);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putChar(valueIndex, (char) 0);
     }
 }

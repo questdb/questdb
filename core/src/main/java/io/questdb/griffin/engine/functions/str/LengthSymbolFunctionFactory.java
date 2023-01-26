@@ -62,5 +62,10 @@ public class LengthSymbolFunctionFactory implements FunctionFactory {
             CharSequence symbol = arg.getSymbol(rec);
             return symbol == null ? -1 : symbol.length();
         }
+
+        @Override
+        public String getName() {
+            return "length";
+        }
     }
 }

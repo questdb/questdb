@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,33 +38,23 @@ import java.io.Closeable;
  */
 public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
 
-    DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
-
-    /**
-     * @param sink to print data frame cursor to
-     */
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    boolean supportTableRowId(CharSequence tableName);
-
-    /**
-     * Order of records in the data frame in regard to timestamp.
-     *
-     * @return 0 for ascending and 1 for descending
-     */
-    int getOrder();
-
-    @Override
-    void close();
-
-    int ORDER_ASC = 0;
-    int ORDER_DESC = 1;
     // Any order means that algorithm is able to work with frames in any order.
     // In this case frame order will be driven by the optimiser.
     // Any order is not returned by the factory
     int ORDER_ANY = 2;
+    int ORDER_ASC = 0;
+    int ORDER_DESC = 1;
+
+    static CharSequence nameOf(int order) {
+        switch (order) {
+            case ORDER_ASC:
+                return "forward";
+            case ORDER_DESC:
+                return "backward";
+            default:
+                return "any";
+        }
+    }
 
     static int reverse(int order) {
         switch (order) {
@@ -74,5 +65,28 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
             default:
                 return ORDER_ANY;
         }
+    }
+
+    @Override
+    void close();
+
+    DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
+
+    RecordMetadata getMetadata();
+
+    /**
+     * Order of records in the data frame in regard to timestamp.
+     *
+     * @return 0 for ascending and 1 for descending
+     */
+    int getOrder();
+
+    boolean supportTableRowId(TableToken tableToken);
+
+    /**
+     * @param sink to print data frame cursor to
+     */
+    default void toSink(CharSink sink) {
+        throw new UnsupportedOperationException();
     }
 }

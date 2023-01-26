@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
@@ -41,9 +42,12 @@ import io.questdb.std.ObjList;
 
 public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
+    private static final String SYMBOL = "make_geohash";
+    private static final String SIGNATURE = SYMBOL + "(DDi)";
+
     @Override
     public String getSignature() {
-        return "make_geohash(DDi)";
+        return SIGNATURE;
     }
 
     @Override
@@ -86,9 +90,9 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
     }
 
     private static class FromCoordinatesFixedBitsFunction extends AbstractGeoHashFunction implements BinaryFunction {
-        private final Function lon;
-        private final Function lat;
         private final int bits;
+        private final Function lat;
+        private final Function lon;
 
         public FromCoordinatesFixedBitsFunction(Function lon, Function lat, int bits) {
             super(ColumnType.getGeoHashTypeWithBits(bits));
@@ -97,24 +101,9 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             this.bits = bits;
         }
 
-        private long getLongValue(Record rec) {
-            try {
-                double lon = this.lon.getDouble(rec);
-                double lat = this.lat.getDouble(rec);
-                return GeoHashes.fromCoordinatesDeg(lat, lon, bits);
-            } catch (NumericException e) {
-                return GeoHashes.NULL;
-            }
-        }
-
         @Override
         public byte getGeoByte(Record rec) {
             return (byte) getLongValue(rec);
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return (short) getLongValue(rec);
         }
 
         @Override
@@ -128,6 +117,11 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public short getGeoShort(Record rec) {
+            return (short) getLongValue(rec);
+        }
+
+        @Override
         public Function getLeft() {
             return lat;
         }
@@ -136,5 +130,21 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return lon;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SYMBOL).val('(').val(lon).val(',').val(lat).val(',').val(bits).val(')');
+        }
+
+        private long getLongValue(Record rec) {
+            try {
+                double lon = this.lon.getDouble(rec);
+                double lat = this.lat.getDouble(rec);
+                return GeoHashes.fromCoordinatesDeg(lat, lon, bits);
+            } catch (NumericException e) {
+                return GeoHashes.NULL;
+            }
+        }
+
     }
 }

@@ -24,12 +24,19 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.std.str.CharSink;
+
 class MicroTimestampSampler implements TimestampSampler {
     private final long bucket;
     private long start;
 
     MicroTimestampSampler(long bucket) {
         this.bucket = bucket;
+    }
+
+    @Override
+    public long getBucketSize() {
+        return this.bucket;
     }
 
     @Override
@@ -44,16 +51,16 @@ class MicroTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        return start  + ((value - start) / bucket) * bucket;
-    }
-
-    @Override
-    public long getBucketSize() {
-        return this.bucket;
+        return start + ((value - start) / bucket) * bucket;
     }
 
     @Override
     public void setStart(long timestamp) {
         this.start = timestamp;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MicroTsSampler");
     }
 }

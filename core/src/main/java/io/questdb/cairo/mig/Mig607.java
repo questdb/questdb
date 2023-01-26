@@ -40,13 +40,12 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.*;
 
 final class Mig607 {
-    private static final String TXN_FILE_NAME = "_txn";
-    private static final String META_FILE_NAME = "_meta";
     private static final String DEFAULT_PARTITION_NAME = "default";
-
-    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    private static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     private static final Log LOG = LogFactory.getLog(Mig607.class);
+    private static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+    private static final String META_FILE_NAME = "_meta";
+    private static final String TXN_FILE_NAME = "_txn";
+    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
 
     public static void migrate(
             FilesFacade ff,
@@ -80,7 +79,7 @@ final class Mig607 {
                     final long columnRowCount = rowCount - columnTop;
                     long offset = columnRowCount * 8L;
                     iFile(path.trimTo(plen2), columnName);
-                    long fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
+                    int fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
                     try {
                         long fileLen = ff.length(fd);
 
@@ -91,7 +90,7 @@ final class Mig607 {
                         TableUtils.allocateDiskSpace(ff, fd, offset + 8);
                         long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
                         dFile(path.trimTo(plen2), columnName);
-                        final long fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
+                        final int fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
                         try {
                             if (columnType == ColumnType.BINARY) {
                                 long len = TableUtils.readLongOrFail(ff, fd2, dataOffset, mem, path);
@@ -114,7 +113,7 @@ final class Mig607 {
                         }
                         TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
                     } finally {
-                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
+                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, offset + 8);
                     }
                 }
             }
@@ -133,11 +132,11 @@ final class Mig607 {
      */
     public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
         try {
-            if (ff.exists(topFile(path.chop$(), name))) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
+            if (ff.exists(topFile(path, name))) {
+                final int fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long n;
-                    if ((n = ff.readULong(fd, 0)) < 0) {
+                    if ((n = ff.readNonNegativeLong(fd, 0)) < 0) {
                         if (failIfCouldNotRead) {
                             throw CairoException.critical(Os.errno())
                                     .put("could not read top of column [file=").put(path)
@@ -163,6 +162,35 @@ final class Mig607 {
 
     public static void txnPartition(CharSink path, long txn) {
         path.put('.').put(txn);
+    }
+
+    private static void charFileName(Path path, CharSequence columnName) {
+        path.concat(columnName).put(".c").$();
+    }
+
+    private static void dFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_D);
+        path.$();
+    }
+
+    private static void iFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_I).$();
+    }
+
+    private static void offsetFileName(Path path, CharSequence columnName) {
+        path.concat(columnName).put(".o").$();
+    }
+
+    private static void trimFile(FilesFacade ff, Path path, long size, long opts) {
+        final int fd = TableUtils.openFileRWOrFail(ff, path, opts);
+        if (!ff.truncate(fd, size)) {
+            // This should never happen on migration but better to be on safe side anyway
+            throw CairoException.critical(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
+        }
+        if (!ff.close(fd)) {
+            // This should never happen on migration but better to be on safe side anyway
+            throw CairoException.critical(ff.errno()).put("Cannot close [file=").put(path).put(']');
+        }
     }
 
     static void migrate(MigrationContext migrationContext) {
@@ -246,7 +274,7 @@ final class Mig607 {
                         final long offset = MigrationActions.prefixedBlockOffset(SymbolMapWriter.HEADER_SIZE, symbolCount, 8L);
 
                         offsetFileName(path.trimTo(plen), columnName);
-                        long fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
+                        final int fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
                         try {
                             long fileLen = ff.length(fd);
                             if (symbolCount > 0) {
@@ -257,7 +285,7 @@ final class Mig607 {
                                     long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, tmpMem, path);
                                     // string length
                                     charFileName(path.trimTo(plen), columnName);
-                                    long fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
+                                    final int fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
                                     try {
                                         long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, tmpMem, path);
                                         if (len == -1) {
@@ -272,7 +300,7 @@ final class Mig607 {
                                 }
                             }
                         } finally {
-                            Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
+                            Vm.bestEffortClose(ff, MigrationActions.LOG, fd, offset + 8);
                         }
                         denseSymbolCount++;
                     }
@@ -292,36 +320,7 @@ final class Mig607 {
         trimFile(ff, path, txFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
     }
 
-    private static void dFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_D);
-        path.$();
-    }
-
     static LPSZ topFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".top").$();
-    }
-
-    private static void trimFile(FilesFacade ff, Path path, long size, long opts) {
-        long fd = TableUtils.openFileRWOrFail(ff, path, opts);
-        if (!ff.truncate(fd, size)) {
-            // This should never happens on migration but better to be on safe side anyway
-            throw CairoException.critical(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
-        }
-        if (!ff.close(fd)) {
-            // This should never happens on migration but better to be on safe side anyway
-            throw CairoException.critical(ff.errno()).put("Cannot close [file=").put(path).put(']');
-        }
-    }
-
-    private static void offsetFileName(Path path, CharSequence columnName) {
-        path.concat(columnName).put(".o").$();
-    }
-
-    private static void charFileName(Path path, CharSequence columnName) {
-        path.concat(columnName).put(".c").$();
-    }
-
-    private static void iFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 }

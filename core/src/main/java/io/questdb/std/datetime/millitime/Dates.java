@@ -30,48 +30,37 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 
-final public class Dates {
+public final class Dates {
 
     public static final long DAY_MILLIS = 86400000L;
     public static final long HOUR_MILLIS = 3600000L;
     public static final long MINUTE_MILLIS = 60000;
     public static final long SECOND_MILLIS = 1000;
-    public static final int STATE_INIT = 0;
-    public static final int STATE_UTC = 1;
+    public static final int STATE_DELIM = 4;
+    public static final int STATE_END = 6;
     public static final int STATE_GMT = 2;
     public static final int STATE_HOUR = 3;
-    public static final int STATE_DELIM = 4;
+    public static final int STATE_INIT = 0;
     public static final int STATE_MINUTE = 5;
-    public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
+    public static final int STATE_UTC = 1;
+    private static final char AFTER_NINE = '9' + 1;
     private static final long AVG_YEAR_MILLIS = (long) (365.2425 * DAY_MILLIS);
-    private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
-    private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
     private static final long HALF_YEAR_MILLIS = AVG_YEAR_MILLIS / 2;
     private static final long EPOCH_MILLIS = 1970L * AVG_YEAR_MILLIS;
     private static final long HALF_EPOCH_MILLIS = EPOCH_MILLIS / 2;
-    private static final int DAY_HOURS = 24;
-    private static final int HOUR_MINUTES = 60;
-    private static final int MINUTE_SECONDS = 60;
+    private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
-    private static final long[] MIN_MONTH_OF_YEAR_MILLIS = new long[12];
+    private static final int DAY_HOURS = 24;
+    private static final int HOUR_MINUTES = 60;
+    private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
     private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
-    private static final char BEFORE_ZERO = '0' - 1;
-    private static final char AFTER_NINE = '9' + 1;
-
-    static {
-        long minSum = 0;
-        long maxSum = 0;
-        for (int i = 0; i < 11; i++) {
-            minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
-            MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
-            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
-            MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
-        }
-    }
+    private static final int MINUTE_SECONDS = 60;
+    private static final long[] MIN_MONTH_OF_YEAR_MILLIS = new long[12];
+    private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
 
     private Dates() {
     }
@@ -204,13 +193,6 @@ final public class Dates {
         return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
     }
 
-    public static int getDayOfYear(long millis) {
-        int year = getYear(millis);
-        boolean leap = isLeapYear(year);
-        long yearStart = yearMillis(year, leap);
-        return (int)((millis - yearStart) / DAY_MILLIS) + 1;
-    }
-
     public static int getDayOfWeek(long millis) {
         // 1970-01-01 is Thursday.
         long d;
@@ -239,14 +221,11 @@ final public class Dates {
         return 1 + (int) ((d + 4) % 7);
     }
 
-    public static int getWeekOfYear(long millis) {
-        return getDayOfYear(millis) / 7 + 1;
-    }
-
-    public static int getWeekOfMonth(long millis) {
+    public static int getDayOfYear(long millis) {
         int year = getYear(millis);
         boolean leap = isLeapYear(year);
-        return getDayOfMonth(millis, year, getMonthOfYear(millis, year, leap), leap) / 7 + 1;
+        long yearStart = yearMillis(year, leap);
+        return (int) ((millis - yearStart) / DAY_MILLIS) + 1;
     }
 
     public static long getDaysBetween(long a, long b) {
@@ -348,6 +327,16 @@ final public class Dates {
         } else {
             return MINUTE_SECONDS - 1 + (int) (((millis + 1) / SECOND_MILLIS) % MINUTE_SECONDS);
         }
+    }
+
+    public static int getWeekOfMonth(long millis) {
+        int year = getYear(millis);
+        boolean leap = isLeapYear(year);
+        return getDayOfMonth(millis, year, getMonthOfYear(millis, year, leap), leap) / 7 + 1;
+    }
+
+    public static int getWeekOfYear(long millis) {
+        return getDayOfYear(millis) / 7 + 1;
     }
 
     /**
@@ -582,17 +571,28 @@ final public class Dates {
         return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MILLIS;
     }
 
-    private static boolean isDigit(char c) {
-        return c > BEFORE_ZERO && c < AFTER_NINE;
-    }
-
     private static long getTime(long millis) {
         return millis < 0 ? DAY_MILLIS - 1 + (millis % DAY_MILLIS) : millis % DAY_MILLIS;
+    }
+
+    private static boolean isDigit(char c) {
+        return c > BEFORE_ZERO && c < AFTER_NINE;
     }
 
     private static long toMillis(int y, int m, int d) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
+    }
+
+    static {
+        long minSum = 0;
+        long maxSum = 0;
+        for (int i = 0; i < 11; i++) {
+            minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
+            MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
+            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
+            MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
+        }
     }
 
 }

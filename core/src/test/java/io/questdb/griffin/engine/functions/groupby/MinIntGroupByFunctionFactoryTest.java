@@ -41,7 +41,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -64,7 +64,7 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
             r.append();
             for (int i = 100; i > 10; i--) {
@@ -86,11 +86,28 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMaxIntOrNull() throws Exception {
+        assertQuery(
+                "a\tmin\n" +
+                        "1\tNaN\n",
+                "select a, min(f) from tab",
+                "create table tab as (select cast(1 as int) a, cast(null as int) f from long_sequence(33))",
+                null,
+                "insert into tab select 1, 2147483647 from long_sequence(1)",
+                "a\tmin\n" +
+                        "1\t2147483647\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testNonNull() throws SqlException {
 
         compiler.compile("create table tab (f int)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putInt(0, i);
@@ -107,49 +124,6 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.assertEquals(11, record.getInt(0));
             }
         }
-    }
-
-    @Test
-    public void testSomeNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
-
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                if (i % 4 == 0) {
-                    r.putInt(0, i);
-                }
-                r.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(12, record.getInt(0));
-            }
-        }
-    }
-
-    @Test
-    public void testMaxIntOrNull() throws Exception {
-        assertQuery(
-                "a\tmin\n" +
-                        "1\tNaN\n",
-                "select a, min(f) from tab",
-                "create table tab as (select cast(1 as int) a, cast(null as int) f from long_sequence(33))",
-                null,
-                "insert into tab select 1, 2147483647 from long_sequence(1)",
-                "a\tmin\n" +
-                        "1\t2147483647\n",
-                true,
-                true,
-                true
-        );
     }
 
     @Test
@@ -324,6 +298,32 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testSomeNull() throws SqlException {
+
+        compiler.compile("create table tab (f int)", sqlExecutionContext);
+
+        try (TableWriter w = getWriter("tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                if (i % 4 == 0) {
+                    r.putInt(0, i);
+                }
+                r.append();
+            }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(12, record.getInt(0));
+            }
+        }
     }
 
 }

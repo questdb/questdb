@@ -35,8 +35,8 @@ public class SplitVirtualRecord implements Record {
     private final ObjList<? extends Function> functionsA;
     private final ObjList<? extends Function> functionsB;
     private final ObjList<InterpolationGroupByFunction> interpolations = new ObjList<>();
-    private ObjList<? extends Function> current;
     private Record base;
+    private ObjList<? extends Function> current;
 
     public SplitVirtualRecord(ObjList<? extends Function> functionsA, ObjList<? extends Function> functionsB) {
         this.current = functionsA;
@@ -96,6 +96,26 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
+    public byte getGeoByte(int col) {
+        return getFunction(col).getGeoByte(base);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return getFunction(col).getGeoInt(base);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return getFunction(col).getGeoLong(base);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getFunction(col).getGeoShort(base);
+    }
+
+    @Override
     public int getInt(int col) {
         return getFunction(col).getInt(base);
     }
@@ -103,6 +123,21 @@ public class SplitVirtualRecord implements Record {
     @Override
     public long getLong(int col) {
         return getFunction(col).getLong(base);
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        return getFunction(col).getLong128Hi(base);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return getFunction(col).getLong128Lo(base);
+    }
+
+    @Override
+    public Record getRecord(int col) {
+        return getFunction(col).getRecord(base);
     }
 
     @Override
@@ -123,11 +158,6 @@ public class SplitVirtualRecord implements Record {
     @Override
     public void getStr(int col, CharSink sink) {
         getFunction(col).getStr(base, sink);
-    }
-
-    @Override
-    public Record getRecord(int col) {
-        return getFunction(col).getRecord(base);
     }
 
     @Override
@@ -153,30 +183,6 @@ public class SplitVirtualRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return getFunction(col).getTimestamp(base);
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        return getFunction(col).getGeoByte(base);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getFunction(col).getGeoShort(base);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return getFunction(col).getGeoInt(base);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return getFunction(col).getGeoLong(base);
-    }
-
-    void of(Record record) {
-        this.base = record;
     }
 
     public void setActiveA() {
@@ -205,5 +211,9 @@ public class SplitVirtualRecord implements Record {
 
     private Function getFunction(int columnIndex) {
         return current.getQuick(columnIndex);
+    }
+
+    void of(Record record) {
+        this.base = record;
     }
 }

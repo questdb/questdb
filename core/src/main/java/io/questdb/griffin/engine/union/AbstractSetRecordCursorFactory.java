@@ -29,16 +29,17 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory factoryA;
-    private final RecordCursorFactory factoryB;
     private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
+    private final RecordCursorFactory factoryA;
+    private final RecordCursorFactory factoryB;
     protected AbstractSetRecordCursor cursor;
 
     public AbstractSetRecordCursorFactory(
@@ -56,11 +57,12 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    protected void _close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
-        Misc.freeObjListAndClear(castFunctionsA);
-        Misc.freeObjListAndClear(castFunctionsB);
+    public String getBaseColumnName(int idx) {
+        if (idx < factoryA.getMetadata().getColumnCount()) {
+            return factoryA.getMetadata().getColumnName(idx);
+        } else {
+            return factoryB.getMetadata().getColumnName(idx);
+        }
     }
 
     @Override
@@ -84,5 +86,30 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return factoryA.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type(getOperation());
+        sink.child(factoryA);
+        if (isSecondFactoryHashed()) {
+            sink.child("Hash", factoryB);
+        } else {
+            sink.child(factoryB);
+        }
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(factoryA);
+        Misc.free(factoryB);
+        Misc.freeObjListAndClear(castFunctionsA);
+        Misc.freeObjListAndClear(castFunctionsB);
+    }
+
+    protected abstract CharSequence getOperation();
+
+    protected boolean isSecondFactoryHashed() {
+        return false;
     }
 }

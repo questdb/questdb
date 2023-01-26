@@ -31,28 +31,25 @@ import static io.questdb.std.IOUringAccessor.*;
 
 public class IOURingImpl implements IOURing {
 
-    private final long ringAddr;
-    private final int ringFd;
-
-    private final long sqesAddr;
-    private final long sqKheadAddr;
-    private final int sqKringMask;
-    private final int sqKringEntries;
-
-    private final long cqesAddr;
-    private final long cqKheadAddr;
-    private final long cqKtailAddr;
-    private final int cqKringMask;
-
-    private final IOURingFacade facade;
     // Holds <id, res> tuples for recently consumed cqes.
     private final long[] cachedCqes;
+    private final long cqKheadAddr;
+    private final int cqKringMask;
+    private final long cqKtailAddr;
+    private final long cqesAddr;
+    private final IOURingFacade facade;
+    private final long ringAddr;
+    private final int ringFd;
+    private final long sqKheadAddr;
+    private final int sqKringEntries;
+    private final int sqKringMask;
+    private final long sqesAddr;
     // Index of cached cqe tuple.
     private int cachedIndex;
     // Count of cached cqe tuples.
     private int cachedSize;
-    private long idSeq;
     private boolean closed = false;
+    private long idSeq;
 
     public IOURingImpl(IOURingFacade facade, int capacity) {
         assert Numbers.isPow2(capacity);
@@ -95,7 +92,13 @@ public class IOURingImpl implements IOURing {
     }
 
     @Override
-    public long enqueueRead(long fd, long offset, long bufAddr, int len) {
+    @TestOnly
+    public long enqueueNop() {
+        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
+    }
+
+    @Override
+    public long enqueueRead(int fd, long offset, long bufAddr, int len) {
         return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);
     }
 
@@ -149,19 +152,13 @@ public class IOURingImpl implements IOURing {
         return facade.submitAndWait(ringAddr, 1);
     }
 
-    @Override
-    @TestOnly
-    public long enqueueNop() {
-        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
-    }
-
-    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
+    private long enqueueSqe(byte op, int fd, long offset, long bufAddr, int len) {
         final long sqeAddr = nextSqe();
         if (sqeAddr == 0) {
             return -1;
         }
         Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
-        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, (int) fd);
+        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, fd);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
         Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);

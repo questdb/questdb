@@ -31,25 +31,25 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
-import java.util.Random;
 
 public class MemRemappedFileTest {
-    private static final int NPAGES = 1000;
-    private static final int NCYCLES = 4;
     private static final Log LOG = LogFactory.getLog(MemRemappedFileTest.class);
-    private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+    private static final int NCYCLES = 4;
+    private static final int NPAGES = 1000;
+    private static final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
     private static final long MAPPING_PAGE_SIZE = ff.getPageSize();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    private static CharSequence root;
     private static int nFile = 0;
+    private static CharSequence root;
     private final Path path = new Path(1_000_000);
 
     @AfterClass
@@ -83,7 +83,7 @@ public class MemRemappedFileTest {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).concat("file" + nFile).$();
                 nFile++;
-                Random rand = new Random(0);
+                Rnd rnd = new Rnd();
                 long expectedTotal = 0;
 
                 nanos = System.nanoTime();
@@ -94,7 +94,7 @@ public class MemRemappedFileTest {
                     appMem.of(ff, path, newSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     appMem.skip(newSize - MAPPING_PAGE_SIZE);
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
-                        byte b = (byte) rand.nextInt();
+                        byte b = (byte) rnd.nextInt();
                         appMem.putByte(b);
                         expectedTotal += b;
                     }

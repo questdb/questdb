@@ -27,8 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -40,9 +40,9 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ExtendedOnePageMemoryTest {
+    private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
     private static final int FILE_SIZE = 1024;
     private static final Path path = new Path(4096);
-    private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     private static FilesFacade ff;
@@ -54,9 +54,9 @@ public class ExtendedOnePageMemoryTest {
 
     @BeforeClass
     public static void beforeClass() {
-        ff = new FilesFacadeImpl() {
+        ff = new TestFilesFacadeImpl() {
             @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }
@@ -64,7 +64,7 @@ public class ExtendedOnePageMemoryTest {
             }
 
             @Override
-            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }

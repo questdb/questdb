@@ -33,32 +33,32 @@ import io.questdb.std.str.CharSink;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampFormatUtils {
-    public static final int HOUR_24 = 2;
-    public static final int HOUR_PM = 1;
-    public static final int HOUR_AM = 0;
-    public static final DateFormat UTC_FORMAT;
-    public static final DateFormat SEC_UTC_FORMAT;
     public static final DateFormat GREEDY_MILLIS1_UTC_FORMAT;
     public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;
-    public static final DateFormat USEC_UTC_FORMAT;
+    public static final int HOUR_24 = 2;
+    public static final int HOUR_AM = 0;
+    public static final int HOUR_PM = 1;
+    public static final DateFormat NANOS_UTC_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
-    public static final DateFormat NANOS_UTC_FORMAT;
+    public static final DateFormat SEC_UTC_FORMAT;
+    public static final int TIMESTAMP_FORMAT_MIN_LENGTH;
+    public static final DateFormat USEC_UTC_FORMAT;
+    public static final DateFormat UTC_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
-    public static final int TIMESTAMP_FORMAT_MIN_LENGTH;
-    private static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
+    private static final DateFormat[] FORMATS;
     private static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
-    private static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
-    private static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
     private static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
     private static final DateFormat HTTP_FORMAT;
-    private static final DateFormat[] FORMATS;
+    private static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
+    private static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
+    private static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
+    static int prevCenturyLow;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
-    static int prevCenturyLow;
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
 
@@ -289,29 +289,28 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        long datetime;
-        if (week == 0) {
-            datetime = Timestamps.yearMicros(year, leap)
-                    + Timestamps.monthOfYearMicros(month, leap)
-                    + (day - 1) * Timestamps.DAY_MICROS
-                    + hour * Timestamps.HOUR_MICROS
-                    + minute * Timestamps.MINUTE_MICROS
-                    + second * Timestamps.SECOND_MICROS
-                    + (long) millis * Timestamps.MILLI_MICROS
-                    + micros;
-        } else {
-            long yearMicros = Timestamps.yearMicros(year, leap);
-            // 4 Jan of year Y
-            // correction formula is taken from https://en.wikipedia.org/wiki/ISO_week_date
-            final long correction = Timestamps.getDayOfWeek(yearMicros + Timestamps.monthOfYearMicros(1, leap) + 4 * Timestamps.DAY_MICROS) + 3;
-            datetime = yearMicros
-                    + (week * 7L + day - correction) * Timestamps.DAY_MICROS
-                    + hour * Timestamps.HOUR_MICROS
-                    + minute * Timestamps.MINUTE_MICROS
-                    + second * Timestamps.SECOND_MICROS
-                    + (long) millis * Timestamps.MILLI_MICROS
-                    + micros;
+        if ((week <= 0 && week != -1) || week > Timestamps.getWeeks(year)) {
+            throw NumericException.INSTANCE;
         }
+
+        // calculate year, month, and day of ISO week
+        if (week != -1) {
+            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, Timestamps.isLeapYear(year)) +
+                    (week - 1) * Timestamps.WEEK_MICROS +
+                    Timestamps.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
+            month = Timestamps.getMonthOfYear(firstDayOfIsoWeekMicros);
+            year += (week == 1 && Timestamps.getIsoYearDayOffset(year) < 0) ? -1 : 0;
+            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, Timestamps.isLeapYear(year));
+        }
+
+        long datetime = Timestamps.yearMicros(year, leap)
+                + Timestamps.monthOfYearMicros(month, leap)
+                + (day - 1) * Timestamps.DAY_MICROS
+                + hour * Timestamps.HOUR_MICROS
+                + minute * Timestamps.MINUTE_MICROS
+                + second * Timestamps.SECOND_MICROS
+                + (long) millis * Timestamps.MILLI_MICROS
+                + micros;
 
         if (timezone > -1) {
             datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year, leap);
@@ -356,6 +355,9 @@ public class TimestampFormatUtils {
 
     public static long getReferenceYear() {
         return referenceYear;
+    }
+
+    public static void init() {
     }
 
     public static long parseDateTime(CharSequence seq) throws NumericException {
@@ -448,8 +450,5 @@ public class TimestampFormatUtils {
         SEC_UTC_FORMAT = dateFormats.get(SEC_UTC_PATTERN);
         GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS2_UTC_PATTERN);
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
-    }
-
-    public static void init() {
     }
 }

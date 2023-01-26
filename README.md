@@ -45,15 +45,25 @@ Java and C++, with no dependencies and zero garbage collection.
 We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
 QuestDB release and sample datasets:
 
-- 10 years of NYC taxi trips with 1.6 billion rows
-- live trading data from a cryptocurrency exchange
-- geolocations of 250k unique ships over time
+- Trips: 10 years of NYC taxi trips with 1.6 billion rows
+- Trades: live crytocurrency market data with 30M+ rows per month
+- Pos: geolocations of 250k unique ships over time
+
+| Query                                                                         | Execution time                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
+| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+
+Our demo is running on `c5.metal` instance and using 24 cores out of 96.
 
 ## Get started
 
 ### Install QuestDB
 
-To run QuestDB, Docker can be used to get started quickly:
+To run QuestDB, [Docker](https://www.docker.com/) can be used to get started quickly:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
@@ -87,7 +97,7 @@ You can interact with QuestDB using the following interfaces:
 
 ### Insert data
 
-Below are our official InfluxDB line protocol clients for popular programming
+Below are our official questdb clients for popular programming
 languages:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
@@ -113,15 +123,6 @@ results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
     <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
   </a>
 </div>
-
-The following table shows query execution time of a billion rows run on a
-`c5.metal` instance using 16 of the 96 threads available:
-
-| Query                                                        | Runtime    |
-| ------------------------------------------------------------ | ---------- |
-| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## Resources
 

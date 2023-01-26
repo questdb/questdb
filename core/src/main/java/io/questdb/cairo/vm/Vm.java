@@ -36,21 +36,23 @@ public class Vm {
     public static final byte TRUNCATE_TO_PAGE = 0;
     public static final byte TRUNCATE_TO_POINTER = 1;
 
-    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, byte truncateMode) {
+    public static void bestEffortClose(FilesFacade ff, Log log, int fd, long size, byte truncateMode) {
         try {
-            if (truncate) {
+            if (size > -1L) {
                 bestEffortTruncate(ff, log, fd, size, truncateMode);
             } else {
                 log.debug().$("closed [fd=").$(fd).$(']').$();
             }
         } finally {
-            if (fd > 0) {
-                ff.close(fd);
-            }
+            ff.close(fd);
         }
     }
 
-    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
+    public static void bestEffortClose(FilesFacade ff, Log log, int fd, long size) {
+        bestEffortClose(ff, log, fd, size, TRUNCATE_TO_PAGE);
+    }
+
+    public static long bestEffortTruncate(FilesFacade ff, Log log, int fd, long size, byte truncateMode) {
         long sz = (truncateMode == TRUNCATE_TO_PAGE) ? Files.ceilPageSize(size) : size;
         if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
@@ -63,11 +65,7 @@ public class Vm {
         return -1;
     }
 
-    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size) {
-        bestEffortClose(ff, log, fd, truncate, size, TRUNCATE_TO_PAGE);
-    }
-
-    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
+    public static long bestEffortTruncate(FilesFacade ff, Log log, int fd, long size) {
         return bestEffortTruncate(ff, log, fd, size, TRUNCATE_TO_PAGE);
     }
 
@@ -91,6 +89,10 @@ public class Vm {
         return new MemoryCMARWImpl();
     }
 
+    public static MemoryCMR getCMRInstance() {
+        return new MemoryCMRImpl();
+    }
+
     public static MemoryMA getMAInstance() {
         return new MemoryPMARImpl();
     }
@@ -111,10 +113,6 @@ public class Vm {
         return new MemoryCMRImpl();
     }
 
-    public static MemoryCMR getCMRInstance() {
-        return new MemoryCMRImpl();
-    }
-
     public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
@@ -123,11 +121,11 @@ public class Vm {
         return new MemoryCMORImpl();
     }
 
-    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
+    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
     }
 
-    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
+    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
     }
 

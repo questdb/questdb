@@ -32,21 +32,15 @@ import java.io.File;
 public interface LogRecord extends CharSinkBase {
     void $();
 
-    default void I$() {
-        $(']').$();
-    }
-
     LogRecord $(CharSequence sequence);
 
     LogRecord $(CharSequence sequence, int lo, int hi);
-
-    LogRecord $utf8(long lo, long hi);
 
     LogRecord $(int x);
 
     LogRecord $(double x);
 
-    LogRecord $(long x);
+    LogRecord $(long l);
 
     LogRecord $(boolean x);
 
@@ -60,21 +54,27 @@ public interface LogRecord extends CharSinkBase {
 
     LogRecord $(Sinkable x);
 
-    LogRecord $ip(long ip);
-
-    LogRecord $ts(long x);
-
     LogRecord $256(long a, long b, long c, long d);
 
     LogRecord $hex(long value);
 
     LogRecord $hexPadded(long value);
 
+    LogRecord $ip(long ip);
+
+    LogRecord $ts(long x);
+
+    LogRecord $utf8(long lo, long hi);
+
+    default void I$() {
+        $(']').$();
+    }
+
     boolean isEnabled();
 
-    LogRecord ts();
-
     LogRecord microTime(long x);
+
+    LogRecord ts();
 
     LogRecord utf8(CharSequence sequence);
 }

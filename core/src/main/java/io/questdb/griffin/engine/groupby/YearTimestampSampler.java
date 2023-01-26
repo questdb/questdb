@@ -25,17 +25,18 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 
 class YearTimestampSampler implements TimestampSampler {
 
     private final int bucket;
-    private int startMonth;
     private int startDay;
     private int startHour;
-    private int startMin;
-    private int startSec;
-    private int startMillis;
     private int startMicros;
+    private int startMillis;
+    private int startMin;
+    private int startMonth;
+    private int startSec;
 
     public YearTimestampSampler(int bucket) {
         this.bucket = bucket;
@@ -78,6 +79,11 @@ class YearTimestampSampler implements TimestampSampler {
         this.startSec = Timestamps.getSecondOfMinute(timestamp);
         this.startMillis = Timestamps.getMillisOfSecond(timestamp);
         this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("YearTsSampler");
     }
 
     private long addYears(long timestamp, int bucket) {

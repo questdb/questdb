@@ -42,7 +42,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         compiler.compile("create table tab (f date)", sqlExecutionContext);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.append();
@@ -66,7 +66,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
         compiler.compile("create table tab (f date)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
             r.append();
             for (int i = 100; i > 10; i--) {
@@ -93,7 +93,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
         compiler.compile("create table tab (f date)", sqlExecutionContext);
 
         final Rnd rnd = new Rnd();
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+        try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
                 TableWriter.Row r = w.newRow();
                 r.putLong(0, rnd.nextLong());
@@ -110,33 +110,6 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
         }
     }
-
-    @Test
-    public void testSomeNull() throws SqlException {
-
-        compiler.compile("create table tab (f date)", sqlExecutionContext);
-
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                if (i % 4 == 0) {
-                    r.putLong(0, i);
-                }
-                r.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(100, record.getLong(0));
-            }
-        }
-    }
-
 
     @Test
     public void testSampleFill() throws Exception {
@@ -297,5 +270,31 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "KFMQ\t1970-01-01T01:01:22.249Z\t1970-01-04T06:00:00.000000Z\n",
                 false
         );
+    }
+
+    @Test
+    public void testSomeNull() throws SqlException {
+
+        compiler.compile("create table tab (f date)", sqlExecutionContext);
+
+        try (TableWriter w = getWriter("tab")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                if (i % 4 == 0) {
+                    r.putLong(0, i);
+                }
+                r.append();
+            }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select first(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(100, record.getLong(0));
+            }
+        }
     }
 }
