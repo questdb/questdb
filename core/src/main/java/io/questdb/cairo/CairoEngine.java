@@ -41,7 +41,9 @@ import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -96,8 +98,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-        this.telemetry = new Telemetry<>(TelemetryTask.TYPE, configuration);
-        this.telemetryWal = new Telemetry<>(TelemetryWalTask.TYPE, configuration);
+        this.telemetry = new Telemetry<>(TelemetryTask.TELEMETERY, configuration);
+        this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMTRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         try {
             this.tableIdGenerator.open();

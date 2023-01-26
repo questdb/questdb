@@ -56,12 +56,13 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
     private final QueueConsumer<T> taskConsumer = this::consume;
 
-    public Telemetry(TelemetryType<T> type, CairoConfiguration configuration) {
+    public Telemetry(TelemetryTypeBuilder<T> builder, CairoConfiguration configuration) {
+        TelemetryType<T> type = builder.build(configuration);
         final TelemetryConfiguration telemetryConfiguration = type.getTelemetryConfiguration(configuration);
         enabled = telemetryConfiguration.getEnabled();
         if (enabled) {
+            this.telemetryType = type;
             clock = configuration.getMicrosecondClock();
-            telemetryType = type;
             telemetryQueue = new RingQueue<>(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
             telemetrySubSeq = new SCSequence();
@@ -96,10 +97,8 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (!enabled) {
             return;
         }
-        CharSequence sysPrefix = engine.getConfiguration().getSystemTableNamePrefix();
-        String tableName = sysPrefix + telemetryType.getTableName();
-
-        compiler.compile(telemetryType.getCreateSql(sysPrefix), sqlExecutionContext);
+        String tableName = telemetryType.getTableName();
+        compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);
         final TableToken tableToken = engine.getTableToken(tableName);
         try {
             writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, "telemetry");
@@ -136,7 +135,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        String getCreateSql(CharSequence prefix);
+        String getCreateSql();
 
         String getTableName();
 
@@ -150,5 +149,9 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
         default void logStatus(TableWriter writer, short systemStatus, long micros) {
         }
+    }
+
+    public interface TelemetryTypeBuilder<T extends AbstractTelemetryTask> {
+        TelemetryType<T> build(CairoConfiguration configuration);
     }
 }

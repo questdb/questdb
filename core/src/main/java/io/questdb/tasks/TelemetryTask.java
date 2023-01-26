@@ -66,21 +66,22 @@ public class TelemetryTask implements AbstractTelemetryTask {
         }
     }
 
-    public static final Telemetry.TelemetryType<TelemetryTask> TYPE = new Telemetry.TelemetryType<TelemetryTask>() {
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETERY = configuration -> new Telemetry.TelemetryType<>() {
         private final TelemetryTask systemStatusTask = new TelemetryTask();
 
         @Override
-        public String getTableName() {
-            return TABLE_NAME;
-        }
-
-        @Override
-        public String getCreateSql(CharSequence prefix) {
-            return "CREATE TABLE IF NOT EXISTS " + prefix + TABLE_NAME + " (" +
+        public String getCreateSql() {
+            // Telemetry table will not have sys. prefix for compatibility.
+            return "CREATE TABLE IF NOT EXISTS \"" + TABLE_NAME + "\" (" +
                     "created timestamp, " +
                     "event short, " +
                     "origin short" +
                     ") timestamp(created)";
+        }
+
+        @Override
+        public String getTableName() {
+            return TABLE_NAME;
         }
 
         @Override
