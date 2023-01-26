@@ -7689,9 +7689,9 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
-        String telemetry = configuration.getSystemTableNamePrefix() + TelemetryTask.TABLE_NAME;
-        TableToken tememetryTableName = new TableToken(telemetry, telemetry, 0, false);
-        try (TableReader reader = new TableReader(configuration, tememetryTableName)) {
+        String telemetry = TelemetryTask.TABLE_NAME;
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false);
+        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
             final StringSink sink = new StringSink();
             sink.clear();
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
