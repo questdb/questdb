@@ -244,7 +244,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             long tsIncrement;
             long now = Os.currentTimeMicros();
             LOG.info().$("now :").$(now).$();
-            Rnd rnd = TestUtils.generateRandom(LOG);
+            Rnd rnd = new Rnd(12291960782565L, 1674666396758L);//TestUtils.generateRandom(LOG);
 
             int releaseWriterSeed = 2;
             int overlapSeed = 3;
@@ -285,9 +285,16 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
                         engine.releaseInactive();
                     }
 
+                    if (i == 3) {
+                        int iasdf = 0;
+                    }
+
                     addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
 
                     LOG.info().$("verifying wal [").$("iteration:").$(i).I$();
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                    engine.releaseInactive();
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                     start += rowCount * tsIncrement + 1;

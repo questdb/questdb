@@ -809,20 +809,36 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     public void testQueryNullSymbols() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
+
+            compile("create table temp as (" +
                     "select " +
                     " cast(case when x % 2 = 0 then null else 'abc' end as symbol) sym, " +
+                    " x," +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(5)" +
-                    "), index(sym) timestamp(ts) partition by DAY WAL");
+                    ")");
+
+            compile("create table " + tableName + " as (" +
+                    "select * from temp), index(sym) timestamp(ts) partition by DAY WAL");
+
 
             drainWalQueue();
 
+            String allRows = "sym\tx\tts\n" +
+                    "abc\t1\t2022-02-24T00:00:00.000000Z\n" +
+                    "\t2\t2022-02-24T00:00:01.000000Z\n" +
+                    "abc\t3\t2022-02-24T00:00:02.000000Z\n" +
+                    "\t4\t2022-02-24T00:00:03.000000Z\n" +
+                    "abc\t5\t2022-02-24T00:00:04.000000Z\n";
+
+            assertSql("temp", allRows);
+            assertSql(tableName, allRows);
+
             assertSql(
                     "select * from " + tableName + " where sym != 'abc'",
-                    "sym\tts\n" +
-                            "\t2022-02-24T00:00:01.000000Z\n" +
-                            "\t2022-02-24T00:00:03.000000Z\n"
+                    "sym\tx\tts\n" +
+                            "\t2\t2022-02-24T00:00:01.000000Z\n" +
+                            "\t4\t2022-02-24T00:00:03.000000Z\n"
             );
         });
     }
