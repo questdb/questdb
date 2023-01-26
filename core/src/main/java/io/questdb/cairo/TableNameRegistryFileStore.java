@@ -207,65 +207,68 @@ public class TableNameRegistryFileStore implements Closeable {
         FilesFacade ff = configuration.getFilesFacade();
         long findPtr = ff.findFirst(path.$());
         StringSink sink = Misc.getThreadLocalBuilder();
-        do {
-            if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                if (!reverseTableNameTokenMap.containsKey(sink)
-                        && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
+        try {
+            do {
+                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                    if (!reverseTableNameTokenMap.containsKey(sink)
+                            && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
 
-                    String dirName = sink.toString();
-                    int tableId;
-                    boolean isWal;
-                    String tableName;
+                        String dirName = sink.toString();
+                        int tableId;
+                        boolean isWal;
+                        String tableName;
 
-                    try {
-                        tableId = readTableId(path, dirName, ff);
-                        isWal = tableId < 0;
-                        tableId = Math.abs(tableId);
-                        path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.TABLE_NAME_FILE).$();
-                        tableName = TableUtils.readTableName(path, tableNameRoMemory, ff);
-                    } catch (CairoException e) {
-                        if (e.errnoReadPathDoesNotExist()) {
-                            // table is being removed.
-                            continue;
-                        } else {
-                            throw e;
-                        }
-                    } finally {
-                        tableNameRoMemory.close();
-                    }
-
-                    if (tableName == null) {
-                        if (isWal) {
-                            LOG.error().$("could not read table name, table will not be available [dirName=").utf8(dirName).I$();
-                            continue;
-                        } else {
-                            // Non-wal tables may not have _name file.
-                            tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
-                        }
-                    }
-
-                    if (tableId > -1L) {
-                        if (tableIds.contains(tableId)) {
-                            LOG.critical().$("duplicate table id found, table will not be available " +
-                                    "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
-                            continue;
+                        try {
+                            tableId = readTableId(path, dirName, ff);
+                            isWal = tableId < 0;
+                            tableId = Math.abs(tableId);
+                            path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.TABLE_NAME_FILE).$();
+                            tableName = TableUtils.readTableName(path, tableNameRoMemory, ff);
+                        } catch (CairoException e) {
+                            if (e.errnoReadPathDoesNotExist()) {
+                                // table is being removed.
+                                continue;
+                            } else {
+                                throw e;
+                            }
+                        } finally {
+                            tableNameRoMemory.close();
                         }
 
-                        if (nameTableTokenMap.containsKey(tableName)) {
-                            LOG.critical().$("duplicate table name found, table will not be available " +
-                                            "[dirName=").utf8(dirName).$(", name=").utf8(tableName)
-                                    .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName()).I$();
-                            continue;
+                        if (tableName == null) {
+                            if (isWal) {
+                                LOG.error().$("could not read table name, table will not be available [dirName=").utf8(dirName).I$();
+                                continue;
+                            } else {
+                                // Non-wal tables may not have _name file.
+                                tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));
+                            }
                         }
 
-                        TableToken token = new TableToken(tableName, dirName, tableId, isWal);
-                        nameTableTokenMap.put(tableName, token);
-                        reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                        if (tableId > -1L) {
+                            if (tableIds.contains(tableId)) {
+                                LOG.critical().$("duplicate table id found, table will not be available " +
+                                        "[dirName=").utf8(dirName).$(", id=").$(tableId).I$();
+                                continue;
+                            }
+
+                            if (nameTableTokenMap.containsKey(tableName)) {
+                                LOG.critical().$("duplicate table name found, table will not be available " +
+                                                "[dirName=").utf8(dirName).$(", name=").utf8(tableName)
+                                        .$(", existingTableDir=").utf8(nameTableTokenMap.get(tableName).getDirName()).I$();
+                                continue;
+                            }
+
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal);
+                            nameTableTokenMap.put(tableName, token);
+                            reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));
+                        }
                     }
                 }
-            }
-        } while (ff.findNext(findPtr) > 0);
-        ff.findClose(findPtr);
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
     }
 
     private void reloadFromTablesFile(

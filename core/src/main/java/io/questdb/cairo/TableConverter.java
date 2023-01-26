@@ -43,51 +43,63 @@ class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
 
     static void convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+        if (!configuration.isTableTypeConversionEnabled()) {
+            LOG.info().$("Table type conversion is disabled").$();
+            return;
+        }
+
         final Path path = Path.getThreadLocal(configuration.getRoot());
         final int rootLen = path.length();
         final StringSink sink = Misc.getThreadLocalBuilder();
         final FilesFacade ff = configuration.getFilesFacade();
         final long findPtr = ff.findFirst(path.$());
-        do {
-            if (ff.isDirOrSoftLinkDirNoDots(path, rootLen, ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                if (!ff.exists(path.concat(WalUtils.CONVERT_FILE_NAME).$())) {
-                    continue;
-                }
-                final String dirName = sink.toString();
-                final boolean walEnabled = readWalEnabled(path, ff);
-                LOG.info().$("Converting table [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
+        try {
+            do {
+                if (ff.isDirOrSoftLinkDirNoDots(path, rootLen, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                    if (!ff.exists(path.concat(WalUtils.CONVERT_FILE_NAME).$())) {
+                        continue;
+                    }
+                    try {
+                        final String dirName = sink.toString();
+                        final boolean walEnabled = readWalEnabled(path, ff);
+                        LOG.info().$("Converting table [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
 
-                path.trimTo(rootLen).concat(dirName);
-                try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
-                    openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-                    if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
-                        LOG.info().$("Skipping conversion, table already has the expected type [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
-                    } else {
-                        if (walEnabled) {
-                            final String tableName;
-                            try (final MemoryCMR mem = Vm.getCMRInstance()) {
-                                final String name = TableUtils.readTableName(path, mem, ff);
-                                tableName = name != null ? name : dirName;
+                        path.trimTo(rootLen).concat(dirName);
+                        try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
+                            openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+                            if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
+                                LOG.info().$("Skipping conversion, table already has the expected type [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
+                            } else {
+                                if (walEnabled) {
+                                    final String tableName;
+                                    try (final MemoryCMR mem = Vm.getCMRInstance()) {
+                                        final String name = TableUtils.readTableName(path, mem, ff);
+                                        tableName = name != null ? name : dirName;
+                                    }
+
+                                    final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+                                    final TableToken token = new TableToken(tableName, dirName, tableId, true);
+                                    try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
+                                        metadata.load();
+                                        tableSequencerAPI.registerTable(tableId, new TableDescriptorImpl(metadata), token);
+                                    }
+                                }
+                                metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                             }
 
-                            final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                            final TableToken token = new TableToken(tableName, dirName, tableId, true);
-                            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, token)) {
-                                metadata.load();
-                                tableSequencerAPI.registerTable(tableId, new TableDescriptorImpl(metadata), token);
+                            path.trimTo(rootLen).concat(dirName).concat(CONVERT_FILE_NAME);
+                            if (!ff.remove(path)) {
+                                LOG.error().$("Could not remove _convert file [path=").utf8(path).I$();
                             }
                         }
-                        metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
-                    }
-
-                    path.trimTo(rootLen).concat(dirName).concat(CONVERT_FILE_NAME);
-                    if (!ff.remove(path)) {
-                        LOG.error().$("Could not remove _convert file [path=").utf8(path).I$();
+                    } catch (Exception e) {
+                        LOG.error().$("Table conversion failed [path=").utf8(path).$(", e=").$(e).I$();
                     }
                 }
-            }
-        } while (ff.findNext(findPtr) > 0);
-        ff.findClose(findPtr);
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
     }
 
     private static boolean readWalEnabled(Path path, FilesFacade ff) {
