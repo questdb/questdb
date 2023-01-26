@@ -24,26 +24,32 @@
 
 package io.questdb.log;
 
-import org.junit.Assert;
-
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 class MockAlertTarget extends Thread {
+
     static final String ACK = "Ack";
     static final String DEATH_PILL = "]"; // /alert-manager-tpt.json ends with "]\n"
+
+    private static final Log LOG = LogFactory.getLog(MockAlertTarget.class);
     private final AtomicBoolean isRunning;
     private final Runnable onTargetEnd;
     private final Runnable onTargetStart;
-    private final int portNumber;
+    private int portNumber;
 
     MockAlertTarget(int portNumber, Runnable onTargetEnd, Runnable onTargetStart) {
         this.portNumber = portNumber;
         this.onTargetStart = onTargetStart;
         this.onTargetEnd = onTargetEnd;
         this.isRunning = new AtomicBoolean();
+        super.setName("MockAlertTarget");
+    }
+
+    public int getPortNumber() {
+        return portNumber;
     }
 
     @Override
@@ -58,15 +64,21 @@ class MockAlertTarget extends Thread {
                 serverSkt = new ServerSocket(portNumber);
                 serverSkt.setReuseAddress(true);
                 serverSkt.setSoTimeout(5000);
+                if (portNumber == 0) {
+                    portNumber = serverSkt.getLocalPort();
+                }
+
                 onTargetStart.run();
                 clientSkt = serverSkt.accept();
+
                 in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                 out = new PrintWriter(clientSkt.getOutputStream(), true);
+
                 clientSkt.setSoTimeout(5000);
-                clientSkt.setReuseAddress(true);
+
                 clientSkt.setTcpNoDelay(true);
                 clientSkt.setKeepAlive(false);
-                clientSkt.setSoLinger(true, 0);
+
 
                 // read until end or until death pill is read
                 String line = in.readLine();
@@ -79,8 +91,8 @@ class MockAlertTarget extends Thread {
                 // send ACK, equivalent to status: ok in http
                 out.print(ACK);
                 out.flush();
-            } catch (IOException e) {
-                Assert.fail(e.getMessage());
+            } catch (Throwable e) {
+                LOG.error().$(e).$();
             } finally {
                 safeClose(out);
                 safeClose(in);
@@ -98,8 +110,8 @@ class MockAlertTarget extends Thread {
         if (target != null) {
             try {
                 target.close();
-            } catch (IOException ignored) {
-                // ignore
+            } catch (IOException e) {
+                LOG.error().$(e).$();
             }
         }
     }
