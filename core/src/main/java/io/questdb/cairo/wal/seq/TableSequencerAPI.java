@@ -265,16 +265,24 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void registerTable(int tableId, final TableDescriptor tableStructure, final TableToken tableToken) {
+    public void registerTable(int tableId, final TableDescriptor tableDescriptor, final TableToken tableToken) {
         try (
-                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt1) -> {
-                    TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tt1);
-                    sequencer.create(tableId, tableStructure);
-                    sequencer.open();
-                    return sequencer;
-                })
+                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt) -> {
+                final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt);
+                sequencer.create(tableId, tableDescriptor);
+                sequencer.open();
+                return sequencer;
+            })
         ) {
             tableSequencer.unlockWrite();
+        }
+    }
+
+    public void deregisterTable(final TableToken tableToken) {
+        final TableSequencerEntry tableSequencer = seqRegistry.get(tableToken.getDirName());
+        if (tableSequencer != null && tableSequencer.checkClose()) {
+            LOG.info().$("table is converted to non-WAL, closed table sequencer [table=").$(tableToken).I$();
+            seqRegistry.remove(tableToken.getDirName(), tableSequencer);
         }
     }
 

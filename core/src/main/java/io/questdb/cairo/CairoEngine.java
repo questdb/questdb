@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -138,6 +139,17 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable e) {
             close();
             throw e;
+        }
+
+        if (convertedTables != null) {
+            for (int i = 0, n = convertedTables.size(); i < n; i++) {
+                final TableToken token = convertedTables.get(i);
+                if (!token.isWal()) {
+                    try (TableWriter writer = getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "tableTypeConversion")) {
+                        writer.commitSeqTxn(0);
+                    }
+                }
+            }
         }
     }
 
