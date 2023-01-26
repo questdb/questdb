@@ -2287,6 +2287,97 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarFillNoneWithoutKey1() throws Exception {
+        assertQuery(
+                "ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:01:30.000000Z\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where ts > '2022-12-01T00:00:30.000000Z' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 3 from long_sequence(1)  " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarFillNoneWithoutKey2() throws Exception {
+        assertQuery(
+                "ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:00:30.000000Z\t1\t1.5\t2\t2\n" +
+                        "2022-12-01T00:01:30.000000Z\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where ts < '2022-12-01T00:01:31.000000Z' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 3 from long_sequence(1)  " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarFillNullWithKey1() throws Exception {
+        assertQuery(
+                "ts\ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:00:00.000000Z\ts2\tNaN\tNaN\tNaN\tNaN\n" +
+                        "2022-12-01T00:01:00.000000Z\ts2\t2\t2.0\t2\t2\n" +
+                        "2022-12-01T00:02:00.000000Z\ts2\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, s, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m fill(null) align to calendar  )" +
+                        "where s != 's1' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 's1', 2 union all " +
+                        "select '2022-12-01T00:01:36.000000Z'::timestamp, 's2', 2 union all " +
+                        "select '2022-12-01T00:02:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarFillNullWithKey2() throws Exception {
+        assertQuery(
+                "ts\ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:00:00.000000Z\ts1\t1\t1.5\t2\t2\n" +
+                        "2022-12-01T00:01:00.000000Z\ts1\tNaN\tNaN\tNaN\tNaN\n" +
+                        "2022-12-01T00:02:00.000000Z\ts1\tNaN\tNaN\tNaN\tNaN\n",
+                "select * from (" +
+                        "select ts, s, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m fill(null) align to calendar  )" +
+                        "where s != 's2' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 's1', 2 union all " +
+                        "select '2022-12-01T00:01:36.000000Z'::timestamp, 's2', 2 union all " +
+                        "select '2022-12-01T00:02:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
     public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
         assertQuery("k\tcount\n" +
                         "1970-01-03T00:00:00.000000Z\t6\n",
@@ -2299,6 +2390,48 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE", "k", false, true, true);
+    }
+
+    @Test
+    public void testSampleByAlignToFirstObservationFillNoneWithKey() throws Exception {
+        assertQuery(
+                "ts\ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:01:30.000000Z\ts2\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, s, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where s != 's1' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 's1', 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToFirstObservationFillNoneWithoutKey() throws Exception {
+        assertQuery(
+                "ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:01:30.000000Z\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where ts > '2022-12-01T00:00:30.000000Z' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 3 from long_sequence(1)  " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
     }
 
     @Test
