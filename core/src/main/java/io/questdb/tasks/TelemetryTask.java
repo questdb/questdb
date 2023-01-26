@@ -26,6 +26,7 @@ package io.questdb.tasks;
 
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
@@ -36,9 +37,44 @@ public class TelemetryTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry";
 
     private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = new Telemetry.TelemetryTypeBuilder<TelemetryTask>() {
+        @Override
+        public Telemetry.TelemetryType<TelemetryTask> build(CairoConfiguration configuration) {
+            return new Telemetry.TelemetryType<TelemetryTask>() {
+                private final TelemetryTask systemStatusTask = new TelemetryTask();
 
-    private short origin;
+                @Override
+                public String getCreateSql() {
+                    // Telemetry table will not have sys. prefix for compatibility.
+                    return "CREATE TABLE IF NOT EXISTS \"" + TABLE_NAME + "\" (" +
+                            "created timestamp, " +
+                            "event short, " +
+                            "origin short" +
+                            ") timestamp(created)";
+                }
+
+                @Override
+                public String getTableName() {
+                    return TABLE_NAME;
+                }
+
+                @Override
+                public ObjectFactory<TelemetryTask> getTaskFactory() {
+                    return TelemetryTask::new;
+                }
+
+                @Override
+                public void logStatus(TableWriter writer, short systemStatus, long micros) {
+                    systemStatusTask.origin = TelemetryOrigin.INTERNAL;
+                    systemStatusTask.event = systemStatus;
+                    systemStatusTask.writeTo(writer, micros);
+                    writer.commit();
+                }
+            };
+        }
+    };
     private short event;
+    private short origin;
 
     private TelemetryTask() {
     }
@@ -65,35 +101,4 @@ public class TelemetryTask implements AbstractTelemetryTask {
                     .$(']').$();
         }
     }
-
-    public static final Telemetry.TelemetryType<TelemetryTask> TYPE = new Telemetry.TelemetryType<TelemetryTask>() {
-        private final TelemetryTask systemStatusTask = new TelemetryTask();
-
-        @Override
-        public String getTableName() {
-            return TABLE_NAME;
-        }
-
-        @Override
-        public String getCreateSql(CharSequence prefix) {
-            return "CREATE TABLE IF NOT EXISTS " + prefix + TABLE_NAME + " (" +
-                    "created timestamp, " +
-                    "event short, " +
-                    "origin short" +
-                    ") timestamp(created)";
-        }
-
-        @Override
-        public ObjectFactory<TelemetryTask> getTaskFactory() {
-            return TelemetryTask::new;
-        }
-
-        @Override
-        public void logStatus(TableWriter writer, short systemStatus, long micros) {
-            systemStatusTask.origin = TelemetryOrigin.INTERNAL;
-            systemStatusTask.event = systemStatus;
-            systemStatusTask.writeTo(writer, micros);
-            writer.commit();
-        }
-    };
 }

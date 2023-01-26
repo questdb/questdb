@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
-    private final static String TELEMETRY = configuration.getSystemTableNamePrefix() + TelemetryTask.TABLE_NAME;
+    private final static String TELEMETRY = TelemetryTask.TABLE_NAME;
 
     @Test
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
