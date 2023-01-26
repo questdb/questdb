@@ -1504,7 +1504,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 Assert.fail();
             } catch (CairoException e) {
                 if (Os.isWindows()) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
                 } else {
                     TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=12]");
                 }

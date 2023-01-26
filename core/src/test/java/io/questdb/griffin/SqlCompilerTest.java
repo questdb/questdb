@@ -2290,7 +2290,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (CairoException e) {
             if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
             } else {
                 TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=niza]");
             }
@@ -2354,7 +2354,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (SqlException e) {
             if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
             } else {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table, could not create soft link [src=" + target + ", tableDir=" + dirName + ']');
             }
@@ -2399,7 +2399,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             Assert.fail();
         } catch (CairoException e) {
             if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported in Windows");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
             } else {
                 TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [alias=" + volumeAlias + ", path=" + volumePath + ']');
             }
