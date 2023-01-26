@@ -830,7 +830,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
             }
             Unsafe.getUnsafe().putByte(addr, (byte) walFlag);
-            ff.append(fd, addr, Byte.BYTES);
+            ff.write(fd, addr, Byte.BYTES, 0);
         } finally {
             path.trimTo(rootLen);
             if (addr > 0) {
