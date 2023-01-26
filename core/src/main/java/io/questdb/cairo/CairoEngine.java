@@ -98,8 +98,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-        this.telemetry = new Telemetry<>(TelemetryTask.TELEMETERY, configuration);
-        this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMTRY, configuration);
+        this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
+        this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         try {
             this.tableIdGenerator.open();

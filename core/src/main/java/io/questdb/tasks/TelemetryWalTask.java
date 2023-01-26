@@ -25,6 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.Telemetry;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
@@ -34,33 +35,36 @@ import org.jetbrains.annotations.NotNull;
 
 public class TelemetryWalTask implements AbstractTelemetryTask {
     public static final String TABLE_NAME = "telemetry_wal";
-    public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMTRY = configuration -> {
-        String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
-        return new Telemetry.TelemetryType<>() {
-            @Override
-            public String getCreateSql() {
-                return "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (" +
-                        "created timestamp, " +
-                        "event short, " +
-                        "tableId int, " +
-                        "walId int, " +
-                        "seqTxn long, " +
-                        "rowCount long," +
-                        "physicalRowCount long," +
-                        "latency float" +
-                        ") timestamp(created) partition by MONTH BYPASS WAL";
-            }
+    public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMETRY = new Telemetry.TelemetryTypeBuilder<TelemetryWalTask>() {
+        @Override
+        public Telemetry.TelemetryType<TelemetryWalTask> build(CairoConfiguration configuration) {
+            String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
+            return new Telemetry.TelemetryType<>() {
+                @Override
+                public String getCreateSql() {
+                    return "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (" +
+                            "created timestamp, " +
+                            "event short, " +
+                            "tableId int, " +
+                            "walId int, " +
+                            "seqTxn long, " +
+                            "rowCount long," +
+                            "physicalRowCount long," +
+                            "latency float" +
+                            ") timestamp(created) partition by MONTH BYPASS WAL";
+                }
 
-            @Override
-            public String getTableName() {
-                return tableName;
-            }
+                @Override
+                public String getTableName() {
+                    return tableName;
+                }
 
-            @Override
-            public ObjectFactory<TelemetryWalTask> getTaskFactory() {
-                return TelemetryWalTask::new;
-            }
-        };
+                @Override
+                public ObjectFactory<TelemetryWalTask> getTaskFactory() {
+                    return TelemetryWalTask::new;
+                }
+            };
+        }
     };
     private static final Log LOG = LogFactory.getLog(TelemetryWalTask.class);
     private short event;
