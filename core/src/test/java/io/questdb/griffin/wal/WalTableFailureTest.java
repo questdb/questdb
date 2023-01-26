@@ -1004,76 +1004,22 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             String nonWalTable = "W";
-            try {
-                compile("create table " + nonWalTable + " as (" +
-                        "select x, " +
-                        " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                        " timestamp_sequence('2022-02-24', 1000000L) ts, " +
-                        " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
-                        " from long_sequence(1)" +
-                        ") timestamp(ts)");
+            createStandardNonWalTable(nonWalTable);
 
-                compile("alter table W resume wal");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[21] " + nonWalTable + " is not a WAL table.");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resum wal");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[41] 'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wall");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[48] 'wal' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wal frol");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[52] 'from' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[56] 'transaction' or 'txn' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from tx");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[57] 'transaction' or 'txn' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from txn");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[60] transaction value expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from txn -10");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[61] invalid value [value=-]");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from txn 10AA");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[61] invalid value [value=10AA]");
-            }
-            try {
-                engine.getTableSequencerAPI().suspendTable(tableToken);
-                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-                compile("alter table " + tableToken.getTableName() + "ererer resume wal from txn 2");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[12] table does not exist [table=" + tableToken.getTableName() + "ererer]");
-            }
+            assertAlterTableTypeFail("alter table " + nonWalTable + " resume wal", nonWalTable + " is not a WAL table");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", "'add', 'drop', 'attach', 'detach', 'set', 'rename' or 'resume' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wall", "'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal frol", "'from' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from", "'transaction' or 'txn' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from tx", "'transaction' or 'txn' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn", "transaction value expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn -10", "invalid value [value=-]");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn 10AA", "invalid value [value=10AA]");
+
+            engine.getTableSequencerAPI().suspendTable(tableToken);
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
+                    "table does not exist [table=" + tableToken.getTableName() + "ererer]");
         });
     }
 
@@ -1081,37 +1027,23 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
-            try {
-                compile("alter table " + tableToken.getTableName() + " set");
-                Assert.fail("expected SQLException is not thrown");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[52] 'param' or 'type' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " set type");
-                Assert.fail("expected SQLException is not thrown");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[57] 'bypass' or 'wal' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " set type bypass");
-                Assert.fail("expected SQLException is not thrown");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[64] 'wal' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " set type wall");
-                Assert.fail("expected SQLException is not thrown");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[58] 'bypass' or 'wal' expected");
-            }
-            try {
-                compile("alter table " + tableToken.getTableName() + " set type bypass wa");
-                Assert.fail("expected SQLException is not thrown");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getMessage(), "[65] 'wal' expected");
-            }
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass", "'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type wall", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass wa", "'wal' expected");
         });
+    }
+
+    private static void assertAlterTableTypeFail(String alterStmt, String expected) {
+        try {
+            compile(alterStmt);
+            Assert.fail("expected SQLException is not thrown");
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), expected);
+        }
     }
 
     @Test
@@ -1174,14 +1106,22 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         });
     }
 
+    private TableToken createStandardNonWalTable(String tableName) throws SqlException {
+        return createStandardTable(tableName, false);
+    }
+
     private TableToken createStandardWalTable(String tableName) throws SqlException {
+        return createStandardTable(tableName, true);
+    }
+
+    private TableToken createStandardTable(String tableName, boolean isWal) throws SqlException {
         compile("create table " + tableName + " as (" +
                 "select x, " +
                 " rnd_symbol('AB', 'BC', 'CD') sym, " +
                 " timestamp_sequence('2022-02-24', 1000000L) ts, " +
                 " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
                 " from long_sequence(1)" +
-                ") timestamp(ts) partition by DAY WAL");
+                ") timestamp(ts) partition by DAY " + (isWal ? "" : "BYPASS ") + "WAL");
         return engine.getTableToken(tableName);
     }
 

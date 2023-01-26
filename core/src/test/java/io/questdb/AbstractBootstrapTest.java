@@ -24,6 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -176,6 +179,15 @@ public abstract class AbstractBootstrapTest {
         System.arraycopy(args, 0, extendedArgs, 0, argsLen);
         System.arraycopy(moreArgs, 0, extendedArgs, argsLen, extLen);
         return extendedArgs;
+    }
+
+    protected static void drainWalQueue(CairoEngine engine) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.drain(0);
+            new CheckWalTransactionsJob(engine).run(0);
+            // run once again as there might be notifications to handle now
+            walApplyJob.drain(0);
+        }
     }
 
     protected static String getPgConnectionUri(int pgPort) {

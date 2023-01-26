@@ -223,7 +223,6 @@ public class TableNameRegistryFileStore implements Closeable {
                         tableId = Math.abs(tableId);
                         path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.TABLE_NAME_FILE).$();
                         tableName = TableUtils.readTableName(path, tableNameRoMemory, ff);
-                        tableNameRoMemory.close();
                     } catch (CairoException e) {
                         if (e.errnoReadPathDoesNotExist()) {
                             // table is being removed.
@@ -231,6 +230,8 @@ public class TableNameRegistryFileStore implements Closeable {
                         } else {
                             throw e;
                         }
+                    } finally {
+                        tableNameRoMemory.close();
                     }
 
                     if (tableName == null) {

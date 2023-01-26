@@ -26,13 +26,12 @@ package io.questdb.griffin;
 
 import io.questdb.AbstractBootstrapTest;
 import io.questdb.Bootstrap;
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -66,7 +65,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
         try {
-            createDummyConfiguration("cairo.wal.supported=true");
+            createDummyConfiguration(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true");
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -86,11 +85,11 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 1);
-                assertConvertFileDoesNotExist(engine, tableName);
+                assertConvertFileDoesNotExist(engine, token);
 
                 // schedule table conversion to WAL
                 setType(tableName, "WAL");
-                final Path path = assertConvertFileExists(engine, tableName);
+                final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, WAL);
 
                 insertInto(tableName);
@@ -110,7 +109,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 try {
                     engine.getTableToken(tableName);
                 } catch (CairoException e) {
-                    assertTrue(e.getMessage().contains("[-1] table does not exist [table=testtable]"));
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
                 }
             }
         });
@@ -130,11 +129,11 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // non-WAL table
                 assertFalse(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 1);
-                assertConvertFileDoesNotExist(engine, tableName);
+                assertConvertFileDoesNotExist(engine, token);
 
                 // schedule table conversion to WAL
                 setType(tableName, "WAL");
-                final Path path = assertConvertFileExists(engine, tableName);
+                final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, WAL);
 
                 insertInto(tableName);
@@ -153,7 +152,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // table has been converted to WAL
                 assertTrue(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 2);
-                assertConvertFileDoesNotExist(engine, tableName);
+                assertConvertFileDoesNotExist(engine, token);
 
                 insertInto(tableName);
                 insertInto(tableName);
@@ -164,7 +163,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // schedule table conversion back to non-WAL
                 setType(tableName, "BYPASS WAL");
                 drainWalQueue(engine);
-                final Path path = assertConvertFileExists(engine, tableName);
+                final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, NON_WAL);
 
                 insertInto(tableName);
@@ -184,7 +183,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // table has been converted to non-WAL
                 assertFalse(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 5);
-                assertConvertFileDoesNotExist(engine, tableName);
+                assertConvertFileDoesNotExist(engine, token);
 
                 insertInto(tableName);
                 assertFalse(engine.isWalTable(token));
@@ -192,7 +191,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
 
                 // schedule table conversion to non-WAL again
                 setType(tableName, "BYPASS WAL");
-                final Path path = assertConvertFileExists(engine, tableName);
+                final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, NON_WAL);
             }
             validateShutdown();
@@ -207,11 +206,11 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // no conversion happened, table was already non-WAL type
                 assertFalse(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 6);
-                assertConvertFileDoesNotExist(engine, tableName);
+                assertConvertFileDoesNotExist(engine, token);
 
                 // schedule table conversion to WAL
                 setType(tableName, "WAL");
-                final Path path = assertConvertFileExists(engine, tableName);
+                final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, WAL);
             }
             validateShutdown();
@@ -226,7 +225,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // table has been converted to WAL
                 assertTrue(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 6);
-                assertConvertFileDoesNotExist(engine, tableName);
+                assertConvertFileDoesNotExist(engine, token);
 
                 insertInto(tableName);
                 insertInto(tableName);
@@ -255,12 +254,12 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
                 // WAL table
                 assertTrue(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 1);
-                assertConvertFileDoesNotExist(engine, tableName);
+                assertConvertFileDoesNotExist(engine, token);
 
                 // schedule table conversion to non-WAL
                 setType(tableName, "BYPASS WAL");
                 drainWalQueue(engine);
-                final Path path = assertConvertFileExists(engine, tableName);
+                final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, NON_WAL);
 
                 insertInto(tableName);
@@ -294,12 +293,12 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
         assertEquals(expected, fileContent[0]);
     }
 
-    private static void assertConvertFileDoesNotExist(CairoEngine engine, String tableName) {
-        doesConvertFileExist(engine, tableName, false);
+    private static void assertConvertFileDoesNotExist(CairoEngine engine, TableToken token) {
+        doesConvertFileExist(engine, token, false);
     }
 
-    private static Path assertConvertFileExists(CairoEngine engine, String tableName) {
-        return doesConvertFileExist(engine, tableName, true);
+    private static Path assertConvertFileExists(CairoEngine engine, TableToken token) {
+        return doesConvertFileExist(engine, token, true);
     }
 
     private static void assertNumOfRows(CairoEngine engine, String tableName, int count) throws SqlException {
@@ -333,20 +332,10 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
         LOG.info().$("created table: ").utf8(tableName).$();
     }
 
-    private static Path doesConvertFileExist(CairoEngine engine, String tableName, boolean doesExist) {
-        final TableToken token = engine.getTableToken(tableName);
+    private static Path doesConvertFileExist(CairoEngine engine, TableToken token, boolean doesExist) {
         final Path path = Path.PATH.get().of(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
         MatcherAssert.assertThat(Chars.toString(path), Files.exists(path.$()), Matchers.is(doesExist));
         return doesExist ? path : null;
-    }
-
-    private static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
-            walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
-            // run once again as there might be notifications to handle now
-            walApplyJob.drain(0);
-        }
     }
 
     private static void dropTable(String tableName) throws SQLException {
@@ -370,7 +359,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
 
     private static void setType(String tableName, String walMode) throws SQLException {
         runSqlViaPG("alter table " + tableName + " set type " + walMode);
-        LOG.info().$("scheduled table type conversion for table ").utf8(tableName).$(" to ").utf8(walMode).$();
+        LOG.info().$("scheduled table type conversion for table ").utf8(tableName).$(" to ").$(walMode).$();
     }
 
     private void validateShutdown() throws SQLException {
@@ -378,7 +367,7 @@ public class AlterTableSetTypeRestartTest extends AbstractBootstrapTest {
             insertInto(tableName);
             fail("Expected exception has not been thrown");
         } catch (PSQLException psqlException) {
-            assertTrue(psqlException.getMessage().startsWith("Connection to 127.0.0.1:8822 refused."));
+            TestUtils.assertContains(psqlException.getMessage(), "Connection to 127.0.0.1:" + PG_PORT + " refused.");
         }
     }
 }

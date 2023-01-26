@@ -55,13 +55,13 @@ class TableConverter {
                 }
                 final String dirName = sink.toString();
                 final boolean walEnabled = readWalEnabled(path, ff);
-                LOG.info().$("Converting table [dirName=").$(dirName).$(", walEnabled=").$(walEnabled).$(']').$();
+                LOG.info().$("Converting table [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
 
                 path.trimTo(rootLen).concat(dirName);
                 try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
                     openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
                     if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
-                        LOG.info().$("Skipping conversion, table already has the expected type [dirName=").$(dirName).$(", walEnabled=").$(walEnabled).$(']').$();
+                        LOG.info().$("Skipping conversion, table already has the expected type [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
                     } else {
                         if (walEnabled) {
                             final String tableName;
@@ -82,7 +82,7 @@ class TableConverter {
 
                     path.trimTo(rootLen).concat(dirName).concat(CONVERT_FILE_NAME);
                     if (!ff.remove(path)) {
-                        LOG.error().$("Could not remove _convert file [path=").$(path).$(']').$();
+                        LOG.error().$("Could not remove _convert file [path=").utf8(path).I$();
                     }
                 }
             }
