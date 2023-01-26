@@ -79,7 +79,7 @@ public class WalTelemetryTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:00.004000Z\t103\t4\t1\t2\t-1\t-1\t1.0000\n" +
                     "1970-01-01T00:00:00.004000Z\t105\t4\t1\t2\t6\t6\t0.0000\n");
 
-            assertSql(sysPrefix + TelemetryTask.TABLE_NAME, "created\tevent\torigin\n" +
+            assertSql(TelemetryTask.TABLE_NAME, "created\tevent\torigin\n" +
                     "1970-01-01T00:00:00.001000Z\t100\t1\n" +
                     "1970-01-01T00:00:00.004000Z\t101\t1\n");
         });

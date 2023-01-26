@@ -39,7 +39,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
         @Override
         public Telemetry.TelemetryType<TelemetryWalTask> build(CairoConfiguration configuration) {
             String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
-            return new Telemetry.TelemetryType<>() {
+            return new Telemetry.TelemetryType<TelemetryWalTask>() {
                 @Override
                 public String getCreateSql() {
                     return "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (" +

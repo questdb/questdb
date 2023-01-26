@@ -40,7 +40,7 @@ public class TelemetryTask implements AbstractTelemetryTask {
     public static final Telemetry.TelemetryTypeBuilder<TelemetryTask> TELEMETRY = new Telemetry.TelemetryTypeBuilder<TelemetryTask>() {
         @Override
         public Telemetry.TelemetryType<TelemetryTask> build(CairoConfiguration configuration) {
-            return new Telemetry.TelemetryType<>() {
+            return new Telemetry.TelemetryType<TelemetryTask>() {
                 private final TelemetryTask systemStatusTask = new TelemetryTask();
 
                 @Override
