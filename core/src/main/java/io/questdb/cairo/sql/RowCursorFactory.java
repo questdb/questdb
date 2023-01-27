@@ -51,6 +51,7 @@ public interface RowCursorFactory extends Plannable {
     RowCursor getCursor(DataFrame dataFrame);
 
     default void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // no-op
     }
 
     boolean isEntity();
@@ -65,5 +66,6 @@ public interface RowCursorFactory extends Plannable {
     }
 
     default void prepareCursor(TableReader tableReader) {
+        // no-op
     }
 }
