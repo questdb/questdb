@@ -55,6 +55,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
 
     @Test
     public void testSetTypeDisabled() throws Exception {
+        final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
@@ -78,7 +79,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
                 assertFalse(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 2);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -94,7 +95,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
                 // can be removed with another ALTER statement
                 assertConvertFileExists(engine, token);
             }
-            validateShutdown();
+            validateShutdown(tableName);
         });
     }
 }

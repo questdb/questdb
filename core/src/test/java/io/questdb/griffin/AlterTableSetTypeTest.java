@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Chars;
@@ -50,9 +49,9 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createNonPartitionedTable(tableName);
             try {
-                executeOperation("alter table " + tableName + " set type wal", CompiledQuery.ALTER);
+                executeOperation("alter table " + tableName + " set type wal", CompiledQuery.TABLE_SET_TYPE);
                 fail("Expected exception is not thrown");
-            } catch (CairoException e) {
+            } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Cannot convert non-partitioned table");
             }
         });
@@ -65,7 +64,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
             createTable(tableName, "BYPASS WAL");
             for (int i = 0; i < 30; i++) {
                 final boolean walEnabled = sqlExecutionContext.getRandom().nextBoolean();
-                executeOperation("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"), CompiledQuery.ALTER);
+                executeOperation("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"), CompiledQuery.TABLE_SET_TYPE);
                 final Path convertFilePath1 = assertConvertFileExists(tableName);
                 assertConvertFileContent(convertFilePath1, walEnabled ? WAL : NON_WAL);
             }
@@ -77,7 +76,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         final String tableName = "table_wal";
         assertMemoryLeak(() -> {
             createTable(tableName, "WAL");
-            executeOperation("alter table " + tableName + " set type bypass wal", CompiledQuery.ALTER);
+            executeOperation("alter table " + tableName + " set type bypass wal", CompiledQuery.TABLE_SET_TYPE);
             drainWalQueue();
             final Path convertFilePath = assertConvertFileExists(tableName);
             assertConvertFileContent(convertFilePath, NON_WAL);
@@ -89,7 +88,7 @@ public class AlterTableSetTypeTest extends AbstractGriffinTest {
         final String tableName = "table_non_wal";
         assertMemoryLeak(() -> {
             createTable(tableName, "BYPASS WAL");
-            executeOperation("alter table " + tableName + " set type wal", CompiledQuery.ALTER);
+            executeOperation("alter table " + tableName + " set type wal", CompiledQuery.TABLE_SET_TYPE);
             final Path convertFilePath = assertConvertFileExists(tableName);
             assertConvertFileContent(convertFilePath, WAL);
         });

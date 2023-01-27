@@ -33,6 +33,7 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -451,11 +452,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             }
             Assert.assertFalse(engine.isWalTable(tt3));
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt2, "alterTableType")) {
-                writer.convertTable(TableUtils.TABLE_TYPE_NON_WAL);
-            }
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tt3, "alterTableType")) {
-                writer.convertTable(TableUtils.TABLE_TYPE_WAL);
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile("alter table " + tt2.getTableName() + " set type bypass wal", sqlExecutionContext);
+                compiler.compile("alter table " + tt3.getTableName() + " set type wal", sqlExecutionContext);
             }
             engine.releaseInactive();
 

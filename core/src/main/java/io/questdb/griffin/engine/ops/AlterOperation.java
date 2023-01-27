@@ -53,8 +53,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short RENAME_COLUMN = 9;
     public final static short SET_PARAM_COMMIT_LAG = 11;
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
-    public final static short CONVERT_TO_WAL = 13;
-    public final static short CONVERT_TO_NON_WAL = 14;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
@@ -122,12 +120,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
-                    break;
-                case CONVERT_TO_WAL:
-                    convertTable(svc, 1);
-                    break;
-                case CONVERT_TO_NON_WAL:
-                    convertTable(svc, 0);
                     break;
                 default:
                     LOG.error()
@@ -433,10 +425,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
-    }
-
-    private void convertTable(MetadataService svc, int walFlag) {
-        svc.convertTable(walFlag);
     }
 
     interface CharSequenceList extends Mutable {

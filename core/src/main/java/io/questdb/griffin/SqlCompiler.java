@@ -519,12 +519,12 @@ public class SqlCompiler implements Closeable {
                         if (SqlKeywords.isBypassKeyword(tok)) {
                             tok = expectToken(lexer, "'wal'");
                             if (SqlKeywords.isWalKeyword(tok)) {
-                                return alterTableSetType(tableNamePosition, tableToken, tableMetadata.getTableId(), false);
+                                return alterTableSetType(executionContext, tableNamePosition, tableToken, (byte) 0);
                             } else {
                                 throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
                             }
                         } else if (SqlKeywords.isWalKeyword(tok)) {
-                            return alterTableSetType(tableNamePosition, tableToken, tableMetadata.getTableId(), true);
+                            return alterTableSetType(executionContext, tableNamePosition, tableToken, (byte) 1);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'bypass' or 'wal' expected");
                         }
@@ -848,17 +848,25 @@ public class SqlCompiler implements Closeable {
         );
     }
 
-    private CompiledQuery alterTableSetType(
-            int tableNamePosition,
-            TableToken tableToken,
-            int tableId,
-            boolean walEnabled
-    ) {
-        return compiledQuery.ofAlter(
-                alterOperationBuilder
-                        .ofSetType(tableNamePosition, tableToken, tableId, walEnabled)
-                        .build()
-        );
+    private CompiledQuery alterTableSetType(SqlExecutionContext executionContext,
+                                            int pos,
+                                            TableToken token,
+                                            byte walFlag) throws SqlException {
+        try {
+            try (TableReader reader = executionContext.getReader(token)) {
+                if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
+                    throw SqlException.$(pos, "Cannot convert non-partitioned table");
+                }
+            }
+
+            path.of(configuration.getRoot()).concat(token.getDirName());
+            TableUtils.createConvertFile(ff, path, walFlag);
+            return compiledQuery.ofTableSetType();
+        } catch (CairoException e) {
+            throw SqlException.position(pos)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
+        }
     }
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, TableToken tableToken, TableRecordMetadata metadata) throws SqlException {

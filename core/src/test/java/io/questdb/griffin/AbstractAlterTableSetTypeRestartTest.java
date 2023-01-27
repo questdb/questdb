@@ -52,8 +52,6 @@ import static org.junit.Assert.fail;
 abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTest {
     private static final Log LOG = LogFactory.getLog(AbstractAlterTableSetTypeRestartTest.class);
 
-    final String tableName = "testtable";
-
     static void assertConvertFileContent(Path convertFilePath, byte expected) throws IOException {
         final byte[] fileContent = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(convertFilePath.toString()));
         assertEquals(1, fileContent.length);
@@ -134,7 +132,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         LOG.info().$("scheduled table type conversion for table ").utf8(tableName).$(" to ").$(walMode).$();
     }
 
-    void validateShutdown() throws SQLException {
+    void validateShutdown(String tableName) throws SQLException {
         try {
             insertInto(tableName);
             fail("Expected exception has not been thrown");

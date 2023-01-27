@@ -816,34 +816,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateMetaStructureVersion();
     }
 
-    @Override
-    public void convertTable(int walFlag) {
-        if (partitionBy == PartitionBy.NONE) {
-            throw CairoException.critical(ff.errno()).put("Cannot convert non-partitioned table [path=").put(path).put(", wal=").put(walFlag == 1).put(']');
-        }
-
-        long addr = 0;
-        int fd = -1;
-        try {
-            fd = ff.openRW(path.trimTo(rootLen).concat(CONVERT_FILE_NAME).$(), CairoConfiguration.O_NONE);
-            if (fd < 1) {
-                throw CairoException.critical(ff.errno()).put("Could not open file [path=").put(path).put(']');
-            }
-            addr = Unsafe.malloc(Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
-            if (addr < 1) {
-                throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
-            }
-            Unsafe.getUnsafe().putByte(addr, (byte) walFlag);
-            ff.write(fd, addr, Byte.BYTES, 0);
-        } finally {
-            path.trimTo(rootLen);
-            if (addr > 0) {
-                Unsafe.free(addr, Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
-            }
-            ff.close(fd);
-        }
-    }
-
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
         long lastCommittedTxn = txWriter.getTxn();
         try {

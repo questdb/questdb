@@ -100,10 +100,5 @@ public interface MetadataServiceStub extends MetadataService {
     default void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
         throw CairoException.critical(0).put("change commit interval does not update sequencer metadata");
     }
-
-    @Override
-    default void convertTable(int walFlag) {
-        throw CairoException.critical(0).put("converting a table to WAL/non-WAL does not update sequencer metadata");
-    }
 }
 

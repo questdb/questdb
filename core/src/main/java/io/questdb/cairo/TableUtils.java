@@ -49,6 +49,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
+import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public final class TableUtils {
     public static final int ANY_TABLE_ID = -1;
@@ -191,6 +192,28 @@ public final class TableUtils {
         mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);
         mem.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE);
         mem.zero();
+    }
+
+    public static void createConvertFile(FilesFacade ff, Path path, byte walFlag) {
+        long addr = 0;
+        int fd = -1;
+        try {
+            fd = ff.openRW(path.concat(CONVERT_FILE_NAME).$(), CairoConfiguration.O_NONE);
+            if (fd < 1) {
+                throw CairoException.critical(ff.errno()).put("Could not open file [path=").put(path).put(']');
+            }
+            addr = Unsafe.malloc(Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            if (addr < 1) {
+                throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
+            }
+            Unsafe.getUnsafe().putByte(addr, walFlag);
+            ff.write(fd, addr, Byte.BYTES, 0);
+        } finally {
+            if (addr > 0) {
+                Unsafe.free(addr, Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            }
+            ff.close(fd);
+        }
     }
 
     @NotNull

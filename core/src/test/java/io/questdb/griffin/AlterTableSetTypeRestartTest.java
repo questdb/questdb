@@ -55,6 +55,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
     @Test
     public void testConvertLoop2() throws Exception {
+        final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
@@ -72,7 +73,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 assertNumOfRows(engine, tableName, 3);
                 drainWalQueue(engine);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -87,7 +88,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 setType(tableName, "WAL");
                 drainWalQueue(engine);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -107,16 +108,16 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 dropTable(tableName);
                 drainWalQueue(engine);
             }
-            validateShutdown();
+            validateShutdown(tableName);
         });
     }
 
     @Test
     public void testNonPartitionedToWal() throws Exception {
+        final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
-                final String tableName = "nonpartitionedtable";
                 createNonPartitionedTable(tableName);
                 insertInto(tableName);
 
@@ -141,6 +142,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
     @Test
     public void testNonWalToWalWithDropTable() throws Exception {
+        final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
@@ -167,7 +169,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 // drop table
                 dropTable(tableName);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -185,6 +187,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
     @Test
     public void testSetType() throws Exception {
+        final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
@@ -208,7 +211,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 assertFalse(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 2);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -239,7 +242,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 assertTrue(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 5);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -262,7 +265,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, NON_WAL);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -281,7 +284,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 final Path path = assertConvertFileExists(engine, token);
                 assertConvertFileContent(path, WAL);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -305,12 +308,13 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 dropTable(tableName);
                 drainWalQueue(engine);
             }
-            validateShutdown();
+            validateShutdown(tableName);
         });
     }
 
     @Test
     public void testWalToNonWal() throws Exception {
+        final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
@@ -338,7 +342,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 assertTrue(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 2);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -357,6 +361,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
     @Test
     public void testWalToNonWalWithDropTable() throws Exception {
+        final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
@@ -388,7 +393,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 dropTable(tableName);
                 drainWalQueue(engine);
             }
-            validateShutdown();
+            validateShutdown(tableName);
 
             // restart
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -398,7 +403,7 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 try {
                     engine.getTableToken(tableName);
                 } catch (CairoException e) {
-                    assertTrue(e.getMessage().contains("[-1] table does not exist [table=testtable]"));
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=" + tableName + ']');
                 }
             }
         });

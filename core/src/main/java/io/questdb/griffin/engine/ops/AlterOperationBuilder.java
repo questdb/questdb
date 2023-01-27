@@ -222,12 +222,4 @@ public class AlterOperationBuilder {
         this.tableId = tableId;
         return this;
     }
-
-    public AlterOperationBuilder ofSetType(int tableNamePosition, TableToken tableToken, int tableId, boolean walEnabled) {
-        this.command = walEnabled ? CONVERT_TO_WAL : CONVERT_TO_NON_WAL;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.tableId = tableId;
-        return this;
-    }
 }

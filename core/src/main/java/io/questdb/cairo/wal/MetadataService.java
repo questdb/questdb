@@ -77,8 +77,6 @@ public interface MetadataService {
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
 
-    void convertTable(int walFlag);
-
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
     void dropIndex(CharSequence columnName);
