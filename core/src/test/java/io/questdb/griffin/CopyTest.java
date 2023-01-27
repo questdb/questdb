@@ -1134,7 +1134,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
-            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "text_import_log", sqlExecutionContext);
+            compiler.compile("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"", sqlExecutionContext);
             try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
 
                 Thread processingThread = createJobThread(processingJob, processed);

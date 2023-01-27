@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
-import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -125,13 +125,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         .$("`, skip: ").$(state.skip)
                         .$(", stop: ").$(state.stop)
                         .I$();
-                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_TEXT);
+                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
             } else {
                 info(state).$("execute-cached [q=`").utf8(state.query)
                         .$("`, skip: ").$(state.skip)
                         .$(", stop: ").$(state.stop)
                         .I$();
-                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_TEXT);
+                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
             }
 
             if (state.recordCursorFactory != null) {

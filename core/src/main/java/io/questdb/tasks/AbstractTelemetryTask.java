@@ -22,44 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.tasks;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.TestFilesFacadeImpl;
+import io.questdb.cairo.TableWriter;
 
-public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
-    public DefaultTestCairoConfiguration(CharSequence root) {
-        super(root);
-    }
-
-    @Override
-    public boolean disableColumnPurgeJob() {
-        return true;
-    }
-
-    @Override
-    public boolean getAllowTableRegistrySharedWrite() {
-        return true;
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return TestFilesFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getO3ColumnMemorySize() {
-        // Reduce test memory consumption, set o3 column memory to 1MB
-        return 1 << 20;
-    }
-
-    @Override
-    public boolean mangleTableDirNames() {
-        return true;
-    }
-
-    @Override
-    public CharSequence getSystemTableNamePrefix() {
-        return "sys.";
-    }
+public interface AbstractTelemetryTask {
+    void writeTo(TableWriter writer, long timestamp);
 }

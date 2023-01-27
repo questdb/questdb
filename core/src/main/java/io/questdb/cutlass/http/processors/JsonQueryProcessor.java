@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
-import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
@@ -168,7 +168,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             final RecordCursorFactory factory = QueryCache.getThreadLocalInstance().poll(state.getQuery());
             if (factory != null) {
                 try {
-                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_JSON);
+                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
                     executeCachedSelect(
                             state,
                             factory,
@@ -415,7 +415,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 final long nanos = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_JSON);
+                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
                 state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
                 state.setQueryType(cc.getType());
                 queryExecutors.getQuick(cc.getType()).execute(

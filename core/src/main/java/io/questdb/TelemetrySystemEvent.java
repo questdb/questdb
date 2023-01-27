@@ -22,44 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.TestFilesFacadeImpl;
-
-public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
-    public DefaultTestCairoConfiguration(CharSequence root) {
-        super(root);
-    }
-
-    @Override
-    public boolean disableColumnPurgeJob() {
-        return true;
-    }
-
-    @Override
-    public boolean getAllowTableRegistrySharedWrite() {
-        return true;
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return TestFilesFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getO3ColumnMemorySize() {
-        // Reduce test memory consumption, set o3 column memory to 1MB
-        return 1 << 20;
-    }
-
-    @Override
-    public boolean mangleTableDirNames() {
-        return true;
-    }
-
-    @Override
-    public CharSequence getSystemTableNamePrefix() {
-        return "sys.";
-    }
+public final class TelemetrySystemEvent {
+    public static final short WAL_TXN_APPLY_START = 103;
+    public static final short WAL_TXN_STRUCTURE_CHANGE_APPLIED = 104;
+    public static final short WAL_TXN_DATA_APPLIED = 105;
+    public static final short WAL_TXN_SQL_APPLIED = 106;
+    public static final short WAL_APPLY_SUSPEND = 107;
+    public static final short WAL_APPLY_RESUME = 108;
+    public static final short ILP_RESERVE_WRITER = 102;
+    public static final short SYSTEM_DOWN = 101;
+    public static final short SYSTEM_UP = 100;
 }

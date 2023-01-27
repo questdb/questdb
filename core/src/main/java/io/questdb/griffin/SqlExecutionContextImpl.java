@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
@@ -32,8 +33,6 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -47,7 +46,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final int sharedWorkerCount;
-    private final RingQueue<TelemetryTask> telemetryQueue;
+    private final Telemetry<TelemetryTask> telemetry;
+    private final TelemetryFacade telemetryFacade;
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
     private BindVariableService bindVariableService;
@@ -62,26 +62,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelFilterEnabled;
     private Rnd random;
     private long requestFd = -1;
-    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
-    private Sequence telemetryPubSeq;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
-        this.cairoConfiguration = cairoEngine.getConfiguration();
         assert workerCount > 0;
         this.workerCount = workerCount;
         assert sharedWorkerCount > 0;
         this.sharedWorkerCount = sharedWorkerCount;
         this.cairoEngine = cairoEngine;
-        this.clock = cairoConfiguration.getMicrosecondClock();
-        this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
-        this.jitMode = cairoConfiguration.getSqlJitMode();
-        this.parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
 
-        this.telemetryQueue = cairoEngine.getTelemetryQueue();
-        if (telemetryQueue != null) {
-            this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
-            this.telemetryMethod = this::doStoreTelemetry;
-        }
+        cairoConfiguration = cairoEngine.getConfiguration();
+        clock = cairoConfiguration.getMicrosecondClock();
+        cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
+        jitMode = cairoConfiguration.getSqlJitMode();
+        telemetry = cairoEngine.getTelemetry();
+        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -248,7 +242,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void storeTelemetry(short event, short origin) {
-        telemetryMethod.store(event, origin);
+        telemetryFacade.store(event, origin);
     }
 
     public SqlExecutionContextImpl with(
@@ -282,9 +276,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void doStoreTelemetry(short event, short origin) {
-        TelemetryTask.store(telemetryQueue, telemetryPubSeq, event, origin, clock);
+        TelemetryTask.store(telemetry, origin, event);
     }
 
     private void storeTelemetryNoop(short event, short origin) {
+    }
+
+    @FunctionalInterface
+    private interface TelemetryFacade {
+        void store(short event, short origin);
     }
 }

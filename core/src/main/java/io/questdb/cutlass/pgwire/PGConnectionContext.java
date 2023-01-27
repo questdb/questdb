@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -2025,7 +2025,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void processCompiledQuery(CompiledQuery cq) throws SqlException {
-        sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
+        sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
 
         switch (cq.getType()) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:

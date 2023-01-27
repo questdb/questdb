@@ -354,11 +354,17 @@ public class RecordComparatorCompiler {
                 int nameAndTypeIndex = asm.poolNameAndType(nameIndex2, typeIndex);
                 fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
             }
-            methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameA, "(I)" + getterType));
+
+            int getterNameIndex = asm.poolUtf8(getterNameA);
+            int getterSigIndex = asm.poolUtf8().put("(I)").put(getterType).$();
+            int getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
+            methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
             fieldRecordAccessorIndicesA.add(methodIndex);
 
             if (getterNameB != null) {
-                methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameB, "(I)" + getterType));
+                getterNameIndex = asm.poolUtf8(getterNameB);
+                getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
+                methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
             }
 
             fieldRecordAccessorIndicesB.add(methodIndex);
