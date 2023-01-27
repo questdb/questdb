@@ -57,7 +57,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
     public void testSetTypeDisabled() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
                 createTable(tableName, "BYPASS WAL");
                 insertInto(tableName);
@@ -82,7 +82,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();

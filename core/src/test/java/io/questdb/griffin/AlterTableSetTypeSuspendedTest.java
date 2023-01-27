@@ -31,7 +31,6 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -39,7 +38,6 @@ import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -75,17 +73,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
             };
 
             final Bootstrap bootstrap = new Bootstrap(null, System.getenv(), filesFacade, "-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
-            try (final ServerMain questdb = new ServerMain(bootstrap) {
-                @Override
-                protected void setupWalApplyJob(
-                        WorkerPool workerPool,
-                        CairoEngine engine,
-                        int sharedWorkerCount,
-                        @Nullable FunctionFactoryCache ffCache
-                ) {
-                    // do nothing
-                }
-            }) {
+            try (final ServerMain questdb = new TestServerMain(bootstrap)) {
                 questdb.start();
                 createTable(tableName, "WAL");
 
@@ -125,7 +113,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
             validateShutdown(tableName);
 
             // restart
-            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            try (final ServerMain questdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
                 questdb.start();
 
                 final CairoEngine engine = questdb.getCairoEngine();
