@@ -54,6 +54,64 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    public void testConvertLoop2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                questdb.start();
+                createTable(tableName, "WAL");
+                insertInto(tableName);
+                insertInto(tableName);
+                insertInto(tableName);
+
+                final CairoEngine engine = questdb.getCairoEngine();
+                final TableToken token = engine.getTableToken(tableName);
+
+                // non-WAL table
+                assertTrue(engine.isWalTable(token));
+                setType(tableName, "BYPASS WAL");
+                assertNumOfRows(engine, tableName, 3);
+                drainWalQueue(engine);
+            }
+            validateShutdown();
+
+            // restart
+            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                questdb.start();
+
+                final CairoEngine engine = questdb.getCairoEngine();
+                final TableToken token = engine.getTableToken(tableName);
+
+                // table has been converted to non-WAL
+                assertFalse(engine.isWalTable(token));
+                assertNumOfRows(engine, tableName, 3);
+                setType(tableName, "WAL");
+                drainWalQueue(engine);
+            }
+            validateShutdown();
+
+            // restart
+            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                questdb.start();
+
+                final CairoEngine engine = questdb.getCairoEngine();
+                final TableToken token = engine.getTableToken(tableName);
+
+                // table has been converted to non-WAL
+                assertTrue(engine.isWalTable(token));
+                assertNumOfRows(engine, tableName, 3);
+
+                insertInto(tableName);
+                drainWalQueue(engine);
+                assertNumOfRows(engine, tableName, 4);
+
+                dropTable(tableName);
+                drainWalQueue(engine);
+            }
+            validateShutdown();
+        });
+    }
+
+    @Test
     public void testNonPartitionedToWal() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
@@ -243,8 +301,57 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 drainWalQueue(engine);
                 assertTrue(engine.isWalTable(token));
                 assertNumOfRows(engine, tableName, 9);
+
+                dropTable(tableName);
+                drainWalQueue(engine);
             }
             validateShutdown();
+        });
+    }
+
+    @Test
+    public void testWalToNonWal() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                questdb.start();
+                createTable(tableName, "WAL");
+
+                final CairoEngine engine = questdb.getCairoEngine();
+                final TableToken token = engine.getTableToken(tableName);
+
+                insertInto(tableName);
+                drainWalQueue(engine);
+
+                // WAL table
+                assertTrue(engine.isWalTable(token));
+                assertNumOfRows(engine, tableName, 1);
+                assertConvertFileDoesNotExist(engine, token);
+
+                // schedule table conversion to non-WAL
+                setType(tableName, "BYPASS WAL");
+                drainWalQueue(engine);
+                final Path path = assertConvertFileExists(engine, token);
+                assertConvertFileContent(path, NON_WAL);
+
+                insertInto(tableName);
+                drainWalQueue(engine);
+                assertTrue(engine.isWalTable(token));
+                assertNumOfRows(engine, tableName, 2);
+            }
+            validateShutdown();
+
+            // restart
+            try (final ServerMain questdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                questdb.start();
+
+                final CairoEngine engine = questdb.getCairoEngine();
+                final TableToken token = engine.getTableToken(tableName);
+                assertFalse(engine.isWalTable(token));
+                insertInto(tableName);
+                assertNumOfRows(engine, tableName, 3);
+
+                dropTable(tableName);
+            }
         });
     }
 
