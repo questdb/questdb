@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -370,17 +370,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
-            final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
-            if (keyIndex < 0) {
-                TableUpdateDetails tud = localTableUpdateDetailsByTableName.valueAtQuick(keyIndex);
-                localTableUpdateDetailsByTableName.removeAt(keyIndex);
-                return tud;
-            }
-            return null;
-        }
-
-        @Override
         public void close() {
         }
 
@@ -397,6 +386,17 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         @Override
         public int getWorkerId() {
             return 0;
+        }
+
+        @Override
+        public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+            final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
+            if (keyIndex < 0) {
+                TableUpdateDetails tud = localTableUpdateDetailsByTableName.valueAtQuick(keyIndex);
+                localTableUpdateDetailsByTableName.removeAt(keyIndex);
+                return tud;
+            }
+            return null;
         }
 
         @Override

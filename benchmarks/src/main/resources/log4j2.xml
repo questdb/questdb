@@ -6,7 +6,7 @@
   ~    \__\_\\__,_|\___||___/\__|____/|____/
   ~
   ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2022 QuestDB
+  ~  Copyright (c) 2019-2023 QuestDB
   ~
   ~  Licensed under the Apache License, Version 2.0 (the "License");
   ~  you may not use this file except in compliance with the License.
@@ -26,7 +26,8 @@
         xmlns="jar:///home/vlad/.m2/repository/org/apache/logging/log4j/log4j-core/2.11.2/log4j-core-2.11.2.jar!/Log4j-config.xsd">
 
     <Appenders>
-        <RollingRandomAccessFile name="xyz" filename="log4j-out.log" filePattern="log4j-out.log" immediateFlush="false" append="false">
+        <RollingRandomAccessFile name="xyz" filename="log4j-out.log" filePattern="log4j-out.log" immediateFlush="false"
+                                 append="false">
             <PatternLayout pattern="%d{yyyMMdd-HH:mm:ss.SSS'Z'}{GMT} [%t] %-5level %logger{1.} - %msg%n"/>
             <CronTriggeringPolicy schedule="0 1 23 * * ?"/>
         </RollingRandomAccessFile>

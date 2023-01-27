@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,11 +33,11 @@ import io.questdb.std.str.DirectByteCharSequence;
 interface NetworkIOJob extends Job, QuietCloseable {
     void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
-    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
-
     TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName);
 
     ObjList<SymbolCache> getUnusedSymbolCaches();
 
     int getWorkerId();
+
+    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
 }

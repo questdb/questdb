@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -113,26 +113,6 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testAddCeilFloorYear() throws NumericException {
-        testAddCeilFloor(
-                "2024-01-01T00:00:00.000000Z",
-                PartitionBy.YEAR,
-                "2023-01-01T00:00:00.000000Z",
-                "2023-03-17T11:22:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testAddCeilFloorYearEdge() throws NumericException {
-        testAddCeilFloor(
-                "2024-01-01T00:00:00.000000Z",
-                PartitionBy.YEAR,
-                "2023-01-01T00:00:00.000000Z",
-                "2023-01-01T00:00:00.000000Z"
-        );
-    }
-
-    @Test
     public void testAddCeilFloorWeek() throws NumericException {
         testAddCeilFloor(
                 "2022-01-03T00:00:00.000000Z",
@@ -153,6 +133,26 @@ public class PartitionByTest {
     }
 
     @Test
+    public void testAddCeilFloorYear() throws NumericException {
+        testAddCeilFloor(
+                "2024-01-01T00:00:00.000000Z",
+                PartitionBy.YEAR,
+                "2023-01-01T00:00:00.000000Z",
+                "2023-03-17T11:22:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testAddCeilFloorYearEdge() throws NumericException {
+        testAddCeilFloor(
+                "2024-01-01T00:00:00.000000Z",
+                PartitionBy.YEAR,
+                "2023-01-01T00:00:00.000000Z",
+                "2023-01-01T00:00:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDirectoryFormattingDay() throws NumericException {
         assertFormatAndParse("2013-03-31", "2013-03-31T00:00:00.000000Z", PartitionBy.DAY);
     }
@@ -168,17 +168,17 @@ public class PartitionByTest {
     }
 
     @Test
+    public void testDirectoryFormattingNone() throws NumericException {
+        assertFormatAndParse("default", "1970-01-01T00:00:00.000000Z", PartitionBy.NONE);
+    }
+
+    @Test
     public void testDirectoryFormattingWeek() throws NumericException {
         assertFormatAndParse("2020-W53", "2020-12-28T00:00:00.000000Z", PartitionBy.WEEK);
         sink.clear();
         assertFormatAndParse("2020-W01", "2019-12-30T00:00:00.000000Z", PartitionBy.WEEK);
         sink.clear();
         assertFormatAndParse("2021-W33", "2021-08-16T00:00:00.000000Z", PartitionBy.WEEK);
-    }
-
-    @Test
-    public void testDirectoryFormattingNone() throws NumericException {
-        assertFormatAndParse("default", "1970-01-01T00:00:00.000000Z", PartitionBy.NONE);
     }
 
     @Test
@@ -237,13 +237,13 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testPartitionByNameWeek() {
-        testPartitionByName("WEEK", PartitionBy.WEEK);
+    public void testPartitionByNameNone() {
+        testPartitionByName("NONE", PartitionBy.NONE);
     }
 
     @Test
-    public void testPartitionByNameNone() {
-        testPartitionByName("NONE", PartitionBy.NONE);
+    public void testPartitionByNameWeek() {
+        testPartitionByName("WEEK", PartitionBy.WEEK);
     }
 
     @Test
@@ -282,16 +282,6 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testSetPathByWeek() throws NumericException {
-        setSetPath(
-                "2021-01-03T23:59:59.999999Z",
-                "a/b/2020-W53",
-                "2021-01-01T00:00:00.000000Z",
-                PartitionBy.WEEK
-        );
-    }
-
-    @Test
     public void testSetPathByNone() throws NumericException {
         sink.put("a/b/");
         final long expectedCeilTimestamp = Long.MAX_VALUE;
@@ -305,6 +295,16 @@ public class PartitionByTest {
                 )
         );
         TestUtils.assertEquals("a/b/default", sink);
+    }
+
+    @Test
+    public void testSetPathByWeek() throws NumericException {
+        setSetPath(
+                "2021-01-03T23:59:59.999999Z",
+                "a/b/2020-W53",
+                "2021-01-01T00:00:00.000000Z",
+                PartitionBy.WEEK
+        );
     }
 
     @Test

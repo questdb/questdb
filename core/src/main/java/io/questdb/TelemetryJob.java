@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,8 +42,8 @@ import java.io.Closeable;
 public class TelemetryJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
     private final Telemetry<TelemetryTask> telemetry;
-    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TelemetryConfigLogger telemetryConfigLogger;
+    private final Telemetry<TelemetryWalTask> telemetryWal;
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
         this(engine, null);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -800,6 +800,110 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampIntervalPartitionDay() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2022-11-20T00:00:00.000000Z\n" +
+                    "3\t2022-11-21T00:00:00.000000Z\n" +
+                    "4\t2022-11-22T00:00:00.000000Z\n" +
+                    "5\t2022-11-23T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2022-11-21T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2022-11-21'";
+            assertSql(query, expected);
+        });
+    }
+
+    @Test
+    public void testTimestampIntervalPartitionMonth() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2022-12-19T00:00:00.000000Z\n" +
+                    "3\t2023-01-18T00:00:00.000000Z\n" +
+                    "4\t2023-02-17T00:00:00.000000Z\n" +
+                    "5\t2023-03-19T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2023-01-18T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2023-01'";
+            assertSql(query, expected);
+        });
+    }
+
+    @Test
+    public void testTimestampIntervalPartitionWeek() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2022-11-26T00:00:00.000000Z\n" +
+                    "3\t2022-12-03T00:00:00.000000Z\n" +
+                    "4\t2022-12-10T00:00:00.000000Z\n" +
+                    "5\t2022-12-17T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2022-12-03T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2022-12-03'";
+            assertSql(query, expected);
+        });
+    }
+
+    @Test
+    public void testTimestampIntervalPartitionYear() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert as select
+            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
+                    "'2022-11-19T00:00:00', " +
+                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)", sqlExecutionContext);
+            String expected = "seq_num\ttimestamp\n" +
+                    "1\t2022-11-19T00:00:00.000000Z\n" +
+                    "2\t2023-11-19T00:00:00.000000Z\n" +
+                    "3\t2024-11-18T00:00:00.000000Z\n" +
+                    "4\t2025-11-18T00:00:00.000000Z\n" +
+                    "5\t2026-11-18T00:00:00.000000Z\n";
+            String query = "select * from interval_test";
+            assertSql(query, expected);
+            // test mid-case
+            expected = "seq_num\ttimestamp\n" +
+                    "3\t2024-11-18T00:00:00.000000Z\n";
+            query = "SELECT * FROM interval_test where timestamp IN '2024'";
+            assertSql(query, expected);
+        });
+    }
+
+    @Test
     public void testTimestampMin() throws Exception {
         assertQuery(
                 "nts\tmin\n" +
@@ -1359,110 +1463,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 false,
                 true
         );
-    }
-
-    @Test
-    public void testTimestampIntervalPartitionDay() throws Exception {
-        assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
-                    "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
-            String expected = "seq_num\ttimestamp\n" +
-                    "1\t2022-11-19T00:00:00.000000Z\n" +
-                    "2\t2022-11-20T00:00:00.000000Z\n" +
-                    "3\t2022-11-21T00:00:00.000000Z\n" +
-                    "4\t2022-11-22T00:00:00.000000Z\n" +
-                    "5\t2022-11-23T00:00:00.000000Z\n";
-            String query = "select * from interval_test";
-            assertSql(query, expected);
-            // test mid-case
-            expected = "seq_num\ttimestamp\n" +
-                    "3\t2022-11-21T00:00:00.000000Z\n";
-            query = "SELECT * FROM interval_test where timestamp IN '2022-11-21'";
-            assertSql(query, expected);
-        });
-    }
-
-    @Test
-    public void testTimestampIntervalPartitionMonth() throws Exception {
-        assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
-                    "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)", sqlExecutionContext);
-            String expected = "seq_num\ttimestamp\n" +
-                    "1\t2022-11-19T00:00:00.000000Z\n" +
-                    "2\t2022-12-19T00:00:00.000000Z\n" +
-                    "3\t2023-01-18T00:00:00.000000Z\n" +
-                    "4\t2023-02-17T00:00:00.000000Z\n" +
-                    "5\t2023-03-19T00:00:00.000000Z\n";
-            String query = "select * from interval_test";
-            assertSql(query, expected);
-            // test mid-case
-            expected = "seq_num\ttimestamp\n" +
-                    "3\t2023-01-18T00:00:00.000000Z\n";
-            query = "SELECT * FROM interval_test where timestamp IN '2023-01'";
-            assertSql(query, expected);
-        });
-    }
-
-    @Test
-    public void testTimestampIntervalPartitionWeek() throws Exception {
-        assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
-                    "'2022-11-19T00:00:00', " +
-                    Timestamps.WEEK_MICROS + ") FROM long_sequence(5)", sqlExecutionContext);
-            String expected = "seq_num\ttimestamp\n" +
-                    "1\t2022-11-19T00:00:00.000000Z\n" +
-                    "2\t2022-11-26T00:00:00.000000Z\n" +
-                    "3\t2022-12-03T00:00:00.000000Z\n" +
-                    "4\t2022-12-10T00:00:00.000000Z\n" +
-                    "5\t2022-12-17T00:00:00.000000Z\n";
-            String query = "select * from interval_test";
-            assertSql(query, expected);
-            // test mid-case
-            expected = "seq_num\ttimestamp\n" +
-                    "3\t2022-12-03T00:00:00.000000Z\n";
-            query = "SELECT * FROM interval_test where timestamp IN '2022-12-03'";
-            assertSql(query, expected);
-        });
-    }
-
-    @Test
-    public void testTimestampIntervalPartitionYear() throws Exception {
-        assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert as select
-            compiler.compile("insert into interval_test select x, timestamp_sequence(" +
-                    "'2022-11-19T00:00:00', " +
-                    Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)", sqlExecutionContext);
-            String expected = "seq_num\ttimestamp\n" +
-                    "1\t2022-11-19T00:00:00.000000Z\n" +
-                    "2\t2023-11-19T00:00:00.000000Z\n" +
-                    "3\t2024-11-18T00:00:00.000000Z\n" +
-                    "4\t2025-11-18T00:00:00.000000Z\n" +
-                    "5\t2026-11-18T00:00:00.000000Z\n";
-            String query = "select * from interval_test";
-            assertSql(query, expected);
-            // test mid-case
-            expected = "seq_num\ttimestamp\n" +
-                    "3\t2024-11-18T00:00:00.000000Z\n";
-            query = "SELECT * FROM interval_test where timestamp IN '2024'";
-            assertSql(query, expected);
-        });
     }
 
     private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {

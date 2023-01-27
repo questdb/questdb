@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -265,10 +265,6 @@ public final class Timestamps {
         return micros - micros % HOUR_MICROS;
     }
 
-    public static long floorWW(long micros) {
-        return (micros - micros % WEEK_MICROS) + getIsoWeekMicrosOffset(micros);
-    }
-
     public static long floorMI(long micros) {
         return micros - micros % MINUTE_MICROS;
     }
@@ -319,6 +315,10 @@ public final class Timestamps {
 
     public static long floorSS(long micros) {
         return micros - micros % SECOND_MICROS;
+    }
+
+    public static long floorWW(long micros) {
+        return (micros - micros % WEEK_MICROS) + getIsoWeekMicrosOffset(micros);
     }
 
     public static long floorYYYY(long micros) {

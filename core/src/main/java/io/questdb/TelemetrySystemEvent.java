@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,13 +25,13 @@
 package io.questdb;
 
 public final class TelemetrySystemEvent {
-    public static final short WAL_TXN_APPLY_START = 103;
-    public static final short WAL_TXN_STRUCTURE_CHANGE_APPLIED = 104;
-    public static final short WAL_TXN_DATA_APPLIED = 105;
-    public static final short WAL_TXN_SQL_APPLIED = 106;
-    public static final short WAL_APPLY_SUSPEND = 107;
-    public static final short WAL_APPLY_RESUME = 108;
     public static final short ILP_RESERVE_WRITER = 102;
     public static final short SYSTEM_DOWN = 101;
     public static final short SYSTEM_UP = 100;
+    public static final short WAL_APPLY_RESUME = 108;
+    public static final short WAL_APPLY_SUSPEND = 107;
+    public static final short WAL_TXN_APPLY_START = 103;
+    public static final short WAL_TXN_DATA_APPLIED = 105;
+    public static final short WAL_TXN_SQL_APPLIED = 106;
+    public static final short WAL_TXN_STRUCTURE_CHANGE_APPLIED = 104;
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,28 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testWalTablesQueryCache() throws Exception {
+        assertMemoryLeak(() -> {
+            cloneCreateTable("A", false);
+            cloneCreateTable("B", true);
+            cloneCreateTable("C", true);
+
+            try (RecordCursorFactory factory = compiler.compile("wal_tables()", sqlExecutionContext).getRecordCursorFactory()) {
+                // RecordCursorFactory could be cached in QueryCache and reused
+                // so let's run the query few times using the same factory
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                        TestUtils.assertEquals("name\tsuspended\twriterTxn\tsequencerTxn\n" +
+                                "B\tfalse\t0\t0\n" +
+                                "C\tfalse\t0\t0\n", sink);
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testWalTablesSelectAll() throws Exception {
@@ -84,28 +106,6 @@ public class WalTableListFunctionFactoryTest extends AbstractGriffinTest {
 
             assertSql("select name, suspended, writerTxn from wal_tables() where name = 'B'", "name\tsuspended\twriterTxn\n" +
                     "B\ttrue\t1\n");
-        });
-    }
-
-    @Test
-    public void testWalTablesQueryCache() throws Exception {
-        assertMemoryLeak(() -> {
-            cloneCreateTable("A", false);
-            cloneCreateTable("B", true);
-            cloneCreateTable("C", true);
-
-            try (RecordCursorFactory factory = compiler.compile("wal_tables()", sqlExecutionContext).getRecordCursorFactory()) {
-                // RecordCursorFactory could be cached in QueryCache and reused
-                // so let's run the query few times using the same factory
-                for (int i = 0; i < 5; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                        TestUtils.assertEquals("name\tsuspended\twriterTxn\tsequencerTxn\n" +
-                                "B\tfalse\t0\t0\n" +
-                                "C\tfalse\t0\t0\n", sink);
-                    }
-                }
-            }
         });
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -153,13 +153,6 @@ public class IntList implements Mutable, Sinkable {
         buffer[index] = buffer[index] + 1;
     }
 
-    // increment at index and return previous value
-    public int postIncrement(int index) {
-        final int prev = buffer[index];
-        buffer[index] = prev + 1;
-        return prev;
-    }
-
     public void increment(int index, int delta) {
         assert delta > -1;
         buffer[index] = buffer[index] + delta;
@@ -181,6 +174,13 @@ public class IntList implements Mutable, Sinkable {
         ensureCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
         buffer[index] = element;
+    }
+
+    // increment at index and return previous value
+    public int postIncrement(int index) {
+        final int prev = buffer[index];
+        buffer[index] = prev + 1;
+        return prev;
     }
 
     public void remove(int key) {

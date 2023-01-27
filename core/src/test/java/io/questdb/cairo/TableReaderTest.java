@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -2475,10 +2475,6 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReloadDaySamePartition() throws Exception {
-        testReload(PartitionBy.DAY, 10, 60L * 60000, MUST_NOT_SWITCH);
-    }
-    @Test
     public void testReloadByDaySwitch() throws Exception {
         testReload(PartitionBy.DAY, 15, 60L * 60000, MUST_SWITCH);
     }
@@ -2511,6 +2507,11 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReloadByYearSwitch() throws Exception {
         testReload(PartitionBy.YEAR, 200, 60 * 60000 * 24L, MUST_SWITCH);
+    }
+
+    @Test
+    public void testReloadDaySamePartition() throws Exception {
+        testReload(PartitionBy.DAY, 10, 60L * 60000, MUST_NOT_SWITCH);
     }
 
     @Test

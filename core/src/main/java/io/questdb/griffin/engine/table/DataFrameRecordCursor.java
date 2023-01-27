@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,12 +38,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private BooleanSupplier next;
-
-    private final BooleanSupplier nextRow = this::nextRow;
-
-    private final BooleanSupplier nextFrame = this::nextFrame;
-
-    private RowCursor rowCursor;    
+    private RowCursor rowCursor;    private final BooleanSupplier nextRow = this::nextRow;
 
     public DataFrameRecordCursor(
             RowCursorFactory rowCursorFactory,
@@ -56,7 +51,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;
-    }    
+    }    private final BooleanSupplier nextFrame = this::nextFrame;
 
     public RowCursorFactory getRowCursorFactory() {
         return rowCursorFactory;
@@ -137,4 +132,8 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
         return nextFrame();
     }
+
+
+
+
 }

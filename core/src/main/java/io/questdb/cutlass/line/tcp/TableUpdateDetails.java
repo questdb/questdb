@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -156,6 +156,31 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    public void commit(boolean withLag) throws CommitFailedException {
+        if (writerAPI.getUncommittedRowCount() > 0) {
+            try {
+                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
+                if (withLag) {
+                    writerAPI.ic();
+                } else {
+                    writerAPI.commit();
+                }
+            } catch (Throwable ex) {
+                setWriterInError();
+                LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
+                try {
+                    writerAPI.rollback();
+                } catch (Throwable th) {
+                    LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
+                }
+                throw CommitFailedException.instance(ex);
+            }
+        }
+        if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
+            setWriterInError();
+        }
+    }
+
     public long getEventsProcessedSinceReshuffle() {
         return eventsProcessedSinceReshuffle;
     }
@@ -192,12 +217,12 @@ public class TableUpdateDetails implements Closeable {
         return assignedToJob;
     }
 
-    public boolean isWriterInError() {
-        return writerInError;
-    }
-
     public boolean isWal() {
         return writerThreadId == -1;
+    }
+
+    public boolean isWriterInError() {
+        return writerInError;
     }
 
     public void removeReference(int workerId) {
@@ -223,31 +248,6 @@ public class TableUpdateDetails implements Closeable {
     public void tick() {
         if (metadataService != null) {
             metadataService.tick();
-        }
-    }
-
-    public void commit(boolean withLag) throws CommitFailedException {
-        if (writerAPI.getUncommittedRowCount() > 0) {
-            try {
-                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
-                if (withLag) {
-                    writerAPI.ic();
-                } else {
-                    writerAPI.commit();
-                }
-            } catch (Throwable ex) {
-                setWriterInError();
-                LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
-                try {
-                    writerAPI.rollback();
-                } catch (Throwable th) {
-                    LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
-                }
-                throw CommitFailedException.instance(ex);
-            }
-        }
-        if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
-            setWriterInError();
         }
     }
 
@@ -538,6 +538,11 @@ public class TableUpdateDetails implements Closeable {
             columnTypes.clear();
         }
 
+        void clearProcessedColumns() {
+            processedCols.setAll(columnCount, false);
+            addedColsUtf16.clear();
+        }
+
         String getColNameUtf16() {
             assert colNameUtf16 != null;
             return colNameUtf16;
@@ -638,11 +643,6 @@ public class TableUpdateDetails implements Closeable {
                 return addSymbolCache(columnIndex);
             }
             return NOT_FOUND_LOOKUP;
-        }
-
-        void clearProcessedColumns() {
-            processedCols.setAll(columnCount, false);
-            addedColsUtf16.clear();
         }
 
         void resetStateIfNecessary() {

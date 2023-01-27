@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -623,6 +623,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionDeletedFromDiskWithoutDropByNone() throws Exception {
+        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.NONE;
+        int partitionToCheck = -1;
+        String partitionDirBaseName = "default";
+        int deletedPartitionIndex = 0;
+        int rowCount = 1000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, partitionDirBaseName, deletedPartitionIndex, 1, 1, rowCount, rowCount);
+    }
+
+    @Test
     public void testPartitionDeletedFromDiskWithoutDropByWeek() throws Exception {
         String expected = "[0] Partition '2020-W02' does not exist in table 'src' directory. " +
                 "Run [ALTER TABLE src DROP PARTITION LIST '2020-W02'] " +
@@ -634,18 +646,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         int deletedPartitionIndex = 1;
         int rowCount = 10000;
         testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, 1, rowCount, 1428);
-    }
-
-    @Test
-    public void testPartitionDeletedFromDiskWithoutDropByNone() throws Exception {
-        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
-        String startDate = "2020-01-01";
-        int day = PartitionBy.NONE;
-        int partitionToCheck = -1;
-        String partitionDirBaseName = "default";
-        int deletedPartitionIndex = 0;
-        int rowCount = 1000;
-        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, partitionDirBaseName, deletedPartitionIndex, 1, 1, rowCount, rowCount);
     }
 
     @Test

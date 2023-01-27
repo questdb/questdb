@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,12 +45,12 @@ public final class PartitionBy {
     public static final int DAY = 0;
     public static final int HOUR = 4;
     public static final int MONTH = 1;
-    public static final int WEEK = 5;
     /**
      * Data is not partitioned at all,
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
+    public static final int WEEK = 5;
     public static final int YEAR = 2;
     private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
     private static final PartitionAddMethod ADD_HH = Timestamps::addHours;

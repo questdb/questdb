@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ public class RadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
         call(45).andAssert(Math.PI / 4, DELTA);
         call(90).andAssert(Math.PI / 2, DELTA);
         call(180).andAssert(Math.PI, DELTA);
-        call(360).andAssert(2* Math.PI, DELTA);
+        call(360).andAssert(2 * Math.PI, DELTA);
     }
 
     @Test

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -243,6 +243,17 @@ public class MemoryCARWImplTest {
             for (char i = n; i > 0; i--) {
                 assertEquals(i, mem.getChar(o));
                 o += 2;
+            }
+        }
+    }
+
+    @Test
+    public void testDeadCodeForUtf8() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+            try {
+                mem.putStrUtf8AsUtf16(null, true);
+                Assert.fail();
+            } catch (UnsupportedOperationException ignored) {
             }
         }
     }
@@ -1031,17 +1042,6 @@ public class MemoryCARWImplTest {
 
             Assert.assertEquals(pageSize, mem.size());
             Assert.assertEquals(0, mem.getAppendOffset());
-        }
-    }
-
-    @Test
-    public void testDeadCodeForUtf8() {
-        try (MemoryARW mem = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
-            try {
-                mem.putStrUtf8AsUtf16(null, true);
-                Assert.fail();
-            } catch (UnsupportedOperationException ignored) {
-            }
         }
     }
 

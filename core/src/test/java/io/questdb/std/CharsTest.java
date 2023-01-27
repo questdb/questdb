@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -177,29 +177,6 @@ public class CharsTest {
     }
 
     @Test
-    public void testUtf8Support() {
-
-        StringBuilder expected = new StringBuilder();
-        for (int i = 0; i < 0xD800; i++) {
-            expected.append((char) i);
-        }
-
-        String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        try {
-            byte[] bytes = in.getBytes(Files.UTF_8);
-            for (int i = 0, n = bytes.length; i < n; i++) {
-                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
-            }
-            CharSink b = new StringSink();
-            Chars.utf8Decode(p, p + bytes.length, b);
-            TestUtils.assertEquals(in, b.toString());
-        } finally {
-            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
     public void testUtf8CharDecode() {
         long p = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -263,14 +240,27 @@ public class CharsTest {
         }
     }
 
-    private static void testUtf8Char(String x, long p, boolean failExpected) {
-        byte[] bytes = x.getBytes(Files.UTF_8);
-        for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
-            Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+    @Test
+    public void testUtf8Support() {
+
+        StringBuilder expected = new StringBuilder();
+        for (int i = 0; i < 0xD800; i++) {
+            expected.append((char) i);
         }
-        int res = Chars.utf8CharDecode(p, p + bytes.length);
-        boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);
-        Assert.assertTrue(failExpected != eq);
+
+        String in = expected.toString();
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
+        try {
+            byte[] bytes = in.getBytes(Files.UTF_8);
+            for (int i = 0, n = bytes.length; i < n; i++) {
+                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            }
+            CharSink b = new StringSink();
+            Chars.utf8Decode(p, p + bytes.length, b);
+            TestUtils.assertEquals(in, b.toString());
+        } finally {
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -295,6 +285,16 @@ public class CharsTest {
         } finally {
             Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static void testUtf8Char(String x, long p, boolean failExpected) {
+        byte[] bytes = x.getBytes(Files.UTF_8);
+        for (int i = 0, n = Math.min(bytes.length, 8); i < n; i++) {
+            Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+        }
+        int res = Chars.utf8CharDecode(p, p + bytes.length);
+        boolean eq = x.charAt(0) == (char) Numbers.decodeHighShort(res);
+        Assert.assertTrue(failExpected != eq);
     }
 
     private void assertThat(String expected, ObjList<Path> list) {

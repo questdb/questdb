@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -148,13 +148,6 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testCeilYYYY() throws Exception {
-        long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilYYYY(micros));
-        TestUtils.assertEquals("2009-01-01T00:00:00.000Z", sink);
-    }
-
-    @Test
     public void testCeilWW() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2024-01-02T23:59:59.999Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilWW(micros));
@@ -162,33 +155,10 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testParseWW() throws NumericException {
-        DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
-        try {
-            byWeek.parse("2020-W00", null);
-            Assert.fail("ISO Week 00 is invalid");
-        } catch (NumericException ignore) {
-        }
-
-        try {
-            byWeek.parse("2020-W54", null);
-            Assert.fail();
-        } catch (NumericException ignore) {
-        }
-
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
-        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", null)));
-        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", null)));
-
-        try {
-            byWeek.parse("2019-W53", null);
-            Assert.fail("2019 has 52 ISO weeks");
-        } catch (NumericException ignore) {
-        }
-
-        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
-        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", null)));
-        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", null)));
+    public void testCeilYYYY() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilYYYY(micros));
+        TestUtils.assertEquals("2009-01-01T00:00:00.000Z", sink);
     }
 
     @Test
@@ -276,17 +246,17 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFloorYYYY() throws Exception {
-        long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros));
-        TestUtils.assertEquals("2008-01-01T00:00:00.000Z", sink);
-    }
-
-    @Test
     public void testFloorWW() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2025-01-02T23:59:59.999Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorWW(micros));
         TestUtils.assertEquals("2024-12-30T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testFloorYYYY() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros));
+        TestUtils.assertEquals("2008-01-01T00:00:00.000Z", sink);
     }
 
     @Test
@@ -592,6 +562,36 @@ public class TimestampsTest {
             Assert.fail();
         } catch (NumericException ignored) {
         }
+    }
+
+    @Test
+    public void testParseWW() throws NumericException {
+        DateFormat byWeek = getPartitionDirFormatMethod(PartitionBy.WEEK);
+        try {
+            byWeek.parse("2020-W00", null);
+            Assert.fail("ISO Week 00 is invalid");
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            byWeek.parse("2020-W54", null);
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
+        Assert.assertEquals("2020-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W53", null)));
+        Assert.assertEquals("2021-01-04T00:00:00.000Z", Timestamps.toString(byWeek.parse("2021-W01", null)));
+
+        try {
+            byWeek.parse("2019-W53", null);
+            Assert.fail("2019 has 52 ISO weeks");
+        } catch (NumericException ignore) {
+        }
+
+        Assert.assertEquals("2019-12-30T00:00:00.000Z", Timestamps.toString(byWeek.parse("2020-W01", null)));
+        Assert.assertEquals("2014-12-22T00:00:00.000Z", Timestamps.toString(byWeek.parse("2014-W52", null)));
+        Assert.assertEquals("2015-12-28T00:00:00.000Z", Timestamps.toString(byWeek.parse("2015-W53", null)));
     }
 
     @Test(expected = NumericException.class)

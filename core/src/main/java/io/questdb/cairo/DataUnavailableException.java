@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,8 +45,8 @@ public class DataUnavailableException extends CairoException {
         ex.errno = CairoException.NON_CRITICAL;
         ex.event = event;
         ex.put("partition is located in cold storage, query will be suspended [table=").put(table)
-            .put(", partition=").put(partition)
-            .put(']');
+                .put(", partition=").put(partition)
+                .put(']');
         return ex;
     }
 

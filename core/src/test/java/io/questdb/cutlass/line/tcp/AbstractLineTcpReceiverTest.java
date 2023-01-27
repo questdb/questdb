@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,6 +79,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     };
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
+    protected boolean autoCreateNewColumns = true;
     protected long commitIntervalDefault = 2000;
     protected double commitIntervalFraction = 0.5;
     protected boolean disconnectOnError = false;
@@ -89,8 +90,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
-    protected boolean autoCreateNewColumns = true;
-
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public String getAuthDbPath() {
@@ -100,6 +99,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             URL u = getClass().getResource("authDb.txt");
             assert u != null;
             return u.getFile();
+        }
+
+        @Override
+        public boolean getAutoCreateNewColumns() {
+            return autoCreateNewColumns;
         }
 
         @Override
@@ -165,11 +169,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
-        }
-
-        @Override
-        public boolean getAutoCreateNewColumns() {
-            return autoCreateNewColumns;
         }
     };
 
