@@ -128,7 +128,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             Map<String, String> env = new HashMap<>(System.getenv());
             env.put("QDB_HTTP_ENABLED", "false");
-            Bootstrap bootstrap = new Bootstrap(null, env, "-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            Bootstrap bootstrap = new Bootstrap(null, env, null, "-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 Assert.assertFalse(serverMain.getConfiguration().getHttpServerConfiguration().isEnabled());
                 serverMain.start();

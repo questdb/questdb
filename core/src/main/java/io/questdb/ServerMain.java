@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
@@ -45,6 +45,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
@@ -119,7 +120,7 @@ public class ServerMain implements Closeable {
                             sharedPool.freeOnExit(walPurgeJob);
 
                             if (!config.getWalApplyPoolConfiguration().isEnabled()) {
-                                WalUtils.setupWorkerPool(sharedPool, engine, getSharedWorkerCount(), ffCache);
+                                setupWalApplyJob(sharedPool, engine, getSharedWorkerCount(), ffCache);
                             }
                         }
 
@@ -157,7 +158,7 @@ public class ServerMain implements Closeable {
                     metrics.health(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
-            WalUtils.setupWorkerPool(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount(), ffCache);
+            setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount(), ffCache);
         }
 
         // http
@@ -207,6 +208,20 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
+    }
+
+    protected void setupWalApplyJob(
+            WorkerPool workerPool,
+            CairoEngine engine,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache ffCache
+    ) {
+        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
+            workerPool.assign(i, applyWal2TableJob);
+            workerPool.freeOnExit(applyWal2TableJob);
+        }
     }
 
     public static void main(String[] args) {

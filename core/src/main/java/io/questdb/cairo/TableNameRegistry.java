@@ -119,7 +119,14 @@ public interface TableNameRegistry extends Closeable {
     /**
      * Reloads table name registry from storage.
      */
-    void reloadTableNameCache();
+    default void reloadTableNameCache() {
+        reloadTableNameCache(null);
+    }
+
+    /**
+     * Reloads table name registry from storage, adjusted with converted tables.
+     */
+    void reloadTableNameCache(ObjList<TableToken> convertedTables);
 
     /**
      * Updates table name in registry.

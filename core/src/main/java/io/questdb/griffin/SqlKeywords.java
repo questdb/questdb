@@ -1406,6 +1406,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'm';
     }
 
+    public static boolean isTypeKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'y'
+                && (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isPartitionKeyword(CharSequence tok) {
         if (tok.length() != 9) {
             return false;

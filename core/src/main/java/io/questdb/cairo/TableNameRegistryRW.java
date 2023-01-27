@@ -26,8 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
-
-import java.util.Map;
+import io.questdb.std.ObjList;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
@@ -83,13 +82,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void reloadTableNameCache() {
+    public synchronized void reloadTableNameCache(ObjList<TableToken> convertedTables) {
         nameTableTokenMap.clear();
         reverseTableNameTokenMap.clear();
         if (!nameStore.isLocked()) {
             nameStore.lock();
         }
-        nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap);
+        nameStore.reload(nameTableTokenMap, reverseTableNameTokenMap, convertedTables);
     }
 
     @Override
