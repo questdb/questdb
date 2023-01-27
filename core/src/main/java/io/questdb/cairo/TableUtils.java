@@ -49,6 +49,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
+import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
 public final class TableUtils {
     public static final int ANY_TABLE_ID = -1;
@@ -82,6 +83,8 @@ public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_NON_WAL = 0;
+    public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
@@ -189,6 +192,28 @@ public final class TableUtils {
         mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);
         mem.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE);
         mem.zero();
+    }
+
+    public static void createConvertFile(FilesFacade ff, Path path, byte walFlag) {
+        long addr = 0;
+        int fd = -1;
+        try {
+            fd = ff.openRW(path.concat(CONVERT_FILE_NAME).$(), CairoConfiguration.O_NONE);
+            if (fd < 1) {
+                throw CairoException.critical(ff.errno()).put("Could not open file [path=").put(path).put(']');
+            }
+            addr = Unsafe.malloc(Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            if (addr < 1) {
+                throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
+            }
+            Unsafe.getUnsafe().putByte(addr, walFlag);
+            ff.write(fd, addr, Byte.BYTES, 0);
+        } finally {
+            if (addr > 0) {
+                Unsafe.free(addr, Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);
+            }
+            ff.close(fd);
+        }
     }
 
     @NotNull
@@ -916,6 +941,35 @@ public final class TableUtils {
         return Unsafe.getUnsafe().getLong(tempMem8b);
     }
 
+    public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
+        int fd = -1;
+        try {
+            path.concat(TableUtils.TABLE_NAME_FILE).$();
+            fd = ff.openRO(path);
+            if (fd < 1) {
+                return null;
+            }
+
+            long fileLen = ff.length(fd);
+            if (fileLen > Integer.BYTES) {
+                int charLen = ff.readNonNegativeInt(fd, 0);
+                if (charLen * 2L + Integer.BYTES != fileLen - 1) {
+                    LOG.error().$("invalid table name file [path=").$(path).$(", headerLen=").$(charLen).$(", fileLen=").$(fileLen).I$();
+                    return null;
+                }
+
+                mem.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
+                return Chars.toString(mem.getStr(0));
+            } else {
+                LOG.error().$("invalid table name file [path=").$(path).$(", fileLen=").$(fileLen).I$();
+                return null;
+            }
+        } finally {
+            path.trimTo(rootLen);
+            ff.close(fd);
+        }
+    }
+
     public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {
         if (ff.exists(path) && !ff.closeRemove(fd, path)) {
             throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
@@ -1069,7 +1123,6 @@ public final class TableUtils {
                 // fall through
             case ColumnType.UUID:
                 // Long128 and UUID are null when all 2 longs are NaNs
-                //noinspection ConstantConditions
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
                 break;
             default:

@@ -71,10 +71,10 @@ public class Bootstrap {
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
-        this(BANNER, System.getenv(), args);
+        this(BANNER, System.getenv(), null, args);
     }
 
-    public Bootstrap(String banner, @Nullable Map<String, String> env, String... args) {
+    public Bootstrap(String banner, @Nullable Map<String, String> env, FilesFacade ffOverride, String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
@@ -153,7 +153,24 @@ public class Bootstrap {
 
             // /server.conf properties
             final Properties properties = loadProperties(rootPath);
-            config = new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation);
+            config = ffOverride == null
+                ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)
+                : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {
+                    private CairoConfiguration cairoConf;
+
+                    @Override
+                    public CairoConfiguration getCairoConfiguration() {
+                        if (cairoConf == null) {
+                            cairoConf = new PropCairoConfiguration() {
+                                @Override
+                                public FilesFacade getFilesFacade() {
+                                    return ffOverride;
+                                }
+                            };
+                        }
+                        return cairoConf;
+                    }
+            };
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (Throwable e) {

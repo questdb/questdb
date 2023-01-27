@@ -130,7 +130,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean ioURingEnabled;
     private final boolean isReadOnlyInstance;
-    private final boolean isWalSupported;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final int latestByQueueCapacity;
     private final boolean lineTcpEnabled;
@@ -263,6 +262,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWithClauseModelPoolCapacity;
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final String systemTableNamePrefix;
+    private final boolean tableTypeConversionEnabled;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
     private final boolean telemetryDisableCompletely;
     private final boolean telemetryEnabled;
@@ -282,6 +282,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walPurgeInterval;
     private final int walRecreateDistressedSequencerAttempts;
     private final long walSegmentRolloverRowCount;
+    private final boolean walSupported;
     private final int walTxnNotificationQueueCapacity;
     private final long workStealTimeoutNanos;
     private final long writerAsyncCommandBusyWaitTimeout;
@@ -458,9 +459,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
-        this.isWalSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
+        this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walCommitSquashRowLimit = getInt(properties, env, PropertyKey.CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT, 512 * 1024);
+        this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
@@ -1483,7 +1485,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropCairoConfiguration implements CairoConfiguration {
+    class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
         public boolean attachPartitionCopy() {
@@ -2304,8 +2306,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             return sqlParallelFilterPreTouchEnabled;
         }
 
+        @Override
+        public boolean isTableTypeConversionEnabled() {
+            return tableTypeConversionEnabled;
+        }
+
         public boolean isWalSupported() {
-            return isWalSupported;
+            return walSupported;
         }
 
         @Override
