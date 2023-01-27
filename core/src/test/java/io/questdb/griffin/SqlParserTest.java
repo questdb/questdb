@@ -2621,7 +2621,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 9, "unexpected explain option found",
+        assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token: *",
                 modelOf("x").col("x", ColumnType.INT));
     }
 
@@ -2642,6 +2642,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testExplainWithMissingFormat() throws Exception {
         assertSyntaxError("explain (format) select * from x", 15, "unexpected explain format found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses1() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain (select x from x) ", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses2() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain (x) ", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT));
     }
 

@@ -1011,7 +1011,9 @@ public final class SqlParser {
         return parseSelect(lexer);
     }
 
-    private int parseExplainOptions(GenericLexer lexer) throws SqlException {
+    private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
+        int parenPosition = lexer.getPosition();
+        CharSequence explainTok = GenericLexer.immutableOf(prevTok);
         CharSequence tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '('");
         if (Chars.equals(tok, '(')) {
             tok = tok(lexer, "'format'");
@@ -1028,7 +1030,8 @@ public final class SqlParser {
                     throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain format found");
                 }
             } else {
-                throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
+                lexer.backTo(parenPosition, explainTok);
+                return ExplainModel.FORMAT_TEXT;
             }
         } else {
             lexer.unparseLast();
@@ -2148,7 +2151,7 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
-            int format = parseExplainOptions(lexer);
+            int format = parseExplainOptions(lexer, tok);
             ExecutionModel model = parseExplain(lexer, executionContext);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
