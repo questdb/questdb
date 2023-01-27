@@ -370,6 +370,20 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
+        public void close() {
+        }
+
+        @Override
+        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
+            return localTableUpdateDetailsByTableName.get(tableName);
+        }
+
+        @Override
+        public void releaseWalTableDetails(LineTcpMeasurementScheduler scheduler) {
+            scheduler.releaseWalTableDetails(localTableUpdateDetailsByTableName);
+        }
+
+        @Override
         public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
             final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
             if (keyIndex < 0) {
@@ -378,15 +392,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return tud;
             }
             return null;
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
-            return localTableUpdateDetailsByTableName.get(tableName);
         }
 
         @Override

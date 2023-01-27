@@ -80,6 +80,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
+    private final ConcurrentHashMap<TableUpdateDetails> walIdleUpdateDetailsUtf8 = new ConcurrentHashMap<>();
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
 
@@ -223,9 +224,25 @@ class LineTcpMeasurementScheduler implements Closeable {
             int readerWorkerId,
             long millis
     ) {
+        for (CharSequence key : walIdleUpdateDetailsUtf8.keySet()) {
+            final TableUpdateDetails tud = walIdleUpdateDetailsUtf8.get(key);
+            if (tud != null && millis - tud.getLastMeasurementMillis() >= writerIdleTimeout) {
+                if (walIdleUpdateDetailsUtf8.remove(key, tud)) {
+                    tud.releaseWriter(true);
+                    Misc.free(tud);
+                    if (listener != null) {
+                        // table going idle
+                        listener.onEvent(tud.getTableToken(), 1);
+                    }
+                    LOG.info().$("active table going idle [tableName=").$(tud.getTableNameUtf16()).I$();
+                }
+            }
+        }
+
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+
             if (millis - tud.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();
                 try {
@@ -289,6 +306,23 @@ class LineTcpMeasurementScheduler implements Closeable {
             event.releaseWriter();
         } finally {
             tableUpdateDetailsLock.readLock().unlock();
+        }
+    }
+
+    public void releaseWalTableDetails(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8) {
+        ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
+        for (int n = 0, sz = keys.size(); n < sz; n++) {
+            final ByteCharSequence tableNameUtf8 = keys.getQuick(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            if (tud.isWal()) {
+                tableUpdateDetailsUtf8.remove(tableNameUtf8);
+                sz--;
+                n--;
+                if (walIdleUpdateDetailsUtf8.putIfAbsent(tableNameUtf8, tud) != null) {
+                    tud.releaseWriter(true);
+                    Misc.free(tud);
+                }
+            }
         }
     }
 
@@ -631,6 +665,12 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
+        TableUpdateDetails walCachedTud = walIdleUpdateDetailsUtf8.remove(tableNameUtf8);
+        if (walCachedTud != null) {
+            netIoJob.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), walCachedTud);
+            return walCachedTud;
+        }
+
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
         tableNameUtf16.clear();
         Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);

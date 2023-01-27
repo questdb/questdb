@@ -298,7 +298,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 // Populate transactionMeta with timestamps of future transactions
                 // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
-                LongList transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen);
+                LongList transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen, writer.getMaxTimestamp());
                 transactionLogCursor.toTop();
 
                 isTerminating = runStatus.isTerminating();
@@ -366,13 +366,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             final long start = microClock.getTicks();
 
-                            if (iTransaction > 0 && transactionMeta.size() < (iTransaction + 2) * TXN_METADATA_LONGS_SIZE) {
+                            if (iTransaction > 0 && transactionMeta.size() < (iTransaction + 20) * TXN_METADATA_LONGS_SIZE) {
                                 // Last few transactions left to process from the list
                                 // of observed transactions built upfront in the beginning of the loop.
                                 // Check if more transaction exist, exit restart the loop to have better picture
                                 // of the future transactions and optimise the application.
                                 if (transactionLogCursor.reset()) {
-                                    transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen);
+                                    transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen, writer.getMaxTimestamp());
                                     transactionLogCursor.toTop();
                                     totalTransactionCount += iTransaction;
                                     iTransaction = 0;
@@ -445,7 +445,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
             final byte walTxnType = walEventCursor.getType();
-            final long referenceTimestamp;
             switch (walTxnType) {
                 case DATA:
                     final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
@@ -464,8 +463,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 // or when there is no more data available in WAL.
                                 // Do not commit yet, copy to LAG memory buffer and wait for more rows
                                 commitToTimestamp = -1;
-                            } else {
-                                rowsSinceLastCommit = 0;
                             }
                         }
                         final long start = microClock.getTicks();
@@ -481,6 +478,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 seqTxn,
                                 commitToTimestamp
                         );
+                        rowsSinceLastCommit -= rowsAdded;
                         final long latency = microClock.getTicks() - start;
                         long physicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
                         metrics.addApplyRowsWritten(rowCount, physicalRowCount, latency);
@@ -553,7 +551,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private LongList readObservableTxnMeta(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen) {
+    private LongList readObservableTxnMeta(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {
         try (WalEventReader eventReader = walEventReader) {
             transactionMeta.clear();
             int prevWalId = Integer.MIN_VALUE;
@@ -616,7 +614,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             }
 
             runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);
-            transactionMeta.setQuick(i, runningMinTimestamp);
+            // No point to hold data in lag buffer if it's already intersects with committed data
+            transactionMeta.setQuick(i, Math.max(maxCommittedTimestamp, runningMinTimestamp));
 
             // Leave last commitToTimestamp as -1 so everything is committed at the end
             if (i < n - 1) {
