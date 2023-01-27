@@ -1485,7 +1485,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropCairoConfiguration implements CairoConfiguration {
+    class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
         public boolean attachPartitionCopy() {

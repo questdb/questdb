@@ -24,11 +24,6 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.mp.WorkerPool;
-import org.jetbrains.annotations.Nullable;
-
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
@@ -56,18 +51,4 @@ public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
-
-    public static void setupWorkerPool(
-            WorkerPool workerPool,
-            CairoEngine engine,
-            int sharedWorkerCount,
-            @Nullable FunctionFactoryCache ffCache
-    ) {
-        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount, ffCache);
-            workerPool.assign(i, applyWal2TableJob);
-            workerPool.freeOnExit(applyWal2TableJob);
-        }
-    }
 }

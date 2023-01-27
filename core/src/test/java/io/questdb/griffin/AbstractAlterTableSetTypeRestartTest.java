@@ -41,13 +41,9 @@ import org.hamcrest.Matchers;
 import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
+import java.sql.*;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTest {
     private static final Log LOG = LogFactory.getLog(AbstractAlterTableSetTypeRestartTest.class);
@@ -116,6 +112,22 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     static void insertInto(String tableName) throws SQLException {
         runSqlViaPG("insert into " + tableName + " values('2016-01-01T00:00:00.000Z', 1234)");
         LOG.info().$("inserted 1 row into table: ").utf8(tableName).$();
+    }
+
+    static void checkSuspended(String tableName) throws SQLException {
+        try (
+                final Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                final PreparedStatement stmt = connection.prepareStatement("select name, suspended from wal_tables()")
+        ) {
+            final ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                assertEquals(tableName, rs.getString(1));
+                assertTrue(rs.getBoolean(2));
+            }
+            if (rs.next()) {
+                fail("Too many records returned");
+            }
+        }
     }
 
     static void runSqlViaPG(String sql) throws SQLException {
