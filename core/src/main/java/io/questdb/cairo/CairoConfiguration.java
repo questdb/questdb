@@ -455,6 +455,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterPreTouchEnabled();
 
+    boolean isTableTypeConversionEnabled();
+
     boolean isWalSupported();
 
     /**

@@ -879,6 +879,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isTableTypeConversionEnabled() {
+        return conf.isTableTypeConversionEnabled();
+    }
+
+    @Override
     public boolean isWalSupported() {
         return conf.isWalSupported();
     }

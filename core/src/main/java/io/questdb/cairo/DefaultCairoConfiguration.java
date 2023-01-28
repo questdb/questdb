@@ -891,6 +891,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isTableTypeConversionEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isWalSupported() {
         return false;
     }

@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -122,13 +123,33 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
+        // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList<TableToken> convertedTables;
         try {
-            this.tableNameRegistry = configuration.isReadOnlyInstance() ?
-                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            this.tableNameRegistry.reloadTableNameCache();
+            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
         } catch (Throwable e) {
             close();
             throw e;
+        }
+
+        try {
+            tableNameRegistry = configuration.isReadOnlyInstance() ?
+                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
+            tableNameRegistry.reloadTableNameCache(convertedTables);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+
+        if (convertedTables != null) {
+            for (int i = 0, n = convertedTables.size(); i < n; i++) {
+                final TableToken token = convertedTables.get(i);
+                if (!token.isWal()) {
+                    try (TableWriter writer = getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "tableTypeConversion")) {
+                        writer.commitSeqTxn(0);
+                    }
+                }
+            }
         }
     }
 
@@ -451,10 +472,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTableToken(dirName, tableId);
     }
 
-    public TableToken getTableTokenByDirName(CharSequence dirName) {
-        return tableNameRegistry.getTokenByDirName(dirName);
-    }
-
     public TableToken getTableTokenIfExists(CharSequence tableName) {
         return tableNameRegistry.getTableToken(tableName);
     }
@@ -673,7 +690,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void reloadTableNames() {
-        tableNameRegistry.reloadTableNameCache();
+        reloadTableNames(null);
+    }
+
+    @TestOnly
+    public void reloadTableNames(ObjList<TableToken> convertedTables) {
+        tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {
