@@ -182,6 +182,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private DropIndexOperator dropIndexOperator;
     private int indexCount;
     private boolean lastOpenPartitionIsReadOnly;
+    private long lastOpenPartitionTimestamp;
     private long lastOpenPartitionTs = -1L;
     private long lastPartitionTimestamp;
     private LifecycleManager lifecycleManager;
@@ -1352,8 +1353,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 freeColumns(false);
                 throw e;
             }
-        } else {
-            int abc = 0;
         }
     }
 
@@ -1401,10 +1400,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 lastTimestamp = o3TimestampMin;
                 partitionTimestampHi = partitionCeilMethod.ceil(o3TimestampMin) - 1;
                 openPartition(lastTimestamp);
-                lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
             }
             walLagColumnsInitialised = true;
         }
+        lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
+
+        assert txWriter.maxTimestamp < 0 ||
+                partitionFloorMethod.floor(lastOpenPartitionTimestamp) == partitionFloorMethod.floor(txWriter.maxTimestamp);
 
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
 
@@ -1466,7 +1468,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                     mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                     o3MergeIntoLag(timestampAddr, walLagRowCount, rowLo, rowHi, timestampIndex);
-                    setAppendPosition(txWriter.transientRowCount, false);
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
                     // Row indexes start from 0, not rowLo
@@ -3896,7 +3897,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             final int type = metadata.getColumnType(i);
             if (timestampIndex != i && type > 0) {
-                long cursor = -1;// pubSeq.next();
+                long cursor = pubSeq.next();
                 if (cursor > -1) {
                     try {
                         final O3CallbackTask task = queue.get(cursor);
@@ -4067,7 +4068,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         o3SrcIndexMem.addressOf(committedIndexOffset),
                         0,
                         copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                        o3DstIndexMem.addressOf(existingLagRows << 3)
+                        o3DstIndexMem.addressOf(existingLagRows << 3),
+                        destOffset + size
                 );
             }
 
@@ -4173,7 +4175,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         0,
                         transientRowsAdded - 1,
                         // copy uncommitted index over the trailing LONG
-                        o3IndexMem.addressOf(dstAppendOffset)
+                        o3IndexMem.addressOf(dstAppendOffset),
+                        dstVarOffset + srcDataMem.getAppendOffset() - srcVarOffset
                 );
 
                 if (locallyMapped) {
@@ -4288,7 +4291,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3SrcIndexMem.addressOf(committedIndexOffset),
                     0,
                     copyToLagRowCount, // No need to do +1 here, hi is inclusive
-                    Math.abs(destAddr)
+                    Math.abs(destAddr),
+                    destOffset + size
             );
             mapAppendColumnBufferRelease(destAddr, destIndexOffset, destIndexSize);
         }
@@ -4764,6 +4768,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void openPartition(long timestamp) {
         try {
+            lastOpenPartitionTimestamp = timestamp;
             setStateForTimestamp(path, timestamp, true);
             int plen = path.length();
             if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {

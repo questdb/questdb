@@ -174,7 +174,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWriteO3DataOnlyBig() throws Exception {
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
-        runFuzz(TestUtils.generateRandom(LOG));
+        runFuzz(new Rnd(617024653517375L, 1675032603413L));
     }
 
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {

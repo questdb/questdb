@@ -33,16 +33,16 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSender03MultiTableMain {
     public static void main(String[] args) {
-        int n = 5;
-        final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
-        for (int i = 0; i < n; i++) {
-            int k = i;
-            new Thread(() -> doSend(k)).start();
+        int[] tables = new int[]{3};
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(tables.length);
+        for (int i = 0; i < tables.length; i++) {
+            int k = tables[i];
+            new Thread(() -> doSend(k, haltLatch)).start();
         }
         haltLatch.await();
     }
 
-    private static void doSend(int k) {
+    private static void doSend(int k, SOCountDownLatch haltLatch) {
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
         int bufferCapacity = 4 * 1024;
@@ -61,6 +61,8 @@ public class LineTCPSender03MultiTableMain {
                 final long ts = clock.getTicks() * 1000L + rnd.nextLong(1_000_000_000) - 500_000_000;
                 sender.$(ts);
             }
+        } finally {
+            haltLatch.countDown();
         }
     }
 }

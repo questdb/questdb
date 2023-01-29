@@ -244,7 +244,7 @@ public class WalTableWriterTest extends AbstractMultiNodeTest {
             long tsIncrement;
             long now = Os.currentTimeMicros();
             LOG.info().$("now :").$(now).$();
-            Rnd rnd = new Rnd(12291960782565L, 1674666396758L);//TestUtils.generateRandom(LOG);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             int releaseWriterSeed = 2;
             int overlapSeed = 3;

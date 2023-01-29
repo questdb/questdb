@@ -100,9 +100,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     default CharSequence getStr(long offset, CharSequenceView view) {
         long addr = addressOf(offset);
-        if (addr <= 0) {
-            int i = 0;
-        }
         assert addr > 0;
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN) {
