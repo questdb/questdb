@@ -190,6 +190,14 @@ class LineTcpMeasurementScheduler implements Closeable {
         for (int i = 0, n = netIoJobs.length; i < n; i++) {
             netIoJobs[i].close();
         }
+
+        for (CharSequence key : walIdleUpdateDetailsUtf8.keySet()) {
+            final TableUpdateDetails tud = walIdleUpdateDetailsUtf8.get(key);
+            if (walIdleUpdateDetailsUtf8.remove(key, tud)) {
+                tud.releaseWriter(true);
+                Misc.free(tud);
+            }
+        }
     }
 
     public long commitWalTables(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8, long wallClockMillis) {
@@ -852,6 +860,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                 appendToWal(netIoJob, parser, tud);
             } catch (Throwable ex) {
                 tud.setWriterInError();
+                if (tud.isWal()) {
+                    throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+                }
                 LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
                         .$(",ex=")
                         .$(ex)
