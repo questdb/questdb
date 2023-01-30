@@ -59,6 +59,7 @@ public interface CompiledQuery {
     short TRUNCATE = 3;
     short TYPES_COUNT = EXPLAIN;
     short TABLE_RESUME = TYPES_COUNT + 1; //this is an odd one (covered by ALTER), do not include it in TYPES_COUNT
+    short TABLE_SET_TYPE = TABLE_RESUME + 1; //this is an odd one (covered by ALTER), do not include it in TYPES_COUNT
     short UNLOCK = 16;
     short UPDATE = 14;
     short VACUUM = 17;
