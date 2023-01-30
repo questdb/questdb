@@ -734,6 +734,31 @@ class SqlOptimiser {
         return model;
     }
 
+    //pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
+    //pushing for other fill options or sample by first observation could alter result 
+    private boolean canPushToSampleBy(final QueryModel model, ObjList<CharSequence> expressionColumns) {
+        ObjList<ExpressionNode> fill = model.getSampleByFill();
+        int fillCount = fill.size();
+        boolean isFillNone = fillCount == 0 || (fillCount == 1 && SqlKeywords.isNoneKeyword(fill.getQuick(0).token));
+
+        if (!isFillNone || model.getSampleByOffset() == null) {
+            return false;
+        }
+
+        CharSequence timestamp = findTimestamp(model);
+        if (timestamp == null) {
+            return false;
+        }
+
+        for (int i = 0, n = expressionColumns.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(expressionColumns.get(i), timestamp)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private boolean checkForAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -1566,6 +1591,22 @@ class SqlOptimiser {
         }
     }
 
+    private CharSequence findTimestamp(QueryModel model) {
+        if (model != null) {
+            CharSequence timestamp;
+            if (model.getTimestamp() != null) {
+                timestamp = model.getTimestamp().token;
+            } else {
+                timestamp = findTimestamp(model.getNestedModel());
+            }
+
+            if (timestamp != null) {
+                return model.getColumnNameToAliasMap().get(timestamp);
+            }
+        }
+        return null;
+    }
+
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
         orderByAdvice.clear();
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -2007,7 +2048,7 @@ class SqlOptimiser {
                             || nested.getLimitLo() != null
                             || nested.getLimitHi() != null
                             || nested.getUnionModel() != null
-                            || nested.getSampleBy() != null
+                            || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
                     ) {
                         // there is no nested model for this table, keep where clause element with this model
                         addWhereNode(parent, node);

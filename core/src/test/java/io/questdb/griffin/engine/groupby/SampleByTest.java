@@ -45,6 +45,8 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class SampleByTest extends AbstractGriffinTest {
     private final static Log LOG = LogFactory.getLog(SampleByTest.class);
 
@@ -2559,6 +2561,24 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAllowsPredicatePushdown() throws Exception {
+        String plan = "Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
+                "    SampleBy\n" +
+                "      keys: [tstmp,sym]\n" +
+                "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                "        SelectedRecord\n" +
+                "            Async JIT Filter\n" +
+                "              filter: sym='B'\n" +
+                "              workers: 1\n" +
+                "                DataFrame\n" +
+                "                    Row forward scan\n" +
+                "                    Frame forward scan on: #TABLE#\n";
+
+        testSampleByPushdown("", "align to calendar", plan);
+        testSampleByPushdown("none", "align to calendar", plan);
+    }
+
+    @Test
     public void testSampleByCountWithNoTsColSelected() throws Exception {
         assertQuery("count\n" +
                         "300\n" +
@@ -2676,6 +2696,29 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   from" +
                         "   long_sequence(120)" +
                         ") timestamp(k)", null, false);
+    }
+
+    @Test
+    public void testSampleByDisallowsPredicatePushdown() throws Exception {
+        for (String align : Arrays.asList("align to calendar", "align to first observation", "")) {
+            for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
+                if (isNone(fill) && "align to calendar".equals(align)) {
+                    continue;
+                }
+
+                String plan = "Filter filter: ((tstmp>=1669852800000000 and sym='B') and 0<length(sym)*tstmp::long)\n" +
+                        "    SampleBy\n" +
+                        (isNone(fill) ? "" : "      fill: " + fill + "\n") +
+                        "      keys: [tstmp,sym]\n" +
+                        "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                        "        SelectedRecord\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: #TABLE#\n";
+
+                testSampleByPushdown(fill, align, plan);
+            }
+        }
     }
 
     @Test
@@ -9873,6 +9916,10 @@ public class SampleByTest extends AbstractGriffinTest {
         };
     }
 
+    private boolean isNone(String fill) {
+        return "".equals(fill) || "none".equals(fill);
+    }
+
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
@@ -9901,4 +9948,38 @@ public class SampleByTest extends AbstractGriffinTest {
             }
         });
     }
+
+    private void testSampleByPushdown(String fill, String alignTo, String plan) throws Exception {
+        testSampleByPushdownWithDesignatedTs(fill, alignTo, plan);
+        testSampleByPushdownWithoutDesignatedTs(fill, alignTo, plan);
+    }
+
+    private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
+            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String query = "select * from (" +
+                    "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m " + fillOpt + " " + alignTo + " ) " +
+                    "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
+            String actualPlan = plan.replace("#TABLE#", "x");
+            assertPlan(query, actualPlan);
+        });
+    }
+
+    private void testSampleByPushdownWithoutDesignatedTs(String fill, String alignTo, String plan) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
+            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String query = "select * from (" +
+                    "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                    "from y timestamp(ts) " +
+                    "sample by 1m " + fillOpt + " " + alignTo + " ) " +
+                    "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
+            String actualPlan = plan.replace("#TABLE#", "y");
+            assertPlan(query, actualPlan);
+        });
+    }
+
 }
