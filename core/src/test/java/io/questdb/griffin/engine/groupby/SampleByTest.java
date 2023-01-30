@@ -2579,6 +2579,28 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAllowsPredicatePushdownWhenTsIsNotIncludedInColumnList() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan("select * from (" +
+                            "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ) " +
+                            "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
+                    "SampleBy\n" +
+                            "  keys: [tstmp,sym]\n" +
+                            "  values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async Filter\n" +
+                            "          filter: ((ts2>=1669852800000000 and sym='B') and 0<length(sym)*ts2::long)\n" +
+                            "          workers: 1\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n");
+        });
+    }
+
+    @Test
     public void testSampleByCountWithNoTsColSelected() throws Exception {
         assertQuery("count\n" +
                         "300\n" +

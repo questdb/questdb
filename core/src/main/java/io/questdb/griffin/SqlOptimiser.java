@@ -747,7 +747,7 @@ class SqlOptimiser {
 
         CharSequence timestamp = findTimestamp(model);
         if (timestamp == null) {
-            return false;
+            return true;
         }
 
         for (int i = 0, n = expressionColumns.size(); i < n; i++) {
