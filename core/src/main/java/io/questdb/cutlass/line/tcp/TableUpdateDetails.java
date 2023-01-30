@@ -55,6 +55,7 @@ public class TableUpdateDetails implements Closeable {
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
+    private final ByteCharSequence tableNameUtf8;
     private final TableToken tableToken;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
@@ -76,7 +77,8 @@ public class TableUpdateDetails implements Closeable {
             TableWriterAPI writer,
             int writerThreadId,
             NetworkIOJob[] netIoJobs,
-            DefaultColumnTypes defaultColumnTypes
+            DefaultColumnTypes defaultColumnTypes,
+            ByteCharSequence tableNameUtf8
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
@@ -108,6 +110,7 @@ public class TableUpdateDetails implements Closeable {
                     writer.getMetadata().getColumnCount()
             );
         }
+        this.tableNameUtf8 = tableNameUtf8;
     }
 
     public void addReference(int workerId) {
@@ -199,6 +202,10 @@ public class TableUpdateDetails implements Closeable {
 
     public String getTableNameUtf16() {
         return tableToken.getTableName();
+    }
+
+    public ByteCharSequence getTableNameUtf8() {
+        return tableNameUtf8;
     }
 
     public TableToken getTableToken() {
