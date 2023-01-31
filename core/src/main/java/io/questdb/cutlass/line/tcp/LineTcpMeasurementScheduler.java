@@ -737,7 +737,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
 
-            netIoJob.addTableUpdateDetails(tud.getTableNameUtf8(), tud);
+            // tud.getTableNameUtf8() can be different case from incoming tableNameUtf8
+            ByteCharSequence key = Chars.equals(tud.getTableNameUtf8(), tableNameUtf8) ? tud.getTableNameUtf8() : ByteCharSequence.newInstance(tableNameUtf8);
+            netIoJob.addTableUpdateDetails(key, tud);
             return tud;
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
@@ -841,13 +843,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                 appendToWal(netIoJob, parser, tud);
             } catch (Throwable ex) {
                 tud.setWriterInError();
-                if (tud.isWal()) {
-                    throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
-                }
                 LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
                         .$(",ex=")
                         .$(ex)
                         .I$();
+                if (tud.isWal()) {
+                    throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+                }
                 engine.getMetrics().health().incrementUnhandledErrors();
             }
             return false;

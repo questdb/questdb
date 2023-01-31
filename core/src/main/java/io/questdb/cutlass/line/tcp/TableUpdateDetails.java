@@ -235,13 +235,13 @@ public class TableUpdateDetails implements Closeable {
     public void removeReference(int workerId) {
         if (!isWal()) {
             networkIOOwnerCount--;
+            localDetailsArray[workerId].clear();
+            LOG.info()
+                    .$("network IO thread released table [workerId=").$(workerId)
+                    .$(", tableName=").$(tableToken)
+                    .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
+                    .I$();
         }
-        localDetailsArray[workerId].clear();
-        LOG.info()
-                .$("network IO thread released table [workerId=").$(workerId)
-                .$(", tableName=").$(tableToken)
-                .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                .I$();
     }
 
     public void setAssignedToJob(boolean assignedToJob) {
