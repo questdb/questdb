@@ -393,7 +393,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             boolean keepReceiving = true;
             OUTER:
             do {
-                if (operation == IOOperation.READ) {
+                if (IOOperation.isRead(operation)) {
                     if (recv() == 0) {
                         keepReceiving = false;
                     }
@@ -426,7 +426,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     } while (recvBufferReadOffset < recvBufferWriteOffset);
                     clearRecvBuffer();
                 }
-            } while (keepReceiving && operation == IOOperation.READ);
+            } while (keepReceiving && IOOperation.isRead(operation));
         } catch (SqlException e) {
             reportNonCriticalError(e.getPosition(), e.getFlyweightMessage());
         } catch (ImplicitCastException e) {

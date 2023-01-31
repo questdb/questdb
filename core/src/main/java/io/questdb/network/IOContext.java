@@ -44,4 +44,8 @@ public interface IOContext extends Closeable {
     default boolean invalid() {
         return getFd() == -1;
     }
+
+    default boolean isTimeout(long millisNow) {
+        return false; //no timer by default
+    }
 }

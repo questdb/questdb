@@ -203,7 +203,7 @@ public class IODispatcherTest {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
                                     (operation, context) -> {
-                                        if (operation == IOOperation.WRITE) {
+                                        if (IOOperation.isWrite(operation)) {
                                             Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
                                             context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                         }
@@ -8227,25 +8227,22 @@ public class IODispatcherTest {
                         IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
                             int fd = context.getFd();
                             int rc;
-                            switch (operation) {
-                                case IOOperation.READ:
-                                    rc = Net.recv(fd, smem, 1);
-                                    if (rc == 1) {
-                                        dispatcher.registerChannel(context, IOOperation.WRITE);
-                                    } else {
-                                        dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                    }
-                                    break;
-                                case IOOperation.WRITE:
-                                    rc = Net.send(fd, smem, 1);
-                                    if (rc == 1) {
-                                        dispatcher.registerChannel(context, IOOperation.READ);
-                                    } else {
-                                        dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                    }
-                                    break;
-                                default:
+                            if (IOOperation.isRead(operation)) {
+                                rc = Net.recv(fd, smem, 1);
+                                if (rc == 1) {
+                                    dispatcher.registerChannel(context, IOOperation.WRITE);
+                                } else {
                                     dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                }
+                            } else if (IOOperation.isWrite(operation)) {
+                                rc = Net.send(fd, smem, 1);
+                                if (rc == 1) {
+                                    dispatcher.registerChannel(context, IOOperation.READ);
+                                } else {
+                                    dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                }
+                            } else {
+                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                             }
                             return true;
                         };

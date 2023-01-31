@@ -26,8 +26,18 @@ package io.questdb.network;
 
 public final class IOOperation {
     public static final int READ = 1;
-    public static final int WRITE = 4;
+    public static final int WRITE = 2;
+    public static final int TIMEOUT = 4;
 
     private IOOperation() {
+    }
+    public static boolean isRead(int op) {
+        return (op & IOOperation.READ) != 0;
+    }
+    public static boolean isWrite(int op) {
+        return (op & IOOperation.WRITE) != 0;
+    }
+    public static boolean isTimeout(int op) {
+        return (op & IOOperation.TIMEOUT) != 0;
     }
 }

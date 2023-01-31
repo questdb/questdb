@@ -85,7 +85,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final int fd = (int) pending.get(i, OPM_FD);
             final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
 
-            if (operation == IOOperation.READ) {
+            if (IOOperation.isRead(operation)) {
                 kqueue.readFD(fd, pending.get(i, OPM_ID));
             } else {
                 kqueue.writeFD(fd, pending.get(i, OPM_ID));
@@ -101,7 +101,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
     }
 
-    private boolean handleSocketOperation(long id) {
+    private boolean handleSocketOperation(long id, long timestamp) {
         // find row in pending for two reasons:
         // 1. find payload
         // 2. remove row from pending, remaining rows will be timed out
@@ -121,10 +121,11 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 return true;
             }
         } else {
-            publishOperation(
-                    kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE,
-                    context
-            );
+            int op = kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE;
+            if (context.isTimeout(timestamp)) {
+                op |= IOOperation.TIMEOUT;
+            }
+            publishOperation(op, context);
             pending.deleteRow(row);
             return true;
         }
@@ -157,7 +158,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
         context.clearSuspendEvent();
         kqueue.setWriteOffset(0);
-        if (operation == IOOperation.READ) {
+        if (IOOperation.isRead(operation)) {
             kqueue.readFD(context.getFd(), opId);
         } else {
             kqueue.writeFD(context.getFd(), opId);
@@ -216,7 +217,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             pending.set(opRow, context);
 
             kqueue.setWriteOffset(offset);
-            if (operation == IOOperation.READ) {
+            if (IOOperation.isRead(operation)) {
                 kqueue.readFD(fd, opId);
             } else {
                 kqueue.writeFD(fd, opId);
@@ -286,7 +287,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             // Next, close the event and resume the original operation.
             context.clearSuspendEvent();
             kqueue.setWriteOffset(offset);
-            if (operation == IOOperation.READ) {
+            if (IOOperation.isRead(operation)) {
                 kqueue.readFD(context.getFd(), opId);
             } else {
                 kqueue.writeFD(context.getFd(), opId);
@@ -349,10 +350,26 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                     handleSuspendEvent(id);
                     continue;
                 }
-                if (handleSocketOperation(id)) {
+                if (handleSocketOperation(id, timestamp)) {
                     useful = true;
                     watermark--;
                 }
+            }
+        }
+
+        // process timers
+        for (int row = Math.min(pending.size(), watermark) - 1; row >= 0; --row) {
+            final C context = pending.get(row);
+            //todo: backup io interest inside of context
+            int fd = context.getFd();
+            if (fd != serverFd && context.isTimeout(timestamp)) {
+                kqueue.setWriteOffset(0);
+                kqueue.removeFD(fd);
+                registerWithKQueue(1);
+                publishOperation(IOOperation.TIMEOUT, context);
+                pending.deleteRow(row);
+                useful = true;
+                watermark--;
             }
         }
 

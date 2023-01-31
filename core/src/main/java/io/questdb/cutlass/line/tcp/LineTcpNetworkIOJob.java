@@ -176,12 +176,25 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
-        if (handleIO(context)) {
-            busyContext = context;
-            LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
-            return false;
-        }
-        return true;
-    }
+        boolean useful = true;
+        boolean ioEvent = IOOperation.isRead(operation) || IOOperation.isWrite(operation);
 
+        if (ioEvent) {
+            if (handleIO(context)) {
+                busyContext = context;
+                LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
+                useful = false;
+            }
+        }
+
+        if (IOOperation.isTimeout(operation)) {
+            //todo: process timout here
+
+            if (!ioEvent) { // only timeout interest for idle fd
+                context.getDispatcher().registerChannel(context, IOOperation.READ);//todo: keep io interest in the context
+                useful = false;
+            }
+        }
+        return useful;
+    }
 }

@@ -80,6 +80,11 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
     }
 
+    @Override
+    public boolean isTimeout(long millisNow) {
+        return true; //todo: calc timeout here
+    }
+
     private boolean checkQueueFullLogHysteresis() {
         long millis = milliClock.getTicks();
         if ((millis - lastQueueFullLogMillis) >= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {

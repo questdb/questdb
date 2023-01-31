@@ -200,17 +200,13 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         boolean keepGoing;
-        switch (operation) {
-            case IOOperation.READ:
-                keepGoing = handleClientRecv(selector, rescheduleContext);
-                break;
-            case IOOperation.WRITE:
-                keepGoing = handleClientSend();
-                break;
-            default:
-                dispatcher.disconnect(this, DISCONNECT_REASON_UNKNOWN_OPERATION);
-                keepGoing = false;
-                break;
+        if (IOOperation.isRead(operation)) {
+            keepGoing = handleClientRecv(selector, rescheduleContext);
+        } else if (IOOperation.isWrite(operation)) {
+            keepGoing = handleClientSend();
+        } else {
+            dispatcher.disconnect(this, DISCONNECT_REASON_UNKNOWN_OPERATION);
+            keepGoing = false;
         }
 
         boolean useful = keepGoing;

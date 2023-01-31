@@ -134,16 +134,12 @@ public class PongMain {
     private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {
         @Override
         public boolean onRequest(int operation, PongConnectionContext context) {
-            switch (operation) {
-                case IOOperation.READ:
-                    context.receivePing();
-                    break;
-                case IOOperation.WRITE:
-                    context.sendPong();
-                    break;
-                default:
-                    context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
-                    break;
+            if (IOOperation.isRead(operation)) {
+                context.receivePing();
+            } else if (IOOperation.isWrite(operation)) {
+                context.sendPong();
+            } else {
+                context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
             }
             return true;
         }

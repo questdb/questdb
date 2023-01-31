@@ -94,7 +94,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         }
     }
 
-    private boolean handleSocketOperation(long id) {
+    private boolean handleSocketOperation(long id, long timestamp) {
         // find row in pending for two reasons:
         // 1. find payload
         // 2. remove row from pending, remaining rows will be timed out
@@ -114,10 +114,11 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 return true;
             }
         } else {
-            publishOperation(
-                    (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
-                    context
-            );
+            int op = (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE;
+            if (context.isTimeout(timestamp)) {
+                op |= IOOperation.TIMEOUT;
+            }
+            publishOperation(op, context);
             pending.deleteRow(row);
             return true;
         }
@@ -306,10 +307,28 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                     handleSuspendEvent(id);
                     continue;
                 }
-                if (handleSocketOperation(id)) {
+                if (handleSocketOperation(id, timestamp)) {
                     useful = true;
                     watermark--;
                 }
+            }
+        }
+
+        // process timers
+        for (int row = Math.min(pending.size(), watermark) - 1; row >= 0; --row) {
+            final C context = pending.get(row);
+            //todo: backup io interest inside of context
+            int fd = context.getFd();
+            long eventId = pending.get(row, OPM_ID);
+            if (fd != serverFd && context.isTimeout(timestamp)) {
+                if (epoll.control(fd, eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                    LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                            .$(", err=").$(nf.errno()).I$();
+                }
+                publishOperation(IOOperation.TIMEOUT, context);
+                pending.deleteRow(row);
+                useful = true;
+                watermark--;
             }
         }
 

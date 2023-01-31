@@ -181,12 +181,18 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     operation = IOOperation.READ;
                 }
 
-                if (operation == IOOperation.READ) {
-                    readFdSet.add(fd);
-                    readFdCount++;
+                if (context.isTimeout(timestamp)) {
+                    publishOperation(IOOperation.TIMEOUT, context);
+                    pending.deleteRow(i);
+                    n--;
                 } else {
-                    writeFdSet.add(fd);
-                    writeFdCount++;
+                    if (IOOperation.isRead(operation)) {
+                        readFdSet.add(fd);
+                        readFdCount++;
+                    } else {
+                        writeFdSet.add(fd);
+                        writeFdCount++;
+                    }
                 }
             } else {
                 // select()'ed operation case
@@ -203,16 +209,26 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 }
 
                 // publish event and remove from pending
-                useful = true;
-
+                boolean timeout = context.isTimeout(timestamp);
+                int op = 0;
                 if ((newOp & SelectAccessor.FD_READ) > 0) {
-                    publishOperation(IOOperation.READ, context);
+                    op |= IOOperation.READ;
+                    if (timeout) {
+                        op |= IOOperation.TIMEOUT;
+                        timeout = false;
+                    }
+                    publishOperation(op, context);
                 }
                 if ((newOp & SelectAccessor.FD_WRITE) > 0) {
-                    publishOperation(IOOperation.WRITE, context);
+                    op |= IOOperation.WRITE;
+                    if (timeout) {
+                        op |= IOOperation.TIMEOUT;
+                    }
+                    publishOperation(op, context);
                 }
 
                 pending.deleteRow(i);
+                useful = true;
                 n--;
             }
         }
