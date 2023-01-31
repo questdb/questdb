@@ -75,6 +75,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    private final int lookAheadTransactionCount;
     private long rowsSinceLastCommit;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
@@ -86,10 +87,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         telemetry = engine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
         operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount, ffCache);
-        microClock = engine.getConfiguration().getMicrosecondClock();
-        walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
-        commitSquashRowLimit = engine.getConfiguration().getWalCommitSquashRowLimit();
+        CairoConfiguration configuration = engine.getConfiguration();
+        microClock = configuration.getMicrosecondClock();
+        walEventReader = new WalEventReader(configuration.getFilesFacade());
+        commitSquashRowLimit = configuration.getWalCommitSquashRowLimit();
         metrics = engine.getMetrics().getWalMetrics();
+        lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
     }
 
     public long applyWAL(
@@ -366,7 +369,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             final long start = microClock.getTicks();
 
-                            if (iTransaction > 0 && transactionMeta.size() < (iTransaction + 20) * TXN_METADATA_LONGS_SIZE) {
+                            if (iTransaction > 0 && transactionMeta.size() < (iTransaction + lookAheadTransactionCount) * TXN_METADATA_LONGS_SIZE) {
                                 // Last few transactions left to process from the list
                                 // of observed transactions built upfront in the beginning of the loop.
                                 // Check if more transaction exist, exit restart the loop to have better picture
