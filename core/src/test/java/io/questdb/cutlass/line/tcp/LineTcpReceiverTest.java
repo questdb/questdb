@@ -138,14 +138,29 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testCaseInsensitiveTableName() throws Exception {
         autoCreateNewColumns = true;
         runInContext((receiver) -> {
+            String tableName = "up";
+
             String lineData =
                     "up out=1.0 631150000000000000\n" +
                             "up out=2.0 631152000000000000\n" +
                             "UP out=3.0 631160000000000000\n" +
                             "up out=4.0 631170000000000000\n";
-            sendLinger(receiver, lineData, "up");
 
-            mayDrainWalQueue();
+            // WAL ILP will create 2 WAL writer, because of different casing. In case of WAL need to wait for 2 writer releases.
+            CountDownLatch released = new CountDownLatch(walEnabled ? 2 : 1);
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (name != null && Chars.equalsNc(name.getTableName(), tableName)) {
+                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        released.countDown();
+                    }
+                }
+            });
+            send(receiver, "up", LineTcpReceiverTest.WAIT_NO_WAIT, () -> sendToSocket(lineData));
+
+            released.await();
+            if (walEnabled) {
+                mayDrainWalQueue();
+            }
             String expected = "out\ttimestamp\n" +
                     "1.0\t1989-12-31T23:26:40.000000Z\n" +
                     "2.0\t1990-01-01T00:00:00.000000Z\n" +
@@ -652,9 +667,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (
-                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock") &&
-                                Chars.contains(name, weather) &&
-                                --count == 0
+                        Chars.endsWith(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
+                                && --count == 0
                 ) {
                     mayDrainWalQueue();
                     renameTable(weather, meteorology);
@@ -664,18 +678,31 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         };
 
         runInContext(filesFacade, (receiver) -> {
-            String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
+            final String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
                     weather + ",location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the split should happen
                     weather + ",location=east5,source=sensor2 temp=50 1465839830100800200\n" +
                     weather + ",location=west6,source=sensor3 temp=60 1465839830100900200\n";
-            send(receiver, lineData, weather);
 
-            lineData = weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n";
-            send(receiver, lineData, weather);
-            lineData = meteorology + ",location=south temperature=80 1465839830101000200\n";
-            send(receiver, lineData, meteorology);
+            // Wait until both weather and meteorology tables are released.
+            CountDownLatch released = new CountDownLatch(2);
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (name != null && (Chars.equals(name.getTableName(), weather) || Chars.equals(name.getTableName(), meteorology))) {
+                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        released.countDown();
+                    }
+                }
+            });
+            send(receiver, weather, LineTcpReceiverTest.WAIT_NO_WAIT, () -> sendToSocket(lineData));
+
+            released.await();
+            mayDrainWalQueue();
+
+            String lineData2 = weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n";
+            send(receiver, lineData2, weather);
+            lineData2 = meteorology + ",location=south temperature=80 1465839830101000200\n";
+            send(receiver, lineData2, meteorology);
 
             mayDrainWalQueue();
             String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
