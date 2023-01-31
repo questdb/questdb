@@ -102,7 +102,6 @@ class IOTableUpdateDetailsPool implements Closeable {
             // There must be a place to return the tud, arrays are pre-allocate to hold enough for all IO threads
             for (int n = tudArray.length, i = 0; i < n; i++) {
                 if (casTabAt(tudArray, i, null, tud)) {
-                    assert tudArray[i] == tud;
                     return;
                 }
             }
