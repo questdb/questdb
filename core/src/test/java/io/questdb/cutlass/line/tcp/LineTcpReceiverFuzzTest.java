@@ -24,9 +24,16 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.Net;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
+import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
@@ -42,6 +49,34 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         initLoadParameters(15, 2, 2, 5, 75);
         initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, false);
         runTest();
+    }
+
+    @Test
+    public void testOnSingleConnectionSingeWalUsed() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        runInContext((receiver) -> {
+            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    for (int i = 0; i < 300; i++) {
+                        lineTcpSender
+                                .metric("table")
+                                .longColumn("tag1", i)
+                                .$();
+                        lineTcpSender.flush();
+
+                        if (i % 100 == 0) {
+                            Os.sleep(20);
+                        }
+
+                    }
+                }
+            });
+
+            // Assert all data went into WAL1 and WAL2 does not exist
+            TableToken token = engine.getTableToken("table");
+            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.WAL_NAME_BASE).put("2");
+            Assert.assertFalse(engine.getConfiguration().getFilesFacade().exists(path.slash$()));
+        });
     }
 
     @Test
