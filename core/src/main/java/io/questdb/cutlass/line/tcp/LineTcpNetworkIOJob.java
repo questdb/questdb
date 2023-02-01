@@ -110,7 +110,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public void releaseWalTableDetails(LineTcpMeasurementScheduler scheduler) {
+    public void releaseWalTableDetails() {
         scheduler.releaseWalTableDetails(tableUpdateDetailsUtf8);
     }
 

@@ -108,6 +108,7 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final int tableCount = 2;
             final int threadCount = 4;
+            final int closeIdleThreadCount = 2;
             final int iterations = 1000;
 
             IOTableUpdateDetailsPool pool = new IOTableUpdateDetailsPool(threadCount);
@@ -124,7 +125,7 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
                 }
             }
 
-            CyclicBarrier barrier = new CyclicBarrier(threadCount + 1);
+            CyclicBarrier barrier = new CyclicBarrier(threadCount + closeIdleThreadCount);
             AtomicInteger done = new AtomicInteger();
             for (int th = 0; th < threadCount; th++) {
                 threads.add(new Thread(() -> {
@@ -150,18 +151,19 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
                 threads.getLast().start();
             }
 
-            threads.add(new Thread(() -> {
-                try {
-                    barrier.await();
-                    while (done.get() != threadCount) {
-                        pool.closeIdle(Long.MAX_VALUE, 0, null);
+            for (int i = 0; i < closeIdleThreadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (done.get() != threadCount) {
+                            pool.closeIdle(Long.MAX_VALUE, 0, null);
+                        }
+                    } catch (Throwable e) {
+                        error.set(e);
                     }
-                } catch (Throwable e) {
-                    error.set(e);
-                }
-            }));
-            threads.getLast().start();
-
+                }));
+                threads.getLast().start();
+            }
 
             for (int i = 0; i < threads.size(); i++) {
                 threads.getQuick(i).join();
@@ -177,8 +179,6 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
 
     @Test
     public void testPutClosedPool() throws Throwable {
-        AtomicReference<Throwable> error = new AtomicReference<>();
-
         assertMemoryLeak(() -> {
             IOTableUpdateDetailsPool pool = new IOTableUpdateDetailsPool(1);
 
@@ -192,10 +192,6 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
             pool.put(tableName, tud);
             Assert.assertNull(pool.get(tableName));
         });
-
-        if (error.get() != null) {
-            throw error.get();
-        }
     }
 
     @NotNull

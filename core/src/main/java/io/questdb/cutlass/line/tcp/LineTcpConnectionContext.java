@@ -162,7 +162,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         try {
             return parseMeasurements(netIoJob);
         } finally {
-            netIoJob.releaseWalTableDetails(scheduler);
+            netIoJob.releaseWalTableDetails();
         }
     }
 

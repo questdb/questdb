@@ -301,13 +301,11 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     public void releaseWalTableDetails(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8) {
         ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
-        for (int n = 0, sz = keys.size(); n < sz; n++) {
+        for (int n = keys.size() - 1; n > -1; --n) {
             final ByteCharSequence tableNameUtf8 = keys.getQuick(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (tud.isWal()) {
                 tableUpdateDetailsUtf8.remove(tableNameUtf8);
-                sz--;
-                n--;
                 walIdleUpdateDetailsUtf8.put(tableNameUtf8, tud);
             }
         }
@@ -847,10 +845,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         .$(",ex=")
                         .$(ex)
                         .I$();
-                if (tud.isWal()) {
-                    throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
-                }
-                engine.getMetrics().health().incrementUnhandledErrors();
+                throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
             }
             return false;
         }

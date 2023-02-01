@@ -51,7 +51,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
-    protected NoNetworkIOJob NO_NETWORK_IO_JOB = new NoNetworkIOJob();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -62,6 +61,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
     protected long microSecondTicks;
     protected int nWriterThreads;
+    protected NoNetworkIOJob noNetworkIOJob = new NoNetworkIOJob();
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
     protected boolean stringAsTagSupported;
@@ -217,7 +217,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected boolean handleContextIO() {
-        switch (context.handleIO(NO_NETWORK_IO_JOB)) {
+        switch (context.handleIO(noNetworkIOJob)) {
             case NEEDS_READ:
                 context.getDispatcher().registerChannel(context, IOOperation.READ);
                 break;
@@ -230,8 +230,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 break;
         }
-        scheduler.commitWalTables(NO_NETWORK_IO_JOB.localTableUpdateDetailsByTableName, Long.MAX_VALUE);
-        scheduler.doMaintenance(NO_NETWORK_IO_JOB.localTableUpdateDetailsByTableName, NO_NETWORK_IO_JOB.getWorkerId(), Long.MAX_VALUE);
+        scheduler.commitWalTables(noNetworkIOJob.localTableUpdateDetailsByTableName, Long.MAX_VALUE);
+        scheduler.doMaintenance(noNetworkIOJob.localTableUpdateDetailsByTableName, noNetworkIOJob.getWorkerId(), Long.MAX_VALUE);
         return false;
     }
 
@@ -283,7 +283,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
                 Assert.assertEquals(0, workerId);
-                return NO_NETWORK_IO_JOB;
+                return noNetworkIOJob;
             }
 
             @Override
@@ -294,6 +294,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return super.scheduleEvent(netIoJob, parser);
             }
         };
+        noNetworkIOJob.setScheduler(scheduler);
         if (authDb == null) {
             context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         } else {
@@ -363,6 +364,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static class NoNetworkIOJob implements NetworkIOJob {
         private final ByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new ByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+        private LineTcpMeasurementScheduler scheduler;
 
         @Override
         public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
@@ -379,7 +381,17 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public void releaseWalTableDetails(LineTcpMeasurementScheduler scheduler) {
+        public ObjList<SymbolCache> getUnusedSymbolCaches() {
+            return unusedSymbolCaches;
+        }
+
+        @Override
+        public int getWorkerId() {
+            return 0;
+        }
+
+        @Override
+        public void releaseWalTableDetails() {
             scheduler.releaseWalTableDetails(localTableUpdateDetailsByTableName);
         }
 
@@ -395,19 +407,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public ObjList<SymbolCache> getUnusedSymbolCaches() {
-            return unusedSymbolCaches;
-        }
-
-        @Override
-        public int getWorkerId() {
-            return 0;
-        }
-
-        @Override
         public boolean run(int workerId, @NotNull RunStatus runStatus) {
             Assert.fail("This is a mock job, not designed to run in a worker pool");
             return false;
+        }
+
+        public void setScheduler(LineTcpMeasurementScheduler scheduler) {
+            this.scheduler = scheduler;
         }
     }
 

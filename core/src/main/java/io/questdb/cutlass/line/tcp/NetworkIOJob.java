@@ -39,7 +39,7 @@ interface NetworkIOJob extends Job, QuietCloseable {
 
     int getWorkerId();
 
-    void releaseWalTableDetails(LineTcpMeasurementScheduler scheduler);
+    void releaseWalTableDetails();
 
     TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8);
 }
