@@ -1239,6 +1239,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isNoneKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isNotJoinKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return true;
@@ -1404,18 +1416,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'r'
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i) | 32) == 'm';
-    }
-
-    public static boolean isTypeKeyword(CharSequence tok) {
-        if (tok.length() != 4) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'y'
-                && (tok.charAt(i++) | 32) == 'p'
-                && (tok.charAt(i) | 32) == 'e';
     }
 
     public static boolean isPartitionKeyword(CharSequence tok) {
@@ -1827,6 +1827,18 @@ public class SqlKeywords {
         return (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i++) | 32) == 'x'
                 && (tok.charAt(i) | 32) == 'n';
+    }
+
+    public static boolean isTypeKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'y'
+                && (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i) | 32) == 'e';
     }
 
     public static boolean isUnionKeyword(CharSequence tok) {
