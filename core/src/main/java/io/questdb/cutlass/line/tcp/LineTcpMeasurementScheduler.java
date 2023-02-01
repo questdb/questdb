@@ -831,6 +831,9 @@ class LineTcpMeasurementScheduler implements Closeable {
             // Table could not be created
             LOG.error().$("could not create table [tableName=").$(measurementName)
                     .$(", errno=").$(ex.getErrno())
+                    .$(", ex=`")
+                    .$(ex.getFlyweightMessage())
+                    .$("`]")
                     .I$();
             // More details will be logged by catching thread
             throw ex;
