@@ -176,12 +176,13 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         return idSeq++ << 1;
     }
 
-    private void processIdleConnections(long deadline) {
+    private int processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < deadline; i++, count++) {
             doDisconnect(pending.get(i), pending.get(i, OPM_ID), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
+        return count;
     }
 
     private boolean processRegistrations(long timestamp) {
@@ -357,28 +358,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             }
         }
 
-        // process timers
-        for (int row = Math.min(pending.size(), watermark) - 1; row >= 0; --row) {
-            final C context = pending.get(row);
-            //todo: backup io interest inside of context
-            int fd = context.getFd();
-            if (fd != serverFd && context.isTimeout(timestamp)) {
-                kqueue.setWriteOffset(0);
-                kqueue.removeFD(fd);
-                registerWithKQueue(1);
-                if (kqueue.register(1) != 0) {
-                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
-                    LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
-                            .$(", err=").$(nf.errno()).I$();
-                } else {
-                    publishOperation(IOOperation.TIMEOUT, context);
-                    pending.deleteRow(row);
-                    useful = true;
-                    watermark--;
-                }
-            }
-        }
-
         // process rows over watermark (new connections)
         if (watermark < pending.size()) {
             enqueuePending(watermark);
@@ -392,8 +371,29 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         // process timed out connections
         final long deadline = timestamp - idleConnectionTimeout;
         if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < deadline) {
-            processIdleConnections(deadline);
+            watermark -= processIdleConnections(deadline);
             useful = true;
+        }
+
+        // process timers
+        for (int row = watermark - 1; row >= 0; --row) {
+            final C context = pending.get(row);
+            //todo: backup io interest inside of context
+            int fd = context.getFd();
+            if (context.isTimeout(timestamp)) {
+                kqueue.setWriteOffset(0);
+                kqueue.removeFD(fd);
+                registerWithKQueue(1);
+                if (kqueue.register(1) != 0) {
+                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
+                    LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
+                            .$(", err=").$(nf.errno()).I$();
+                } else {
+                    publishOperation(IOOperation.TIMEOUT, context);
+                    pending.deleteRow(row);
+                    useful = true;
+                }
+            }
         }
 
         return processRegistrations(timestamp) || useful;

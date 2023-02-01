@@ -28,6 +28,7 @@ import io.questdb.std.LongIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
     private final LongIntHashMap fds = new LongIntHashMap();
@@ -35,6 +36,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     private final SelectFacade sf;
     private final FDSet writeFdSet;
     private boolean listenerRegistered;
+    private int readFdCount;
+    private int writeFdCount;
 
     public IODispatcherWindows(
             IODispatcherConfiguration configuration,
@@ -66,14 +69,28 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             C context = evt.context;
             int operation = evt.operation;
             interestSubSeq.done(cursor);
-
             useful = true;
 
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                // if the operation was suspended, we request a read to be able to detect a client disconnect
+                operation = IOOperation.READ;
+            }
             int r = pending.addRow();
             pending.set(r, OPM_TIMESTAMP, timestamp);
-            pending.set(r, OPM_FD, context.getFd());
+            int fd = context.getFd();
+            pending.set(r, OPM_FD, fd);
             pending.set(r, OPM_OPERATION, operation);
             pending.set(r, context);
+
+            if (IOOperation.isRead(operation)) {
+                readFdSet.add(fd);
+                readFdCount++;
+            } else {
+                writeFdSet.add(fd);
+                writeFdCount++;
+            }
+
         }
         return useful;
     }
@@ -130,78 +147,37 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         boolean useful = false;
         fds.clear();
 
+        int watermark = pending.size();
         // collect reads into hash map
         if (count > 0) {
             queryFdSets(timestamp);
             useful = true;
         }
 
-        // process returned fds
-        useful |= processRegistrations(timestamp);
-
         // re-arm select() fds
-        int readFdCount = 0;
-        int writeFdCount = 0;
+        readFdCount = 0;
+        writeFdCount = 0;
         readFdSet.reset();
         writeFdSet.reset();
-        long deadline = timestamp - idleConnectionTimeout;
         for (int i = 0, n = pending.size(); i < n; ) {
             final C context = pending.get(i);
 
-            // check if the context is waiting for a suspend event
-            final SuspendEvent suspendEvent = context.getSuspendEvent();
-            if (suspendEvent != null) {
-                if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {
-                    // the event has been triggered or expired already, clear it and proceed
-                    context.clearSuspendEvent();
-                }
-            }
-
-            final long ts = pending.get(i, OPM_TIMESTAMP);
             final int fd = (int) pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
 
-            if (newOp == -1) {
-                // new operation case
-
-                // check if the connection was idle for too long
-                if (ts < deadline) {
-                    doDisconnect(context, DISCONNECT_SRC_IDLE);
-                    pending.deleteRow(i);
-                    n--;
-                    useful = true;
-                    continue;
-                }
-
-                int operation = (int) pending.get(i, OPM_OPERATION);
-                i++;
-                if (suspendEvent != null) {
-                    // if the operation was suspended, we request a read to be able to detect a client disconnect
-                    operation = IOOperation.READ;
-                }
-
-                if (context.isTimeout(timestamp)) {
-                    publishOperation(IOOperation.TIMEOUT, context);
-                    pending.deleteRow(i);
-                    n--;
-                } else {
-                    if (IOOperation.isRead(operation)) {
-                        readFdSet.add(fd);
-                        readFdCount++;
-                    } else {
-                        writeFdSet.add(fd);
-                        writeFdCount++;
-                    }
-                }
-            } else {
+            if (newOp != -1) {
                 // select()'ed operation case
+
+                // check if the context is waiting for a suspend event
+                final SuspendEvent suspendEvent = getSuspendEvent(timestamp, context);
                 if (suspendEvent != null) {
                     // the event is still pending, check if we have a client disconnect
                     if (testConnection(context.getFd())) {
                         doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
                         pending.deleteRow(i);
                         n--;
+                        watermark--;
                     } else {
                         i++; // just skip to the next operation
                     }
@@ -230,8 +206,34 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 pending.deleteRow(i);
                 useful = true;
                 n--;
+                watermark--;
             }
         }
+
+        // process rows over watermark (new connections)
+        if (watermark < pending.size()) {
+            enqueuePending(watermark, timestamp);
+        }
+
+        // process timed out connections
+        final long deadline = timestamp - idleConnectionTimeout;
+        if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < deadline) {
+            watermark -= processIdleConnections(deadline);
+            useful = true;
+        }
+
+        // process timers
+        for (int row = watermark - 1; row >= 0; --row) {
+            final C context = pending.get(row);
+            if (context.isTimeout(timestamp)) {
+                publishOperation(IOOperation.TIMEOUT, context);
+                pending.deleteRow(row);
+                useful = true;
+            }
+        }
+
+        // process returned fds
+        useful |= processRegistrations(timestamp);
 
         if (listenerRegistered) {
             assert serverFd >= 0;
@@ -244,6 +246,50 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         return useful;
     }
 
+    @Nullable
+    private SuspendEvent getSuspendEvent(long timestamp, C context) {
+        // check if the context is waiting for a suspend event
+        final SuspendEvent suspendEvent = context.getSuspendEvent();
+        if (suspendEvent != null) {
+            if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {
+                // the event has been triggered or expired already, clear it and proceed
+                context.clearSuspendEvent();
+            }
+        }
+        return suspendEvent;
+    }
+
+    private void enqueuePending(int watermark, long timestamp) {
+        for (int i = watermark, sz = pending.size(); i < sz; i++) {
+            final C context = pending.get(i);
+            final SuspendEvent suspendEvent = getSuspendEvent(timestamp, context);
+
+            int operation = (int) pending.get(i, OPM_OPERATION);
+            final int fd = (int) pending.get(i, OPM_FD);
+            if (suspendEvent != null) {
+                // if the operation was suspended, we request a read to be able to detect a client disconnect
+                operation = IOOperation.READ;
+            }
+
+            if (IOOperation.isRead(operation)) {
+                readFdSet.add(fd);
+                readFdCount++;
+            } else {
+                writeFdSet.add(fd);
+                writeFdCount++;
+            }
+        }
+    }
+    
+    private int processIdleConnections(long deadline) {
+        int count = 0;
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < deadline; i++, count++) {
+            doDisconnect(pending.get(i), DISCONNECT_SRC_PEER_DISCONNECT);
+        }
+        pending.zapTop(count);
+        return count;
+    }
+    
     @Override
     protected void unregisterListenerFd() {
         listenerRegistered = false;

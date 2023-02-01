@@ -156,12 +156,13 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         return idSeq++ << 1;
     }
 
-    private void processIdleConnections(long idleTimestamp) {
+    private int processIdleConnections(long idleTimestamp) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < idleTimestamp; i++, count++) {
             doDisconnect(pending.get(i), pending.get(i, OPM_ID), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
+        return count;
     }
 
     private boolean processRegistrations(long timestamp) {
@@ -314,26 +315,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             }
         }
 
-        // process timers
-        for (int row = Math.min(pending.size(), watermark) - 1; row >= 0; --row) {
-            final C context = pending.get(row);
-            //todo: backup io interest inside of context
-            int fd = context.getFd();
-            long eventId = pending.get(row, OPM_ID);
-            if (fd != serverFd && context.isTimeout(timestamp)) {
-                if (epoll.control(fd, eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
-                    LOG.critical().$("internal error: epoll_ctl remove fd failure [fd=").$(fd)
-                            .$(", err=").$(nf.errno()).I$();
-                } else {
-                    publishOperation(IOOperation.TIMEOUT, context);
-                    pending.deleteRow(row);
-                    useful = true;
-                    watermark--;
-                }
-            }
-        }
-
         // process rows over watermark (new connections)
         if (watermark < pending.size()) {
             enqueuePending(watermark);
@@ -347,8 +328,27 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         // process timed out connections
         final long idleTimestamp = timestamp - idleConnectionTimeout;
         if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < idleTimestamp) {
-            processIdleConnections(idleTimestamp);
+            watermark -= processIdleConnections(idleTimestamp);
             useful = true;
+        }
+
+        // process timers
+        for (int row = watermark - 1; row >= 0; --row) {
+            final C context = pending.get(row);
+            //todo: backup io interest inside of context
+            int fd = context.getFd();
+            long eventId = pending.get(row, OPM_ID);
+            if (context.isTimeout(timestamp)) {
+                if (epoll.control(fd, eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
+                    LOG.critical().$("internal error: epoll_ctl remove fd failure [fd=").$(fd)
+                            .$(", err=").$(nf.errno()).I$();
+                } else {
+                    publishOperation(IOOperation.TIMEOUT, context);
+                    pending.deleteRow(row);
+                    useful = true;
+                }
+            }
         }
 
         return processRegistrations(timestamp) || useful;
