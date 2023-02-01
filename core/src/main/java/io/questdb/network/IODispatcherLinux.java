@@ -322,13 +322,15 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             long eventId = pending.get(row, OPM_ID);
             if (fd != serverFd && context.isTimeout(timestamp)) {
                 if (epoll.control(fd, eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                    LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
+                    LOG.critical().$("internal error: epoll_ctl remove fd failure [fd=").$(fd)
                             .$(", err=").$(nf.errno()).I$();
+                } else {
+                    publishOperation(IOOperation.TIMEOUT, context);
+                    pending.deleteRow(row);
+                    useful = true;
+                    watermark--;
                 }
-                publishOperation(IOOperation.TIMEOUT, context);
-                pending.deleteRow(row);
-                useful = true;
-                watermark--;
             }
         }
 

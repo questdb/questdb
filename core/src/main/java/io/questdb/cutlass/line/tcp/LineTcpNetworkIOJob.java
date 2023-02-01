@@ -176,6 +176,10 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
+        if (context == null || context.invalid()) {
+            LOG.error().$("context is invalid.").$();
+            return false;
+        }
         boolean useful = true;
         boolean ioEvent = IOOperation.isRead(operation) || IOOperation.isWrite(operation);
 

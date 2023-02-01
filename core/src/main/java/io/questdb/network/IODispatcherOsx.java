@@ -366,10 +366,16 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 kqueue.setWriteOffset(0);
                 kqueue.removeFD(fd);
                 registerWithKQueue(1);
-                publishOperation(IOOperation.TIMEOUT, context);
-                pending.deleteRow(row);
-                useful = true;
-                watermark--;
+                if (kqueue.register(1) != 0) {
+                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
+                    LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
+                            .$(", err=").$(nf.errno()).I$();
+                } else {
+                    publishOperation(IOOperation.TIMEOUT, context);
+                    pending.deleteRow(row);
+                    useful = true;
+                    watermark--;
+                }
             }
         }
 
