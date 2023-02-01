@@ -246,7 +246,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     tableNonPartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
                     tablePartitioned + " windspeed=4.0 631170000000000000\n" +
                     tablePartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n";
-            sendLinger(receiver, lineData, tablePartitioned);
+            sendLinger(receiver, lineData, tablePartitioned, tableNonPartitioned);
 
             mayDrainWalQueue();
 
@@ -1661,8 +1661,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         tableIndex.get("weather").await(expectedReleaseCount);
     }
 
-    private void sendLinger(LineTcpReceiver receiver, String lineData, String tableName) {
-        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData));
+    private void sendLinger(LineTcpReceiver receiver, String lineData, String... tableNames) {
+        send(receiver, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData), tableNames);
     }
 
     private void sendNoWait(LineTcpReceiver receiver, String lineData, String tableName) {
