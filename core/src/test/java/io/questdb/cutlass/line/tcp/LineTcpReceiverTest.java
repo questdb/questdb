@@ -683,28 +683,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=east3 temperature=30 1465839830100600200\n" +
                     weather + ",location=west4,source=sensor1 temp=40 1465839830100700200\n" + // <- this is where the split should happen
                     weather + ",location=east5,source=sensor2 temp=50 1465839830100800200\n" +
-                    weather + ",location=west6,source=sensor3 temp=60 1465839830100900200\n";
+                    weather + ",location=west6,source=sensor3 temp=60 1465839830100900200\n" +
+                    weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
+                    meteorology + ",location=south temperature=80 1465839830101000200\n";
 
-            // Wait until both weather and meteorology tables are released.
-            CountDownLatch released = new CountDownLatch(2);
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (name != null && (Chars.equals(name.getTableName(), weather) || Chars.equals(name.getTableName(), meteorology))) {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                        released.countDown();
-                    }
-                }
-            });
-            send(receiver, weather, LineTcpReceiverTest.WAIT_NO_WAIT, () -> sendToSocket(lineData));
-
-            released.await();
-            mayDrainWalQueue();
-
-            String lineData2 = weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n";
-            send(receiver, lineData2, weather);
-            lineData2 = meteorology + ",location=south temperature=80 1465839830101000200\n";
-            send(receiver, lineData2, meteorology);
+            sendLinger(receiver, lineData, weather, meteorology);
 
             mayDrainWalQueue();
+
             String expected = "location\ttemperature\ttimestamp\tsource\ttemp\n" +
                     "west1\t10.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
                     "west2\t20.0\t2016-06-13T17:43:50.100500Z\t\tNaN\n" +
@@ -749,19 +735,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext(filesFacade, (receiver) -> {
             String lineData = weather + ",location=west1 temperature=10 1465839830100400200\n" +
                     weather + ",location=west2 temperature=20 1465839830100500200\n" +
-                    weather + ",location=east3 temperature=30 1465839830100600200\n";
-            sendNoWait(receiver, lineData, weather);
-
-            lineData = weather + ",location=west4 temperature=40 1465839830100700200\n" +
+                    weather + ",location=east3 temperature=30 1465839830100600200\n" +
+                    weather + ",location=west4 temperature=40 1465839830100700200\n" +
                     weather + ",location=west5 temperature=50 1465839830100800200\n" +
-                    weather + ",location=east6 temperature=60 1465839830100900200\n";
-
-            send(receiver, lineData, weather);
-
-            lineData = weather + ",location=south7 temperature=70 1465839830101000200\n";
-            send(receiver, lineData, weather);
-            lineData = meteorology + ",location=south8 temperature=80 1465839830101000200\n";
-            send(receiver, lineData, meteorology);
+                    weather + ",location=east6 temperature=60 1465839830100900200\n" +
+                    weather + ",location=south7 temperature=70 1465839830101000200\n" +
+                    meteorology + ",location=south8 temperature=80 1465839830101000200\n";
+            sendLinger(receiver, lineData, weather, meteorology);
 
             mayDrainWalQueue();
             // two of the three commits go to the renamed table
