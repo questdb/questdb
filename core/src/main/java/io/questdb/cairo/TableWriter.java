@@ -139,9 +139,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
     private final int partitionBy;
-    private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private final DateFormat partitionDirFmt;
-    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
     private final AtomicLong physicallyWrittenRowsSinceLastCommit = new AtomicLong();
@@ -313,8 +311,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.o3NullSetters2 = new ObjList<>(columnCount);
             this.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             if (PartitionBy.isPartitioned(partitionBy)) {
                 this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                 this.partitionTimestampHi = txWriter.getLastPartitionTimestamp();
@@ -767,7 +763,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             assert timestamp <= attachMinTimestamp && attachMinTimestamp <= attachMaxTimestamp;
             long nextMinTimestamp = Math.min(attachMinTimestamp, txWriter.getMinTimestamp());
             long nextMaxTimestamp = Math.max(attachMaxTimestamp, txWriter.getMaxTimestamp());
-            boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
+            boolean appendPartitionAttached = size() == 0 || txWriter.getNextPartitionTimestamp(nextMaxTimestamp) > txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp());
 
             txWriter.beginPartitionSizeUpdate();
             txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
@@ -885,7 +881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         long maxTimestamp = txWriter.getMaxTimestamp();
-        if (timestamp == getPartitionLo(maxTimestamp)) {
+        if (timestamp == txWriter.getPartitionTimestampLo(maxTimestamp)) {
             return AttachDetachStatus.DETACH_ERR_ACTIVE;
         }
         long minTimestamp = txWriter.getMinTimestamp();
@@ -1384,7 +1380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolMapDiffCursor mapDiffCursor,
             long commitToTimestamp
     ) {
-        this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
+        this.lastPartitionTimestamp = txWriter.getPartitionTimestampLo(partitionTimestampHi);
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
         int walRootPathLen = walPath.length();
 
@@ -1696,7 +1692,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
 
-        timestamp = getPartitionLo(timestamp);
+        timestamp = txWriter.getPartitionTimestampLo(timestamp);
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").utf8(path).$(", partitionTimestamp=").$ts(timestamp).I$();
@@ -1705,7 +1701,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
 
-        if (timestamp == getPartitionLo(maxTimestamp)) {
+        if (timestamp == txWriter.getPartitionTimestampLo(maxTimestamp)) {
 
             // removing active partition
 
@@ -2700,7 +2696,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // last partition in the attached partition list.
                     if (txWriter.reconcileOptimisticPartitions()) {
                         this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-                        this.partitionTimestampHi = partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) - 1;
+                        this.partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
                         openLastPartition();
                     }
                 }
@@ -2746,7 +2742,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
             openFirstPartition(this.txWriter.getMaxTimestamp());
             if (partitioned) {
-                partitionTimestampHi = partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) - 1;
+                partitionTimestampHi = txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp()) - 1;
                 rowAction = ROW_ACTION_OPEN_PARTITION;
                 timestampSetter = appendTimestampSetter;
             } else {
@@ -3192,9 +3188,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return (masterRef - o3MasterRef + 1) / 2;
     }
 
-    private long getPartitionLo(long timestamp) {
-        return partitionFloorMethod.floor(timestamp);
-    }
 
     private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
@@ -3387,10 +3380,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
         final int timestampIndex = metadata.getTimestampIndex();
-        lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
+        lastPartitionTimestamp = txWriter.getPartitionTimestampLo(partitionTimestampHi);
         // we will check new partitionTimestampHi value against the limit to see if the writer
         // will have to switch partition internally
-        long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
+        long partitionTimestampHiLimit = txWriter.getNextPartitionTimestamp(partitionTimestampHi) - 1;
         try {
             o3RowCount += o3MoveUncommitted(timestampIndex);
 
@@ -4823,7 +4816,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                     final long srcOooHi;
                     // keep ceil inclusive in the interval
-                    final long srcOooTimestampCeil = partitionCeilMethod.ceil(o3Timestamp) - 1;
+                    final long srcOooTimestampCeil = txWriter.getNextPartitionTimestamp(o3Timestamp) - 1;
                     if (srcOooTimestampCeil < o3TimestampMax) {
                         srcOooHi = Vect.boundedBinarySearchIndexT(
                                 sortedTimestampsAddr,
@@ -4836,7 +4829,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcOooHi = srcOooMax - 1;
                     }
 
-                    final long partitionTimestamp = partitionFloorMethod.floor(o3Timestamp);
+                    final long partitionTimestamp = txWriter.getPartitionTimestampLo(o3Timestamp);
 
                     // This partition is the last partition.
                     final boolean last = partitionTimestamp == lastPartitionTimestamp;
@@ -5220,8 +5213,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(", partitionSizeRows=").put(partitionSize)
                         .put(", errno=").put(ff.errno()).put(']');
             }
-            if (partitionFloorMethod.floor(attachMinTimestamp) != partitionTimestamp
-                    || partitionFloorMethod.floor(attachMaxTimestamp) != partitionTimestamp) {
+            if (txWriter.getPartitionTimestampLo(attachMinTimestamp) != partitionTimestamp
+                    || txWriter.getPartitionTimestampLo(attachMaxTimestamp) != partitionTimestamp) {
                 throw CairoException.critical(0)
                         .put("invalid timestamp column data in detached partition, data does not match partition directory name [path=").put(path)
                         .put(", minTimestamp=").ts(attachMinTimestamp)
@@ -5822,8 +5815,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long transientRowCount = this.txWriter.getTransientRowCount();
             long maxTimestamp = this.txWriter.getMaxTimestamp();
             try {
-                final long tsLimit = partitionFloorMethod.floor(this.txWriter.getMaxTimestamp());
-                for (long ts = getPartitionLo(txWriter.getMinTimestamp()); ts < tsLimit; ts = partitionCeilMethod.ceil(ts)) {
+                final long tsLimit = txWriter.getPartitionTimestampLo(this.txWriter.getMaxTimestamp());
+                for (long ts = txWriter.getPartitionTimestampLo(txWriter.getMinTimestamp()); ts < tsLimit; ts = partitionCeilMethod.ceil(ts)) {
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, ts, false);
                     int p = path.length();
@@ -6117,7 +6110,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionTxnName = PartitionBy.isPartitioned(partitionBy) ? txWriter.getTxn() - 1 : -1;
         TableUtils.txnPartitionConditionally(
                 path,
-                txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestampHi, partitionTxnName)
+                txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp, partitionTxnName)
         );
         if (updatePartitionInterval) {
             this.partitionTimestampHi = partitionTimestampHi;

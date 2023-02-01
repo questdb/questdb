@@ -72,6 +72,7 @@ public class TxReader implements Closeable, Mutable {
     protected long truncateVersion;
     protected long txn;
     private int baseOffset;
+    private PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
     private MemoryMR roTxMemBase;
@@ -84,7 +85,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean attachedPartitionsContains(long ts) {
-        return findAttachedPartitionIndex(ts) > -1L;
+        return findAttachedPartitionIndexByLoTimestamp(ts) > -1L;
     }
 
     @Override
@@ -233,6 +234,25 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
     }
 
+    public long getNextPartitionTimestamp(long timestamp) {
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, BinarySearch.SCAN_UP);
+        if (index > -1 && (index + LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET) < attachedPartitions.size()) {
+            long nextPartitionTs = attachedPartitions.getQuick(index + LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
+            if (partitionCeilMethod.ceil(timestamp) == partitionCeilMethod.ceil(nextPartitionTs)) {
+                return nextPartitionTs;
+            }
+        }
+        return partitionCeilMethod.ceil(timestamp);
+    }
+
+    public long getPartitionTimestampLo(long timestamp) {
+        int index = findAttachedPartitionIndex(timestamp);
+        if (index > -1) {
+            return attachedPartitions.getQuick(index + PARTITION_TS_OFFSET);
+        }
+        return getPartitionFloor(timestamp);
+    }
+
     public long getRecordSize() {
         return size;
     }
@@ -276,6 +296,7 @@ public class TxReader implements Closeable, Mutable {
     public void initRO(MemoryMR txnFile, int partitionBy) {
         roTxMemBase = txnFile;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+        this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
         this.partitionBy = partitionBy;
     }
 
@@ -465,7 +486,21 @@ public class TxReader implements Closeable, Mutable {
     }
 
     protected int findAttachedPartitionIndex(long ts) {
-        return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
+        int index = findAttachedPartitionIndexByLoTimestamp(ts);
+        if (index > -1L) {
+            return index;
+        }
+
+        int prevIndex = -index - 2;
+        if (prevIndex < 0) {
+            return -1;
+        }
+        long prevPartitionTimestamp = attachedPartitions.getQuick(prevIndex + PARTITION_TS_OFFSET);
+        if (getPartitionFloor(prevPartitionTimestamp) == getPartitionFloor(ts)) {
+            return prevIndex;
+        }
+        // Not found.
+        return -1;
     }
 
     int findAttachedPartitionIndexByLoTimestamp(long ts) {
@@ -473,7 +508,7 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
     }
 
-    protected long getPartitionTimestampLo(long timestamp) {
+    protected long getPartitionFloor(long timestamp) {
         return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
     }
 
