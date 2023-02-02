@@ -353,6 +353,9 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
         if (partitionBy != null) {
             sink.put(" partition by ").put(partitionBy.token);
+            if (walEnabled) {
+                sink.put(" wal");
+            }
         }
 
         if (volumeAlias != null) {

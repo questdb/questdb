@@ -433,16 +433,24 @@ public final class TableUtils {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
-    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, boolean pathIsLoadedWithVolume) {
-        return exists(ff, path, root, name, 0, name.length(), pathIsLoadedWithVolume);
-    }
-
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
-        return exists(ff, path, root, name, 0, name.length(), false);
+        return exists(ff, path.of(root).concat(name).$());
     }
 
-    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
-        return exists(ff, path, root, name, lo, hi, false);
+    public static int existsInVolume(FilesFacade ff, Path volumePath, CharSequence name) {
+        return exists(ff, volumePath.concat(name).$());
+    }
+
+    private static int exists(FilesFacade ff, Path path) {
+        if (ff.exists(path)) { // it can also be a file, for example created with touch
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return TABLE_EXISTS;
+            } else {
+                return TABLE_RESERVED;
+            }
+        } else {
+            return TABLE_DOES_NOT_EXIST;
+        }
     }
 
     public static void freeTransitionIndex(long address) {
@@ -1354,21 +1362,6 @@ public final class TableUtils {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
-    }
-
-    private static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int nameLo, int nameHi, boolean pathIsLoadedWithVolume) {
-        if (!pathIsLoadedWithVolume) {
-            path.of(root);
-        }
-        if (ff.exists(path.concat(name, nameLo, nameHi).$())) { // it can also be a file, for example created with touch
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return TABLE_EXISTS;
-            } else {
-                return TABLE_RESERVED;
-            }
-        } else {
-            return TABLE_DOES_NOT_EXIST;
-        }
     }
 
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
