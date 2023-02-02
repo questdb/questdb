@@ -199,8 +199,16 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             // because we have to remove FD from epoll
             final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
             if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_MOD, epollOp) < 0) {
-                LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
-                        .$(", err=").$(nf.errno()).I$();
+                if (nf.errno() == 2) {
+                    if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_ADD, epollOp) < 0) {
+                        LOG.critical().$("internal error: epoll_ctl add operation failure [id=").$(opId)
+                                .$(", err=").$(nf.errno()).I$();
+                    }
+                } else {
+                    LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
+                            .$(", err=").$(nf.errno()).I$();
+
+                }
             }
 
             if (suspendEvent != null) {
