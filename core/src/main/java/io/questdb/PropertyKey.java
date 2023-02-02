@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
 public enum PropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
-    CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS("cairo.create.allowed.volume.definitions"),
+    CAIRO_VOLUMES("cairo.volumes"),
     CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
