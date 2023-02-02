@@ -285,7 +285,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.info().$("create table [name=").utf8(tableDir).I$();
+        LOG.debug().$("create table [name=").utf8(tableDir).I$();
         path.of(root).concat(tableDir).$();
         if (ff.isDirOrSoftLinkDir(path)) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
@@ -312,7 +312,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.info().$("create table in volume [name=").utf8(tableDir).I$();
+        LOG.info().$("create table in volume [path=").utf8(path).I$();
         Path normalPath = Path.getThreadLocal2(root).concat(tableDir).$();
         if (ff.isDirOrSoftLinkDir(normalPath)) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(normalPath).put(']');
@@ -329,7 +329,7 @@ public final class TableUtils {
             }
             if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
                 if (ff.rmdir(path.slash$()) != 0) {
-                    LOG.error().$("cannot remove table directory in volume [path=").utf8(path.trimTo(rootLen).$()).I$();
+                    LOG.error().$("cannot remove table directory in volume [errno=").$(ff.errno()).$(", path=").utf8(path.trimTo(rootLen).$()).I$();
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }

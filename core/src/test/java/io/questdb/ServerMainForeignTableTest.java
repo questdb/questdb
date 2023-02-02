@@ -91,7 +91,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                     pgPort,
                     ILP_PORT + 10,
                     PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
-                    PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume);
+                    PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
