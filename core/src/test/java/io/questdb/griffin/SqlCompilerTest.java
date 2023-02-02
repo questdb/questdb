@@ -2397,7 +2397,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     true,
                     true);
             Assert.fail();
-        } catch (SqlException e) {
+        } catch (SqlException | CairoException e) {
             if (Os.isWindows()) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
             } else {
