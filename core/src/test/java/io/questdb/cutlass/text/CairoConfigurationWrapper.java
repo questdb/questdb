@@ -763,6 +763,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return conf.getWalApplyLookAheadTransactionCount();
+    }
+
+    @Override
     public int getWalCommitSquashRowLimit() {
         return conf.getWalCommitSquashRowLimit();
     }
