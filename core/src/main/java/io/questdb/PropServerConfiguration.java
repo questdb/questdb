@@ -495,7 +495,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            volumeDefinitions.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_CREATE_ALLOWED_VOLUME_DEFINITIONS), path, root);
+            volumeDefinitions.of(overrideWithEnv(properties, env, PropertyKey.CAIRO_VOLUMES), path, root);
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
