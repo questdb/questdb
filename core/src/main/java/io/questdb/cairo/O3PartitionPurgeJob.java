@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -102,7 +103,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
-                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                if (!Chars.startsWith(tableName, WalUtils.WAL_NAME_BASE) && !Chars.equals(tableName, WalUtils.SEQ_DIR)) {
+                    LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                }
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
             }
         } catch (NumericException e) {
