@@ -59,7 +59,6 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 public class CairoEngine implements Closeable, WriterSource {
     public static final String BUSY_READER = "busyReader";
@@ -184,14 +183,13 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.close();
     }
 
-    private TableToken createTableExecutor(
+    public TableToken createTable(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
             Path path,
             boolean ifNotExists,
             TableStructure struct,
-            boolean keepLock,
-            Consumer<TableToken> statement
+            boolean keepLock
     ) {
         securityContext.checkWritePermission();
         CharSequence tableName = struct.getTableName();
@@ -211,7 +209,10 @@ public class CairoEngine implements Closeable, WriterSource {
             if (null == lockedReason) {
                 boolean tableCreated = false;
                 try {
-                    statement.accept(tableToken);
+                    if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
+                        throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
+                    }
+                    createTableUnsafe(securityContext, mem, path, struct, tableToken);
                     tableCreated = true;
                 } finally {
                     if (!keepLock) {
@@ -237,30 +238,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
-    public TableToken createTable(
-            CairoSecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
-            boolean ifNotExists,
-            TableStructure struct,
-            boolean keepLock
-    ) {
-        return createTableExecutor(
-                securityContext,
-                mem,
-                path,
-                ifNotExists,
-                struct,
-                keepLock,
-                tableToken -> {
-                    if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
-                        throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
-                    }
-                    createTableUnsafe(securityContext, mem, path, struct, tableToken);
-                }
-        );
-    }
-
     public TableToken createTableInVolume(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
@@ -269,20 +246,51 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
-        return createTableExecutor(
-                securityContext,
-                mem,
-                path,
-                ifNotExists,
-                struct,
-                keepLock,
-                tableToken -> {
+        securityContext.checkWritePermission();
+        CharSequence tableName = struct.getTableName();
+        validNameOrThrow(tableName);
+
+        int tableId = (int) tableIdGenerator.getNextId();
+        TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
+        if (tableToken == null) {
+            if (ifNotExists) {
+                return null;
+            }
+            throw EntryUnavailableException.instance("table exists");
+        }
+
+        try {
+            String lockedReason = lock(securityContext, tableToken, "createTable");
+            if (null == lockedReason) {
+                boolean tableCreated = false;
+                try {
                     if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
                         throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
                     }
                     createTableInVolumeUnsafe(securityContext, mem, path, struct, tableToken);
+                    tableCreated = true;
+                } finally {
+                    if (!keepLock) {
+                        unlockTableUnsafe(tableToken, null, tableCreated);
+                        LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                    }
                 }
-        );
+                tableNameRegistry.registerName(tableToken);
+            } else {
+                if (!ifNotExists) {
+                    throw EntryUnavailableException.instance(lockedReason);
+                }
+            }
+        } catch (Throwable th) {
+            if (struct.isWalEnabled()) {
+                // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
+                tableSequencerAPI.dropTable(tableToken, true);
+            }
+            throw th;
+        } finally {
+            tableNameRegistry.unlockTableName(tableToken);
+        }
+        return tableToken;
     }
 
     public void drop(
