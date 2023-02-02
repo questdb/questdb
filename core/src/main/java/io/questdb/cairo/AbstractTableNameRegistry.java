@@ -28,13 +28,13 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractTableNameRegistry implements TableNameRegistry {
+abstract class AbstractTableNameRegistry implements TableNameRegistry {
     // drop marker must contain special symbols to avoid a table created by the same name
-    protected final TableNameRegistryFileStore nameStore;
-    protected ConcurrentHashMap<TableToken> nameTokenMap;
-    protected ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
+    final TableNameRegistryFileStore nameStore;
+    ConcurrentHashMap<TableToken> nameTokenMap;
+    ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
 
-    public AbstractTableNameRegistry(CairoConfiguration configuration) {
+    AbstractTableNameRegistry(CairoConfiguration configuration) {
         this.nameStore = new TableNameRegistryFileStore(configuration);
     }
 
