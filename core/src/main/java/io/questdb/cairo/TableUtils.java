@@ -314,6 +314,7 @@ public final class TableUtils {
     ) {
         LOG.info().$("create table in volume [path=").utf8(path).I$();
         Path normalPath = Path.getThreadLocal2(root).concat(tableDir).$();
+        assert normalPath != path;
         if (ff.isDirOrSoftLinkDir(normalPath)) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(normalPath).put(']');
         }
