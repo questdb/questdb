@@ -1615,7 +1615,7 @@ public class SqlCompiler implements Closeable {
                     throw CairoException.critical(0).put("not a valid path for volume [alias=").put(volumeAlias).put(", path=").put(path).put(']');
                 }
             } else {
-                throw CairoException.critical(0).put("volume alias is not allowed [alias=").put(volumeAlias).put(']');
+                throw SqlException.position(0).put("volume alias is not allowed [alias=").put(volumeAlias).put(']');
             }
         }
 
