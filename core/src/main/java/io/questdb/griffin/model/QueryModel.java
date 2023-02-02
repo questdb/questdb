@@ -176,7 +176,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (current.updateTableModel != null) {
                 backupWhereClause(pool, current.updateTableModel);
             }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+            for (int i = 1, n = current.joinModels.size(); i < n; i++) {
                 final QueryModel m = current.joinModels.get(i);
                 if (m != null && current != m) {
                     backupWhereClause(pool, m);
@@ -197,7 +197,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (current.updateTableModel != null) {
                 restoreWhereClause(pool, current.updateTableModel);
             }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+            for (int i = 1, n = current.joinModels.size(); i < n; i++) {
                 final QueryModel m = current.joinModels.get(i);
                 if (m != null && current != m) {
                     restoreWhereClause(pool, m);
