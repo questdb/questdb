@@ -28,13 +28,16 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-abstract class AbstractTableNameRegistry implements TableNameRegistry {
-    // drop marker must contain special symbols to avoid a table created by the same name
-    final TableNameRegistryFileStore nameStore;
-    ConcurrentHashMap<TableToken> nameTokenMap;
-    ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
+import java.util.Iterator;
+import java.util.Map;
 
-    AbstractTableNameRegistry(CairoConfiguration configuration) {
+public abstract class AbstractTableNameRegistry implements TableNameRegistry {
+    // drop marker must contain special symbols to avoid a table created by the same name
+    protected final TableNameRegistryFileStore nameStore;
+    private ConcurrentHashMap<TableToken> nameTokenMap;
+    private ConcurrentHashMap<ReverseTableMapItem> reverseNameTokenMap;
+
+    public AbstractTableNameRegistry(CairoConfiguration configuration) {
         this.nameStore = new TableNameRegistryFileStore(configuration);
     }
 
@@ -62,7 +65,9 @@ abstract class AbstractTableNameRegistry implements TableNameRegistry {
     @Override
     public void getTableTokens(ObjList<TableToken> bucket, boolean includeDropped) {
         bucket.clear();
-        for (ReverseTableMapItem entry : reverseNameTokenMap.values()) {
+        Iterator<ReverseTableMapItem> iterator = reverseNameTokenMap.values().iterator();
+        while (iterator.hasNext()) {
+            ReverseTableMapItem entry = iterator.next();
             if (includeDropped || !entry.isDropped()) {
                 bucket.add(entry.getToken());
             }
@@ -86,10 +91,10 @@ abstract class AbstractTableNameRegistry implements TableNameRegistry {
         nameStore.resetMemory();
     }
 
-    final void setNameMaps(
+    void setNameMaps(
             ConcurrentHashMap<TableToken> nameTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap) {
-        nameTokenMap = nameTableTokenMap;
-        reverseNameTokenMap = reverseTableNameTokenMap;
+        this.nameTokenMap = nameTableTokenMap;
+        this.reverseNameTokenMap = reverseTableNameTokenMap;
     }
 }
