@@ -55,6 +55,7 @@ public class TableUpdateDetails implements Closeable {
     private final CairoEngine engine;
     private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
+    private final ByteCharSequence tableNameUtf8;
     private final TableToken tableToken;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
@@ -76,7 +77,8 @@ public class TableUpdateDetails implements Closeable {
             TableWriterAPI writer,
             int writerThreadId,
             NetworkIOJob[] netIoJobs,
-            DefaultColumnTypes defaultColumnTypes
+            DefaultColumnTypes defaultColumnTypes,
+            ByteCharSequence tableNameUtf8
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
@@ -108,17 +110,18 @@ public class TableUpdateDetails implements Closeable {
                     writer.getMetadata().getColumnCount()
             );
         }
+        this.tableNameUtf8 = tableNameUtf8;
     }
 
     public void addReference(int workerId) {
         if (!isWal()) {
             networkIOOwnerCount++;
+            LOG.info()
+                    .$("network IO thread using table [workerId=").$(workerId)
+                    .$(", tableName=").$(tableToken)
+                    .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
+                    .$(']').$();
         }
-        LOG.info()
-                .$("network IO thread using table [workerId=").$(workerId)
-                .$(", tableName=").$(tableToken)
-                .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                .$(']').$();
     }
 
     @Override
@@ -156,76 +159,6 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    public long getEventsProcessedSinceReshuffle() {
-        return eventsProcessedSinceReshuffle;
-    }
-
-    public long getLastMeasurementMillis() {
-        return lastMeasurementMillis;
-    }
-
-    public MillisecondClock getMillisecondClock() {
-        return millisecondClock;
-    }
-
-    public int getNetworkIOOwnerCount() {
-        return networkIOOwnerCount;
-    }
-
-    public String getTableNameUtf16() {
-        return tableToken.getTableName();
-    }
-
-    public TableToken getTableToken() {
-        return tableToken;
-    }
-
-    public int getWriterThreadId() {
-        return writerThreadId;
-    }
-
-    public void incrementEventsProcessedSinceReshuffle() {
-        ++eventsProcessedSinceReshuffle;
-    }
-
-    public boolean isAssignedToJob() {
-        return assignedToJob;
-    }
-
-    public boolean isWriterInError() {
-        return writerInError;
-    }
-
-    public boolean isWal() {
-        return writerThreadId == -1;
-    }
-
-    public void removeReference(int workerId) {
-        if (!isWal()) {
-            networkIOOwnerCount--;
-        }
-        localDetailsArray[workerId].clear();
-        LOG.info()
-                .$("network IO thread released table [workerId=").$(workerId)
-                .$(", tableName=").$(tableToken)
-                .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                .I$();
-    }
-
-    public void setAssignedToJob(boolean assignedToJob) {
-        this.assignedToJob = assignedToJob;
-    }
-
-    public void setWriterInError() {
-        writerInError = true;
-    }
-
-    public void tick() {
-        if (metadataService != null) {
-            metadataService.tick();
-        }
-    }
-
     public void commit(boolean withLag) throws CommitFailedException {
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
@@ -248,6 +181,80 @@ public class TableUpdateDetails implements Closeable {
         }
         if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
             setWriterInError();
+        }
+    }
+
+    public long getEventsProcessedSinceReshuffle() {
+        return eventsProcessedSinceReshuffle;
+    }
+
+    public long getLastMeasurementMillis() {
+        return lastMeasurementMillis;
+    }
+
+    public MillisecondClock getMillisecondClock() {
+        return millisecondClock;
+    }
+
+    public int getNetworkIOOwnerCount() {
+        return networkIOOwnerCount;
+    }
+
+    public String getTableNameUtf16() {
+        return tableToken.getTableName();
+    }
+
+    public ByteCharSequence getTableNameUtf8() {
+        return tableNameUtf8;
+    }
+
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    public int getWriterThreadId() {
+        return writerThreadId;
+    }
+
+    public void incrementEventsProcessedSinceReshuffle() {
+        ++eventsProcessedSinceReshuffle;
+    }
+
+    public boolean isAssignedToJob() {
+        return assignedToJob;
+    }
+
+    public boolean isWal() {
+        return writerThreadId == -1;
+    }
+
+    public boolean isWriterInError() {
+        return writerInError;
+    }
+
+    public void removeReference(int workerId) {
+        if (!isWal()) {
+            networkIOOwnerCount--;
+            localDetailsArray[workerId].clear();
+            LOG.info()
+                    .$("network IO thread released table [workerId=").$(workerId)
+                    .$(", tableName=").$(tableToken)
+                    .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
+                    .I$();
+        }
+    }
+
+    public void setAssignedToJob(boolean assignedToJob) {
+        this.assignedToJob = assignedToJob;
+    }
+
+    public void setWriterInError() {
+        writerInError = true;
+    }
+
+    public void tick() {
+        if (metadataService != null) {
+            metadataService.tick();
         }
     }
 
@@ -538,6 +545,11 @@ public class TableUpdateDetails implements Closeable {
             columnTypes.clear();
         }
 
+        void clearProcessedColumns() {
+            processedCols.setAll(columnCount, false);
+            addedColsUtf16.clear();
+        }
+
         String getColNameUtf16() {
             assert colNameUtf16 != null;
             return colNameUtf16;
@@ -638,11 +650,6 @@ public class TableUpdateDetails implements Closeable {
                 return addSymbolCache(columnIndex);
             }
             return NOT_FOUND_LOOKUP;
-        }
-
-        void clearProcessedColumns() {
-            processedCols.setAll(columnCount, false);
-            addedColsUtf16.clear();
         }
 
         void resetStateIfNecessary() {

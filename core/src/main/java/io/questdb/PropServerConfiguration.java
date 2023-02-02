@@ -438,6 +438,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
+    private final int walApplyLookAheadTransactionCount;
 
     public PropServerConfiguration(
             String root,
@@ -463,6 +464,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walCommitSquashRowLimit = getInt(properties, env, PropertyKey.CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT, 512 * 1024);
+        this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
@@ -2196,6 +2198,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getVectorAggregateQueueCapacity() {
             return vectorAggregateQueueCapacity;
+        }
+
+        @Override
+        public int getWalApplyLookAheadTransactionCount() {
+            return walApplyLookAheadTransactionCount;
         }
 
         @Override

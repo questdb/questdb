@@ -404,6 +404,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    int getWalApplyLookAheadTransactionCount();
+
     int getWalCommitSquashRowLimit();
 
     VolumeDefinitions getVolumeDefinitions();
