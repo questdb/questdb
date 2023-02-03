@@ -31,10 +31,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.AbstractMutableIOContext;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
 class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectionContext> {
@@ -55,6 +54,11 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
 
+    private long maintenanceJobDeadline;
+    private long nextCommitTime;
+    private final long maintenanceInterval;
+    private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
+
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
         disconnectOnError = configuration.getDisconnectOnError();
@@ -65,6 +69,9 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
+        this.maintenanceInterval = configuration.getMaintenanceInterval();
+        this.maintenanceJobDeadline = milliClock.getTicks() + maintenanceInterval;
+        this.nextCommitTime = milliClock.getTicks();
     }
 
     @Override
@@ -72,19 +79,56 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         resetParser();
+        ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
+        for (int n = keys.size() - 1; n >= 0; --n) {
+            final ByteCharSequence tableNameUtf8 = keys.get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            tud.releaseWriter(true);
+            tud.close();
+            tableUpdateDetailsUtf8.remove(tableNameUtf8);
+        }
     }
 
     @Override
     public void close() {
         this.fd = -1;
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
+        clear();
     }
 
     @Override
     public boolean isTimeout(long millisNow) {
-        return true; //todo: calc timeout here
+        return millisNow > nextCommitTime || millisNow > maintenanceJobDeadline;
     }
 
+    public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
+        return tableUpdateDetailsUtf8.get(tableName);
+    }
+    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
+        if (keyIndex < 0) {
+            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
+            tableUpdateDetailsUtf8.removeAt(keyIndex);
+            return tud;
+        }
+        return null;
+    }
+
+    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
+    }
+
+    public void doMaintenance(long now, int workerId) {
+        if (now > nextCommitTime) {
+            nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, now);
+        }
+
+        if (now > maintenanceJobDeadline) {
+            if (!scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, now)) {
+                maintenanceJobDeadline = now + maintenanceInterval;
+            }
+        }
+    }
     private boolean checkQueueFullLogHysteresis() {
         long millis = milliClock.getTicks();
         if ((millis - lastQueueFullLogMillis) >= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {
@@ -174,7 +218,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(netIoJob, parser)) {
+                            if (scheduler.scheduleEvent(netIoJob, this, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();

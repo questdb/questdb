@@ -629,7 +629,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         return true;
     }
 
-    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
+    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpConnectionContext ctx,  @NotNull LineTcpParser parser) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
         tableNameUtf16.clear();
@@ -703,6 +703,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 netIoJobs,
                                 defaultColumnTypes
                         );
+                        ctx.addTableUpdateDetails(ByteCharSequence.newInstance(tableNameUtf8), tud);
+                        return tud;
                     } else {
                         tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
                     }
@@ -776,19 +778,22 @@ class LineTcpMeasurementScheduler implements Closeable {
         return seq;
     }
 
-    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
+    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpConnectionContext ctx, LineTcpParser parser) {
         DirectByteCharSequence measurementName = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {
-            tud = netIoJob.getLocalTableDetails(measurementName);
-            if (tud == null || (tud.isWal() && tud.isWriterInError())) {
-                if (tud != null) {
-                    TableUpdateDetails removed = netIoJob.removeTableUpdateDetails(measurementName);
-                    assert tud == removed;
-                    removed.releaseWriter(true);
-                    removed.close();
+            tud = ctx.getTableUpdateDetails(measurementName);
+            if (tud == null) {
+                tud = netIoJob.getLocalTableDetails(measurementName);
+                if (tud == null) {
+                    tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser);
                 }
-                tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser);
+            } else if (tud.isWriterInError()) {
+                TableUpdateDetails removed = ctx.removeTableUpdateDetails(measurementName);
+                assert tud == removed;
+                removed.releaseWriter(true);
+                removed.close();
+                tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser);
             }
         } catch (EntryUnavailableException ex) {
             // Table writer is locked

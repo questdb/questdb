@@ -53,6 +53,7 @@ public class MutableIOContextFactory<C extends MutableIOContext<C>>
         if (closed) {
             Misc.free(context);
         } else {
+            context.clear();
             context.of(-1, null);
             contextPool.get().push(context);
         }

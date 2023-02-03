@@ -138,13 +138,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             busy = true;
         }
 
-        if (!busy) {
-            final long wallClockMillis = millisecondClock.getTicks();
-            if (wallClockMillis > nextCommitTime) {
-                nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, wallClockMillis);
-            }
-        }
-
         final long millis = millisecondClock.getTicks();
         if (millis > maintenanceJobDeadline) {
             busy = scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, millis);
@@ -187,13 +180,12 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             if (handleIO(context)) {
                 busyContext = context;
                 LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
-                useful = false;
+                return false;
             }
         }
 
         if (IOOperation.isTimeout(operation)) {
-            //todo: process timout here
-
+            context.doMaintenance(millisecondClock.getTicks(), workerId);
             if (!ioEvent) { // only timeout interest for idle fd
                 context.getDispatcher().registerChannel(context, IOOperation.READ);//todo: keep io interest in the context
                 useful = false;
