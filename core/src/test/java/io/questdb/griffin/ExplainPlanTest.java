@@ -477,7 +477,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testCastFloatToDouble() throws Exception {
-        assertPlan("select rnd_float()::double) ",
+        assertPlan("select rnd_float()::double ",
                 "VirtualRecord\n" +
                         "  functions: [rnd_float()::double]\n" +
                         "    long_sequence count: 1\n");
