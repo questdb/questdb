@@ -22,15 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -270,8 +273,14 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         addedTables.remove(tableId);
 
                         // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
+                        // Remove _txn file first
+                        rmPath.trimTo(configuration.getRoot().length()).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+                        configuration.getFilesFacade().remove(rmPath);
+
+                        // Remove table directory
                         for (int i = 0;
-                             i < 1000 && configuration.getFilesFacade().rmdir(rmPath.trimTo(configuration.getRoot().length()).concat(tableName).$()) != 0; i++) {
+                             i < 1000 && configuration.getFilesFacade().rmdir(rmPath.trimTo(configuration.getRoot().length()).concat(tableName).$()) != 0;
+                             i++) {
                             Os.pause();
                         }
                     }
@@ -407,6 +416,65 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             Assert.assertNull(engine.getTableTokenIfExists("tab1"));
             Assert.assertEquals(tt2, engine.getTableToken("tab2"));
+        });
+    }
+
+    @Test
+    public void testConvertedTableListPassedToRegistryOnLoad() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tt1;
+            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt1 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt1));
+
+            TableToken tt2;
+            try (TableModel model = new TableModel(configuration, "tab2", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .wal()
+                    .timestamp()) {
+                tt2 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertTrue(engine.isWalTable(tt2));
+
+            TableToken tt3;
+            try (TableModel model = new TableModel(configuration, "tab3", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.INT)
+                    .noWal()
+                    .timestamp()) {
+                tt3 = engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+            }
+            Assert.assertFalse(engine.isWalTable(tt3));
+
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile("alter table " + tt2.getTableName() + " set type bypass wal", sqlExecutionContext);
+                compiler.compile("alter table " + tt3.getTableName() + " set type wal", sqlExecutionContext);
+            }
+            engine.releaseInactive();
+
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI());
+            engine.reloadTableNames(convertedTables);
+
+            Assert.assertEquals(tt1, engine.getTableToken("tab1"));
+
+            Assert.assertEquals(tt2.getTableId(), engine.getTableToken("tab2").getTableId());
+            Assert.assertEquals(tt2.getTableName(), engine.getTableToken("tab2").getTableName());
+            Assert.assertEquals(tt2.getDirName(), engine.getTableToken("tab2").getDirName());
+            Assert.assertTrue(tt2.isWal());
+            Assert.assertFalse(engine.getTableToken("tab2").isWal());
+
+            Assert.assertEquals(tt3.getTableId(), engine.getTableToken("tab3").getTableId());
+            Assert.assertEquals(tt3.getTableName(), engine.getTableToken("tab3").getTableName());
+            Assert.assertEquals(tt3.getDirName(), engine.getTableToken("tab3").getDirName());
+            Assert.assertFalse(tt3.isWal());
+            Assert.assertTrue(engine.getTableToken("tab3").isWal());
         });
     }
 

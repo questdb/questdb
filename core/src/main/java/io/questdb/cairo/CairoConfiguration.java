@@ -403,6 +403,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    int getWalApplyLookAheadTransactionCount();
+
     int getWalCommitSquashRowLimit();
 
     boolean getWalEnabledDefault();
@@ -451,6 +453,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isTableTypeConversionEnabled();
 
     boolean isWalSupported();
 

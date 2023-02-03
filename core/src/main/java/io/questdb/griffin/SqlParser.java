@@ -1011,7 +1011,9 @@ public final class SqlParser {
         return parseSelect(lexer);
     }
 
-    private int parseExplainOptions(GenericLexer lexer) throws SqlException {
+    private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
+        int parenthesisPos = lexer.getPosition();
+        CharSequence explainTok = GenericLexer.immutableOf(prevTok);
         CharSequence tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '('");
         if (Chars.equals(tok, '(')) {
             tok = tok(lexer, "'format'");
@@ -1028,7 +1030,8 @@ public final class SqlParser {
                     throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain format found");
                 }
             } else {
-                throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
+                lexer.backTo(parenthesisPos, explainTok);
+                return ExplainModel.FORMAT_TEXT;
             }
         } else {
             lexer.unparseLast();
@@ -1625,8 +1628,11 @@ public final class SqlParser {
                 assertNotDot(lexer, tok);
 
                 if (isAsKeyword(tok)) {
-                    alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
+                    CharSequence aliasTok = GenericLexer.immutableOf(tok(lexer, "alias"));
+                    validateIdentifier(lexer, aliasTok);
+                    alias = GenericLexer.unquote(aliasTok);
                 } else {
+                    validateIdentifier(lexer, tok);
                     alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                 }
                 tok = optTok(lexer);
@@ -2095,6 +2101,35 @@ public final class SqlParser {
         return tok;
     }
 
+    private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (tok == null || tok.length() == 0) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+        }
+
+        if (Chars.isQuoted(tok)) {
+            if (tok.length() == 2) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+            }
+            return;
+        }
+
+        char c = tok.charAt(0);
+
+        if (!(Character.isLetter(c) || c == '_')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("identifier should start with a letter or '_'");
+        }
+
+        for (int i = 1, n = tok.length(); i < n; i++) {
+            c = tok.charAt(i);
+            if (!(Character.isLetter(c) ||
+                    Character.isDigit(c) ||
+                    c == '_' ||
+                    c == '$')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
+            }
+        }
+    }
+
     private void validateLiteral(int pos, CharSequence tok) throws SqlException {
         switch (tok.charAt(0)) {
             case '(':
@@ -2148,7 +2183,7 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
-            int format = parseExplainOptions(lexer);
+            int format = parseExplainOptions(lexer, tok);
             ExecutionModel model = parseExplain(lexer, executionContext);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
