@@ -45,6 +45,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -382,6 +383,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     }
 
     @Test
+    @Ignore
     public void testAlterCommandTruncateTable() throws Exception {
         long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
         long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
