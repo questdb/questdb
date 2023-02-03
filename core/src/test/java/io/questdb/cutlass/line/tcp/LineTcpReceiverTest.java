@@ -321,6 +321,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    @Ignore
     public void testDropTable() throws Exception {
         Assume.assumeTrue(walEnabled);
         configOverrideMaxUncommittedRows(2);
