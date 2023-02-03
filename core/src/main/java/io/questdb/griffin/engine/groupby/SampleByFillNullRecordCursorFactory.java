@@ -39,7 +39,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final AbstractNoRecordSampleByCursor cursor;
+    private final SampleByFillValueRecordCursor cursor;
 
     public SampleByFillNullRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -72,7 +72,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         );
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            this.cursor = new SampleByFillValueRecordCursor(
+            cursor = new SampleByFillValueRecordCursor(
                     map,
                     mapSink,
                     groupByFunctions,

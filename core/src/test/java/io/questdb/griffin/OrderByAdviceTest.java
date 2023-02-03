@@ -144,7 +144,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         assertQuery(
                 "sym\tmaxp\n",
-                "select sym , min(price) maxp from x where ts IN '1970-01-04' order by maxp",
+                "select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp",
                 "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    price double,\n" +

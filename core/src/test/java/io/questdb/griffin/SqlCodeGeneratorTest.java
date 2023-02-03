@@ -307,7 +307,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "cc\n" +
                         "cc\n" +
                         "cc\n",
-                "select * from x2 where sym in (select distinct sym from x2 where sym  in (select distinct sym from x2 where sym = 'cc')) and test_match()",
+                "select * from x2 where sym in (select distinct sym from x2 where sym in (select distinct sym from x2 where sym = 'cc')) and test_match()",
                 "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
                 null
         );
@@ -912,7 +912,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "24.45295612285482\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n");
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -5205,7 +5205,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         factory,
                         true,
                         true,
-                        true
+                        false
                 );
             }
         });
@@ -6488,8 +6488,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
+                        " from long_sequence(20)" +
                         "),index(b) timestamp(k) partition by MONTH",
                 null,
                 "insert into x select * from (" +

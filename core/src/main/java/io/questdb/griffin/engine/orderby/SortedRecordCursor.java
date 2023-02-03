@@ -31,7 +31,10 @@ import io.questdb.std.Misc;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
+    private RecordCursor base;
     private RecordTreeChain.TreeCursor chainCursor;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean isChainBuilt;
     private boolean isOpen;
 
     public SortedRecordCursor(RecordTreeChain chain) {
@@ -42,9 +45,10 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            Misc.free(chainCursor);
-            Misc.free(chain);
             isOpen = false;
+            Misc.free(chainCursor); // this call also closes base
+            Misc.free(chain);
+            base = null;
         }
     }
 
@@ -65,6 +69,10 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (!isChainBuilt) {
+            buildChain();
+            isChainBuilt = true;
+        }
         return chainCursor.hasNext();
     }
 
@@ -75,28 +83,15 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        try {
-            if (!isOpen) {
-                this.chain.reopen();
-                this.isOpen = true;
-            }
-            this.chainCursor = chain.getCursor(base);
-            final Record record = base.getRecord();
-            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-            while (base.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                // Tree chain is liable to re-position record to
-                // other rows to do record comparison. We must use our
-                // own record instance in case base cursor keeps
-                // state in the record it returns.
-                chain.put(record);
-            }
-            chainCursor.toTop();
-        } catch (Throwable ex) {
-            base.close();
-            throw ex;
+        if (!isOpen) {
+            this.chain.reopen();
+            this.isOpen = true;
         }
+
+        this.base = base;
+        chainCursor = chain.getCursor(base);
+        circuitBreaker = executionContext.getCircuitBreaker();
+        isChainBuilt = false;
     }
 
     @Override
@@ -106,11 +101,24 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public long size() {
-        return chainCursor.size();
+        return base.size();
     }
 
     @Override
     public void toTop() {
         chainCursor.toTop();
+    }
+
+    private void buildChain() {
+        final Record record = base.getRecord();
+        while (base.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            // Tree chain is liable to re-position record to
+            // other rows to do record comparison. We must use our
+            // own record instance in case base cursor keeps
+            // state in the record it returns.
+            chain.put(record);
+        }
+        toTop();
     }
 }

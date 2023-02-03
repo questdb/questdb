@@ -32,7 +32,7 @@ import io.questdb.std.ObjList;
 
 public class VirtualFunctionSkewedSymbolRecordCursor extends AbstractVirtualFunctionRecordCursor {
 
-    private RecordCursor managedCursor;
+    protected RecordCursor managedCursor;
 
     public VirtualFunctionSkewedSymbolRecordCursor(ObjList<Function> functions) {
         super(functions, true);

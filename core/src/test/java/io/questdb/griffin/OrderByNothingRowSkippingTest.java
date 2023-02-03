@@ -26,19 +26,19 @@ package io.questdb.griffin;
 
 import org.junit.Test;
 
-/*
- * This class tests select on unsorted table without designated timestamp or sort clause .
+/**
+ * These tests cover select on unsorted table without designated timestamp or sort clause.
  * It was added to make sure sorting is not applied by accident.
  * Note: this might turn into a flaky test one day because if SQL doesn't specify order then any order is allowed
- * and limit clause makes little sense when table is neither ordered physically nor by an order by clause
- * */
+ * and limit clause makes little sense when table is neither ordered physically nor by an order by clause.
+ */
 public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectAll() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n1\n4\n7\n9\n3\n6\n10\n8\n2\n5\n", "select l from tab");
+        assertQueryExpectSize("l\n1\n4\n7\n9\n3\n6\n10\n8\n2\n5\n", "select l from tab");
     }
 
     @Test
@@ -119,12 +119,30 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     }
 
     private void assertQuery(String expected, String query) throws Exception {
-        assertQuery(expected,
+        assertQuery(
+                expected,
                 query,
-                null, null, true, false, true);
+                null,
+                null,
+                true,
+                false,
+                false
+        );
     }
 
-    //table with x reflecting timestamp position  in descending order
+    private void assertQueryExpectSize(String expected, String query) throws Exception {
+        assertQuery(
+                expected,
+                query,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    // table with x reflecting timestamp position  in descending order
     private void prepare_unordered_noTs_table() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP);");
         runInserts("insert into tab(l, ts) values (1, to_timestamp('2022-01-10T00:00:00', 'yyyy-MM-ddTHH:mm:ss') );",

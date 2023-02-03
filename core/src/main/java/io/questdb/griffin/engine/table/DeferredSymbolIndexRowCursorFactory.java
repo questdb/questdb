@@ -50,7 +50,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
             int indexDirection
     ) {
         this.columnIndex = columnIndex;
-        this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
+        symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.symbol = symbol;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;
@@ -73,6 +73,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        symbol.init(tableReader, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
@@ -83,8 +88,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        symbol.init(tableReader, sqlExecutionContext);
+    public void prepareCursor(TableReader tableReader) {
         int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol.getSymbol(null));
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             this.symbolKey = TableUtils.toIndexKey(symbolKey);
