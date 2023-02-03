@@ -208,7 +208,11 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
 
     IOContextResult handleIO(NetworkIOJob netIoJob) {
         read();
-        return parseMeasurements(netIoJob);
+        try {
+            return parseMeasurements(netIoJob);
+        } finally {
+            netIoJob.releaseWalTableDetails();
+        }
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {

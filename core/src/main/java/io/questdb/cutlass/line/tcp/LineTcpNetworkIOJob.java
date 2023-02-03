@@ -95,19 +95,8 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
-        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
-        if (keyIndex < 0) {
-            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
-            tableUpdateDetailsUtf8.removeAt(keyIndex);
-            return tud;
-        }
-        return null;
-    }
-
-    @Override
-    public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
-        return tableUpdateDetailsUtf8.get(tableName);
+    public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8) {
+        return tableUpdateDetailsUtf8.get(tableNameUtf8);
     }
 
     @Override
@@ -118,6 +107,22 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     @Override
     public int getWorkerId() {
         return workerId;
+    }
+
+    @Override
+    public void releaseWalTableDetails() {
+        scheduler.releaseWalTableDetails(tableUpdateDetailsUtf8);
+    }
+
+    @Override
+    public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
+        if (keyIndex < 0) {
+            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
+            tableUpdateDetailsUtf8.removeAt(keyIndex);
+            return tud;
+        }
+        return null;
     }
 
     @Override
