@@ -289,13 +289,20 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
-        SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
-        final CharSequence t = tableName;
+        send(receiver, wait, sendToSocket, tableName);
+    }
+
+    protected void send(LineTcpReceiver receiver, int wait, Runnable sendToSocket, CharSequence... tableNames) {
+        ConcurrentHashMap<CharSequence> tablesToWaitFor = new ConcurrentHashMap<>();
+        for (CharSequence tableName : tableNames) {
+            tablesToWaitFor.put(tableName, tableName);
+        }
+        SOCountDownLatch releaseLatch = new SOCountDownLatch(tablesToWaitFor.size());
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equalsNc(name.getTableName(), tableName) && Chars.equals(name.getTableName(), tableName)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t)) {
+                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        if (name != null && tablesToWaitFor.remove(name.getTableName()) != null) {
                             releaseLatch.countDown();
                         }
                     }
@@ -303,7 +310,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 break;
             case WAIT_ILP_TABLE_RELEASE:
                 receiver.setSchedulerListener((tableName1, event) -> {
-                    if (Chars.equalsNc(tableName, tableName1.getTableName())) {
+                    if (tableName1 != null && tablesToWaitFor.remove(tableName1.getTableName()) != null) {
                         releaseLatch.countDown();
                     }
                 });

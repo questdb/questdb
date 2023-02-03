@@ -151,6 +151,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public CompiledQuery ofTableSetType() {
+        type = TABLE_SET_TYPE;
+        return this;
+    }
+
     public CompiledQuery ofUnlock() {
         type = UNLOCK;
         return this;
