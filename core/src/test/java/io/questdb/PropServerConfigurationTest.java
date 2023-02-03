@@ -375,15 +375,17 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(3, configuration.getCairoConfiguration().getWalRecreateDistressedSequencerAttempts());
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
-        Assert.assertFalse(configuration.getCairoConfiguration().isWalSupported());
+        Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
         Assert.assertFalse(configuration.getCairoConfiguration().getWalEnabledDefault());
-        Assert.assertFalse(configuration.getWalApplyPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
-        Assert.assertEquals(0, configuration.getWalApplyPoolConfiguration().getWorkerCount());
+        Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() > 0);
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
     }
 
     @Test
@@ -1081,6 +1083,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(55, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
             Assert.assertEquals(33, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(23, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+            Assert.assertFalse(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
         }
     }
 

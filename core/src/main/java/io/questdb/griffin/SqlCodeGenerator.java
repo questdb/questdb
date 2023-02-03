@@ -63,6 +63,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.ArrayDeque;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -74,10 +75,12 @@ import static io.questdb.griffin.model.QueryModel.*;
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
     public static final int GKK_VANILLA_INT = 0;
+    private static final ModelOperator BACKUP_WHERE_CLAUSE = QueryModel::backupWhereClause;
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
+    private static final ModelOperator RESTORE_WHERE_CLAUSE = QueryModel::restoreWhereClause;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
@@ -113,6 +116,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+
+    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
     private final IntList tempKeyIndex = new IntList();
@@ -351,6 +356,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    private void backupWhereClause(ExpressionNode node) {
+        processNodeQueryModels(node, BACKUP_WHERE_CLAUSE);
+    }
+
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
     private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
@@ -409,6 +418,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (condition) {
             ObjList<Function> workerFilters = new ObjList<>();
             for (int i = 0; i < workerCount; i++) {
+                restoreWhereClause(filterExpr);//restore original filters in node query models
                 workerFilters.extendAndSet(i, compileBooleanFilter(filterExpr, metadata, executionContext));
             }
             return workerFilters;
@@ -1338,6 +1348,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             ExpressionNode filterExpr
     ) throws SqlException {
+        backupWhereClause(filterExpr);//back up in case filters need to be compiled again
         model.setWhereClause(null);
 
         final Function filter;
@@ -4376,6 +4387,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private void processNodeQueryModels(ExpressionNode node, ModelOperator operator) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.queryModel != null) {
+                operator.operate(expressionNodePool, node.queryModel);
+            }
+
+            if (node.lhs != null) {
+                sqlNodeStack.push(node.lhs);
+            }
+
+            if (node.rhs != null) {
+                node = node.rhs;
+            } else {
+                if (!sqlNodeStack.isEmpty()) {
+                    node = this.sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+
+    }
+
+    private void restoreWhereClause(ExpressionNode node) {
+        processNodeQueryModels(node, RESTORE_WHERE_CLAUSE);
+    }
+
     private Function toLimitFunction(
             SqlExecutionContext executionContext,
             ExpressionNode limit,
@@ -4529,6 +4568,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 IntList columnIndex,
                 JoinContext joinContext
         );
+    }
+
+    @FunctionalInterface
+    interface ModelOperator {
+        void operate(ObjectPool<ExpressionNode> pool, QueryModel model);
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {

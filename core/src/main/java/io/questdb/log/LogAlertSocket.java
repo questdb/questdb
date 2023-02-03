@@ -117,7 +117,7 @@ public class LogAlertSocket implements Closeable {
     public void connect() {
         addressInfoAddr = nf.getAddrInfo(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
         if (addressInfoAddr == -1) {
-            logNetworkConnectError("Could not connect with");
+            logNetworkConnectError("Could not create addr info with");
         } else {
             socketFd = nf.socketTcp(true);
             if (socketFd > -1) {
@@ -126,7 +126,7 @@ public class LogAlertSocket implements Closeable {
                     freeSocketAndAddress();
                 }
             } else {
-                logNetworkConnectError("Could create TCP socket with");
+                logNetworkConnectError("Could not create TCP socket with");
                 freeSocketAndAddress();
             }
         }
@@ -148,6 +148,10 @@ public class LogAlertSocket implements Closeable {
         return outBufferSize;
     }
 
+    public boolean send(int len) {
+        return send(len, onReconnectRef);
+    }
+
     public boolean send(int len, Runnable onReconnect) {
         if (len < 1) {
             return false;
@@ -167,13 +171,9 @@ public class LogAlertSocket implements Closeable {
                         p += n;
                     } else {
                         $currentAlertHost(log.info().$("Could not send"))
-                                .$(" [errno=")
-                                .$(nf.errno())
-                                .$(", size=")
-                                .$(n)
-                                .$(", log=")
-                                .$utf8(outBufferPtr, outBufferPtr + len)
-                                .I$();
+                                .$(" [errno=").$(nf.errno())
+                                .$(", size=").$(n)
+                                .$(", log=").$utf8(outBufferPtr, outBufferPtr + len).I$();
                         sendFail = true;
                         // do fail over, could not send
                         break;
@@ -226,10 +226,6 @@ public class LogAlertSocket implements Closeable {
         return success;
     }
 
-    public boolean send(int len) {
-        return send(len, onReconnectRef);
-    }
-
     private static boolean isContentLength(CharSequence tok, int lo, int hi) {
         return hi - lo > 13 &&
                 (tok.charAt(lo++) | 32) == 'c' &&
@@ -262,7 +258,7 @@ public class LogAlertSocket implements Closeable {
             addressInfoAddr = -1;
         }
         if (socketFd != -1) {
-            nf.close(socketFd);
+            nf.close(socketFd, log);
             socketFd = -1;
         }
     }
