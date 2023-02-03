@@ -29,19 +29,20 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
+class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final Function filter;
     private final int symbolKey;
-    private boolean empty;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean hasNext;
+    private boolean isFindPending;
+    private boolean isRecordFound;
 
     public LatestByValueFilteredRecordCursor(
             int columnIndex,
@@ -62,11 +63,27 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor im
 
     @Override
     public boolean hasNext() {
+        if (!isFindPending) {
+            findRecord();
+            hasNext = isRecordFound;
+            isFindPending = true;
+        }
         if (hasNext) {
             hasNext = false;
             return true;
         }
         return false;
+    }
+
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
+        filter.init(this, executionContext);
+        isRecordFound = false;
+        isFindPending = false;
     }
 
     @Override
@@ -83,16 +100,14 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor im
 
     @Override
     public void toTop() {
-        hasNext = !empty;
+        hasNext = isRecordFound;
         filter.toTop();
     }
 
-    private void findRecord(SqlExecutionContext executionContext) {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        empty = true;
+    private void findRecord() {
         DataFrame frame;
         OUT:
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
@@ -103,21 +118,11 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor im
                 if (filter.getBool(recordA)) {
                     int key = recordA.getInt(columnIndex);
                     if (key == symbolKey) {
-                        empty = false;
+                        isRecordFound = true;
                         break OUT;
                     }
                 }
             }
         }
-    }
-
-    @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        filter.init(this, executionContext);
-        findRecord(executionContext);
-        hasNext = !empty;
     }
 }

@@ -25,7 +25,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -45,7 +44,6 @@ public class HttpServerConfigurationBuilder {
     private String httpProtocolVersion = "HTTP/1.1 ";
     private long multipartIdleSpinCount = -1;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-    private Runnable onPeerDisconnect = HttpContextConfiguration.NONE;
     private int receiveBufferSize = 1024 * 1024;
     private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
@@ -61,7 +59,6 @@ public class HttpServerConfigurationBuilder {
 
         return new DefaultHttpServerConfiguration() {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-                private final DefaultSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
                 @Override
                 public MillisecondClock getClock() {
@@ -178,11 +175,6 @@ public class HttpServerConfigurationBuilder {
                     public boolean getServerKeepAlive() {
                         return serverKeepAlive;
                     }
-
-                    @Override
-                    public Runnable onPeerDisconnect() {
-                        return onPeerDisconnect;
-                    }
                 };
             }
 
@@ -260,11 +252,6 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withOnPeerDisconnect(Runnable runnable) {
-        this.onPeerDisconnect = runnable;
         return this;
     }
 

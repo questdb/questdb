@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     protected final FullTableDataFrame frame = new FullTableDataFrame();
@@ -57,15 +58,16 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
 
     public DataFrameCursor of(TableReader reader) {
         this.reader = reader;
-        this.partitionHi = reader.getPartitionCount();
+        partitionHi = reader.getPartitionCount();
         toTop();
         return this;
     }
 
+    @TestOnly
     @Override
     public boolean reload() {
         boolean moreData = reader.reload();
-        this.partitionHi = reader.getPartitionCount();
+        partitionHi = reader.getPartitionCount();
         toTop();
         return moreData;
     }

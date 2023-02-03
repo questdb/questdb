@@ -43,7 +43,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
     private final IntList columnIndexes;
-    private final DataFrameRecordCursor cursor;
+    private final DataFrameRecordCursorImpl cursor;
     private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final Function filter;
@@ -70,8 +70,8 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         this.filter = filter;
         this.columnIndexes = columnIndexes;
         this.orderDirection = orderDirection;
-        this.cursorFactories = new ObjList<>(nKeyValues);
-        this.cursorFactoriesIdx = new int[]{0};
+        cursorFactories = new ObjList<>(nKeyValues);
+        cursorFactoriesIdx = new int[]{0};
         final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
         for (int i = 0; i < nKeyValues; i++) {
             final Function symbol = keyValues.get(i);
@@ -82,11 +82,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             }
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-            this.cursor = new DataFrameRecordCursor(rowCursorFactory, false, filter, columnIndexes);
+            rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         } else {
-            this.rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-            this.cursor = new DataFrameRecordCursor(rowCursorFactory, false, filter, columnIndexes);
+            rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
     }
@@ -194,8 +194,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext sqlExecutionContext)
-            throws SqlException {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
         }
@@ -208,11 +210,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
 
         findDuplicates();
 
-        this.cursor.of(dataFrameCursor, sqlExecutionContext);
+        cursor.of(dataFrameCursor, sqlExecutionContext);
         if (filter != null) {
-            filter.init(this.cursor, sqlExecutionContext);
+            filter.init(cursor, sqlExecutionContext);
         }
-        return this.cursor;
+        return cursor;
     }
-
 }

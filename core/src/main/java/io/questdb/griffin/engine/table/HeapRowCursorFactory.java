@@ -42,9 +42,9 @@ import io.questdb.std.ObjList;
 public class HeapRowCursorFactory implements RowCursorFactory {
     private final HeapRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
+    // used to skip some cursor factories if values repeat
+    private final int[] cursorFactoriesIdx;
     private final ObjList<RowCursor> cursors;
-    //used to skip some cursor factories if values repeat  
-    private int[] cursorFactoriesIdx;
 
     public HeapRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
@@ -63,13 +63,18 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
+    public void prepareCursor(TableReader tableReader) {
+        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
     }
 
     @Override

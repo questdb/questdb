@@ -572,7 +572,6 @@ public final class Chars {
     }
 
     public static int lowerCaseAsciiHashCode(CharSequence value, int lo, int hi) {
-
         if (hi == lo) {
             return 0;
         }

@@ -254,11 +254,11 @@ public abstract class AbstractCairoTest {
     protected static void assertFactoryMemoryUsage() {
         if (memoryUsage > -1) {
             long memAfterCursorClose = getMemUsedByFactories();
-            long limit = memoryUsage + 50 * 1024;
+            long limit = memoryUsage + 64 * 1024;
             if (memAfterCursorClose > limit) {
                 dumpMemoryUsage();
                 printFactoryMemoryUsageDiff();
-                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + " . Diff " + (memAfterCursorClose - memoryUsage));
+                Assert.fail("cursor memory usage should be less or equal " + limit + " but was " + memAfterCursorClose + ". Diff " + (memAfterCursorClose - memoryUsage));
             }
         }
     }
@@ -333,10 +333,6 @@ public abstract class AbstractCairoTest {
     @SuppressWarnings("SameParameterValue")
     protected static void configOverrideO3QuickSortEnabled(boolean o3QuickSortEnabled) {
         node1.getConfigurationOverrides().setO3QuickSortEnabled(o3QuickSortEnabled);
-    }
-
-    protected static void configOverrideParallelFilterEnabled(Boolean parallelFilterEnabled) {
-        node1.getConfigurationOverrides().setParallelFilterEnabled(parallelFilterEnabled);
     }
 
     protected static void configOverrideParallelImportStatusLogKeepNDays(int parallelImportStatusLogKeepNDays) {

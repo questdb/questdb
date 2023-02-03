@@ -29,7 +29,6 @@ import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlExecutionContext;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
     private final boolean cachedIndexReaderCursor;
@@ -41,17 +40,16 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
-        this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
+        symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
     }
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            RowCursor cursor =
-                    dataFrame
-                            .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
-                            .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+            RowCursor cursor = dataFrame
+                    .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
+                    .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
 
             if (cursor.hasNext()) {
                 this.cursor.of(cursor.next());
@@ -72,7 +70,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+    public void prepareCursor(TableReader tableReader) {
         final CharSequence symbol = symbolFunc.getStr(null);
         symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {

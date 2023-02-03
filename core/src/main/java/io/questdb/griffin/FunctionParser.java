@@ -513,11 +513,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
+        // Disable async offload for in (select ...) sub-queries to avoid infinite loops
+        // due to nested reduce calls. See SqlCodeGenerator#testBug484() for the reproducer.
+        boolean currentFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
+        sqlExecutionContext.setParallelFilterEnabled(false);
         // Make sure to override timestamp required flag from base query.
         sqlExecutionContext.pushTimestampRequiredFlag(false);
         try {
             return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
         } finally {
+            sqlExecutionContext.setParallelFilterEnabled(currentFilterEnabled);
             sqlExecutionContext.popTimestampRequiredFlag();
         }
     }

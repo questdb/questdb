@@ -134,6 +134,27 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncSubQueryWithFilterOnIndexedSymbol() throws Exception {
+        testAsyncSubQueryWithFilter("SELECT count(*) " +
+                "FROM price " +
+                "WHERE type IN  (SELECT id FROM mapping WHERE ext in ('s1', 's2') and substring(ext,2,1) = '1')");
+    }
+
+    @Test
+    public void testAsyncSubQueryWithFilterOnLatestBy() throws Exception {
+        testAsyncSubQueryWithFilter("SELECT count(*) " +
+                "FROM price " +
+                "WHERE type IN  (SELECT id FROM mapping WHERE ext in ('s1'))");
+    }
+
+    @Test
+    public void testAsyncSubQueryWithFilterOnSymbol() throws Exception {
+        testAsyncSubQueryWithFilter("SELECT count(*) " +
+                "FROM price " +
+                "WHERE type IN  (SELECT id FROM mapping WHERE ext in ('s1'))");
+    }
+
+    @Test
     public void testEqStrFunctionFactory() throws Exception {
         final int threadCount = 4;
         final int workerCount = 4;
@@ -410,6 +431,31 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     null
             );
         }
+    }
+
+    private void testAsyncSubQueryWithFilter(String query) throws Exception {
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    compiler.compile("CREATE TABLE price (\n" +
+                            "  ts TIMESTAMP," +
+                            "  type SYMBOL," +
+                            "  value DOUBLE ) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
+                    compiler.compile("insert into price select x::timestamp,  't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
+                    compiler.compile("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
+                    compiler.compile("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
+
+                    assertQuery(
+                            compiler,
+                            "count\n20000\n",
+                            query,
+                            null,
+                            sqlExecutionContext,
+                            false,
+                            true,
+                            true);
+                },
+                configuration,
+                LOG);
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {

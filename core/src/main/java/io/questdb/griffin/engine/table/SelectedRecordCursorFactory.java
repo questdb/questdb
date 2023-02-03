@@ -62,7 +62,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.cursor.of(base.getCursor(executionContext));
+        cursor.of(base.getCursor(executionContext));
         return cursor;
     }
 

@@ -98,7 +98,9 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
         private final int masterTimestampIndex;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
+        private boolean isMasterHasNextPending;
         private long latestSlaveRowID = Long.MIN_VALUE;
+        private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecA;
         private Record slaveRecB;
@@ -123,10 +125,19 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public boolean hasNext() {
-            if (masterCursor.hasNext()) {
+            if (isMasterHasNextPending) {
+                masterHasNext = masterCursor.hasNext();
+                isMasterHasNextPending = false;
+            }
+            if (masterHasNext) {
                 // great, we have a record no matter what
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+                if (masterTimestamp < slaveTimestamp) {
+                    isMasterHasNextPending = true;
+                    return true;
+                }
                 nextSlave(masterTimestamp);
+                isMasterHasNextPending = true;
                 return true;
             }
             return false;
@@ -144,61 +155,40 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             record.hasSlave(false);
             masterCursor.toTop();
             slaveCursor.toTop();
+            isMasterHasNextPending = true;
         }
 
         private void nextSlave(long masterTimestamp) {
-            long slaveTimestamp = this.slaveTimestamp;
-            positionSlaveRecB();
-            // check where this record falls
-            if (slaveTimestamp <= masterTimestamp) {
-                overScrollSlave(masterTimestamp, slaveTimestamp);
-            }
-        }
-
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            slaveTimestamp = Long.MIN_VALUE;
-            latestSlaveRowID = Long.MIN_VALUE;
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecA = slaveCursor.getRecord();
-            this.slaveRecB = slaveCursor.getRecordB();
-            record.of(masterRecord, slaveRecB);
-            record.hasSlave(false);
-        }
-
-        private void overScrollSlave(long masterTimestamp, long slaveTimestamp) {
-            latestSlaveRowID = slaveRecA.getRowId();
-            this.slaveTimestamp = slaveTimestamp;
-
-            // scroll slave down
             while (true) {
-                if (slaveCursor.hasNext()) {
+                boolean slaveHasNext = slaveCursor.hasNext();
+                if (latestSlaveRowID != Long.MIN_VALUE) {
+                    record.hasSlave(true);
+                    slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
+                }
+                if (slaveHasNext) {
                     slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
-                    if (slaveTimestamp < masterTimestamp) {
-                        record.hasSlave(true);
-                        slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
-                        latestSlaveRowID = slaveRecA.getRowId();
-                        this.slaveTimestamp = slaveTimestamp;
-                    } else {
-                        latestSlaveRowID = slaveRecA.getRowId();
-                        this.slaveTimestamp = slaveTimestamp;
+                    latestSlaveRowID = slaveRecA.getRowId();
+                    if (slaveTimestamp >= masterTimestamp) {
                         break;
                     }
                 } else {
-                    record.hasSlave(true);
-                    slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
-                    this.slaveTimestamp = Long.MAX_VALUE;
+                    slaveTimestamp = Long.MAX_VALUE;
                     break;
                 }
             }
         }
 
-        private void positionSlaveRecB() {
-            if (this.latestSlaveRowID != Long.MIN_VALUE) {
-                record.hasSlave(true);
-                slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
-            }
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            slaveTimestamp = Long.MIN_VALUE;
+            latestSlaveRowID = Long.MIN_VALUE;
+            masterRecord = masterCursor.getRecord();
+            slaveRecA = slaveCursor.getRecord();
+            slaveRecB = slaveCursor.getRecordB();
+            record.of(masterRecord, slaveRecB);
+            record.hasSlave(false);
+            isMasterHasNextPending = true;
         }
     }
 }

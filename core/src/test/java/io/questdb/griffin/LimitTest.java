@@ -247,6 +247,24 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNegativeLimitEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table y (sym symbol, ts timestamp) timestamp(ts) partition by day",
+                    sqlExecutionContext
+            );
+
+            assertQuery(
+                    "sym\tts\n",
+                    "y where sym = 'googl' limit -3",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testNegativeLimitMultiplePageFramesNonPartitioned() throws Exception {
         // Here we verify that the implicit timestamp descending order is preserved
         // by negative limit clause even if it spans multiple page frames.
@@ -345,7 +363,7 @@ public class LimitTest extends AbstractGriffinTest {
                     "y where sym = 'googl' limit -3",
                     "timestamp",
                     true,
-                    true
+                    false
             );
         });
     }
@@ -398,11 +416,11 @@ public class LimitTest extends AbstractGriffinTest {
                 bindVariableService.setLong("lo", 4);
                 bindVariableService.setInt("hi", 8);
 
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQueryAndCache(expected1, query, "timestamp", true, false);
                 bindVariableService.setLong("lo", 6);
                 bindVariableService.setInt("hi", 12);
 
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQueryAndCache(expected2, query, "timestamp", true, false);
             } finally {
                 engine.clear();
             }
@@ -583,9 +601,9 @@ public class LimitTest extends AbstractGriffinTest {
                 );
 
                 bindVariableService.setLong(0, 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQueryAndCache(expected1, query, "timestamp", true, false);
                 bindVariableService.setLong(0, 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQueryAndCache(expected2, query, "timestamp", true, false);
             } finally {
                 engine.clear();
             }
@@ -638,9 +656,9 @@ public class LimitTest extends AbstractGriffinTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, true);
+                assertQueryAndCache(expected1, query, "timestamp", true, false);
                 bindVariableService.setLong("lim", 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, true);
+                assertQueryAndCache(expected2, query, "timestamp", true, false);
             } finally {
                 engine.clear();
             }
@@ -706,7 +724,7 @@ public class LimitTest extends AbstractGriffinTest {
                             ") timestamp(timestamp)",
                     sqlExecutionContext
             );
-            assertQueryAndCache(expected1, query, "timestamp", true, true);
+            assertQueryAndCache(expected1, query, "timestamp", true, false);
 
             compiler.compile(
                     "insert into y select * from " +
@@ -732,7 +750,7 @@ public class LimitTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQuery(expected2, query, "timestamp", true, true);
+            assertQuery(expected2, query, "timestamp", true, false);
         });
     }
 
