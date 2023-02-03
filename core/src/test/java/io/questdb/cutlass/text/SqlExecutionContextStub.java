@@ -165,8 +165,4 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     @Override
     public void setRandom(Rnd rnd) {
     }
-
-    @Override
-    public void storeTelemetry(short event, short origin) {
-    }
 }

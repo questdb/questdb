@@ -771,6 +771,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return 20;
+    }
+
+    @Override
     public int getWalCommitSquashRowLimit() {
         return 512 * 1024;
     }
@@ -881,6 +886,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isTableTypeConversionEnabled() {
         return true;
     }
 

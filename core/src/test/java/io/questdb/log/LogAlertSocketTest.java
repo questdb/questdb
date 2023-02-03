@@ -34,11 +34,14 @@ import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.Timeout;
 
 import java.io.File;
 import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.log.HttpLogRecordSink.CRLF;
@@ -46,6 +49,11 @@ import static io.questdb.log.HttpLogRecordSink.CRLF;
 public class LogAlertSocketTest {
 
     private static final Log LOG = LogFactory.getLog(LogAlertSocketTest.class);
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     public void assertAlertTargets(
             String alertTargets,
@@ -158,23 +166,23 @@ public class LogAlertSocketTest {
     public void testFailOverSingleHost() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String host = "127.0.0.1";
-            final int port = 1241;
+
+            // start server
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+            final CyclicBarrier startBarrier = new CyclicBarrier(2);
+            final MockAlertTarget server = new MockAlertTarget(
+                    0,
+                    haltLatch::countDown,
+                    () -> TestUtils.await(startBarrier)
+            );
+            server.start();
+            startBarrier.await();
+            int port = server.getPortNumber();
+
             try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, host + ":" + port, LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader(host)
                         .setMark();
-
-                // start server
-                final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                final CyclicBarrier startBarrier = new CyclicBarrier(2);
-                final MockAlertTarget server = new MockAlertTarget(
-                        port,
-                        haltLatch::countDown,
-                        () -> TestUtils.await(startBarrier)
-                );
-                server.start();
-
-                startBarrier.await();
 
                 // connect to server
                 alertSkt.connect();

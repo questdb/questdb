@@ -57,4 +57,9 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     public boolean mangleTableDirNames() {
         return true;
     }
+
+    @Override
+    public CharSequence getSystemTableNamePrefix() {
+        return "sys.";
+    }
 }
