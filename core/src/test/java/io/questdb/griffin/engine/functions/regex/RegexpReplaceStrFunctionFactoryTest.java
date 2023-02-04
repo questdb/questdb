@@ -37,7 +37,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
     public void testNullRegex() throws Exception {
         assertFailure(
                 "[29] NULL regex",
-                "select regexp_replace('abc', null, 'def')"
+                "select regexp_replace('abc', null, 'def'))"
         );
     }
 
