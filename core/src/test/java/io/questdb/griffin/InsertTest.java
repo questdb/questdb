@@ -461,6 +461,7 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+
     @Test
     public void testInsertEscapeString() throws Exception {
         assertMemoryLeak(() -> {
