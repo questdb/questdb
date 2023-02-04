@@ -52,6 +52,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.*;
@@ -80,9 +81,9 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
-    private final IOTableUpdateDetailsPool walIdleUpdateDetailsUtf8;
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
+    private final ConcurrentHashMap<java.util.concurrent.ConcurrentHashMap<Integer, TableUpdateDetails>> walTableUpdateDetails;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -96,7 +97,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
-        MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
         this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
         final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
         this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];
@@ -109,10 +109,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             ioWorkerPool.freeOnExit(netIoJob);
         }
 
-        // Worker count is set to 1 because we do not use this execution context
-        // in worker threads.
+        // todo: extract this out into a separate class WalTableUpdateDetails (similar implementation as IOTableUpdateDetailsPool was)
+        walTableUpdateDetails = new ConcurrentHashMap<>();
+        // todo: extract the below maps out into a separate class NonWalTableUpdateDetails
         tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
+
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
         autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
@@ -125,6 +127,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         queue = new RingQueue[nWriterThreads];
         //noinspection unchecked
         assignedTables = new ObjList[nWriterThreads];
+        MillisecondClock millisClock = cairoConfiguration.getMillisecondClock();
         for (int i = 0; i < nWriterThreads; i++) {
             MPSequence ps = new MPSequence(queueSize);
             pubSeq[i] = ps;
@@ -155,7 +158,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     i,
                     q,
                     subSeq,
-                    milliClock,
+                    millisClock,
                     commitIntervalDefault,
                     this,
                     engine.getMetrics(),
@@ -166,7 +169,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
         this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy());
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
-        walIdleUpdateDetailsUtf8 = new IOTableUpdateDetailsPool(ioWorkerPoolSize);
     }
 
     @Override
@@ -178,10 +180,10 @@ class LineTcpMeasurementScheduler implements Closeable {
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
-        Misc.free(walIdleUpdateDetailsUtf8);
 
         Misc.free(path);
         Misc.free(ddlMem);
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = assignedTables.length; i < n; i++) {
             Misc.freeObjList(assignedTables[i]);
             assignedTables[i].clear();
@@ -190,36 +192,10 @@ class LineTcpMeasurementScheduler implements Closeable {
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = netIoJobs.length; i < n; i++) {
             netIoJobs[i].close();
         }
-    }
-
-    public long commitWalTables(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8, long wallClockMillis) {
-        long minTableNextCommitTime = Long.MAX_VALUE;
-        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
-            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-
-            if (tud.isWal()) {
-                final MillisecondClock millisecondClock = tud.getMillisecondClock();
-                try {
-                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
-                    // get current time again, commit is not instant and take quite some time.
-                    wallClockMillis = millisecondClock.getTicks();
-                    if (tableNextCommitTime < minTableNextCommitTime) {
-                        // taking the earliest commit time
-                        minTableNextCommitTime = tableNextCommitTime;
-                    }
-                } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
-                    engine.getMetrics().health().incrementUnhandledErrors();
-                }
-            }
-        }
-        // if no tables, just use the default commit interval
-        long commitIntervalDefault = configuration.getCommitIntervalDefault();
-        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
     }
 
     public boolean doMaintenance(
@@ -227,8 +203,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             int readerWorkerId,
             long millis
     ) {
-        walIdleUpdateDetailsUtf8.closeIdle(millis, writerIdleTimeout, listener);
-
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
@@ -280,17 +254,17 @@ class LineTcpMeasurementScheduler implements Closeable {
     public void processWriterReleaseEvent(LineTcpMeasurementEvent event, int workerId) {
         tableUpdateDetailsLock.readLock().lock();
         try {
-            final TableUpdateDetails tub = event.getTableUpdateDetails();
-            if (tub.getWriterThreadId() != workerId) {
+            final TableUpdateDetails tud = event.getTableUpdateDetails();
+            if (tud.getWriterThreadId() != workerId) {
                 return;
             }
-            if (!event.getTableUpdateDetails().isWriterInError() && tableUpdateDetailsUtf16.keyIndex(tub.getTableNameUtf16()) < 0) {
+            if (!event.getTableUpdateDetails().isWriterInError() && tableUpdateDetailsUtf16.keyIndex(tud.getTableNameUtf16()) < 0) {
                 // Table must have been re-assigned to an IO thread
                 return;
             }
             LOG.info()
-                    .$("releasing writer, its been idle since ").$ts(tub.getLastMeasurementMillis() * 1_000)
-                    .$("[tableName=").$(tub.getTableNameUtf16())
+                    .$("releasing writer, its been idle since ").$ts(tud.getLastMeasurementMillis() * 1_000)
+                    .$("[tableName=").$(tud.getTableNameUtf16())
                     .I$();
 
             event.releaseWriter();
@@ -298,19 +272,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             tableUpdateDetailsLock.readLock().unlock();
         }
     }
-
-    public void releaseWalTableDetails(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8) {
-        ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
-        for (int n = keys.size() - 1; n > -1; --n) {
-            final ByteCharSequence tableNameUtf8 = keys.getQuick(n);
-            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-            if (tud.isWal()) {
-                tableUpdateDetailsUtf8.remove(tableNameUtf8);
-                walIdleUpdateDetailsUtf8.put(tableNameUtf8, tud);
-            }
-        }
-    }
-
 
     private static long getEventSlotSize(int maxMeasurementSize) {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
@@ -630,6 +591,24 @@ class LineTcpMeasurementScheduler implements Closeable {
         tudUtf16.clear();
     }
 
+    boolean dispatchCommitEvent(TableUpdateDetails tud) {
+        final int writerThreadId = tud.getWriterThreadId();
+        long seq = getNextPublisherEventSequence(writerThreadId);
+        if (seq > -1) {
+            try {
+                if (tud.isWriterInError()) {
+                    throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
+                }
+                queue[writerThreadId].get(seq).createCommitEvent(tud);
+            } finally {
+                pubSeq[writerThreadId].done(seq);
+            }
+            tud.incrementEventsProcessedSinceReshuffle();
+            return false;
+        }
+        return true;
+    }
+
     private boolean dispatchEvent(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) {
         final int writerThreadId = tud.getWriterThreadId();
         long seq = getNextPublisherEventSequence(writerThreadId);
@@ -648,14 +627,39 @@ class LineTcpMeasurementScheduler implements Closeable {
         return true;
     }
 
-    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
-        final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
-        TableUpdateDetails walCachedTud = walIdleUpdateDetailsUtf8.get(tableNameUtf8);
-        if (walCachedTud != null) {
-            netIoJob.addTableUpdateDetails(walCachedTud.getTableNameUtf8(), walCachedTud);
-            return walCachedTud;
+    private TableToken createTableIfDoesNotExist(CharSequence tableNameUtf16, LineTcpParser parser) {
+        final TableToken token = engine.getTableTokenIfExists(tableNameUtf16);
+        final int status = engine.getStatus(securityContext, path, token);
+        if (status == TableUtils.TABLE_EXISTS) {
+            return token;
         }
 
+        if (parser == null) {
+            throw CairoException.nonCritical()
+                    .put("table does not exist, cannot create table during commit [table=").put(tableNameUtf16).put(']');
+        }
+        if (!autoCreateNewTables) {
+            throw CairoException.nonCritical()
+                    .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
+                    .put(']');
+        }
+        if (!autoCreateNewColumns) {
+            throw CairoException.nonCritical()
+                    .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
+                    .put(']');
+        }
+        // validate that parser entities do not contain NULLs
+        final TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
+        for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
+            if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
+                throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+            }
+        }
+        LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
+        return engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+    }
+
+    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, LineTcpParser parser, DirectByteCharSequence tableNameUtf8) {
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
         tableNameUtf16.clear();
         Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);
@@ -670,29 +674,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // we should not have "shared" WAL tables
                 tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
-                TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);
-                int status = engine.getStatus(securityContext, path, tableToken);
-                if (status != TableUtils.TABLE_EXISTS) {
-                    if (!autoCreateNewTables) {
-                        throw CairoException.nonCritical()
-                                .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
-                                .put(']');
-                    }
-                    if (!autoCreateNewColumns) {
-                        throw CairoException.nonCritical()
-                                .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
-                                .put(']');
-                    }
-                    // validate that parser entities do not contain NULLs
-                    TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
-                    for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
-                        if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
-                            throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
-                        }
-                    }
-                    LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
-                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
-                }
+                final TableToken tableToken = createTableIfDoesNotExist(tableNameUtf16, parser);
 
                 // by the time we get here, definitely exists on disk
                 // check the global idle cache - TUD can be there
@@ -713,22 +695,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 } else {
                     TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
-                    // check if table on disk is WAL
+                    // todo: could this line be removed?
                     path.of(engine.getConfiguration().getRoot());
                     if (engine.isWalTable(tableToken)) {
-                        // create WAL-oriented TUD and NOT add it to the global cache
-                        tud = new TableUpdateDetails(
-                                configuration,
-                                engine,
-                                engine.getWalWriter(
-                                        securityContext,
-                                        tableToken
-                                ),
-                                -1,
-                                netIoJobs,
-                                defaultColumnTypes,
-                                ByteCharSequence.newInstance(tableNameUtf8)
-                        );
+                        throw new RuntimeException("Should not be here, WAL table handled elsewhere!");
                     } else {
                         tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));
                     }
@@ -805,38 +775,13 @@ class LineTcpMeasurementScheduler implements Closeable {
         return seq;
     }
 
-    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
-        DirectByteCharSequence measurementName = parser.getMeasurementName();
+    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, int fd) {
+        DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         TableUpdateDetails tud;
         try {
-            tud = netIoJob.getLocalTableDetails(measurementName);
-            if (tud == null || (tud.isWal() && tud.isWriterInError())) {
-                if (tud != null) {
-                    TableUpdateDetails removed = netIoJob.removeTableUpdateDetails(measurementName);
-                    assert tud == removed;
-                    removed.releaseWriter(true);
-                    removed.close();
-                }
-                tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser);
-            }
+            tud = lookupTUD(tableNameUtf8, netIoJob, parser, fd);
         } catch (EntryUnavailableException ex) {
-            // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(measurementName)
-                    .$(", ex=`")
-                    .$(ex.getFlyweightMessage())
-                    .$("`]")
-                    .$();
             return true;
-        } catch (CairoException ex) {
-            // Table could not be created
-            LOG.error().$("could not create table [tableName=").$(measurementName)
-                    .$(", errno=").$(ex.getErrno())
-                    .$(", ex=`")
-                    .$(ex.getFlyweightMessage())
-                    .$("`]")
-                    .I$();
-            // More details will be logged by catching thread
-            throw ex;
         }
 
         if (tud.isWal()) {
@@ -848,11 +793,96 @@ class LineTcpMeasurementScheduler implements Closeable {
                         .$(",ex=")
                         .$(ex)
                         .I$();
-                throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+                throw CairoException.critical(0).put("could not append to WAL [tableName=").put(tableNameUtf8).put(", error=").put(ex.getMessage()).put(']');
             }
             return false;
         }
         return dispatchEvent(netIoJob, parser, tud);
+    }
+
+    void releaseTUDs(int fd) {
+        if (fd < 0) {
+            return;
+        }
+        for (Map.Entry<CharSequence, java.util.concurrent.ConcurrentHashMap<Integer, TableUpdateDetails>> tuds: walTableUpdateDetails.entrySet()) {
+            final TableUpdateDetails tud = tuds.getValue().remove(fd);
+            Misc.free(tud);
+        }
+    }
+
+    TableUpdateDetails lookupTUD(@NotNull DirectByteCharSequence tableNameUtf8, @NotNull NetworkIOJob netIoJob, int fd) {
+        return lookupTUD(tableNameUtf8, netIoJob, null, fd);
+    }
+
+    TableUpdateDetails lookupTUD(@NotNull DirectByteCharSequence tableNameUtf8, @NotNull NetworkIOJob netIoJob, LineTcpParser parser, int fd) {
+        java.util.concurrent.ConcurrentHashMap<Integer, TableUpdateDetails> tuds = walTableUpdateDetails.get(tableNameUtf8);
+        if (tuds == null) {
+            final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
+            tableNameUtf16.clear();
+            Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);
+
+            TableToken token;
+            tableUpdateDetailsLock.writeLock().lock();
+            try {
+                token = createTableIfDoesNotExist(tableNameUtf16, parser);
+            } finally {
+                tableUpdateDetailsLock.writeLock().unlock();
+            }
+
+            if (engine.isWalTable(token)) {
+                tuds = walTableUpdateDetails.computeIfAbsent(tableNameUtf8, tableName -> new java.util.concurrent.ConcurrentHashMap<>());
+            }
+        }
+
+        if (tuds != null) {
+            // WAL table
+            return tuds.computeIfAbsent(fd, fdKey -> {
+                final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
+                tableNameUtf16.clear();
+                Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);
+
+                final TableToken token = engine.getTableToken(tableNameUtf16);
+                return new TableUpdateDetails(
+                        configuration,
+                        engine,
+                        engine.getWalWriter(
+                                securityContext,
+                                token
+                        ),
+                        -1,
+                        netIoJobs,
+                        defaultColumnTypes,
+                        ByteCharSequence.newInstance(tableNameUtf8)
+                );
+            });
+        } else {
+            // non-WAL table
+            try {
+                TableUpdateDetails tud = netIoJob.getLocalTableDetails(tableNameUtf8);
+                if (tud == null) {
+                    tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser, tableNameUtf8);
+                }
+                return tud;
+            } catch (EntryUnavailableException ex) {
+                // Table writer is locked
+                LOG.info().$("could not get table writer [tableName=").$(tableNameUtf8)
+                        .$(", ex=`")
+                        .$(ex.getFlyweightMessage())
+                        .$("`]")
+                        .$();
+                throw ex;
+            } catch (CairoException ex) {
+                // Table could not be created
+                LOG.error().$("could not create table [tableName=").$(tableNameUtf8)
+                        .$(", errno=").$(ex.getErrno())
+                        .$(", ex=`")
+                        .$(ex.getFlyweightMessage())
+                        .$("`]")
+                        .I$();
+                // More details will be logged by catching thread
+                throw ex;
+            }
+        }
     }
 
     @TestOnly

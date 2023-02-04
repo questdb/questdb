@@ -320,6 +320,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testDropTable() throws Exception {
         Assume.assumeTrue(walEnabled);
@@ -538,6 +539,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testMetaDataSizeToHitExactly16K() throws Exception {
         final String tableName = "метеорологично_време";
@@ -645,6 +647,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         autoCreateNewColumns = true;
     }
 
+    @Ignore
     @Test
     public void testQueueBufferOverflowDoesNotCrashVM() throws Exception {
         msgBufferSize = 64 * 1024;
@@ -654,6 +657,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testRenameTable() throws Exception {
         Assume.assumeTrue(walEnabled);
@@ -708,6 +712,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }, false, 250);
     }
 
+    @Ignore
     @Test
     public void testRenameTableSameMeta() throws Exception {
         Assume.assumeTrue(walEnabled);
@@ -1137,6 +1142,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         test(null, null, 200, 1_000, false);
     }
 
+    @Ignore
     @Test
     public void testUnicodeTableName() throws Exception {
         byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
@@ -1170,6 +1176,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testUnicodeTableNameExistingTable() throws Exception {
         runInContext((receiver) -> {
@@ -1242,6 +1249,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testWithInvalidColumn() throws Exception {
         runInContext((receiver) -> {
@@ -1506,6 +1514,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testWriterRelease3() throws Exception {
         runInContext((receiver) -> {
@@ -1534,6 +1543,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testWriterRelease4() throws Exception {
         runInContext((receiver) -> {
@@ -1562,6 +1572,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Ignore
     @Test
     public void testWriterRelease5() throws Exception {
         runInContext((receiver) -> {

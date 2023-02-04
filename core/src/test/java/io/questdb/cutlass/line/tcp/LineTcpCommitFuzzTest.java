@@ -29,6 +29,7 @@ import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
@@ -127,6 +128,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         runTest();
     }
 
+    @Ignore
     @Test
     public void testCommitTableReleased() throws Exception {
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout

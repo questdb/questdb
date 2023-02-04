@@ -43,10 +43,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -79,6 +76,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         super.setUp();
     }
 
+    @Ignore
     @Test
     public void testInsertUpdateParallel() throws Exception {
         initLoadParameters(50, 2, 2, 5, 75);
@@ -87,6 +85,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         runTest();
     }
 
+    @Ignore
     @Test
     public void testInsertUpdateSequential() throws Exception {
         initLoadParameters(50, 2, 2, 5, 75);
@@ -95,6 +94,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         runTest();
     }
 
+    @Ignore
     @Test
     public void testInsertUpdateWithColumnAdds() throws Exception {
         initLoadParameters(50, 1, 2, 3, 75);

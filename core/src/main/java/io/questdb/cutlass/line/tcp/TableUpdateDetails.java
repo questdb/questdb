@@ -44,6 +44,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 import static io.questdb.std.Chars.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
@@ -159,14 +160,15 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    public void commit(boolean withLag) throws CommitFailedException {
+    public long commit(boolean withLag) throws CommitFailedException {
+        long seqTxn = NO_TXN;
         if (writerAPI.getUncommittedRowCount() > 0) {
             try {
                 LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableToken).I$();
                 if (withLag) {
-                    writerAPI.ic();
+                    seqTxn = writerAPI.ic();
                 } else {
-                    writerAPI.commit();
+                    seqTxn = writerAPI.commit();
                 }
             } catch (Throwable ex) {
                 setWriterInError();
@@ -182,6 +184,7 @@ public class TableUpdateDetails implements Closeable {
         if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
             setWriterInError();
         }
+        return seqTxn;
     }
 
     public long getEventsProcessedSinceReshuffle() {

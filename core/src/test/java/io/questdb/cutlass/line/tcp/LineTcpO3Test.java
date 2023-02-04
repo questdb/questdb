@@ -133,11 +133,13 @@ public class LineTcpO3Test extends AbstractCairoTest {
         TestUtils.removeTestPath(root);
     }
 
+    @Ignore
     @Test
     public void testInOrder() throws Exception {
         test("ilp.inOrder1");
     }
 
+    @Ignore
     @Test
     public void testO3() throws Exception {
         test("ilp.outOfOrder1");

@@ -24,18 +24,10 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.mp.Job;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
-
-interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
-
-    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8);
-
-    ObjList<SymbolCache> getUnusedSymbolCaches();
-
-    int getWorkerId();
+interface CommandError {
+    int OK = 0;
+    int QUEUE_FULL = 1;
+    int BUFFER_TOO_SMALL = 2;
+    int INVALID_COMMIT_TYPE = 3;
+    int COMMIT_FAILED = 4;
 }

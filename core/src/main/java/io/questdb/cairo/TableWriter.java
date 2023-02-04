@@ -1238,17 +1238,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void ic(long o3MaxLag) {
-        commit(defaultCommitMode, o3MaxLag);
+    public long ic(long o3MaxLag) {
+        return commit(defaultCommitMode, o3MaxLag);
     }
 
-    public void ic(int commitMode) {
-        commit(commitMode, metadata.getO3MaxLag());
+    public long ic(int commitMode) {
+        return commit(commitMode, metadata.getO3MaxLag());
     }
 
     @Override
-    public void ic() {
-        commit(defaultCommitMode, metadata.getO3MaxLag());
+    public long ic() {
+        return commit(defaultCommitMode, metadata.getO3MaxLag());
     }
 
     public boolean inTransaction() {

@@ -476,7 +476,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         while (lineTcpParser.getBufferAddress() < bufHi) {
             ParseResult rc;
             if (!onErrorLine) {
-                rc = lineTcpParser.parseMeasurement(bufHi);
+                rc = lineTcpParser.parseMeasurement(null, bufHi);
             } else {
                 rc = lineTcpParser.skipMeasurement(bufHi);
             }

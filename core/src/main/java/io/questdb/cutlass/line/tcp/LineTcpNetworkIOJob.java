@@ -53,7 +53,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     private LineTcpConnectionContext busyContext = null;
     private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
     private long maintenanceJobDeadline;
-    private long nextCommitTime;
 
     LineTcpNetworkIOJob(
             LineTcpReceiverConfiguration configuration,
@@ -65,7 +64,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         this.maintenanceInterval = configuration.getMaintenanceInterval();
         this.scheduler = scheduler;
         this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;
-        this.nextCommitTime = millisecondClock.getTicks();
         this.dispatcher = dispatcher;
         this.workerId = workerId;
     }
@@ -88,8 +86,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (tud.isWal()) {
-                tud.releaseWriter(true);
-                tud.close();
+                throw new RuntimeException("Cannot be WAL TUD !!!");
             }
         }
     }
@@ -110,22 +107,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public void releaseWalTableDetails() {
-        scheduler.releaseWalTableDetails(tableUpdateDetailsUtf8);
-    }
-
-    @Override
-    public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
-        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
-        if (keyIndex < 0) {
-            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
-            tableUpdateDetailsUtf8.removeAt(keyIndex);
-            return tud;
-        }
-        return null;
-    }
-
-    @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
         assert this.workerId == workerId;
         boolean busy = false;
@@ -141,13 +122,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
         if (dispatcher.processIOQueue(onRequest)) {
             busy = true;
-        }
-
-        if (!busy) {
-            final long wallClockMillis = millisecondClock.getTicks();
-            if (wallClockMillis > nextCommitTime) {
-                nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, wallClockMillis);
-            }
         }
 
         final long millis = millisecondClock.getTicks();
@@ -174,6 +148,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
                     return true;
                 case NEEDS_DISCONNECT:
                     context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
+                    scheduler.releaseTUDs(context.getFd());
                     return false;
             }
         }

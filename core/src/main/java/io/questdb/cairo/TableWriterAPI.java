@@ -115,9 +115,9 @@ public interface TableWriterAPI extends Closeable {
      * <p>
      * When data is in order and O3 area is empty, ic() equals to commit().
      */
-    void ic();
+    long ic();
 
-    void ic(long o3MaxLag);
+    long ic(long o3MaxLag);
 
     TableWriter.Row newRow();
 

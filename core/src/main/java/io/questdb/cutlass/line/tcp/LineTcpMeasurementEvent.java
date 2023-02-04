@@ -49,7 +49,7 @@ class LineTcpMeasurementEvent implements Closeable {
     private final int maxColumnNameLength;
     private final boolean stringToCharCastAllowed;
     private final LineProtoTimestampAdapter timestampAdapter;
-    private boolean commitOnWriterClose;
+    private boolean commitWriter;
     private TableUpdateDetails tableUpdateDetails;
     private int writerWorkerId;
 
@@ -118,21 +118,26 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     public void releaseWriter() {
-        tableUpdateDetails.releaseWriter(commitOnWriterClose);
+        tableUpdateDetails.releaseWriter(commitWriter);
     }
 
     void append() throws CommitFailedException {
         TableWriter.Row row = null;
         try {
             TableWriterAPI writer = tableUpdateDetails.getWriter();
+            assert !tableUpdateDetails.isWal();
+            assert writer instanceof TableWriter;
             long offset = buffer.getAddress();
             final long structureVersion = buffer.readLong(offset);
             offset += Long.BYTES;
+
+            // todo: this probably should be removed, ILP for WAL table should never get here
             if (structureVersion > writer.getStructureVersion()) {
                 // I/O thread has a more recent version of the WAL table metadata than the writer.
                 // Let the WAL writer commit, so that it refreshes its metadata copy.
                 writer.commit();
             }
+
             long timestamp = buffer.readLong(offset);
             offset += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
@@ -177,8 +182,11 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.cancel();
                         row = null;
                         final int colType = defaultColumnTypes.MAPPED_COLUMN_TYPES[entityType];
+
+                        // todo: this probably should be removed, ILP for WAL table should never get here
                         // we have to commit before adding a new column as WalWriter doesn't do that automatically
                         writer.commit();
+
                         try {
                             writer.addColumn(columnName, colType);
                         } catch (CairoException e) {
@@ -299,6 +307,7 @@ class LineTcpMeasurementEvent implements Closeable {
         final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
         this.tableUpdateDetails = tud;
+        commitWriter = false;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -571,9 +580,19 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = tud.getWriterThreadId();
     }
 
-    void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
+    void createWriterReleaseEvent(TableUpdateDetails tud, boolean commitOnWriterClose) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER;
-        this.tableUpdateDetails = tableUpdateDetails;
-        this.commitOnWriterClose = commitOnWriterClose;
+        tableUpdateDetails = tud;
+        commitWriter = commitOnWriterClose;
+    }
+
+    void createCommitEvent(TableUpdateDetails tud) {
+        writerWorkerId = tud.getWriterThreadId();
+        tableUpdateDetails = tud;
+        commitWriter = true;
+    }
+
+    boolean isCommit() {
+        return commitWriter;
     }
 }

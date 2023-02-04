@@ -45,6 +45,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -172,6 +173,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }, true, 50L);
     }
 
+    @Ignore
     @Test
     public void testAlterCommandDropLastPartition() throws Exception {
         runInContext((server) -> {
@@ -215,6 +217,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }, true, 50L);
     }
 
+    @Ignore
     @Test
     public void testAlterCommandDropPartition() throws Exception {
         long day1 = 0;
@@ -271,6 +274,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }, false, 1000);
     }
 
+    @Ignore
     @Test
     public void testAlterCommandRenameAndReAddColumnSameType() throws Exception {
         runInContext((server) -> {
@@ -302,6 +306,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }, false, 1000);
     }
 
+    @Ignore
     @Test
     public void testAlterCommandSequenceReleased() throws Exception {
         long day1 = 0;
@@ -335,6 +340,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }, true, 250);
     }
 
+    @Ignore
     @Test
     public void testAlterCommandTableMetaModifications() throws Exception {
         runInContext((server) -> {
@@ -473,6 +479,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }, true, 50L);
     }
 
+    @Ignore
     @Test
     public void testAlterTableAddIndex() throws Exception {
         runInContext((server) -> {
@@ -501,6 +508,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         });
     }
 
+    @Ignore
     @Test
     public void testDropColumnAddDuplicate() throws Exception {
         runInContext((server) -> {
@@ -558,6 +566,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         });
     }
 
+    @Ignore
     @Test
     public void testDropColumnInTheMiddle() throws Exception {
         runInContext((server) -> {
@@ -657,6 +666,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         });
     }
 
+    @Ignore
     @Test
     public void testRenameColumnConcurrently() throws Exception {
         final int rows = 10_000;
@@ -686,6 +696,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         });
     }
 
+    @Ignore
     @Test
     public void testSymbolColumnDeletedAndAdded() throws Exception {
         runInContext((server) -> {

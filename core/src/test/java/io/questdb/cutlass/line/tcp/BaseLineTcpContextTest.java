@@ -230,7 +230,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 break;
         }
-        scheduler.commitWalTables(noNetworkIOJob.localTableUpdateDetailsByTableName, Long.MAX_VALUE);
         scheduler.doMaintenance(noNetworkIOJob.localTableUpdateDetailsByTableName, noNetworkIOJob.getWorkerId(), Long.MAX_VALUE);
         return false;
     }
@@ -287,14 +286,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, int fd) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.scheduleEvent(netIoJob, parser);
+                return super.scheduleEvent(netIoJob, parser, fd);
             }
         };
-        noNetworkIOJob.setScheduler(scheduler);
         if (authDb == null) {
             context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         } else {
@@ -364,7 +362,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static class NoNetworkIOJob implements NetworkIOJob {
         private final ByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new ByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
-        private LineTcpMeasurementScheduler scheduler;
 
         @Override
         public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
@@ -391,29 +388,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public void releaseWalTableDetails() {
-            scheduler.releaseWalTableDetails(localTableUpdateDetailsByTableName);
-        }
-
-        @Override
-        public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
-            final int keyIndex = localTableUpdateDetailsByTableName.keyIndex(tableNameUtf8);
-            if (keyIndex < 0) {
-                TableUpdateDetails tud = localTableUpdateDetailsByTableName.valueAtQuick(keyIndex);
-                localTableUpdateDetailsByTableName.removeAt(keyIndex);
-                return tud;
-            }
-            return null;
-        }
-
-        @Override
         public boolean run(int workerId, @NotNull RunStatus runStatus) {
             Assert.fail("This is a mock job, not designed to run in a worker pool");
             return false;
-        }
-
-        public void setScheduler(LineTcpMeasurementScheduler scheduler) {
-            this.scheduler = scheduler;
         }
     }
 

@@ -131,7 +131,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                     Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
                 }
                 lineTcpParser.of(mem);
-                Assert.assertEquals(expectedParseResult, lineTcpParser.parseMeasurement(mem + len));
+                Assert.assertEquals(expectedParseResult, lineTcpParser.parseMeasurement(null, mem + len));
                 LineTcpParser.ProtoEntity entity = lineTcpParser.getEntity(0);
                 Assert.assertEquals(type, entity.getType());
                 Assert.assertEquals("v", entity.getName().toString());

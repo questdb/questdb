@@ -24,18 +24,23 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.mp.Job;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+abstract class Command {
+    final CommandHeader header;
 
-interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+    Command(CommandHeader header) {
+        this.header = header;
+    }
 
-    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8);
+    // deserialize the command from the buffer starting at `bufferPos`
+    abstract long read(long bufferPos);
 
-    ObjList<SymbolCache> getUnusedSymbolCaches();
+    // execute the command
+    abstract void execute(NetworkIOJob netIoJob, LineTcpConnectionContext context);
 
-    int getWorkerId();
+    // serialize the ack into the buffer starting at `bufferPos`
+    abstract long writeAck(long bufferPos);
+
+    // the size of an ack message in bytes
+    // should return 0 if command does not require an ack to the client
+    abstract int getAckSize();
 }

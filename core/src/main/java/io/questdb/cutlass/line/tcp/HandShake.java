@@ -24,18 +24,41 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.mp.Job;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.ByteCharSequence;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.Unsafe;
 
-interface NetworkIOJob extends Job, QuietCloseable {
-    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+class HandShake extends Command {
+    private byte clientType;
+    private int protocolVersion;
 
-    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8);
+    HandShake(CommandHeader header) {
+        super(header);
+    }
 
-    ObjList<SymbolCache> getUnusedSymbolCaches();
+    @Override
+    void execute(NetworkIOJob netIoJob, LineTcpConnectionContext context) {
+        // put info on context
+    }
 
-    int getWorkerId();
+    @Override
+    long read(long bufferPos) {
+        clientType = Unsafe.getUnsafe().getByte(bufferPos);
+        bufferPos += Byte.BYTES;
+        protocolVersion = Unsafe.getUnsafe().getInt(bufferPos);
+        bufferPos += Integer.BYTES;
+        return bufferPos;
+    }
+
+    @Override
+    long writeAck(long bufferPos) {
+        header.of(Integer.BYTES);
+        bufferPos = header.writeHeader(bufferPos);
+        Unsafe.getUnsafe().putInt(bufferPos, 7);  // server version
+        bufferPos += Integer.BYTES;
+        return bufferPos;
+    }
+
+    @Override
+    int getAckSize() {
+        return CommandHeader.getAckSize() + Integer.BYTES;
+    }
 }

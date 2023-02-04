@@ -164,7 +164,12 @@ class LineTcpWriterJob implements Job, Closeable {
                                         .$(", threadId=").$(workerId)
                                         .I$();
                             }
-                            event.append();
+                            // todo: move commit handling out of the hot path
+                            if (event.isCommit()) {
+                                tud.commit(true);
+                            } else {
+                                event.append();
+                            }
                         }
                     } catch (Throwable ex) {
                         tud.setWriterInError();

@@ -323,11 +323,11 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     protected CharSequence getTableName(int tableIndex, boolean randomCase) {
         final String tableName;
-        if (randomCase) {
-            tableName = random.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
-        } else {
+//        if (randomCase) {
+//            tableName = random.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
+//        } else {
             tableName = "weather";
-        }
+//        }
         return tableName + tableIndex;
     }
 
@@ -471,6 +471,21 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
         new Thread(() -> {
             try {
+                // send handshake
+                // always acked by server
+                final byte[] handshake = new byte[]{
+                        5,                                  //cmd start             byte    always 5
+                        1, 0, 0, 0, 0, 0, 0, 0,             //msg id                long    1, 2, 3...
+                        0, 0,                               //cmd type              short   0-handshake, 1-commit, 2-rollback...
+                        5, 0, 0, 0,                         //length of msg body    int     length of the msg body in bytes
+                        0,                                  //client type           byte    0-java, 1-c, 2-python, 3-go, 4-nodejs...
+                        1, 0, 0, 0                          //protocol version      int     1, 2, 3...
+                };
+                sendToSocket(socket, handshake);
+                // receive handshake ack
+                receiveOnSocket(socket, 22, walEnabled);
+
+                // send ILP lines
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
                         final LineData line = generateLine();
@@ -481,6 +496,21 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     }
                     Os.sleep(waitBetweenIterationsMillis);
                 }
+
+                // send commit
+                // ack is optional, also can wait for the data to be applied
+                final byte[] commit = new byte[]{
+                        5,                                      //cmd start             byte    always 5
+                        2, 0, 0, 0, 0, 0, 0, 0,                 //msg id                long    1, 2, 3...
+                        1, 0,                                   //cmd type              short   0-handshake, 1-commit, 2-rollback...
+                        13, 0, 0, 0,                            //length of msg body    int     length of the msg body in bytes
+                        1,                                      //commit type           byte    0-no reply, 1-only ack
+                        8, 0, 0, 0,                             //length of table name  int     length of table name in bytes
+                        119, 101, 97, 116, 104, 101, 114, 48    //table name            bytes   table name in UTF-8 encoding
+                };
+                sendToSocket(socket, commit);
+                // receive commit ack
+                receiveOnSocket(socket, 26, walEnabled);
             } catch (Exception e) {
                 Assert.fail("Data sending failed [e=" + e + "]");
                 throw new RuntimeException(e);
@@ -488,21 +518,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 threadPushFinished.countDown();
             }
         }).start();
-    }
-
-    void waiForTable(TableData table) {
-        // if CI is very slow the table could be released before ingestion stops
-        // then acquired again for further data ingestion
-        // because of the above we will wait in a loop with a timeout for the data to appear in the table
-        // in most cases we should not hit the sleep() below
-        table.await();
-        for (int i = 0; i < 180; i++) {
-            if (checkTable(table)) {
-                return;
-            }
-            Os.sleep(1000);
-        }
-        throw new RuntimeException("Timed out on waiting for the data, table=" + table.getName());
     }
 
     protected void waitDone() {

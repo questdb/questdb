@@ -351,13 +351,13 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void ic() {
-        commit();
+    public long ic() {
+        return commit();
     }
 
     @Override
-    public void ic(long o3MaxLag) {
-        commit();
+    public long ic(long o3MaxLag) {
+        return commit();
     }
 
     public boolean inTransaction() {

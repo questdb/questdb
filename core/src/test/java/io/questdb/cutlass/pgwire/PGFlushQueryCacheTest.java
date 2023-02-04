@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.mp.MPSequence;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -129,24 +127,6 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue()));
                 }
             }
-        });
-    }
-
-    private void checkQueryCacheFlushed(long memInitial, long memAfterJoin) {
-        // We need to wait until PG Wire workers process the message. To do so, we simply try to
-        // publish another query flush event. Since we set the queue size to 1, we're able to
-        // publish only when all consumers (PG Wire workers) have processed the previous event.
-        final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
-        pubSeq.waitForNext();
-
-        // Sequence set to done before actual flush performed. We might have to try it a few times,
-        // before memory usage drop is measured.
-        assertEventually(() -> {
-            long memAfterFlush = Unsafe.getMemUsed();
-            Assert.assertTrue(
-                    "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
-                    memAfterFlush < memAfterJoin
-            );
         });
     }
 }

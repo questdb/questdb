@@ -822,11 +822,13 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void ic() {
+        public long ic() {
+            return 0L;
         }
 
         @Override
-        public void ic(long o3MaxLag) {
+        public long ic(long o3MaxLag) {
+            return 0L;
         }
 
         @Override

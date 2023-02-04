@@ -105,7 +105,7 @@ public class LineTcpParserBenchmark {
         long bufPos = bufLo;
         while (bufPos < bufHi) {
             parser.of(bufPos);
-            if (parser.parseMeasurement(bufHi) != LineTcpParser.ParseResult.MEASUREMENT_COMPLETE) {
+            if (parser.parseMeasurement(null, bufHi) != LineTcpParser.ParseResult.MEASUREMENT_COMPLETE) {
                 break;
             }
             bh.consume(parser.getMeasurementName());

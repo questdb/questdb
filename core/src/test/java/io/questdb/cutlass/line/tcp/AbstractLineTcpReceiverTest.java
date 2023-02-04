@@ -45,6 +45,7 @@ import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
@@ -334,8 +335,55 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
+    private final AtomicLong expectedSeqTxn = new AtomicLong(0);
+
+    protected void receiveOnSocket(Socket socket, int expectedBytes, boolean walEnabled) {
+        int bufSize = 4096;
+        long bufaddr = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            int received = 0;
+            while (received < expectedBytes) {
+                final int rc = nf.recv(socket.fd, bufaddr, expectedBytes - received);
+                if (rc < 0) {
+                    throw new RuntimeException("Data reading failed [rc=" + rc + "]");
+                }
+                received += rc;
+            }
+            long pos = bufaddr;
+            if (expectedBytes == 22) {
+                // handshake ack
+                assertEquals(1L, Unsafe.getUnsafe().getLong(pos));
+                pos += Long.BYTES;
+                assertEquals(0, Unsafe.getUnsafe().getShort(pos));
+                pos += Short.BYTES;
+                assertEquals(0, Unsafe.getUnsafe().getInt(pos));
+                pos += Integer.BYTES;
+                assertEquals(4, Unsafe.getUnsafe().getInt(pos));
+                pos += Integer.BYTES;
+                assertEquals(7, Unsafe.getUnsafe().getInt(pos));
+            } else {
+                // commit ack
+                assertEquals(2L, Unsafe.getUnsafe().getLong(pos));
+                pos += Long.BYTES;
+                assertEquals(1, Unsafe.getUnsafe().getShort(pos));
+                pos += Short.BYTES;
+                assertEquals(0, Unsafe.getUnsafe().getInt(pos));
+                pos += Integer.BYTES;
+                assertEquals(8, Unsafe.getUnsafe().getInt(pos));
+                pos += Integer.BYTES;
+                assertEquals(walEnabled ? expectedSeqTxn.incrementAndGet() : -1L, Unsafe.getUnsafe().getInt(pos));
+            }
+        } finally {
+            Unsafe.free(bufaddr, bufSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     protected void sendToSocket(Socket socket, String lineData) {
         byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+        sendToSocket(socket, lineDataBytes);
+    }
+
+    protected void sendToSocket(Socket socket, byte[] lineDataBytes) {
         long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int n = 0; n < lineDataBytes.length; n++) {

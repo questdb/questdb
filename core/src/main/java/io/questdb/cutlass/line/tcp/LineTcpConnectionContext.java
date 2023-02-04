@@ -30,6 +30,7 @@ import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.AbstractMutableIOContext;
+import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -47,6 +48,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
     private final LineTcpMeasurementScheduler scheduler;
+    private final LineTcpCommandProcessor cmdProcessor;
     protected boolean peerDisconnected;
     protected long recvBufEnd;
     protected long recvBufPos;
@@ -61,10 +63,18 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         this.scheduler = scheduler;
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
-        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
+        cmdProcessor = new LineTcpCommandProcessor(scheduler);
+        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported(), cmdProcessor);
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
+    }
+
+    @Override
+    public LineTcpConnectionContext of(int fd, IODispatcher<LineTcpConnectionContext> dispatcher) {
+        super.of(fd, dispatcher);
+        cmdProcessor.of(nf, this);
+        return this;
     }
 
     @Override
@@ -76,7 +86,9 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
 
     @Override
     public void close() {
+        scheduler.releaseTUDs(fd);
         this.fd = -1;
+        cmdProcessor.close();
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
     }
 
@@ -159,21 +171,17 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
 
     IOContextResult handleIO(NetworkIOJob netIoJob) {
         read();
-        try {
-            return parseMeasurements(netIoJob);
-        } finally {
-            netIoJob.releaseWalTableDetails();
-        }
+        return parseMeasurements(netIoJob);
     }
 
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
-                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
+                ParseResult rc = goodMeasurement ? parser.parseMeasurement(netIoJob, recvBufPos) : parser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(netIoJob, parser)) {
+                            if (scheduler.scheduleEvent(netIoJob, parser, fd)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();

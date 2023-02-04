@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -32,6 +33,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
 
 public class LineTcpParser {
 
@@ -87,10 +89,16 @@ public class LineTcpParser {
     private boolean tagStartsWithQuote;
     private boolean tagsComplete;
     private long timestamp;
+    private final LineTcpCommandProcessor cmdProcessor;
 
     public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
+        this(stringAsTagSupported, symbolAsFieldSupported, null);
+    }
+
+    LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported, LineTcpCommandProcessor cmdProcessor) {
         this.stringAsTagSupported = stringAsTagSupported;
         this.symbolAsFieldSupported = symbolAsFieldSupported;
+        this.cmdProcessor = cmdProcessor;
     }
 
     public long getBufferAddress() {
@@ -132,7 +140,7 @@ public class LineTcpParser {
         return this;
     }
 
-    public ParseResult parseMeasurement(long bufHi) {
+    public ParseResult parseMeasurement(NetworkIOJob netIoJob, long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
         // We can resume from random place of the line message
         // the class member variables should resume byte by byte parsing from the last place
@@ -257,9 +265,27 @@ public class LineTcpParser {
                     nextValueCanBeOpenQuote = false;
                     break;
 
+                case 5:
+                    // if not the first byte when parsing table name it is not a command
+                    if (entityHandler != ENTITY_HANDLER_TABLE || entityLo != bufAt) {
+                        appendByte = true;
+                        nextValueCanBeOpenQuote = false;
+                        break;
+                    }
+                    bufAt++;
+
+                    // parse command
+                    final ParseResult parseResult = processCommand(netIoJob, bufHi);
+                    if (parseResult != ParseResult.OK) {
+                        return parseResult;
+                    }
+                    entityLo = bufAt;
+                    break;
+
                 case '\0':
                     LOG.info().$("could not parse [byte=\\0]").$();
                     return getError();
+
                 case '/':
                     if (entityHandler != ENTITY_HANDLER_VALUE) {
                         LOG.info().$("could not parse [byte=/]").$();
@@ -281,6 +307,23 @@ public class LineTcpParser {
             }
         }
         return ParseResult.BUFFER_UNDERFLOW;
+    }
+
+    @NotNull
+    private ParseResult processCommand(NetworkIOJob netIoJob, long bufHi) {
+        try {
+            final ParseResult parseResult = cmdProcessor.parseHeader(bufAt, bufHi);
+            if (parseResult == ParseResult.OK) {
+                bufAt = cmdProcessor.parseCommand(bufAt + CommandHeader.getSize());
+                cmdProcessor.executeCommand(netIoJob);
+            }
+            return parseResult;
+        } catch (CairoException e) {
+            cmdProcessor.processError(e);
+            LOG.error().$("Exception while processing command: ").$(e.getFlyweightMessage()).$();
+            errorCode = LineTcpParser.ErrorCode.COMMAND_FAILURE;
+            return ParseResult.ERROR;
+        }
     }
 
     public void shl(long shl) {
@@ -547,11 +590,12 @@ public class LineTcpParser {
         INVALID_FIELD_VALUE_STR_UNDERFLOW,
         INVALID_TABLE_NAME,
         INVALID_COLUMN_NAME,
+        COMMAND_FAILURE,
         NONE
     }
 
     public enum ParseResult {
-        MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
+        MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR, OK
     }
 
     public class ProtoEntity {
@@ -700,7 +744,7 @@ public class LineTcpParser {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '\u0005', '/'};
         controlChars = new boolean[Byte.MAX_VALUE];
         for (char ch : chars) {
             controlChars[ch] = true;
