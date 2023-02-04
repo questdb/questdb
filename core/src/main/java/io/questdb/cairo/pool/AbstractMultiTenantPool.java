@@ -42,7 +42,8 @@ import java.util.Map;
 public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
-    private static final Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
+    // Use derived class names, e.g. Wal, Reader or Metadata pool
+    private final Log LOG = LogFactory.getLog(this.getClass());
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
     private static final int NEXT_OPEN = 0;

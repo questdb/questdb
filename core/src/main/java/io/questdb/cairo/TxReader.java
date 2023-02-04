@@ -157,7 +157,7 @@ public class TxReader implements Closeable, Mutable {
 
     public long getLastPartitionTimestamp() {
         if (PartitionBy.isPartitioned(partitionBy)) {
-            return getPartitionTimestampLo(maxTimestamp);
+            return getPartitionTimestamp(maxTimestamp);
         }
         return DEFAULT_PARTITION_TIMESTAMP;
     }
@@ -182,12 +182,21 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
-    public int getPartitionIndex(long ts) {
-        int index = findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
-        if (index > -1) {
-            return index / LONGS_PER_TX_ATTACHED_PARTITION;
+    public long getNextPartitionTimestamp(long timestamp) {
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, BinarySearch.SCAN_UP);
+        if (index < 0) {
+            index = -index - 1;
+        } else {
+            index += LONGS_PER_TX_ATTACHED_PARTITION;
         }
-        return -1;
+        int nextIndex = index + PARTITION_TS_OFFSET;
+        if (nextIndex < attachedPartitions.size()) {
+            long nextPartitionTs = attachedPartitions.getQuick(nextIndex);
+            if (partitionFloorMethod.floor(timestamp) == partitionFloorMethod.floor(nextPartitionTs)) {
+                return nextPartitionTs;
+            }
+        }
+        return partitionCeilMethod.ceil(timestamp);
     }
 
     public long getPartitionNameTxn(int i) {
@@ -234,18 +243,15 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
     }
 
-    public long getNextPartitionTimestamp(long timestamp) {
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, BinarySearch.SCAN_UP);
-        if (index > -1 && (index + LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET) < attachedPartitions.size()) {
-            long nextPartitionTs = attachedPartitions.getQuick(index + LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
-            if (partitionCeilMethod.ceil(timestamp) == partitionCeilMethod.ceil(nextPartitionTs)) {
-                return nextPartitionTs;
-            }
+    public int getPartitionIndex(long ts) {
+        int index = findAttachedPartitionIndexByLoTimestamp(getPartitionTimestamp(ts));
+        if (index > -1) {
+            return index / LONGS_PER_TX_ATTACHED_PARTITION;
         }
-        return partitionCeilMethod.ceil(timestamp);
+        return -1;
     }
 
-    public long getPartitionTimestampLo(long timestamp) {
+    public long getPartitionTimestamp(long timestamp) {
         int index = findAttachedPartitionIndex(timestamp);
         if (index > -1) {
             return attachedPartitions.getQuick(index + PARTITION_TS_OFFSET);
@@ -491,7 +497,7 @@ public class TxReader implements Closeable, Mutable {
             return index;
         }
 
-        int prevIndex = -index - 2;
+        int prevIndex = -index - 1 - LONGS_PER_TX_ATTACHED_PARTITION;
         if (prevIndex < 0) {
             return -1;
         }

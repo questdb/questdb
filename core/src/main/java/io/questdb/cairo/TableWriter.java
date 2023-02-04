@@ -881,7 +881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         long maxTimestamp = txWriter.getMaxTimestamp();
-        if (timestamp == txWriter.getPartitionTimestampLo(maxTimestamp)) {
+        if (timestamp == txWriter.getPartitionTimestamp(maxTimestamp)) {
             return AttachDetachStatus.DETACH_ERR_ACTIVE;
         }
         long minTimestamp = txWriter.getMinTimestamp();
@@ -1380,8 +1380,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolMapDiffCursor mapDiffCursor,
             long commitToTimestamp
     ) {
-        this.lastPartitionTimestamp = txWriter.getPartitionTimestampLo(partitionTimestampHi);
-        long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
+        this.lastPartitionTimestamp = txWriter.getPartitionTimestamp(partitionTimestampHi);
+        long partitionTimestampHiLimit = txWriter.getNextPartitionTimestamp(partitionTimestampHi) - 1;
         int walRootPathLen = walPath.length();
 
         try {
@@ -1692,7 +1692,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
 
-        timestamp = txWriter.getPartitionTimestampLo(timestamp);
+        timestamp = txWriter.getPartitionTimestamp(timestamp);
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").utf8(path).$(", partitionTimestamp=").$ts(timestamp).I$();
@@ -1701,7 +1701,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
 
-        if (timestamp == txWriter.getPartitionTimestampLo(maxTimestamp)) {
+        if (timestamp == txWriter.getPartitionTimestamp(maxTimestamp)) {
 
             // removing active partition
 
@@ -3380,7 +3380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
         final int timestampIndex = metadata.getTimestampIndex();
-        lastPartitionTimestamp = txWriter.getPartitionTimestampLo(partitionTimestampHi);
+        lastPartitionTimestamp = txWriter.getPartitionTimestamp(partitionTimestampHi);
         // we will check new partitionTimestampHi value against the limit to see if the writer
         // will have to switch partition internally
         long partitionTimestampHiLimit = txWriter.getNextPartitionTimestamp(partitionTimestampHi) - 1;
@@ -4620,7 +4620,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             assert columnCount > 0;
 
-            lastOpenPartitionTs = txWriter.getPartitionTimestampLo(timestamp);
+            lastOpenPartitionTs = txWriter.getPartitionTimestamp(timestamp);
             lastOpenPartitionIsReadOnly = partitionBy != PartitionBy.NONE && txWriter.isPartitionReadOnlyByPartitionTimestamp(lastOpenPartitionTs);
 
             for (int i = 0; i < columnCount; i++) {
@@ -4829,7 +4829,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcOooHi = srcOooMax - 1;
                     }
 
-                    final long partitionTimestamp = txWriter.getPartitionTimestampLo(o3Timestamp);
+                    final long partitionTimestamp = txWriter.getPartitionTimestamp(o3Timestamp);
 
                     // This partition is the last partition.
                     final boolean last = partitionTimestamp == lastPartitionTimestamp;
@@ -5213,8 +5213,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(", partitionSizeRows=").put(partitionSize)
                         .put(", errno=").put(ff.errno()).put(']');
             }
-            if (txWriter.getPartitionTimestampLo(attachMinTimestamp) != partitionTimestamp
-                    || txWriter.getPartitionTimestampLo(attachMaxTimestamp) != partitionTimestamp) {
+            if (txWriter.getPartitionTimestamp(attachMinTimestamp) != partitionTimestamp
+                    || txWriter.getPartitionTimestamp(attachMaxTimestamp) != partitionTimestamp) {
                 throw CairoException.critical(0)
                         .put("invalid timestamp column data in detached partition, data does not match partition directory name [path=").put(path)
                         .put(", minTimestamp=").ts(attachMinTimestamp)
@@ -5815,8 +5815,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long transientRowCount = this.txWriter.getTransientRowCount();
             long maxTimestamp = this.txWriter.getMaxTimestamp();
             try {
-                final long tsLimit = txWriter.getPartitionTimestampLo(this.txWriter.getMaxTimestamp());
-                for (long ts = txWriter.getPartitionTimestampLo(txWriter.getMinTimestamp()); ts < tsLimit; ts = partitionCeilMethod.ceil(ts)) {
+                final long tsLimit = txWriter.getPartitionTimestamp(this.txWriter.getMaxTimestamp());
+                for (long ts = txWriter.getPartitionTimestamp(txWriter.getMinTimestamp()); ts < tsLimit; ts = txWriter.getNextPartitionTimestamp(ts)) {
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, ts, false);
                     int p = path.length();
@@ -5959,7 +5959,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3PartitionUpdateSink.setCapacity(size);
         o3PartitionUpdateSink.setPos(size);
         o3PartitionUpdateSink.zero(-1);
-        o3PartitionUpdateSink.set(0, partitionFloorMethod.floor(o3TimestampMin));
+        o3PartitionUpdateSink.set(0, txWriter.getPartitionTimestamp(o3TimestampMin));
     }
 
     private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
