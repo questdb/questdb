@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -57,7 +56,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
                     Assert.fail("Exception expected");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
-                    Assert.assertEquals("position", position, e.getPosition());
+                    Assert.assertEquals(position, e.getPosition());
                 }
             });
         } finally {
@@ -116,11 +115,10 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
 
     private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-            RecordMetadata metadata = factory.getMetadata();
-            for (int idx = 0; idx < columns.length; idx++) {
-                TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
-            }
+        RecordMetadata metadata = cc.getRecordCursorFactory().getMetadata();
+
+        for (int idx = 0; idx < columns.length; idx++) {
+            TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
         }
     }
 
