@@ -896,7 +896,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWalSupported() {
-        return false;
+        return true;
     }
 
     @Override
