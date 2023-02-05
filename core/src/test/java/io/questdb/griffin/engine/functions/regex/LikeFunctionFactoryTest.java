@@ -237,7 +237,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
 
     // JANE
     @Test
-    public void testLikeEscapeUnderscore1() throws Exception {
+    public void testLikeEscapePercentage() throws Exception {
         assertMemoryLeak(() -> {
             /**
              * The string stored in the table is
@@ -266,7 +266,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLikeEscapeUnderscore2() throws Exception {
+    public void testLikeEscapeUnderscore() throws Exception {
         assertMemoryLeak(() -> {
 
             String sql = "create table myTable as (\n" +
@@ -282,6 +282,28 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), false, sink);
                     Assert.assertEquals("", sink.toString().replace("\n", ""));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLikeNotRealEscape() throws Exception {
+        assertMemoryLeak(() -> {
+
+            String sql = "create table myTable as (\n" +
+                    "select cast('Can you give me 30% discount?' as string) as comment from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('May I get 30 USD off?' as string) as comment from long_sequence(1)\n" +
+                    "union\n" +
+                    "select cast('The target path is \\usr' as string) as comment from long_sequence(1))";
+            compiler.compile(sql, sqlExecutionContext);
+
+            try (RecordCursorFactory factory = compiler.compile("select * from myTable where comment like '%\\usr'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), false, sink);
+                    Assert.assertEquals("The target path is \\usr", sink.toString().replace("\n", ""));
                 }
             }
         });
