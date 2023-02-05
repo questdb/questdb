@@ -87,13 +87,13 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(
+    protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
             deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
                 final CharSequence symbol = symbolFunc.getStr(null);

@@ -67,15 +67,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             boolean supportsRandomAccess
     ) {
         super(metadata, dataFrameCursorFactory);
+
         this.rowCursorFactory = rowCursorFactory;
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
+        cursor = new DataFrameRecordCursorImpl(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
-        this.pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        this.pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
+        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
+        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
         this.supportsRandomAccess = supportsRandomAccess;
     }
 

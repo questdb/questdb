@@ -94,10 +94,6 @@ public class MetricsIODispatcherTest {
 
                     new SendAndReceiveRequestBuilder()
                             .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
-                            .withExpectDisconnect(false)
-                            .withPrintOnly(false)
-                            .withRequestCount(1)
-                            .withPauseBetweenSendAndReceive(0)
                             .execute(prometheusRequest, expectedResponse);
                 });
     }

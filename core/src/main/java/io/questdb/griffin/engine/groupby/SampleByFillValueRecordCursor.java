@@ -28,11 +28,12 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -42,6 +43,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     private final Map map;
     private final RecordCursor mapCursor;
     private final Record mapRecord;
+    private boolean isHasNextPending;
+    private boolean isMapBuildPending;
+    private boolean isMapInitialized;
     private boolean isOpen;
 
     public SampleByFillValueRecordCursor(
@@ -72,10 +76,10 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         );
         this.map = map;
         this.keyMapSink = keyMapSink;
-        this.record.of(map.getRecord());
-        this.mapCursor = map.getCursor();
-        this.mapRecord = map.getRecord();
-        this.isOpen = true;
+        record.of(map.getRecord());
+        mapCursor = map.getCursor();
+        mapRecord = map.getRecord();
+        isOpen = true;
     }
 
     @Override
@@ -89,6 +93,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
 
     @Override
     public boolean hasNext() {
+        initMap();
+        initTimestamps();
+
         if (mapCursor.hasNext()) {
             // scroll down the map iterator
             // next() will return record that uses current map position
@@ -99,69 +106,23 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             return false;
         }
 
-        // key map has been flushed
-        // before we build another one we need to check
-        // for timestamp gaps
+        buildMap();
 
-        // what is the next timestamp we are expecting?
-        long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        return refreshMapCursor();
+    }
 
-        // is data timestamp ahead of next expected timestamp?
-        if (expectedLocalEpoch < localEpoch) {
-            this.sampleLocalEpoch = expectedLocalEpoch;
-            this.nextSampleLocalEpoch = expectedLocalEpoch;
-            // reset iterator on map and stream contents
-            return refreshMapCursor();
-        }
-
-        long next = timestampSampler.nextTimestamp(localEpoch);
-        this.sampleLocalEpoch = localEpoch;
-        this.nextSampleLocalEpoch = localEpoch;
-
-        // looks like we need to populate key map
-        while (true) {
-            long timestamp = getBaseRecordTimestamp();
-            if (timestamp < next) {
-                adjustDSTInFlight(timestamp - tzOffset);
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                final MapValue value = key.findValue();
-                assert value != null;
-
-                if (value.getLong(0) != localEpoch) {
-                    value.putLong(0, localEpoch);
-                    groupByFunctionsUpdater.updateNew(value, baseRecord);
-                } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
-                }
-
-                // carry on with the loop if we still have data
-                if (base.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    continue;
-                }
-
-                // we ran out of data, make sure hasNext() returns false at the next
-                // opportunity, after we stream map that is.
-                baseRecord = null;
-            } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'next' to 'lastTimestamp'
-                // and build another map
-                timestamp = adjustDST(timestamp, null, next);
-                if (timestamp != Long.MIN_VALUE) {
-                    nextSamplePeriod(timestamp);
-                }
-            }
-            return refreshMapCursor();
-        }
+    @Override
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        super.of(baseCursor, executionContext);
+        isHasNextPending = false;
+        isMapBuildPending = true;
+        isMapInitialized = false;
     }
 
     @Override
     public void reopen() {
         if (!isOpen) {
-            this.map.reopen();
+            map.reopen();
             isOpen = true;
         }
     }
@@ -169,13 +130,99 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     @Override
     public void toTop() {
         super.toTop();
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
-            int n = groupByFunctions.size();
-            RecordCursor mapCursor = map.getCursor();
-            MapRecord mapRecord = map.getRecord();
-            while (mapCursor.hasNext()) {
-                MapValue value = mapRecord.getValue();
+        map.clear();
+        isHasNextPending = false;
+        isMapBuildPending = true;
+        isMapInitialized = false;
+    }
+
+    private void buildMap() {
+        if (isMapBuildPending) {
+            // key map has been flushed
+            // before we build another one we need to check
+            // for timestamp gaps
+
+            // what is the next timestamp we are expecting?
+            final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+
+            // is data timestamp ahead of next expected timestamp?
+            if (expectedLocalEpoch < localEpoch) {
+                sampleLocalEpoch = expectedLocalEpoch;
+                nextSampleLocalEpoch = expectedLocalEpoch;
+                isMapBuildPending = true;
+                // stream contents
+                return;
+            }
+            sampleLocalEpoch = localEpoch;
+            nextSampleLocalEpoch = localEpoch;
+            isMapBuildPending = false;
+        }
+
+        final long next = timestampSampler.nextTimestamp(localEpoch);
+        while (true) {
+            long timestamp = getBaseRecordTimestamp();
+            if (timestamp < next) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
+                if (!isHasNextPending) {
+                    adjustDstInFlight(timestamp - tzOffset);
+                    final MapKey key = map.withKey();
+                    keyMapSink.copy(baseRecord, key);
+                    final MapValue value = key.findValue();
+                    assert value != null;
+
+                    if (value.getLong(0) != localEpoch) {
+                        value.putLong(0, localEpoch);
+                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                    } else {
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                    }
+                }
+
+                isHasNextPending = true;
+                boolean baseHasNext = baseCursor.hasNext();
+                isHasNextPending = false;
+                // carry on with the loop if we still have data
+                if (baseHasNext) {
+                    continue;
+                }
+
+                // we ran out of data, make sure hasNext() returns false at the next
+                // opportunity, after we stream map that is
+                baseRecord = null;
+            } else {
+                // timestamp changed, make sure we keep the value of 'lastTimestamp'
+                // unchanged. Timestamp columns uses this variable
+                // When map is exhausted we would assign 'next' to 'lastTimestamp'
+                // and build another map
+                timestamp = adjustDst(timestamp, null, next);
+                if (timestamp != Long.MIN_VALUE) {
+                    nextSamplePeriod(timestamp);
+                }
+            }
+            isMapBuildPending = true;
+            break;
+        }
+    }
+
+    private void initMap() {
+        if (isMapInitialized) {
+            return;
+        }
+
+        // This factory fills gaps in data. To do that we
+        // have to know all possible key values. Essentially, every time
+        // we sample we return same set of key values with different
+        // aggregation results and timestamp.
+
+        final int n = groupByFunctions.size();
+        while (baseCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+
+            MapKey key = map.withKey();
+            keyMapSink.copy(baseRecord, key);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
                 // timestamp is always stored in value field 0
                 value.putLong(0, Numbers.LONG_NaN);
                 // have functions reset their columns to "zero" state
@@ -185,10 +232,15 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 }
             }
         }
+
+        // because we iterate the base cursor twice, we have to go back to top
+        // for the second run
+        baseCursor.toTop();
+        isMapInitialized = true;
     }
 
     private boolean refreshMapCursor() {
-        this.map.getCursor().hasNext();
+        map.getCursor().hasNext();
         return refreshRecord();
     }
 

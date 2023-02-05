@@ -38,7 +38,7 @@ import org.jetbrains.annotations.Nullable;
 public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final int columnIndex;
     private final IntList columnIndexes;
-    private final DataFrameRecordCursor cursor;
+    private final DataFrameRecordCursorImpl cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
     private final int[] cursorFactoriesIdx;//used to disable unneeded factories if there are duplicate excluded keys 
@@ -74,16 +74,16 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
                 break;
             }
         }
-        this.dynamicExcludedKeys = dynamicValues;
-        this.keyExcludedValueFunctions.addAll(keyValues);
+        dynamicExcludedKeys = dynamicValues;
+        keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.cursorFactoriesIdx = new int[]{0};
-        this.cursorFactories = new ObjList<>(nKeyValues);
+        cursorFactoriesIdx = new int[]{0};
+        cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         } else {
-            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
         this.columnIndexes = columnIndexes;
@@ -184,18 +184,20 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
-            throws SqlException {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         TableReader reader = dataFrameCursor.getTableReader();
         if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
             throw TableReferenceOutOfDateException.of(reader.getTableToken().getTableName());
         }
         Function.init(keyExcludedValueFunctions, reader, executionContext);
-        this.recalculateIncludedValues(reader);
-        this.cursor.of(dataFrameCursor, executionContext);
+        recalculateIncludedValues(reader);
+        cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
-            filter.init(this.cursor, executionContext);
+            filter.init(cursor, executionContext);
         }
-        return this.cursor;
+        return cursor;
     }
 }

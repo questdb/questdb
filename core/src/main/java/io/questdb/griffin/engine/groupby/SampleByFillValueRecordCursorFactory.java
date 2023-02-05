@@ -43,7 +43,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
-    private final AbstractNoRecordSampleByCursor cursor;
+    private final SampleByFillValueRecordCursor cursor;
 
     public SampleByFillValueRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -84,7 +84,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     false
             );
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            this.cursor = new SampleByFillValueRecordCursor(
+            cursor = new SampleByFillValueRecordCursor(
                     map,
                     mapSink,
                     groupByFunctions,

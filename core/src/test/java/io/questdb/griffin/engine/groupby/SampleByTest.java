@@ -494,8 +494,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testGroupByFail() throws Exception {
         assertMemoryLeak(() -> {
-
-            compiler.compile("create table x as " +
+            compiler.compile(
+                    "create table x as " +
                             "(" +
                             "select" +
                             " x," +
@@ -532,7 +532,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            cursor.hasNext();
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -1768,7 +1769,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
                         "), index(s) timestamp(k) partition by DAY",
-                true);
+                false);
     }
 
     @Test
@@ -2391,7 +2392,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, true);
+                        ") timestamp(k) partition by NONE", "k", false, true, false);
     }
 
     @Test
@@ -2448,7 +2449,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, true);
+                        ") timestamp(k) partition by NONE", "k", false, true, false);
     }
 
     @Test
@@ -3400,7 +3401,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 null,
                 true,
                 false,
-                true);
+                false);
     }
 
     @Test
@@ -4234,9 +4235,14 @@ public class SampleByTest extends AbstractGriffinTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (
+                                RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine))
+                        ) {
                             // with mmap count = 5 we should get failure in cursor
-                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            // noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
                         }
                         Assert.fail();
                     } catch (CairoException e) {

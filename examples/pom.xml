@@ -35,7 +35,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb</artifactId>
-            <version>6.7.1-SNAPSHOT</version>
+            <version>7.0.0</version>
         </dependency>
     </dependencies>
 

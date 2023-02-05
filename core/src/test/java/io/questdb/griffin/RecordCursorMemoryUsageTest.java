@@ -107,10 +107,10 @@ public class RecordCursorMemoryUsageTest extends AbstractGriffinTest {
                 long memDuring;
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) ;
+
                     freeDuring = Unsafe.getFreeCount();
                     memDuring = Unsafe.getMemUsed();
-
-                    while (cursor.hasNext()) ;
                 }
 
                 long memAfter = Unsafe.getMemUsed();

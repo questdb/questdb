@@ -59,6 +59,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int jitMode;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
+    private boolean parallelFilterEnabled;
     private Rnd random;
     private long requestFd = -1;
 
@@ -73,6 +74,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         clock = cairoConfiguration.getMicrosecondClock();
         cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
+        parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
     }
@@ -184,6 +186,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelFilterEnabled() {
+        return parallelFilterEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -222,6 +229,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void setNowAndFixClock(long now) {
         this.now = now;
         clock = nowClock;
+    }
+
+    @Override
+    public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
+        this.parallelFilterEnabled = parallelFilterEnabled;
     }
 
     @Override

@@ -48,36 +48,32 @@ public class AndFunctionFactory implements FunctionFactory {
         Function leftFunc = args.getQuick(0);
         Function rightFunc = args.getQuick(1);
         if (leftFunc.isConstant()) {
-            try {
+            try (Function ignore = leftFunc) {
                 if (leftFunc.getBool(null)) {
                     return rightFunc;
                 }
                 Misc.free(rightFunc);
                 return BooleanConstant.FALSE;
-            } finally {
-                leftFunc.close();
             }
         }
 
         if (rightFunc.isConstant()) {
-            try {
+            try (Function ignore = rightFunc) {
                 if (rightFunc.getBool(null)) {
                     return leftFunc;
                 }
                 Misc.free(leftFunc);
                 return BooleanConstant.FALSE;
-            } finally {
-                rightFunc.close();
             }
         }
-        return new MyBooleanFunction(leftFunc, rightFunc);
+        return new AndBooleanFunction(leftFunc, rightFunc);
     }
 
-    private static class MyBooleanFunction extends BooleanFunction implements BinaryFunction {
+    private static class AndBooleanFunction extends BooleanFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public MyBooleanFunction(Function left, Function right) {
+        public AndBooleanFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

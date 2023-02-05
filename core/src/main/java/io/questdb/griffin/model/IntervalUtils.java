@@ -636,9 +636,17 @@ public final class IntervalUtils {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
+        int n = count - 1;
+        if (period < 0) {
+            lo += period * n;
+            hi += period * n;
+            out.setQuick(k - 2, lo);
+            out.setQuick(k - 1, hi);
+            period = -period;
+        }
         int writePoint = k / 2;
 
-        for (int i = 0, n = count - 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             lo += period;
             hi += period;
             writePoint = append(out, writePoint, lo, hi);
@@ -650,8 +658,16 @@ public final class IntervalUtils {
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
+        int n = count - 1;
+        if (period < 0) {
+            lo = Timestamps.addMonths(lo, period * n);
+            hi = Timestamps.addMonths(hi, period * n);
+            out.setQuick(k - 2, lo);
+            out.setQuick(k - 1, hi);
+            period = -period;
+        }
 
-        for (int i = 0, n = count - 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             lo = Timestamps.addMonths(lo, period);
             hi = Timestamps.addMonths(hi, period);
             writePoint = append(out, writePoint, lo, hi);
@@ -663,8 +679,16 @@ public final class IntervalUtils {
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
+        int n = count - 1;
+        if (period < 0) {
+            lo = Timestamps.addYear(lo, period * n);
+            hi = Timestamps.addYear(hi, period * n);
+            out.setQuick(k - 2, lo);
+            out.setQuick(k - 1, hi);
+            period = -period;
+        }
 
-        for (int i = 0, n = count - 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             lo = Timestamps.addYear(lo, period);
             hi = Timestamps.addYear(hi, period);
             writePoint = append(out, writePoint, lo, hi);

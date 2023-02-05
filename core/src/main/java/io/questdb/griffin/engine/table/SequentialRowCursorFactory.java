@@ -47,8 +47,8 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
-        this.cursors = new ObjList<>();
-        this.cursor = new SequentialRowCursor();
+        cursors = new ObjList<>();
+        cursor = new SequentialRowCursor();
         this.cursorFactoriesIdx = cursorFactoriesIdx;
     }
 
@@ -62,13 +62,18 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
+    public void prepareCursor(TableReader tableReader) {
+        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
     }
 
     @Override
@@ -106,7 +111,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         }
 
         private void init() {
-            this.cursorIndex = 0;
+            cursorIndex = 0;
             if (cursorIndex < cursorFactoriesIdx[0]) {
                 currentCursor = cursors.getQuick(cursorIndex);
             }
