@@ -763,6 +763,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalApplyLookAheadTransactionCount() {
+        return conf.getWalApplyLookAheadTransactionCount();
+    }
+
+    @Override
     public int getWalCommitSquashRowLimit() {
         return conf.getWalCommitSquashRowLimit();
     }
@@ -870,6 +875,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return conf.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
+    public boolean isTableTypeConversionEnabled() {
+        return conf.isTableTypeConversionEnabled();
     }
 
     @Override

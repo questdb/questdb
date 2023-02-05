@@ -461,6 +461,26 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+
+    @Test
+    public void testInsertEscapeString() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE EscapeInsert (field STRING);", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("INSERT INTO EscapeInsert(field) values('My name''s Tim. I love eating Lay''s.');", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertOperation insert = cq.getInsertOperation();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "field\n" +
+                    "My name's Tim. I love eating Lay's.\n";
+
+            assertReaderCheckWal(expected, "EscapeInsert");
+        });
+    }
+
     @Test
     public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" +
