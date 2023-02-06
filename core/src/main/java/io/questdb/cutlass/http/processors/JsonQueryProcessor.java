@@ -95,7 +95,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.configuration = configuration;
         this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
-        this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
@@ -120,6 +119,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_PREPARE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_COMPLETE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
+        this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
         // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
