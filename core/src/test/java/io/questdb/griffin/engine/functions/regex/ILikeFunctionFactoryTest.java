@@ -263,7 +263,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
 
     // JANE
     @Test
-    public void testLikeEscapeUnderscore1() throws Exception {
+    public void testLikeEscapePercengtage() throws Exception {
         assertMemoryLeak(() -> {
             /**
              * The string stored in the table is
@@ -293,7 +293,7 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
 
 
     @Test
-    public void testLikeEscapeUnderscore2() throws Exception {
+    public void testLikeEscapeUnderscore() throws Exception {
         assertMemoryLeak(() -> {
 
             String sql = "create table myTable as (\n" +
