@@ -281,6 +281,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         forEachNode(QuestDBNode::setUpGriffin);
+        sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
     }
 
     @Override
@@ -319,7 +320,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                     checkSameStr,
                     expectSize,
                     sizeCanBeVariable,
-                    null);
+                    null
+            );
         });
     }
 
@@ -617,7 +619,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             }
 
             final long rowsCount = cursor.size();
-            Assert.assertEquals(rowsCount, expected.length);
+            if (expectSize) {
+                Assert.assertEquals(rowsCount, expected.length);
+            }
 
             RecordMetadata metadata = factory.getMetadata();
 
@@ -1208,6 +1212,22 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    protected void assertPlan(SqlCompiler compiler, CharSequence query, CharSequence expectedPlan, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        StringSink sink = new StringSink();
+        sink.put("EXPLAIN ").put(query);
+
+        try (ExplainPlanFactory planFactory = getPlanFactory(compiler, sink, sqlExecutionContext);
+             RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
+
+            if (!JitUtil.isJitSupported()) {
+                expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
+            }
+
+            TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
+        }
+    }
+
+
     protected void assertQuery(String expected, String query, String expectedTimestamp) throws SqlException {
         assertQuery(expected, query, expectedTimestamp, false);
     }
@@ -1569,6 +1589,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
+        return (ExplainPlanFactory) compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+    }
+
+    protected ExplainPlanFactory getPlanFactory(SqlCompiler compiler, CharSequence query, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return (ExplainPlanFactory) compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
     }
 

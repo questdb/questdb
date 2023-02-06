@@ -45,7 +45,7 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     public RecordAsAFieldRecordCursorFactory(RecordCursorFactory base, CharSequence columnAlias) {
         super(new GenericRecordMetadata());
         this.base = base;
-        this.cursor = new RecordAsAFieldRecordCursor();
+        cursor = new RecordAsAFieldRecordCursor(base.recordCursorSupportsRandomAccess());
         GenericRecordMetadata metadata = (GenericRecordMetadata) getMetadata();
         metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD, base.getMetadata()));
     }
@@ -84,7 +84,6 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     private static final class RecordAsAFieldRecord implements Record {
-
         private Record base;
 
         @Override
@@ -96,8 +95,12 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
 
     private static final class RecordAsAFieldRecordCursor implements DelegatingRecordCursor {
         private final RecordAsAFieldRecord record = new RecordAsAFieldRecord();
-        private final RecordAsAFieldRecord recordB = new RecordAsAFieldRecord();
+        private final RecordAsAFieldRecord recordB;
         private RecordCursor base;
+
+        public RecordAsAFieldRecordCursor(boolean baseSupportsRandomAccess) {
+            recordB = baseSupportsRandomAccess ? new RecordAsAFieldRecord() : null;
+        }
 
         @Override
         public void close() {
@@ -111,7 +114,10 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public Record getRecordB() {
-            return recordB;
+            if (recordB != null) {
+                return recordB;
+            }
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -123,7 +129,9 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         public void of(RecordCursor base, SqlExecutionContext executionContext) {
             this.base = base;
             record.base = base.getRecord();
-//            recordB.base = base.getRecordB();
+            if (recordB != null) {
+                recordB.base = base.getRecordB();
+            }
         }
 
         @Override

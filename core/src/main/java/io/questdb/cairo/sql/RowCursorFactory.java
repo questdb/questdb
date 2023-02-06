@@ -31,17 +31,28 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public interface RowCursorFactory extends Plannable {
-    static void prepareCursor(
+
+    static void init(
             ObjList<? extends RowCursorFactory> factories,
             TableReader tableReader,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         for (int i = 0, n = factories.size(); i < n; i++) {
-            factories.getQuick(i).prepareCursor(tableReader, sqlExecutionContext);
+            factories.getQuick(i).init(tableReader, sqlExecutionContext);
+        }
+    }
+
+    static void prepareCursor(ObjList<? extends RowCursorFactory> factories, TableReader tableReader) {
+        for (int i = 0, n = factories.size(); i < n; i++) {
+            factories.getQuick(i).prepareCursor(tableReader);
         }
     }
 
     RowCursor getCursor(DataFrame dataFrame);
+
+    default void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // no-op
+    }
 
     boolean isEntity();
 
@@ -54,6 +65,7 @@ public interface RowCursorFactory extends Plannable {
         return false;
     }
 
-    default void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    default void prepareCursor(TableReader tableReader) {
+        // no-op
     }
 }

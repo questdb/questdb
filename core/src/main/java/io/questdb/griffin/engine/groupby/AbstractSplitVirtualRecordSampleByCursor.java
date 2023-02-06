@@ -55,7 +55,7 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
                 offsetFunc,
                 offsetFuncPos
         );
-        this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
+        record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();
         final TimestampFunc timestampFunc = new TimestampFunc();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {

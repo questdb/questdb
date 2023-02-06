@@ -63,7 +63,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
-        this.columnCount = columnIndexes.size();
+        columnCount = columnIndexes.size();
         this.workerCount = workerCount;
         this.pageFrameMinRows = pageFrameMinRows;
         this.pageFrameMaxRows = pageFrameMaxRows;
@@ -109,7 +109,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     public FwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
-        this.reader = dataFrameCursor.getTableReader();
+        reader = dataFrameCursor.getTableReader();
         this.dataFrameCursor = dataFrameCursor;
         toTop();
         return this;
@@ -190,11 +190,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         // it is possible that all columns in data frame are empty, but it doesn't mean
         // the data frame size is 0; sometimes we may want to imply nulls
         if (adjustedHi < partitionHi) {
-            this.reenterPartitionLo = adjustedHi;
-            this.reenterPartitionHi = partitionHi;
-            this.reenterDataFrame = true;
+            reenterPartitionLo = adjustedHi;
+            reenterPartitionHi = partitionHi;
+            reenterDataFrame = true;
         } else {
-            this.reenterDataFrame = false;
+            reenterDataFrame = false;
         }
 
         frame.partitionLo = partitionLo;

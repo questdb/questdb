@@ -28,6 +28,24 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface StatefulAtom {
+
+    /**
+     * Initializes state required for filtering, such as child atoms, symbol table sources,
+     * bind variable values, circuit breakers, etc.
+     *
+     * @param symbolTableSource symbol table source
+     * @param executionContext  execution context
+     * @throws SqlException when bind variable validation or any other kind of validation fails
+     */
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+    }
+
+    /**
+     * Initializes cursor-based data structures used by cursor functions, like 'symbol_col IN (SELECT ...)'.
+     * Must be called after {@link #init(SymbolTableSource, SqlExecutionContext)}.
+     *
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
+     */
+    default void initCursor() {
     }
 }

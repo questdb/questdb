@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
@@ -39,7 +38,7 @@ import org.jetbrains.annotations.NotNull;
  * Nested Loop with filter join.
  * Iterates on master factory in outer loop and on slave factory in inner loop
  * and returns all row pairs matching filter plus all unmatched rows from master factory.
- **/
+ */
 public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final NestedLoopLeftRecordCursor cursor;
     private final Function filter;
@@ -67,19 +66,13 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
         RecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getCursor(executionContext);
-            if (masterCursor.hasNext()) {
-                cursor.of(masterCursor, slaveCursor, executionContext);
-                return cursor;
-            }
-            slaveCursor = Misc.free(slaveCursor);
-            Misc.free(masterCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext);
+            return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
             throw ex;
         }
-
-        return EmptyTableRecordCursor.INSTANCE;
     }
 
     @Override
@@ -111,15 +104,15 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
     private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {
         private final Function filter;
         private final OuterJoinRecord record;
-        private boolean hasMore;
+        private boolean isMasterHasNextPending;
         private boolean isMatch;
+        private boolean masterHasNext;
 
         public NestedLoopLeftRecordCursor(int columnSplit, Function filter, Record nullRecord) {
             super(columnSplit);
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.filter = filter;
             this.isMatch = false;
-            this.hasMore = true;
         }
 
         @Override
@@ -129,11 +122,16 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public boolean hasNext() {
-            if (!hasMore) {
-                return false;
-            }
+            while (true) {
+                if (isMasterHasNextPending) {
+                    masterHasNext = masterCursor.hasNext();
+                    isMasterHasNextPending = false;
+                }
 
-            do {
+                if (!masterHasNext) {
+                    return false;
+                }
+
                 while (slaveCursor.hasNext()) {
                     if (filter.getBool(record)) {
                         isMatch = true;
@@ -145,39 +143,36 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
                     isMatch = true;
                     record.hasSlave(false);
                     return true;
-                } else {
-                    isMatch = false;
-                    slaveCursor.toTop();
-                    record.hasSlave(true);
                 }
-            } while (masterCursor.hasNext());
 
-            hasMore = false;
-            return false;
+                isMatch = false;
+                slaveCursor.toTop();
+                record.hasSlave(true);
+                isMasterHasNextPending = true;
+            }
         }
 
         @Override
         public long size() {
-            return -1L;
+            return -1;
         }
 
         @Override
         public void toTop() {
             masterCursor.toTop();
-            masterCursor.hasNext();
             slaveCursor.toTop();
             filter.toTop();
             isMatch = false;
-            hasMore = true;
+            isMasterHasNextPending = true;
             record.hasSlave(true);
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.filter.init(this, executionContext);
-            this.record.of(masterCursor.getRecord(), slaveCursor.getRecord());
-            this.hasMore = true;
+            filter.init(this, executionContext);
+            record.of(masterCursor.getRecord(), slaveCursor.getRecord());
+            isMasterHasNextPending = true;
         }
     }
 }

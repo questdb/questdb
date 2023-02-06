@@ -107,15 +107,6 @@ public class TableReaderRecordCursor implements RecordCursor {
         return reader.size();
     }
 
-    public void startFrom(long rowid) {
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        long recordIndex = Rows.toLocalRowID(rowid);
-        recordA.jumpTo(this.partitionIndex, recordIndex);
-        maxRecordIndex = reader.openPartition(partitionIndex) - 1;
-        partitionIndex++;
-        this.partitionLimit = reader.getPartitionCount();
-    }
-
     @Override
     public void toTop() {
         partitionIndex = partitionLo;
@@ -159,5 +150,14 @@ public class TableReaderRecordCursor implements RecordCursor {
             partitionIndex++;
         }
         return false;
+    }
+
+    protected void startFrom(long rowid) {
+        partitionIndex = Rows.toPartitionIndex(rowid);
+        long recordIndex = Rows.toLocalRowID(rowid);
+        recordA.jumpTo(this.partitionIndex, recordIndex);
+        maxRecordIndex = reader.openPartition(partitionIndex) - 1;
+        partitionIndex++;
+        this.partitionLimit = reader.getPartitionCount();
     }
 }

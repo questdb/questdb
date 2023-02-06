@@ -65,10 +65,10 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 supportsRandomAccess
         );
         this.symbolFunc = symbolFunc;
-        this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
-        this.symbolColumnIndex = columnIndexes.indexOf(tableSymColIndex, 0, columnIndexes.size());
+        symbolKey = SymbolTable.VALUE_NOT_FOUND;
+        symbolColumnIndex = columnIndexes.indexOf(tableSymColIndex, 0, columnIndexes.size());
 
-        this.symbolFilter = new SingleSymbolFilter() {
+        symbolFilter = new SingleSymbolFilter() {
             @Override
             public int getColumnIndex() {
                 return symbolColumnIndex;
@@ -82,8 +82,8 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     }
 
     public SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
-        if (!this.convertedToFrame) {
-            this.convertedToFrame = true;
+        if (!convertedToFrame) {
+            convertedToFrame = true;
         }
         return symbolFilter;
     }
@@ -95,15 +95,15 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        assert this.convertedToFrame;
+        assert convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
         initFwdPageFrameCursor(executionContext, dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             final CharSequence symbol = symbolFunc.getStr(null);
             final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
-            this.symbolKey = symbolMapReader.keyOf(symbol);
+            symbolKey = symbolMapReader.keyOf(symbol);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                this.symbolKey = TableUtils.toIndexKey(symbolKey);
+                symbolKey = TableUtils.toIndexKey(symbolKey);
             }
         }
         return fwdPageFrameCursor;
@@ -111,7 +111,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
 
     @Override
     public boolean supportPageFrameCursor() {
-        return this.convertedToFrame;
+        return convertedToFrame;
     }
 
     @Override
@@ -125,7 +125,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        assert !this.convertedToFrame;
+        assert !convertedToFrame;
         return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 }

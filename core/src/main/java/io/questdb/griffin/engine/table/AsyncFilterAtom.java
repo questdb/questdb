@@ -122,6 +122,16 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         preTouchEnabled = executionContext.isColumnPreTouchEnabled();
     }
 
+    @Override
+    public void initCursor() {
+        filter.initCursor();
+        if (perWorkerFilters != null) {
+            // Initialize all per-worker filters on the query owner thread to avoid
+            // DataUnavailableException thrown on worker threads when filtering.
+            Function.initCursor(perWorkerFilters);
+        }
+    }
+
     /**
      * Pre-touches column values for the filtered rows, if the feature is configured.
      * <p>

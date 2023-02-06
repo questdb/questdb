@@ -61,7 +61,7 @@ public class HashJoinTest extends AbstractGriffinTest {
                     "TIMESTAMP(sensor_time);", sqlExecutionContext);
 
             compile("insert into weather_data_historical \n" +
-                    "select cast(x*1000000000 as timestamp), to_str( cast(x*1000000000 as timestamp), 'MM-dd') ), \n" +
+                    "select cast(x*1000000000 as timestamp), to_str( cast(x*1000000000 as timestamp), 'MM-dd'), \n" +
                     "       rnd_float()*100, rnd_float()*100, rnd_float()*100, rnd_float()*200, rnd_float()*100, rnd_float()*300\n" +
                     "from long_sequence(1000);");
 

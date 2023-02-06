@@ -25,16 +25,16 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
+public abstract class AbstractDataFrameRecordCursor implements DataFrameRecordCursor {
     protected final IntList columnIndexes;
     protected final TableReaderSelectedColumnRecord recordA;
     protected final TableReaderSelectedColumnRecord recordB;
@@ -49,6 +49,16 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     @Override
     public void close() {
         dataFrameCursor = Misc.free(dataFrameCursor);
+    }
+
+    @Override
+    public IntList getColumnIndexes() {
+        return columnIndexes;
+    }
+
+    @Override
+    public DataFrameCursor getDataFrameCursor() {
+        return dataFrameCursor;
     }
 
     @Override
@@ -75,6 +85,4 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     public void recordAt(Record record, long atRowId) {
         ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
     }
-
-    abstract void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException;
 }

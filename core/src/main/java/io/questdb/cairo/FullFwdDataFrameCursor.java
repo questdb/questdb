@@ -28,6 +28,8 @@ import io.questdb.cairo.sql.DataFrame;
 import org.jetbrains.annotations.Nullable;
 
 public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
+    private int skipToPartitionIndex = -1;
+    private long skipToPosition = -1;
 
     @Override
     public @Nullable DataFrame next() {
@@ -55,30 +57,37 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
             return null;
         }
 
-        long position = rowCount;
-        long partitionRows = 0;
-        int partitionIndex = 0;
-
-        for (; partitionIndex < partitionCount; partitionIndex++) {
-            partitionRows = getTableReader().openPartition(partitionIndex);
-            if (partitionRows < 0) {
-                continue;
-            }
-            if (partitionRows > position) {
-                break;
-            }
-            if (partitionIndex == partitionCount - 1) {
-                position = partitionRows;
-                break;
-            } else {
-                position -= partitionRows;
-            }
+        if (skipToPartitionIndex == -1) {
+            skipToPosition = rowCount;
+            skipToPartitionIndex = 0;
         }
 
-        frame.partitionIndex = partitionIndex;
+        long partitionRows = 0;
+        while (skipToPartitionIndex < partitionCount) {
+            partitionRows = getTableReader().openPartition(skipToPartitionIndex);
+            if (partitionRows < 0) {
+                skipToPartitionIndex++;
+                continue;
+            }
+            if (partitionRows > skipToPosition) {
+                break;
+            }
+            if (skipToPartitionIndex == partitionCount - 1) {
+                skipToPosition = partitionRows;
+                break;
+            } else {
+                skipToPosition -= partitionRows;
+            }
+            skipToPartitionIndex++;
+        }
+
+        frame.partitionIndex = skipToPartitionIndex;
         frame.rowHi = partitionRows;
-        frame.rowLo = position;
-        this.partitionIndex = partitionIndex + 1;
+        frame.rowLo = skipToPosition;
+        this.partitionIndex = skipToPartitionIndex + 1;
+
+        skipToPosition = -1;
+        skipToPartitionIndex = -1;
 
         return frame;
     }
@@ -89,6 +98,8 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
     @Override
     public void toTop() {
-        this.partitionIndex = 0;
+        partitionIndex = 0;
+        skipToPosition = -1;
+        skipToPartitionIndex = -1;
     }
 }

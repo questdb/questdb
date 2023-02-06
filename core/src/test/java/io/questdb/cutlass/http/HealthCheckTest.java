@@ -83,10 +83,6 @@ public class HealthCheckTest {
                 .run(engine -> {
                     new SendAndReceiveRequestBuilder()
                             .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
-                            .withExpectDisconnect(false)
-                            .withPrintOnly(false)
-                            .withRequestCount(1)
-                            .withPauseBetweenSendAndReceive(0)
                             .execute(healthCheckRequest, expectedResponse);
                 });
     }
@@ -142,10 +138,6 @@ public class HealthCheckTest {
 
                     new SendAndReceiveRequestBuilder()
                             .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
-                            .withExpectDisconnect(false)
-                            .withPrintOnly(false)
-                            .withRequestCount(1)
-                            .withPauseBetweenSendAndReceive(0)
                             .execute(request, expectedResponse);
                 });
     }
