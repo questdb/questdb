@@ -45,7 +45,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -383,7 +382,6 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
     }
 
     @Test
-    @Ignore
     public void testAlterCommandTruncateTable() throws Exception {
         long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
         long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
@@ -785,9 +783,11 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 } else {
                     // Wait for the next txn notification which would mean an INSERT.
                     Sequence txnNotificationSequence = engine.getMessageBus().getWalTxnNotificationSubSequence();
-                    while (txnNotificationSequence.next() < 0) {
+                    long cursor;
+                    while ((cursor = txnNotificationSequence.next()) < 0) {
                         Os.pause();
                     }
+                    txnNotificationSequence.done(cursor);
                 }
                 alterOperationFuture = executeAlterSql(alterTableCommand);
                 alterOperationFuture.await(10 * Timestamps.SECOND_MILLIS);
