@@ -55,9 +55,9 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         final RecordMetadata metadata = base.getMetadata();
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
-        this.mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
+        mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
         this.base = base;
-        this.cursor = new DistinctRecordCursor(configuration, metadata);
+        cursor = new DistinctRecordCursor(configuration, metadata);
     }
 
     @Override
@@ -157,12 +157,12 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
             if (!isOpen) {
-                this.isOpen = true;
-                this.dataMap.reopen();
+                isOpen = true;
+                dataMap.reopen();
             }
             this.baseCursor = baseCursor;
             this.recordSink = recordSink;
-            this.record = baseCursor.getRecord();
+            record = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;
         }
 

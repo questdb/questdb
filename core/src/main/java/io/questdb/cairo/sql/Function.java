@@ -48,6 +48,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         }
     }
 
+    static void initCursor(ObjList<? extends Function> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.getQuick(i).initCursor();
+        }
+    }
+
     static void initNc(
             ObjList<? extends Function> args,
             SymbolTableSource symbolTableSource,

@@ -28,11 +28,10 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -43,7 +42,7 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
+class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
     private static final Function NO_OP_FILTER = BooleanConstant.TRUE;
     private final Function filter;
@@ -51,6 +50,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     private final IntList partitionByColumnIndexes;
     private final IntList partitionBySymbolCounts;
     private final RecordSink recordSink;
+    private long possibleCombinations;
 
     public LatestByAllSymbolsFilteredRecordCursor(
             @NotNull Map map,
@@ -80,6 +80,16 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
 
     public Function getFilter() {
         return filter;
+    }
+
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        if (!isOpen()) {
+            map.reopen();
+        }
+        super.of(dataFrameCursor, executionContext);
+        filter.init(this, executionContext);
+        possibleCombinations = -1;
     }
 
     @Override
@@ -122,18 +132,13 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-        if (!isOpen()) {
-            map.reopen();
+    protected void buildTreeMap() {
+        if (possibleCombinations < 0) {
+            possibleCombinations = countSymbolCombinations();
         }
-        filter.init(this, executionContext);
-
-        long possibleCombinations = countSymbolCombinations();
         DataFrame frame;
         OUTER:
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

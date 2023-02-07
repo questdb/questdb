@@ -1373,7 +1373,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
+        final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
         final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
 
@@ -1729,7 +1729,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filterExpr = slaveModel.getPostJoinWhereClause();
                 if (filterExpr != null) {
-                    if (configuration.isSqlParallelFilterEnabled() && master.supportPageFrameCursor()) {
+                    if (executionContext.isParallelFilterEnabled() && master.supportPageFrameCursor()) {
                         final Function filter = compileBooleanFilter(
                                 filterExpr,
                                 master.getMetadata(),
@@ -1957,8 +1957,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int nKeyValues = intrinsicModel.keyValueFuncs.size();
             final int nExcludedKeyValues = intrinsicModel.keyExcludedValueFuncs.size();
-            if (indexed) {
-
+            if (indexed && nExcludedKeyValues == 0) {
                 assert nKeyValues > 0;
                 // deal with key values as a list
                 // 1. resolve each value of the list to "int"
@@ -2032,7 +2031,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            assert nKeyValues > 0;
+            assert nKeyValues > 0 || nExcludedKeyValues > 0;
 
             // we have "latest by" column values, but no index
 
@@ -3105,9 +3104,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-
-        // fail fast if we cannot create timestamp sampler
-
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
             return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
@@ -3143,11 +3139,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final QueryModel nested = model.getNestedModel();
             assert nested != null;
             // check if underlying model has reference to hour(column) function
-            if (nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                    && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
-                    && isHourKeyword(columnExpr.token)
-                    && columnExpr.paramCount == 1
-                    && columnExpr.rhs.type == LITERAL
+            if (
+                    nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
+                            && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
+                            && isHourKeyword(columnExpr.token)
+                            && columnExpr.paramCount == 1
+                            && columnExpr.rhs.type == LITERAL
             ) {
                 specialCaseKeys = true;
                 QueryModel.backupWhereClause(expressionNodePool, model);
@@ -3206,11 +3203,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         meta.add(
                                 indexInThis,
                                 new TableColumnMetadata(
-                                        Chars.toString(columns.getQuick(indexInThis).getName())
-                                        , type
-                                        , false
-                                        , 0
-                                        , metadata.isSymbolTableStatic(indexInBase),
+                                        Chars.toString(columns.getQuick(indexInThis).getName()),
+                                        type,
+                                        false,
+                                        0,
+                                        metadata.isSymbolTableStatic(indexInBase),
                                         null
                                 )
                         );
@@ -3358,7 +3355,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     groupByFunctions,
                     recordFunctions
             );
-
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
@@ -3974,7 +3970,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             indexDirection,
                             columnIndexes
                     );
-
                 } else if (
                         intrinsicModel.keyExcludedValueFuncs.size() > 0
                                 && reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()

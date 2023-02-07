@@ -783,6 +783,11 @@ public class CairoEngine implements Closeable, WriterSource {
         this.walWriterPool.setPoolListener(poolListener);
     }
 
+    @TestOnly
+    public void setReaderListener(ReaderPool.ReaderListener readerListener) {
+        readerPool.setTableReaderListener(readerListener);
+    }
+
     public void unlock(
             @SuppressWarnings("unused") CairoSecurityContext securityContext,
             TableToken tableToken,

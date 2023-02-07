@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
@@ -68,7 +67,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         // this is the map itself, which we must not forget to free when factory closes
         final Map map = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
         final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        this.cursor = new SampleByFillNoneRecordCursor(
+        cursor = new SampleByFillNoneRecordCursor(
                 map,
                 mapSink,
                 groupByFunctions,
@@ -87,14 +86,8 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            if (baseCursor.hasNext()) {
-                return initFunctionsAndCursor(executionContext, baseCursor);
-            }
-            Misc.free(baseCursor);
-            Misc.free(cursor);
-            return EmptyTableNoSizeRecordCursor.INSTANCE;
+            return initFunctionsAndCursor(executionContext, baseCursor);
         } catch (Throwable ex) {
-            Misc.free(baseCursor);
             Misc.free(cursor);
             throw ex;
         }

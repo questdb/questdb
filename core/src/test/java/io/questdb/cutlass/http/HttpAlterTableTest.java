@@ -26,10 +26,11 @@ package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultTestCairoConfiguration;
-import io.questdb.mp.MPSequence;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.network.NetworkFacadeImpl;
-import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -37,9 +38,7 @@ import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
 
-import static io.questdb.test.tools.TestUtils.assertEventually;
-
-public class HttpFlushQueryCacheTest {
+public class HttpAlterTableTest {
 
     private static final String JSON_DDL_RESPONSE = "0c\r\n" +
             "{\"ddl\":\"OK\"}\r\n" +
@@ -54,10 +53,10 @@ public class HttpFlushQueryCacheTest {
             .build();
 
     @Test
-    public void testJsonQueryFlushQueryCache() throws Exception {
+    public void testAlterTableSetType() throws Exception {
         Metrics metrics = Metrics.enabled();
         testJsonQuery(2, metrics, engine -> {
-            // create tables
+            // create table
             sendAndReceiveDdl("CREATE TABLE test\n" +
                     "AS(\n" +
                     "    SELECT\n" +
@@ -66,8 +65,6 @@ public class HttpFlushQueryCacheTest {
                     "    FROM long_sequence(1000) x)\n" +
                     "TIMESTAMP(ts)\n" +
                     "PARTITION BY DAY");
-
-            Assert.assertEquals(0, metrics.jsonQuery().cachedQueriesGauge().getValue());
 
             // execute a SELECT query
             String sql = "SELECT *\n" +
@@ -80,28 +77,49 @@ public class HttpFlushQueryCacheTest {
                     "00\r\n" +
                     "\r\n");
 
-            // The query might not be returned to cache immediately, so we need to try a few times.
-            assertEventually(() -> Assert.assertEquals(1, metrics.jsonQuery().cachedQueriesGauge().getValue()));
+            // convert table to WAL
+            sendAndReceiveDdl("ALTER TABLE test SET TYPE WAL");
+        });
+    }
 
-            // flush query cache and verify that the memory gets released
-            sql = "SELECT flush_query_cache()";
+    @Test
+    public void testAlterTableResume() throws Exception {
+        Metrics metrics = Metrics.enabled();
+        testJsonQuery(2, metrics, engine -> {
+            // create table
+            sendAndReceiveDdl("CREATE TABLE test\n" +
+                    "AS(\n" +
+                    "    SELECT\n" +
+                    "        x id,\n" +
+                    "        timestamp_sequence(0L, 100000L) ts\n" +
+                    "    FROM long_sequence(1000) x)\n" +
+                    "TIMESTAMP(ts)\n" +
+                    "PARTITION BY DAY WAL");
+            drainWalQueue(engine);
+
+            // execute a SELECT query
+            String sql = "SELECT *\n" +
+                    "FROM test t1 JOIN test t2 \n" +
+                    "ON t1.id = t2.id\n" +
+                    "LIMIT 1";
             sendAndReceiveBasicSelect(sql, "\r\n" +
-                    "8c\r\n" +
-                    "{\"query\":\"SELECT flush_query_cache()\",\"columns\":[{\"name\":\"flush_query_cache\",\"type\":\"BOOLEAN\"}],\"dataset\":[[true]],\"timestamp\":-1,\"count\":1}\r\n" +
+                    "0139\r\n" +
+                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
                     "00\r\n" +
                     "\r\n");
 
-            // We need to wait until HTTP workers process the message. To do so, we simply try to
-            // publish another query flush event. Since we set the queue size to 1, we're able to
-            // publish only when all consumers (HTTP workers) have processed the previous event.
-            Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
-            final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
-            pubSeq.waitForNext();
-
-            // Sequence set to done before actual flush performed. We might have to try it a few times,
-            // before memory usage drop is measured.
-            assertEventually(() -> Assert.assertEquals(0, metrics.jsonQuery().cachedQueriesGauge().getValue()));
+            // RESUME
+            sendAndReceiveDdl("ALTER TABLE test RESUME WAL");
         });
+    }
+
+    private static void drainWalQueue(CairoEngine engine) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.drain(0);
+            new CheckWalTransactionsJob(engine).run(0);
+            // run once again as there might be notifications to handle now
+            walApplyJob.drain(0);
+        }
     }
 
     private static void sendAndReceive(String request, CharSequence response) throws InterruptedException {

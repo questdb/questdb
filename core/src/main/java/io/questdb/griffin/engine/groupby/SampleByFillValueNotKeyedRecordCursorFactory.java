@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
+
     private final SampleByFillValueNotKeyedRecordCursor cursor;
 
     public SampleByFillValueNotKeyedRecordCursorFactory(

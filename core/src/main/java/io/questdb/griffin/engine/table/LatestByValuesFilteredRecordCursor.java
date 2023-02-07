@@ -26,23 +26,23 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
+class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
+    private boolean isMapPrepared;
 
     public LatestByValuesFilteredRecordCursor(
             int columnIndex,
@@ -61,6 +61,13 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        filter.init(this, executionContext);
+        isMapPrepared = false;
+        super.of(dataFrameCursor, executionContext);
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Row backward scan").meta("on").putColumnName(columnIndex);
         sink.optAttr("filter", filter);
@@ -72,7 +79,7 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
         filter.toTop();
     }
 
-    private void prepare() {
+    private void prepareMap() {
         if (deferredSymbolKeys != null) {
             // We need to clean up the map when there are deferred keys since
             // they may contain bind variables.
@@ -88,13 +95,14 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        prepare();
-        filter.init(this, executionContext);
+    protected void buildTreeMap() {
+        if (!isMapPrepared) {
+            prepareMap();
+            isMapPrepared = true;
+        }
 
         DataFrame frame;
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

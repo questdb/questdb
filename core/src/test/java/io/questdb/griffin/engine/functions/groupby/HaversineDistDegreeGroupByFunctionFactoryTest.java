@@ -194,10 +194,9 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
     }
 
-    //"select s, haversine_dist_deg(lat, lon, k) from tab",
+    // "select s, haversine_dist_deg(lat, lon, k) from tab"
     @Test
     public void testAggregationBySymbol() throws SqlException {
-
         compiler.compile("create table tab (s symbol, lat double, lon double, k timestamp) timestamp(k) partition by NONE", sqlExecutionContext);
 
         try (TableWriter w = getWriter("tab")) {
@@ -235,7 +234,6 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         try (RecordCursorFactory factory = compiler.compile("select s, haversine_dist_deg(lat, lon, k) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
-                Assert.assertEquals(2, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals("AAA", record.getSym(0));
                 Assert.assertEquals(1414.545985354098, record.getDouble(1), DELTA);

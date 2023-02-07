@@ -72,8 +72,8 @@ import java.util.concurrent.locks.LockSupport;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
-    public static final String JSON_DDL_RESPONSE = "0d\r\n" +
-            "{\"ddl\":\"OK\"}\n\r\n" +
+    public static final String JSON_DDL_RESPONSE = "0c\r\n" +
+            "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
@@ -160,8 +160,8 @@ public class IODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                         "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
-                        "72\r\n" +
-                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"count\":1}\r\n"
+                        "81\r\n" +
+                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"timestamp\":-1,\"count\":1}\r\n"
                                 + "00\r\n"
                                 + "\r\n"
                 ));
@@ -463,7 +463,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testDDLinExp() throws Exception {
+    public void testDDLInExp() throws Exception {
         testJsonQuery(
                 20,
                 "GET /exp?query=create%20table%20balance%20(money%20float) HTTP/1.1\r\n" +
@@ -482,8 +482,7 @@ public class IODispatcherTest {
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "67\r\n" +
@@ -496,39 +495,37 @@ public class IODispatcherTest {
 
     @Test
     public void testEmptyQuotedString() throws Exception {
-        testJsonQuery0(1, engine -> {
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    // select '' from long_sequence(1)
-                    "GET /exec?query=select%20%27%27%20from%20long_sequence%281%29 HTTP/1.1\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "74\r\n" +
-                            "{\"query\":\"select '' from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"}],\"dataset\":[[\"\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+        testJsonQuery0(1, engine -> sendAndReceive(
+                NetworkFacadeImpl.INSTANCE,
+                // select '' from long_sequence(1)
+                "GET /exec?query=select%20%27%27%20from%20long_sequence%281%29 HTTP/1.1\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "83\r\n" +
+                        "{\"query\":\"select '' from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"}],\"dataset\":[[\"\"]],\"timestamp\":-1,\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1,
+                0,
+                false
+        ), false);
     }
 
     @Test
@@ -790,8 +787,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0340\r\n" +
-                        "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workers: 2\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"count\":9}\r\n" +
+                        "034f\r\n" +
+                        "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workers: 2\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"timestamp\":-1,\"count\":9}\r\n" +
                         "00\r\n" +
                         "\r\n"
                 , 1);
@@ -928,12 +925,12 @@ public class IODispatcherTest {
                     TestUtils.assertEquals(expectedTableMetadata, sink);
                 }
 
-                final String selectAsJsonScript = ">474554202f657865633f71756572793d25304125304125323773616d706c652e637376253237266c696d69743d302532433130303026636f756e743d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
+                final String selectAsJsonScript = ">504f5354202f696d703f666d743d6a736f6e266f76657277726974653d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a436f6e74656e742d4c656e6774683a203534380d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a436f6e74656e742d547970653a206d756c7469706172742f666f726d2d646174613b20626f756e646172793d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a4f726967696e3a20687474703a2f2f6c6f63616c686f73743a393030300d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2264617461223b2066696c656e616d653d2273616d706c652e637376220d0a436f6e74656e742d547970653a206170706c69636174696f6e2f766e642e6d732d657863656c0d0a0d0a3078356335303465643433326362353131333862636630396161356538613431306464346131653230346566383462666564316265313664666261316232323036302c610d0a3078313966316466326337656536623436343732306164323865393033616564613161356164383738306166633232663062393630383237626434666366363536642c620d0a3078396536653139363337626236323561386666336430353262376332666535376463373863353561313564323538643737633433643561396331363062303338342c700d0a3078636239333738393737303839633737336330373430343562323065646532636463633361366666353632663465363462353162323063353230353233343532352c770d0a3078643233616539623265356336386361663263353636336166356261323736373964633362336362373831633464633639386162626431376436336533326539662c740d0a0d0a2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f2d2d0d0a\n" +
+                        "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a\n" +
+                        "<0d0a63380d0a7b22737461747573223a224f4b222c226c6f636174696f6e223a2273616d706c652e637376222c22726f777352656a6563746564223a302c22726f7773496d706f72746564223a352c22686561646572223a66616c73652c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536222c2273697a65223a33322c226572726f7273223a307d2c7b226e616d65223a226631222c2274797065223a2243484152222c2273697a65223a322c226572726f7273223a307d5d7d0d0a30300d0a0d0a\n" +
+                        ">474554202f657865633f71756572793d25304125304125323773616d706c652e637376253237266c696d69743d302532433130303026636f756e743d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a\n" +
                         "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
-                        "<0d0a303166300d0a\n" +
-                        "<7b227175657279223a225c6e5c6e2773616d706c652e63737627222c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536227d2c7b226e616d65223a226631222c2274797065223a2243484152227d5d2c2264617461736574223a5b5b22307835633530346564343332636235313133386263663039616135653861343130646434613165323034656638346266656431626531366466626131623232303630222c2261225d2c5b22307831396631646632633765653662343634373230616432386539303361656461316135616438373830616663323266306239363038323762643466636636353664222c2262225d2c5b22307839653665313936333762623632356138666633643035326237633266653537646337386335356131356432353864373763343364356139633136306230333834222c2270225d2c5b22307863623933373839373730383963373733633037343034356232306564653263646363336136666635363266346536346235316232306335323035323334353235222c2277225d2c5b22307864323361653962326535633638636166326335363633616635626132373637396463336233636237383163346463363938616262643137643633653332653966222c2274225d5d2c22636f756e74223a357d\n" +
-                        "<0d0a30300d0a\n" +
-                        "<0d0a";
+                        "<0d0a303166660d0a7b227175657279223a225c6e5c6e2773616d706c652e63737627222c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536227d2c7b226e616d65223a226631222c2274797065223a2243484152227d5d2c2264617461736574223a5b5b22307835633530346564343332636235313133386263663039616135653861343130646434613165323034656638346266656431626531366466626131623232303630222c2261225d2c5b22307831396631646632633765653662343634373230616432386539303361656461316135616438373830616663323266306239363038323762643466636636353664222c2262225d2c5b22307839653665313936333762623632356138666633643035326237633266653537646337386335356131356432353864373763343364356139633136306230333834222c2270225d2c5b22307863623933373839373730383963373733633037343034356232306564653263646363336136666635363266346536346235316232306335323035323334353235222c2277225d2c5b22307864323361653962326535633638636166326335363633616635626132373637396463336233636237383163346463363938616262643137643633653332653966222c2274225d5d2c2274696d657374616d70223a2d312c22636f756e74223a357d0d0a30300d0a0d0a\n";
 
                 // select * from 'sample.csv'
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
@@ -1001,9 +998,13 @@ public class IODispatcherTest {
                     TestUtils.assertEquals(expectedTableMetadata, sink);
                 }
 
-                final String selectAsJsonScript = ">474554202f657865633f71756572793d25323773616d706c652e63737625323726636f756e743d66616c736526636f6c733d66302532436631267372633d76697320485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37392e302e333934352e313330205361666172692f3533372e33360d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a5365632d46657463682d4d6f64653a20636f72730d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a436f6f6b69653a205f67613d4741312e312e323132343933323030312e313537333832343636393b205f6769643d4741312e312e3339323836373839362e313538303132333336350d0a0d0a\n" +
+                final String selectAsJsonScript = ">504f5354202f696d703f666d743d6a736f6e266f76657277726974653d7472756520485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a436f6e74656e742d4c656e6774683a203534380d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37362e302e333830392e313030205361666172692f3533372e33360d0a5365632d46657463682d4d6f64653a20636f72730d0a436f6e74656e742d547970653a206d756c7469706172742f666f726d2d646174613b20626f756e646172793d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a4f726967696e3a20687474703a2f2f6c6f63616c686f73743a393030300d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a0d0a2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f0d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2264617461223b2066696c656e616d653d2273616d706c652e637376220d0a436f6e74656e742d547970653a206170706c69636174696f6e2f766e642e6d732d657863656c0d0a0d0a3078356335303465643433326362353131333862636630396161356538613431306464346131653230346566383462666564316265313664666261316232323036302c610d0a3078313966316466326337656536623436343732306164323865393033616564613161356164383738306166633232663062393630383237626434666366363536642c620d0a3078396536653139363337626236323561386666336430353262376332666535376463373863353561313564323538643737633433643561396331363062303338342c700d0a3078636239333738393737303839633737336330373430343562323065646532636463633361366666353632663465363462353162323063353230353233343532352c770d0a3078643233616539623265356336386361663263353636336166356261323736373964633362336362373831633464633639386162626431376436336533326539662c740d0a0d0a2d2d2d2d2d2d5765624b6974466f726d426f756e64617279386c75374239696e37567a5767614a4f2d2d0d0a\n" +
+                        "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a\n" +
+                        "<0d0a63380d0a7b22737461747573223a224f4b222c226c6f636174696f6e223a2273616d706c652e637376222c22726f777352656a6563746564223a302c22726f7773496d706f72746564223a352c22686561646572223a66616c73652c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536222c2273697a65223a33322c226572726f7273223a307d2c7b226e616d65223a226631222c2274797065223a2243484152222c2273697a65223a322c226572726f7273223a307d5d7d0d0a30300d0a0d0a\n" +
+                        ">474554202f657865633f71756572793d25323773616d706c652e63737625323726636f756e743d66616c736526636f6c733d66302532436631267372633d76697320485454502f312e310d0a486f73743a206c6f63616c686f73743a393030300d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4163636570743a202a2f2a0d0a582d5265717565737465642d576974683a20584d4c48747470526571756573740d0a557365722d4167656e743a204d6f7a696c6c612f352e30202857696e646f7773204e542031302e303b2057696e36343b2078363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29204368726f6d652f37392e302e333934352e313330205361666172692f3533372e33360d0a5365632d46657463682d536974653a2073616d652d6f726967696e0d0a5365632d46657463682d4d6f64653a20636f72730d0a526566657265723a20687474703a2f2f6c6f63616c686f73743a393030302f696e6465782e68746d6c0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174652c2062720d0a4163636570742d4c616e67756167653a20656e2d47422c656e2d55533b713d302e392c656e3b713d302e380d0a436f6f6b69653a205f67613d4741312e312e323132343933323030312e313537333832343636393b205f6769643d4741312e312e3339323836373839362e313538303132333336350d0a0d0a\n" +
                         "<485454502f312e3120323030204f4b0d0a5365727665723a20717565737444422f312e300d0a446174653a205468752c2031204a616e20313937302030303a30303a303020474d540d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a436f6e74656e742d547970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a4b6565702d416c6976653a2074696d656f75743d352c206d61783d31303030300d0a\n" +
-                        "<0d0a303165630d0a\n";
+                        "<0d0a303166620d0a7b227175657279223a222773616d706c652e63737627222c22636f6c756d6e73223a5b7b226e616d65223a226630222c2274797065223a224c4f4e47323536227d2c7b226e616d65223a226631222c2274797065223a2243484152227d5d2c2264617461736574223a5b5b22307835633530346564343332636235313133386263663039616135653861343130646434613165323034656638346266656431626531366466626131623232303630222c2261225d2c5b22307831396631646632633765653662343634373230616432386539303361656461316135616438373830616663323266306239363038323762643466636636353664222c2262225d2c5b22307839653665313936333762623632356138666633643035326237633266653537646337386335356131356432353864373763343364356139633136306230333834222c2270225d2c5b22307863623933373839373730383963373733633037343034356232306564653263646363336136666635363266346536346235316232306335323035323334353235222c2277225d2c5b22307864323361653962326535633638636166326335363633616635626132373637396463336233636237383163346463363938616262643137643633653332653966222c2274225d5d2c2274696d657374616d70223a2d312c22636f756e74223a357d0d0a30300d0a0d0a\n" +
+                        "";
 
                 // select * from 'sample.csv' and limit columns to f0,f1
                 NetUtils.playScript(NetworkFacadeImpl.INSTANCE, selectAsJsonScript, "127.0.0.1", 9001);
@@ -1092,10 +1093,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "e5\r\n" +
-                            "{\"query\":\"select * from xx latest on ts partition by value\","
-                            + "\"columns\":[{\"name\":\"value\",\"type\":\"UUID\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],"
-                            + "\"dataset\":[[\"12345678-1234-1234-5678-123456789012\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                            "f3\r\n" +
+                            "{\"query\":\"select * from xx latest on ts partition by value\",\"columns\":[{\"name\":\"value\",\"type\":\"UUID\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"12345678-1234-1234-5678-123456789012\",\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -1109,10 +1108,10 @@ public class IODispatcherTest {
             String response,
             String request,
             NetworkFacade nf,
-            boolean expectDisconnect,
+            boolean expectReceiveDisconnect,
             int requestCount
     ) throws Exception {
-        testImport(response, request, nf, null, expectDisconnect, requestCount, engine -> {
+        testImport(response, request, nf, null, expectReceiveDisconnect, requestCount, engine -> {
         });
     }
 
@@ -1121,11 +1120,10 @@ public class IODispatcherTest {
             String request,
             NetworkFacade nf,
             CairoConfiguration configuration,
-            boolean expectDisconnect,
+            boolean expectReceiveDisconnect,
             int requestCount,
             HttpQueryTestBuilder.HttpClientCode createTable
     ) throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(2)
@@ -1147,7 +1145,7 @@ public class IODispatcherTest {
                                     requestCount,
                                     0,
                                     false,
-                                    expectDisconnect
+                                    expectReceiveDisconnect
                             );
                         });
     }
@@ -1246,7 +1244,7 @@ public class IODispatcherTest {
                         "Accept-Language: en-GB,en;q=0.9,es-AR;q=0.8,es;q=0.7\r\n" +
                         "\r\n",
                 NetworkFacadeImpl.INSTANCE,
-                true,
+                false,
                 1
         );
     }
@@ -1529,7 +1527,7 @@ public class IODispatcherTest {
                                         1,
                                         0,
                                         false,
-                                        true
+                                        false
                                 );
 
                                 StringSink sink = new StringSink();
@@ -1749,7 +1747,7 @@ public class IODispatcherTest {
                                         1,
                                         0,
                                         false,
-                                        true
+                                        false
                                 );
 
                                 StringSink sink = new StringSink();
@@ -1839,7 +1837,7 @@ public class IODispatcherTest {
                                         1,
                                         0,
                                         false,
-                                        true
+                                        false
                                 );
 
                                 StringSink sink = new StringSink();
@@ -2475,9 +2473,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0d\r\n" +
-                        "{\"ddl\":\"OK\"}\n" +
-                        "\r\n" +
+                        "0c\r\n" +
+                        "{\"ddl\":\"OK\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1
@@ -2532,8 +2529,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0abe\r\n" +
-                        "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"CHAR\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"1\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"2\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"3\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"4\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"5\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"6\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"7\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"8\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"9\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"10\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"11\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"12\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"m\",2950,false,0,16,0,\"13\",\"\",null,null,null,0,\"b\"]],\"count\":13,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "0acd\r\n" +
+                        "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"CHAR\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"1\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"2\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"3\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"4\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"5\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"6\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"7\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"8\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"9\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"10\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"11\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"12\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"m\",2950,false,0,16,0,\"13\",\"\",null,null,null,0,\"b\"]],\"timestamp\":-1,\"count\":13,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
                 , 10);
@@ -2649,8 +2646,8 @@ public class IODispatcherTest {
                             ",\"LITWG\",\"FCY\",false,[],\"8d15f9be-35f5-123b-89f1-b8c36671315a\"],[43,23344,null,6597192149501050504,\"145534057-07-16T10:01:51.726Z\",\"293570-08-02T02:25:16.408939Z\",0.50894374,0.6699251221933199,\"QGKNP\",\"KOW\",true,[],null],[87,22301,1565399410,null,null\r\n" +
                             "fc\r\n" +
                             ",\"-282656-02-10T11:02:17.927938Z\",0.3436802,0.6830693823696385,\"ZEOCV\",\"FKM\",true,[],\"4099211c-7746-712f-1eaf-c5dd81b883a7\"],[-97,8534,223584565,null,\"-83792057-10-06T05:58:07.503Z\",\"-123988-08-29T16:43:11.395940Z\",0.8645536,null,\"YLMSR\",\"GKR\",false,[]\r\n" +
-                            "b7\r\n" +
-                            ",null],[113,207,1152958351,-8935746544559020794,\"-247476685-05-02T16:21:08.287Z\",\"80951-09-27T18:56:24.702529Z\",0.47329992,0.5458550805896514,\"KSNGI\",\"RPF\",false,[],null]],\"count\":30}\r\n" +
+                            "c6\r\n" +
+                            ",null],[113,207,1152958351,-8935746544559020794,\"-247476685-05-02T16:21:08.287Z\",\"80951-09-27T18:56:24.702529Z\",0.47329992,0.5458550805896514,\"KSNGI\",\"RPF\",false,[],null]],\"timestamp\":-1,\"count\":30}\r\n" +
                             "00\r\n\r\n";
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
@@ -2710,8 +2707,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "08d7\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"],[-85,-1298,980916820,1979259865811371792,\"243489516-08-10T11:01:43.116Z\",\"-256868-02-13T02:53:08.892559Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",true,[],\"9465e10f-93d3-ecdc-42d5-b398330f32df\"],[114,4567,1786866891,-3384541225473840596,\"-263374628-03-10T06:12:04.293Z\",\"154186-11-06T19:12:56.221046Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",true,[],\"8bb0645a-f60f-7a1f-b166-288cc3685d60\"],[-33,19521,null,null,null,null,null,0.0846754178136283,null,null,true,[],\"8055ebf2-c14f-6170-5f3f-358f3f41ca27\"],[-56,-19967,null,null,\"-261173464-07-23T05:03:03.226Z\",\"202010-04-20T01:47:44.821886Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",true,[],\"2e28a1ac-2237-a3f5-22eb-d09bed4bb888\"],[82,17661,88088322,null,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[],\"9f527485-c4aa-c4a2-826f-47baacd58b28\"],[60,12240,-958065826,-6269840107323772779,\"219763469-12-11T15:11:49.322Z\",\"239562-09-15T01:56:19.789254Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",false,[],\"a195c293-cd15-d1c1-5d40-0142c9511e5c\"]],\"count\":20}\r\n" +
+                        "08e6\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"],[-85,-1298,980916820,1979259865811371792,\"243489516-08-10T11:01:43.116Z\",\"-256868-02-13T02:53:08.892559Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",true,[],\"9465e10f-93d3-ecdc-42d5-b398330f32df\"],[114,4567,1786866891,-3384541225473840596,\"-263374628-03-10T06:12:04.293Z\",\"154186-11-06T19:12:56.221046Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",true,[],\"8bb0645a-f60f-7a1f-b166-288cc3685d60\"],[-33,19521,null,null,null,null,null,0.0846754178136283,null,null,true,[],\"8055ebf2-c14f-6170-5f3f-358f3f41ca27\"],[-56,-19967,null,null,\"-261173464-07-23T05:03:03.226Z\",\"202010-04-20T01:47:44.821886Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",true,[],\"2e28a1ac-2237-a3f5-22eb-d09bed4bb888\"],[82,17661,88088322,null,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[],\"9f527485-c4aa-c4a2-826f-47baacd58b28\"],[60,12240,-958065826,-6269840107323772779,\"219763469-12-11T15:11:49.322Z\",\"239562-09-15T01:56:19.789254Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",false,[],\"a195c293-cd15-d1c1-5d40-0142c9511e5c\"]],\"timestamp\":-1,\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -2741,8 +2738,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01cb\r\n" +
-                        "{\"query\":\"x where d = 0\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":true}}\r\n" +
+                        "01da\r\n" +
+                        "{\"query\":\"x where d = 0\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0,\"explain\":{\"jitCompiled\":true}}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -2769,8 +2766,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01ce\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "01dd\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -2855,8 +2852,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "c4\r\n" +
-                            "{\"query\":\"select * from xx latest on ts partition by value\",\"columns\":[{\"name\":\"value\",\"type\":\"LONG256\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                            "d2\r\n" +
+                            "{\"query\":\"select * from xx latest on ts partition by value\",\"columns\":[{\"name\":\"value\",\"type\":\"LONG256\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"\",\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -2947,8 +2944,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "6b\r\n" +
-                            "{\"query\":\"data\",\"columns\":[{\"name\":\"s\",\"type\":\"STRING\"}],\"dataset\":[[\"{ title: \\\\\\\"Title\\\\\\\"}\"]],\"count\":1}\r\n" +
+                            "7a\r\n" +
+                            "{\"query\":\"data\",\"columns\":[{\"name\":\"s\",\"type\":\"STRING\"}],\"dataset\":[[\"{ title: \\\\\\\"Title\\\\\\\"}\"]],\"timestamp\":-1,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -3040,8 +3037,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0163\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"count\":1}\r\n" +
+                            "0171\r\n" +
+                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"timestamp\":4,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -3099,8 +3096,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0133\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[],\"count\":0}\r\n" +
+                            "0141\r\n" +
+                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[],\"timestamp\":4,\"count\":0}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -3387,18 +3384,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0166\r\n" +
-                        "{\"query\":\"SELECT * FROM y\",\"columns\":[" +
-                        "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"}," +
-                        "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"}," +
-                        "{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"}," +
-                        "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"}," +
-                        "{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}" +
-                        "],\"dataset\":[" +
-                        "[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"]," +
-                        "[\"u\",\"u10\",\"questd\",null,\"1\"]," +
-                        "[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]" +
-                        "],\"count\":3}\r\n" +
+                        "0175\r\n" +
+                        "{\"query\":\"SELECT * FROM y\",\"columns\":[{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"},{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"},{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"},{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"},{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}],\"dataset\":[[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"],[\"u\",\"u10\",\"questd\",null,\"1\"],[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]],\"timestamp\":-1,\"count\":3}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3428,8 +3415,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "b0\r\n" +
-                        "{\"query\":\"select cast(1.0/0.0 as float), cast(1.0/0.0 as double)\",\"columns\":[{\"name\":\"cast\",\"type\":\"FLOAT\"},{\"name\":\"cast1\",\"type\":\"DOUBLE\"}],\"dataset\":[[null,null]],\"count\":1}\r\n" +
+                        "bf\r\n" +
+                        "{\"query\":\"select cast(1.0/0.0 as float), cast(1.0/0.0 as double)\",\"columns\":[{\"name\":\"cast\",\"type\":\"FLOAT\"},{\"name\":\"cast1\",\"type\":\"DOUBLE\"}],\"dataset\":[[null,null]],\"timestamp\":-1,\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3507,8 +3494,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0179\r\n" +
-                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"]],\"count\":20}\r\n" +
+                            "0188\r\n" +
+                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"]],\"timestamp\":-1,\"count\":20}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     100,
@@ -3572,8 +3559,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "ec\r\n" +
-                        "{\"query\":\"select 'oops' рекордно from long_sequence(10)\\n\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"STRING\"}],\"dataset\":[[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"]],\"count\":10}\r\n" +
+                        "fb\r\n" +
+                        "{\"query\":\"select 'oops' рекордно from long_sequence(10)\\n\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"STRING\"}],\"dataset\":[[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"],[\"oops\"]],\"timestamp\":-1,\"count\":10}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3600,8 +3587,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "04ca\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"]],\"count\":14}\r\n" +
+                        "04d9\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"]],\"timestamp\":-1,\"count\":14}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3628,8 +3615,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0342\r\n" +
-                        "{\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"]],\"count\":14}\r\n" +
+                        "0351\r\n" +
+                        "{\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"]],\"timestamp\":-1,\"count\":14}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3658,8 +3645,8 @@ public class IODispatcherTest {
                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                 "Keep-Alive: timeout=5, max=10000\r\n" +
                                 "\r\n" +
-                                "d9\r\n" +
-                                "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"UDEYY\",0.15786635599554755],[\"UDEYY\",0.8445258177211064],[\"UDEYY\",0.5778947915182423]],\"count\":3}\r\n" +
+                                "e8\r\n" +
+                                "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"UDEYY\",0.15786635599554755],[\"UDEYY\",0.8445258177211064],[\"UDEYY\",0.5778947915182423]],\"timestamp\":-1,\"count\":3}\r\n" +
                                 "00\r\n" +
                                 "\r\n"
                 },
@@ -3681,8 +3668,8 @@ public class IODispatcherTest {
                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                 "Keep-Alive: timeout=5, max=10000\r\n" +
                                 "\r\n" +
-                                "0114\r\n" +
-                                "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"QEHBH\",0.4022810626779558],[\"QEHBH\",0.9038068796506872],[\"QEHBH\",0.05048190020054388],[\"QEHBH\",0.4149517697653501],[\"QEHBH\",0.44804689668613573]],\"count\":5}\r\n" +
+                                "0123\r\n" +
+                                "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"QEHBH\",0.4022810626779558],[\"QEHBH\",0.9038068796506872],[\"QEHBH\",0.05048190020054388],[\"QEHBH\",0.4149517697653501],[\"QEHBH\",0.44804689668613573]],\"timestamp\":-1,\"count\":5}\r\n" +
                                 "00\r\n" +
                                 "\r\n"
                 },
@@ -3704,8 +3691,8 @@ public class IODispatcherTest {
                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                 "Keep-Alive: timeout=5, max=10000\r\n" +
                                 "\r\n" +
-                                "da\r\n" +
-                                "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"SXUXI\",0.6761934857077543],[\"SXUXI\",0.38642336707855873],[\"SXUXI\",0.48558682958070665]],\"count\":3}\r\n" +
+                                "e9\r\n" +
+                                "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"SXUXI\",0.6761934857077543],[\"SXUXI\",0.38642336707855873],[\"SXUXI\",0.48558682958070665]],\"timestamp\":-1,\"count\":3}\r\n" +
                                 "00\r\n" +
                                 "\r\n"
                 },
@@ -3727,8 +3714,8 @@ public class IODispatcherTest {
                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                 "Keep-Alive: timeout=5, max=10000\r\n" +
                                 "\r\n" +
-                                "f4\r\n" +
-                                "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"VTJWC\",0.3435685332942956],[\"VTJWC\",0.8258367614088108],[\"VTJWC\",0.437176959518218],[\"VTJWC\",0.7176053468281931]],\"count\":4}\r\n" +
+                                "0103\r\n" +
+                                "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"VTJWC\",0.3435685332942956],[\"VTJWC\",0.8258367614088108],[\"VTJWC\",0.437176959518218],[\"VTJWC\",0.7176053468281931]],\"timestamp\":-1,\"count\":4}\r\n" +
                                 "00\r\n" +
                                 "\r\n"
                 }
@@ -3787,8 +3774,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0e93\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"],[-85,-1298,980916820,1979259865811371792,\"243489516-08-10T11:01:43.116Z\",\"-256868-02-13T02:53:08.892559Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",true,[],\"9465e10f-93d3-ecdc-42d5-b398330f32df\"],[114,4567,1786866891,-3384541225473840596,\"-263374628-03-10T06:12:04.293Z\",\"154186-11-06T19:12:56.221046Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",true,[],\"8bb0645a-f60f-7a1f-b166-288cc3685d60\"],[-33,19521,null,null,null,null,null,0.0846754178136283,null,null,true,[],\"8055ebf2-c14f-6170-5f3f-358f3f41ca27\"],[-56,-19967,null,null,\"-261173464-07-23T05:03:03.226Z\",\"202010-04-20T01:47:44.821886Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",true,[],\"2e28a1ac-2237-a3f5-22eb-d09bed4bb888\"],[82,17661,88088322,null,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[],\"9f527485-c4aa-c4a2-826f-47baacd58b28\"],[60,12240,-958065826,-6269840107323772779,\"219763469-12-11T15:11:49.322Z\",\"239562-09-15T01:56:19.789254Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",false,[],\"a195c293-cd15-d1c1-5d40-0142c9511e5c\"]],\"count\":20}\r\n" +
+                        "0ea2\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"],[-85,-1298,980916820,1979259865811371792,\"243489516-08-10T11:01:43.116Z\",\"-256868-02-13T02:53:08.892559Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",true,[],\"9465e10f-93d3-ecdc-42d5-b398330f32df\"],[114,4567,1786866891,-3384541225473840596,\"-263374628-03-10T06:12:04.293Z\",\"154186-11-06T19:12:56.221046Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",true,[],\"8bb0645a-f60f-7a1f-b166-288cc3685d60\"],[-33,19521,null,null,null,null,null,0.0846754178136283,null,null,true,[],\"8055ebf2-c14f-6170-5f3f-358f3f41ca27\"],[-56,-19967,null,null,\"-261173464-07-23T05:03:03.226Z\",\"202010-04-20T01:47:44.821886Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",true,[],\"2e28a1ac-2237-a3f5-22eb-d09bed4bb888\"],[82,17661,88088322,null,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[],\"9f527485-c4aa-c4a2-826f-47baacd58b28\"],[60,12240,-958065826,-6269840107323772779,\"219763469-12-11T15:11:49.322Z\",\"239562-09-15T01:56:19.789254Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",false,[],\"a195c293-cd15-d1c1-5d40-0142c9511e5c\"]],\"timestamp\":-1,\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3815,8 +3802,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0272\r\n" +
-                        "{\"query\":\"\\n\\nselect * from x where i ~ 'E'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":4}\r\n" +
+                        "0281\r\n" +
+                        "{\"query\":\"\\n\\nselect * from x where i ~ 'E'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"timestamp\":-1,\"count\":4}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3843,8 +3830,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0b8e\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[false,-727724771,24814,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,null,-15458,null,\"246280-11-21T19:36:06.863064Z\",\"271684783-08-14T19:54:59.209Z\",0.9687423,null,\"EDRQQ\",\"LOF\",27,[]],[false,-443320374,-12303,null,null,\"18125533-09-05T04:06:38.086Z\",0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",-15,[]],[false,844704299,-1072,-5439556746612026472,\"-223119-09-14T09:01:18.820936Z\",null,0.24008358,null,\"SSUQS\",\"LTK\",-26,[]],[false,1431425139,-16957,5703149806881083206,\"169679-01-30T22:35:53.709416Z\",\"-169092820-09-20T13:00:33.346Z\",0.85931313,0.021189232728939578,null,null,-22,[]],[false,null,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",0.38422543,null,\"ZHZSQ\",\"DGL\",40,[]],[true,null,26413,null,\"-212972-12-23T07:03:41.201156Z\",\"-280416206-11-15T18:10:34.329Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",12,[]],[false,-1594425659,10793,-7414829143044491558,\"-277346-12-26T06:26:35.016287Z\",null,0.48352557,null,null,null,-48,[]],[false,-895337819,-32283,6146164804821006241,null,\"-78315370-06-23T19:44:52.764Z\",0.43461353,0.2559680920632348,\"FDTNP\",null,-109,[]],[true,415709351,-4941,6153381060986313135,\"226653-05-24T13:46:11.574792Z\",\"216474105-07-04T10:25:00.310Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",43,[]],[false,1817259704,3605,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,-78,[]],[true,null,31291,-7460860813229540628,null,\"129690313-12-24T17:39:48.572Z\",0.4268921,0.34804764389663523,null,\"ZKY\",5,[]],[false,-957569989,-10015,-5722148114589357073,\"268603-07-17T16:20:37.463497Z\",null,0.8136066,0.8766908646423737,null,null,60,[]],[true,-1440131320,20400,null,\"-271841-11-06T10:08:21.455425Z\",null,0.73472875,0.5251698097331752,null,\"LIH\",-19,[]],[true,980916820,-1298,1979259865811371792,\"-256868-02-13T02:53:08.892559Z\",\"243489516-08-10T11:01:43.116Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",-85,[]],[true,1786866891,4567,-3384541225473840596,\"154186-11-06T19:12:56.221046Z\",\"-263374628-03-10T06:12:04.293Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",114,[]],[true,null,19521,null,null,null,null,0.0846754178136283,null,null,-33,[]],[true,null,-19967,null,\"202010-04-20T01:47:44.821886Z\",\"-261173464-07-23T05:03:03.226Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",-56,[]],[true,88088322,17661,null,\"216070-11-17T13:37:58.936720Z\",\"152525393-08-28T08:19:48.512Z\",null,null,\"JJILL\",\"YMI\",82,[]],[false,-958065826,12240,-6269840107323772779,\"239562-09-15T01:56:19.789254Z\",\"219763469-12-11T15:11:49.322Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",60,[]]],\"count\":20}\r\n" +
+                        "0b9d\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[false,-727724771,24814,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,null,-15458,null,\"246280-11-21T19:36:06.863064Z\",\"271684783-08-14T19:54:59.209Z\",0.9687423,null,\"EDRQQ\",\"LOF\",27,[]],[false,-443320374,-12303,null,null,\"18125533-09-05T04:06:38.086Z\",0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",-15,[]],[false,844704299,-1072,-5439556746612026472,\"-223119-09-14T09:01:18.820936Z\",null,0.24008358,null,\"SSUQS\",\"LTK\",-26,[]],[false,1431425139,-16957,5703149806881083206,\"169679-01-30T22:35:53.709416Z\",\"-169092820-09-20T13:00:33.346Z\",0.85931313,0.021189232728939578,null,null,-22,[]],[false,null,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",0.38422543,null,\"ZHZSQ\",\"DGL\",40,[]],[true,null,26413,null,\"-212972-12-23T07:03:41.201156Z\",\"-280416206-11-15T18:10:34.329Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",12,[]],[false,-1594425659,10793,-7414829143044491558,\"-277346-12-26T06:26:35.016287Z\",null,0.48352557,null,null,null,-48,[]],[false,-895337819,-32283,6146164804821006241,null,\"-78315370-06-23T19:44:52.764Z\",0.43461353,0.2559680920632348,\"FDTNP\",null,-109,[]],[true,415709351,-4941,6153381060986313135,\"226653-05-24T13:46:11.574792Z\",\"216474105-07-04T10:25:00.310Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",43,[]],[false,1817259704,3605,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,-78,[]],[true,null,31291,-7460860813229540628,null,\"129690313-12-24T17:39:48.572Z\",0.4268921,0.34804764389663523,null,\"ZKY\",5,[]],[false,-957569989,-10015,-5722148114589357073,\"268603-07-17T16:20:37.463497Z\",null,0.8136066,0.8766908646423737,null,null,60,[]],[true,-1440131320,20400,null,\"-271841-11-06T10:08:21.455425Z\",null,0.73472875,0.5251698097331752,null,\"LIH\",-19,[]],[true,980916820,-1298,1979259865811371792,\"-256868-02-13T02:53:08.892559Z\",\"243489516-08-10T11:01:43.116Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",-85,[]],[true,1786866891,4567,-3384541225473840596,\"154186-11-06T19:12:56.221046Z\",\"-263374628-03-10T06:12:04.293Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",114,[]],[true,null,19521,null,null,null,null,0.0846754178136283,null,null,-33,[]],[true,null,-19967,null,\"202010-04-20T01:47:44.821886Z\",\"-261173464-07-23T05:03:03.226Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",-56,[]],[true,88088322,17661,null,\"216070-11-17T13:37:58.936720Z\",\"152525393-08-28T08:19:48.512Z\",null,null,\"JJILL\",\"YMI\",82,[]],[false,-958065826,12240,-6269840107323772779,\"239562-09-15T01:56:19.789254Z\",\"219763469-12-11T15:11:49.322Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",60,[]]],\"timestamp\":-1,\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3871,8 +3858,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01a0\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "01af\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3899,8 +3886,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01ae\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "01bd\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3928,8 +3915,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01ae\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "01bd\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3957,8 +3944,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "cb\r\n" +
-                        "{\"query\":\"select rnd_symbol('a','b','c') sym from long_sequence(10, 33, 55)\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"c\"],[\"c\"],[\"c\"],[\"b\"],[\"b\"],[\"a\"],[\"a\"],[\"a\"],[\"a\"],[\"a\"]],\"count\":10}\r\n" +
+                        "da\r\n" +
+                        "{\"query\":\"select rnd_symbol('a','b','c') sym from long_sequence(10, 33, 55)\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"c\"],[\"c\"],[\"c\"],[\"b\"],[\"b\"],[\"a\"],[\"a\"],[\"a\"],[\"a\"],[\"a\"]],\"timestamp\":-1,\"count\":10}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3986,8 +3973,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "7e\r\n" +
-                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[1400055037509505337]],\"count\":1}\r\n" +
+                        "8d\r\n" +
+                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[1400055037509505337]],\"timestamp\":-1,\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4015,8 +4002,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "80\r\n" +
-                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"count\":1}\r\n" +
+                        "8f\r\n" +
+                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"timestamp\":-1,\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4044,8 +4031,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "a0\r\n" +
-                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"count\":1,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "af\r\n" +
+                        "{\"query\":\"select 1400055037509505337 as l\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"dataset\":[[\"1400055037509505337\"]],\"timestamp\":-1,\"count\":1,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4107,8 +4094,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0266\r\n" +
-                            "{\"query\":\"y where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":1}\r\n" +
+                            "0275\r\n" +
+                            "{\"query\":\"y where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"timestamp\":-1,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -4162,8 +4149,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0266\r\n" +
-                            "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":1}\r\n" +
+                            "0275\r\n" +
+                            "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"timestamp\":-1,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -4195,8 +4182,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "02e6\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"]],\"count\":11}\r\n" +
+                        "02f5\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"]],\"timestamp\":-1,\"count\":11}\r\n" +
                         "00\r\n" +
                         "\r\n");
     }
@@ -4283,8 +4270,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0163\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"count\":1}\r\n" +
+                            "0171\r\n" +
+                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"timestamp\":4,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -4314,8 +4301,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0d\r\n" +
-                            "{\"ddl\":\"OK\"}\n\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -4345,8 +4332,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0184\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"xyz\",\"type\":\"INT\"}],\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\",null]],\"count\":1}\r\n" +
+                            "0192\r\n" +
+                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"xyz\",\"type\":\"INT\"}],\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\",null]],\"timestamp\":4,\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -4377,8 +4364,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0266\r\n" +
-                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":1}\r\n" +
+                        "0275\r\n" +
+                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"timestamp\":-1,\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4405,8 +4392,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01a0\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "01af\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1,
@@ -4445,8 +4432,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01a0\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "01af\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 2,
@@ -4566,11 +4553,18 @@ public class IODispatcherTest {
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                                "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                336,
-                                "timeout, query aborted"
-                        );
+                        // We expect header only to be sent and then a disconnect.
+                        new SendAndReceiveRequestBuilder()
+                                .withExpectReceiveDisconnect(true)
+                                .executeWithStandardRequestHeaders(
+                                        "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "Keep-Alive: timeout=5, max=10000\r\n"
+                                );
                     }
                 });
     }
@@ -4592,8 +4586,8 @@ public class IODispatcherTest {
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                    "ea\r\n" +
-                                            "{\"query\":\"select i, avg(l), max(l) from t group by i order by i asc limit 3\",\"columns\":[{\"name\":\"i\",\"type\":\"INT\"},{\"name\":\"avg\",\"type\":\"DOUBLE\"},{\"name\":\"max\",\"type\":\"LONG\"}],\"dataset\":[[0,55.0,100],[1,46.0,91],[2,47.0,92]],\"count\":3}\r\n" +
+                                    "f9\r\n" +
+                                            "{\"query\":\"select i, avg(l), max(l) from t group by i order by i asc limit 3\",\"columns\":[{\"name\":\"i\",\"type\":\"INT\"},{\"name\":\"avg\",\"type\":\"DOUBLE\"},{\"name\":\"max\",\"type\":\"LONG\"}],\"dataset\":[[0,55.0,100],[1,46.0,91],[2,47.0,92]],\"timestamp\":-1,\"count\":3}\r\n" +
                                             "00\r\n" +
                                             "\r\n"
                             );
@@ -4626,8 +4620,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0820\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"count\":10}\r\n" +
+                        "082f\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"timestamp\":-1,\"count\":10}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4654,8 +4648,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0820\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"count\":20}\r\n" +
+                        "082f\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"timestamp\":-1,\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4691,8 +4685,8 @@ public class IODispatcherTest {
                                     "Connection: close\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "0820\r\n" +
-                                    "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"count\":10}\r\n" +
+                                    "082f\r\n" +
+                                    "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"timestamp\":-1,\"count\":10}\r\n" +
                                     "00\r\n" +
                                     "\r\n",
                             1,
@@ -4905,8 +4899,6 @@ public class IODispatcherTest {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final int tableRowCount = 3_000_000;
 
-            SOCountDownLatch peerDisconnectLatch = new SOCountDownLatch(1);
-
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withNetwork(nf)
                     .withBaseDir(baseDir)
@@ -4915,7 +4907,6 @@ public class IODispatcherTest {
                     .withAllowDeflateBeforeSend(false)
                     .withServerKeepAlive(true)
                     .withHttpProtocolVersion("HTTP/1.1 ")
-                    .withOnPeerDisconnect(peerDisconnectLatch::countDown)
                     .build();
             QueryCache.configure(httpConfiguration, metrics);
 
@@ -4924,7 +4915,7 @@ public class IODispatcherTest {
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir) {
                 @Override
                 public int getSqlPageFrameMaxRows() {
-                    // this is necessary to sufficiently fragment paged filter execution
+                    // this is necessary to sufficiently fragmented paged filter execution
                     return 10_000;
                 }
             }, metrics);
@@ -4958,29 +4949,6 @@ public class IODispatcherTest {
                     }
                 });
 
-                final int minClientReceivedBytesBeforeDisconnect = 180;
-                final AtomicInteger refClientFd = new AtomicInteger(-1);
-                HttpClientStateListener clientStateListener = new HttpClientStateListener() {
-                    private int nBytesReceived = 0;
-
-                    @Override
-                    public void onClosed() {
-                    }
-
-                    @Override
-                    public void onReceived(int nBytes) {
-                        LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
-                        nBytesReceived += nBytes;
-                        if (nBytesReceived >= minClientReceivedBytesBeforeDisconnect) {
-                            int fd = refClientFd.get();
-                            if (fd != -1) {
-                                refClientFd.set(-1);
-                                nf.close(fd);
-                            }
-                        }
-                    }
-                };
-
                 O3Utils.setupWorkerPool(
                         workerPool,
                         engine,
@@ -5000,13 +4968,15 @@ public class IODispatcherTest {
                     );
 
                     // send multipart request to server
-                    final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
-                            + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
-                            + "Upgrade-Insecure-Requests: 1\r\n"
-                            + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
-                            + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
-                            + "Accept-Encoding: gzip, deflate, br\r\n"
-                            + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
+                    final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
                     int fd = nf.socketTcp(true);
                     try {
@@ -5015,7 +4985,6 @@ public class IODispatcherTest {
                         try {
                             TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-                            refClientFd.set(fd);
                             nf.configureNonBlocking(fd);
 
                             long bufLen = request.length();
@@ -5025,8 +4994,8 @@ public class IODispatcherTest {
                                         .withNetworkFacade(nf)
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
-                                        .withExpectDisconnect(true)
-                                        .executeUntilDisconnect(request, fd, 200, ptr, clientStateListener);
+                                        .withExpectReceiveDisconnect(true)
+                                        .executeUntilDisconnect(request, fd, 200, ptr, null);
                             } finally {
                                 Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
                             }
@@ -5034,9 +5003,9 @@ public class IODispatcherTest {
                             nf.freeAddrInfo(sockAddrInfo);
                         }
                     } finally {
+                        nf.close(fd);
                         LOG.info().$("Closing client connection").$();
                     }
-                    peerDisconnectLatch.await();
                     // depending on how quick the CI hardware is we may end up processing different
                     // number of rows before query is interrupted
                     Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
@@ -5068,8 +5037,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01a0\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "01af\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"dataset\":[],\"timestamp\":-1,\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -5099,8 +5068,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "011d\r\n" +
-                        "{\"query\":\"\\r\\n\\r\\n\\r\\nselect pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)\",\"columns\":[{\"name\":\"x1\",\"type\":\"RECORD\"},{\"name\":\"column\",\"type\":\"INT\"}],\"dataset\":[[null,11],[null,2200],[null,11],[null,2200]],\"count\":4,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "012c\r\n" +
+                        "{\"query\":\"\\r\\n\\r\\n\\r\\nselect pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)\",\"columns\":[{\"name\":\"x1\",\"type\":\"RECORD\"},{\"name\":\"column\",\"type\":\"INT\"}],\"dataset\":[[null,11],[null,2200],[null,11],[null,2200]],\"timestamp\":-1,\"count\":4,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -5128,8 +5097,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "76\r\n" +
-                        "{\"query\":\"select null from long_sequence(1)\",\"columns\":[{\"name\":\"null\",\"type\":\"STRING\"}],\"dataset\":[[null]],\"count\":1}\r\n" +
+                        "85\r\n" +
+                        "{\"query\":\"select null from long_sequence(1)\",\"columns\":[{\"name\":\"null\",\"type\":\"STRING\"}],\"dataset\":[[null]],\"timestamp\":-1,\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
                 , 1);
@@ -5157,11 +5126,11 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "b0\r\n" +
-                        "{\"query\":\"select 0 рекордно from long_sequence(10)\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"INT\"}],\"dataset\":[[0],[0],[0],[0],[0],[0],[0],[0],[0],[0]],\"count\":10}\r\n" +
+                        "bf\r\n" +
+                        "{\"query\":\"select 0 рекордно from long_sequence(10)\",\"columns\":[{\"name\":\"рекордно\",\"type\":\"INT\"}],\"dataset\":[[0],[0],[0],[0],[0],[0],[0],[0],[0],[0]],\"timestamp\":-1,\"count\":10}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 1);
+                        "\r\n",
+                1);
     }
 
     @Test
@@ -5188,8 +5157,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "cb\r\n" +
-                        "{\"query\":\"\\n\\n\\n\\nSELECT 'Raphaël' a, 'Léo' b FROM long_sequence(2)\",\"columns\":[{\"name\":\"a\",\"type\":\"STRING\"},{\"name\":\"b\",\"type\":\"STRING\"}],\"dataset\":[[\"Raphaël\",\"Léo\"],[\"Raphaël\",\"Léo\"]],\"count\":2}\r\n" +
+                        "da\r\n" +
+                        "{\"query\":\"\\n\\n\\n\\nSELECT 'Raphaël' a, 'Léo' b FROM long_sequence(2)\",\"columns\":[{\"name\":\"a\",\"type\":\"STRING\"},{\"name\":\"b\",\"type\":\"STRING\"}],\"dataset\":[[\"Raphaël\",\"Léo\"],[\"Raphaël\",\"Léo\"]],\"timestamp\":-1,\"count\":2}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -5515,7 +5484,7 @@ public class IODispatcherTest {
                         "\r\n" +
                         "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
                 NetworkFacadeImpl.INSTANCE,
-                true,
+                false,
                 1
         );
     }
@@ -5543,8 +5512,8 @@ public class IODispatcherTest {
                             "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "0100\r\n" +
                                     "{\"query\":\"select * from test_data_unavailable(32, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10],[11,11,11],[12\r\n" +
-                                    "f0\r\n" +
-                                    ",12,12],[13,13,13],[14,14,14],[15,15,15],[16,16,16],[17,17,17],[18,18,18],[19,19,19],[20,20,20],[21,21,21],[22,22,22],[23,23,23],[24,24,24],[25,25,25],[26,26,26],[27,27,27],[28,28,28],[29,29,29],[30,30,30],[31,31,31],[32,32,32]],\"count\":32}\r\n" +
+                                    "ff\r\n" +
+                                    ",12,12],[13,13,13],[14,14,14],[15,15,15],[16,16,16],[17,17,17],[18,18,18],[19,19,19],[20,20,20],[21,21,21],[22,22,22],[23,23,23],[24,24,24],[25,25,25],[26,26,26],[27,27,27],[28,28,28],[29,29,29],[30,30,30],[31,31,31],[32,32,32]],\"timestamp\":-1,\"count\":32}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -5592,8 +5561,8 @@ public class IODispatcherTest {
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
-                            "c0\r\n" +
-                                    "{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
+                            "cf\r\n" +
+                                    "{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"timestamp\":-1,\"count\":3}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -5626,8 +5595,8 @@ public class IODispatcherTest {
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
-                            "c1\r\n" +
-                                    "{\"query\":\"select * from test_data_unavailable(3, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
+                            "d0\r\n" +
+                                    "{\"query\":\"select * from test_data_unavailable(3, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"timestamp\":-1,\"count\":3}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -5648,8 +5617,8 @@ public class IODispatcherTest {
                     // with select being the column name to check double quote parsing
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
-                            "67\r\n"
-                                    + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
+                            "76\r\n" +
+                                    "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"timestamp\":-1,\"count\":1}\r\n"
                                     + "00\r\n"
                                     + "\r\n"
                     );
@@ -6504,7 +6473,6 @@ public class IODispatcherTest {
 
     @Test
     public void testSendTimeout() throws Exception {
-
         LOG.info().$("started testSendHttpGet").$();
 
         final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
@@ -6856,13 +6824,14 @@ public class IODispatcherTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "9b\r\n" +
-                                    "{\"query\":\"copy test from 'test-numeric-headers.csv' with header true\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\"]],\"count\":1}\r\n" +
-                                    "00\r\n\r\n",
+                                    "aa\r\n" +
+                                    "{\"query\":\"copy test from 'test-numeric-headers.csv' with header true\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\"]],\"timestamp\":-1,\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     // Cancel should always succeed since we don't have text import jobs running here.
@@ -6892,7 +6861,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     final String incorrectCancelQuery = "copy 'ffffffffffffffff' cancel";
@@ -6923,7 +6892,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
                 });
     }
@@ -6951,9 +6920,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0d\r\n" +
-                        "{\"ddl\":\"OK\"}\n" +
-                        "\r\n" +
+                        "0c\r\n" +
+                        "{\"ddl\":\"OK\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1
@@ -7031,7 +6999,7 @@ public class IODispatcherTest {
                                     1,
                                     0,
                                     false,
-                                    true
+                                    false
                             );
 
                             sendAndReceive(
@@ -7052,8 +7020,7 @@ public class IODispatcherTest {
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                             "Transfer-Encoding: chunked\r\n" +
-                                            "Content-Type: text/csv; charset=utf-8\r\n" +
-                                            "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                            "Content-Type: application/json; charset=utf-8\r\n" +
                                             "Keep-Alive: timeout=5, max=10000\r\n" +
                                             "\r\n" +
                                             "76\r\n" +
@@ -7063,7 +7030,7 @@ public class IODispatcherTest {
                                     1,
                                     0,
                                     false,
-                                    true
+                                    false
                             );
                         }
                 );
@@ -7175,7 +7142,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     final String showColumnsQuery = "show columns from balances";
@@ -7200,13 +7167,13 @@ public class IODispatcherTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "01cd\r\n" +
-                                    "{\"query\":\"show columns from balances\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"},{\"name\":\"type\",\"type\":\"STRING\"},{\"name\":\"indexed\",\"type\":\"BOOLEAN\"},{\"name\":\"indexBlockCapacity\",\"type\":\"INT\"},{\"name\":\"symbolCached\",\"type\":\"BOOLEAN\"},{\"name\":\"symbolCapacity\",\"type\":\"INT\"},{\"name\":\"designated\",\"type\":\"BOOLEAN\"}],\"dataset\":[[\"cust_id\",\"INT\",false,0,false,0,false],[\"ccy\",\"SYMBOL\",false,256,true,128,false],[\"balance\",\"DOUBLE\",false,0,false,0,false]],\"count\":3}\r\n" +
+                                    "01dc\r\n" +
+                                    "{\"query\":\"show columns from balances\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"},{\"name\":\"type\",\"type\":\"STRING\"},{\"name\":\"indexed\",\"type\":\"BOOLEAN\"},{\"name\":\"indexBlockCapacity\",\"type\":\"INT\"},{\"name\":\"symbolCached\",\"type\":\"BOOLEAN\"},{\"name\":\"symbolCapacity\",\"type\":\"INT\"},{\"name\":\"designated\",\"type\":\"BOOLEAN\"}],\"dataset\":[[\"cust_id\",\"INT\",false,0,false,0,false],[\"ccy\",\"SYMBOL\",false,256,true,128,false],[\"balance\",\"DOUBLE\",false,0,false,0,false]],\"timestamp\":-1,\"count\":3}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     final String dropTableDdl = "drop table balances";
@@ -7235,7 +7202,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
 
                     // We should get a meaningful error.
@@ -7266,7 +7233,7 @@ public class IODispatcherTest {
                             1,
                             0,
                             false,
-                            true
+                            false
                     );
                 });
     }
@@ -7283,11 +7250,19 @@ public class IODispatcherTest {
                     SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         compiler.compile(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                                "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                387,
-                                "timeout, query aborted"
-                        );
+                        // We expect header only to be sent and then a disconnect.
+                        new SendAndReceiveRequestBuilder()
+                                .withExpectReceiveDisconnect(true)
+                                .executeWithStandardRequestHeaders(
+                                        "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/csv; charset=utf-8\r\n" +
+                                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                                "Keep-Alive: timeout=5, max=10000\r\n"
+                                );
                     }
                 });
     }
@@ -7583,7 +7558,8 @@ public class IODispatcherTest {
                 180_000_000,
                 1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -7595,7 +7571,8 @@ public class IODispatcherTest {
                 -1,
                 -1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     private static void assertDownloadResponse(
@@ -7668,11 +7645,11 @@ public class IODispatcherTest {
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print,
-            boolean expectDisconnect
+            boolean expectReceiveDisconnect
     ) throws InterruptedException {
         new SendAndReceiveRequestBuilder()
                 .withNetworkFacade(nf)
-                .withExpectDisconnect(expectDisconnect)
+                .withExpectReceiveDisconnect(expectReceiveDisconnect)
                 .withPrintOnly(print)
                 .withRequestCount(requestCount)
                 .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)

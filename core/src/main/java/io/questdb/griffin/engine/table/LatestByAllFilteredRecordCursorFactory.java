@@ -53,9 +53,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
         super(metadata, dataFrameCursorFactory, configuration);
         Map map = MapFactory.createMap(configuration, columnTypes);
         if (filter == null) {
-            this.cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
+            cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
         } else {
-            this.cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
+            cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
         }
     }
 
@@ -73,7 +73,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
 
     @Override
     protected void _close() {
-        this.cursor.close();
+        cursor.close();
         super._close();
     }
 }

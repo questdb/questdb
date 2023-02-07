@@ -95,7 +95,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.configuration = configuration;
         this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
-        this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
@@ -120,6 +119,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_PREPARE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_COMPLETE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
+        this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
         // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
         assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
         this.sqlExecutionContext = sqlExecutionContext;
@@ -193,7 +195,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (CairoError | CairoException e) {
-            internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state, context.getMetrics());
+            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e.getFlyweightMessage(), e, state, context.getMetrics());
             readyForNextRequest(context);
         } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
             // re-throw the exception
@@ -205,11 +207,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, HttpException e)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final JsonQueryProcessorState state = LV.get(context);
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        internalError(socket, e.getFlyweightMessage(), e, state, context.getMetrics());
+        logInternalError(e, state, metrics);
+        sendException(socket, 0, e.getFlyweightMessage(), state.getQuery(), configuration.getKeepAliveHeader());
         socket.shutdownWrite();
     }
 
@@ -296,7 +298,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             return;
         }
 
-        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
+        LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         while (true) {
@@ -331,26 +333,34 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
-                state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
+                state.info().$("query cancelled [q=`").utf8(state.getQuery())
+                        .$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
             } else {
                 if (ce.isCritical()) {
-                    state.critical().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
+                    state.critical().$("error [q=`").utf8(state.getQuery())
+                            .$("`, msg=`").$(ce.getFlyweightMessage())
+                            .$("`, errno=").$(ce.getErrno()).I$();
                 } else {
-                    state.error().$("error [q=`").utf8(state.getQuery()).$(", msg=`").$(ce.getFlyweightMessage()).$('`').$(", errno=`").$(ce.getErrno()).I$();
+                    state.error().$("error [q=`").utf8(state.getQuery())
+                            .$("`, msg=`").$(ce.getFlyweightMessage())
+                            .$("`, errno=").$(ce.getErrno()).I$();
                 }
             }
         } else if (e instanceof HttpException) {
-            state.error().$("internal HTTP server error [q=`").utf8(state.getQuery()).$("`, reason=`").$(((HttpException) e).getFlyweightMessage()).$("`]").$();
+            state.error().$("internal HTTP server error [q=`").utf8(state.getQuery())
+                    .$("`, reason=`").$(((HttpException) e).getFlyweightMessage()).I$();
         } else {
-            state.critical().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
+            state.critical().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).I$();
             // This is a critical error, so we treat it as an unhandled one.
             metrics.health().incrementUnhandledErrors();
         }
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
-                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
+        LOG.info().$("all sent [fd=").$(context.getFd())
+                .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
+                .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
     private static void sendConfirmation(
@@ -360,7 +370,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader, 200);
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put('\n');
+        socket.put('{')
+                .putQuoted("ddl").put(':').putQuoted("OK")
+                .put('}');
         socket.sendChunk(true);
         readyForNextRequest(context);
     }
@@ -373,7 +385,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader, 200);
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put(',').putQuoted("updated").put(':').put(updateRecords).put('}').put('\n');
+        socket.put('{')
+                .putQuoted("ddl").put(':').putQuoted("OK").put(',')
+                .putQuoted("updated").put(':').put(updateRecords)
+                .put('}');
         socket.sendChunk(true);
         readyForNextRequest(context);
     }
@@ -576,12 +591,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void internalError(
             HttpChunkedResponseSocket socket,
+            long bytesSent,
             CharSequence message,
             Throwable e,
             JsonQueryProcessorState state,
             Metrics metrics
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         logInternalError(e, state, metrics);
+        if (bytesSent > 0) {
+            // We already sent a partial response to the client.
+            // Give up and close the connection.
+            throw ServerDisconnectException.INSTANCE;
+        }
         sendException(socket, 0, message, state.getQuery(), configuration.getKeepAliveHeader());
     }
 

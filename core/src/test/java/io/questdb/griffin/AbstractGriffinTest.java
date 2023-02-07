@@ -281,6 +281,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         forEachNode(QuestDBNode::setUpGriffin);
+        sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
     }
 
     @Override
@@ -319,7 +320,8 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                     checkSameStr,
                     expectSize,
                     sizeCanBeVariable,
-                    null);
+                    null
+            );
         });
     }
 
@@ -617,7 +619,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             }
 
             final long rowsCount = cursor.size();
-            Assert.assertEquals(rowsCount, expected.length);
+            if (expectSize) {
+                Assert.assertEquals(rowsCount, expected.length);
+            }
 
             RecordMetadata metadata = factory.getMetadata();
 

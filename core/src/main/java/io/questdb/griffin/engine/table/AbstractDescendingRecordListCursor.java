@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -35,8 +36,10 @@ import org.jetbrains.annotations.NotNull;
 abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecordCursor {
 
     protected final DirectLongList rows;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean isOpen;
     private long index;
+    private boolean isTreeMapBuilt;
 
     public AbstractDescendingRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
         super(columnIndexes);
@@ -52,6 +55,11 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
 
     @Override
     public boolean hasNext() {
+        if (!isTreeMapBuilt) {
+            buildTreeMap();
+            index = rows.size() - 1;
+            isTreeMapBuilt = true;
+        }
         if (index > -1) {
             long row = rows.get(index--);
             recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
@@ -65,6 +73,17 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
+        rows.clear();
+        isTreeMapBuilt = false;
+        isOpen = true;
+    }
+
+    @Override
     public long size() {
         return rows.size();
     }
@@ -74,16 +93,5 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
         index = rows.size() - 1;
     }
 
-    abstract protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException;
-
-    @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        rows.clear();
-        buildTreeMap(executionContext);
-        this.isOpen = true;
-        index = rows.size() - 1;
-    }
+    abstract protected void buildTreeMap();
 }

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     static final int SCAN_DOWN = 1;
@@ -94,6 +95,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return this;
     }
 
+    @TestOnly
     @Override
     public boolean reload() {
         if (reader != null && reader.reload()) {
@@ -135,6 +137,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         }
     }
 
+    /**
+     * Best effort size calculation.
+     */
     private long computeSize() {
         int intervalsLo = this.intervalsLo;
         int intervalsHi = this.intervalsHi;
@@ -146,13 +151,19 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
-            long rowCount = reader.openPartition(partitionLo);
+            long rowCount;
+            try {
+                rowCount = reader.openPartition(partitionLo);
+            } catch (DataUnavailableException e) {
+                // The data is in cold storage, close the event and give up on size calculation.
+                Misc.free(e.getEvent());
+                return -1;
+            }
             if (rowCount > 0) {
 
                 final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
-
 
                 final long partitionTimestampLo = column.getLong(0);
                 // interval is wholly above partition, skip interval
@@ -192,7 +203,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 }
 
                 if (lo < hi) {
-
                     size += (hi - lo);
 
                     // we do have whole partition of fragment?

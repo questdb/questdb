@@ -313,8 +313,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         for (; ; ) {
             int rc = lineChannel.receive(ptr + n, capacity - n);
             if (rc < 0) {
+                int errno = lineChannel.errno();
                 close();
-                throw new LineSenderException("disconnected during authentication").errno(lineChannel.errno());
+                throw new LineSenderException("disconnected during authentication").errno(errno);
             }
             int eol = findEOL(ptr + n, rc);
             if (eol != -1) {
