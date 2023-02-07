@@ -864,4 +864,9 @@ class LineTcpMeasurementScheduler implements Closeable {
     void setListener(LineTcpReceiver.SchedulerListener listener) {
         this.listener = listener;
     }
+
+    @TestOnly
+    LineTcpReceiver.SchedulerListener getListener() {
+        return this.listener;
+    }
 }

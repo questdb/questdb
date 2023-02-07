@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.TestOnly;
 
 class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -58,6 +59,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
     private long nextCommitTime;
     private final long maintenanceInterval;
     private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
+    private LineTcpReceiver.SchedulerListener listener;
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
@@ -85,6 +87,10 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             tud.releaseWriter(true);
             tud.close();
+            if (listener != null) {
+                // table going idle
+                listener.onEvent(tud.getTableToken(), 1);
+            }
             tableUpdateDetailsUtf8.remove(tableNameUtf8);
         }
     }
@@ -306,6 +312,11 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         parser.of(recvBufStart);
         goodMeasurement = true;
         recvBufStartOfMeasurement = recvBufStart;
+    }
+
+    @TestOnly
+    void setListener(LineTcpReceiver.SchedulerListener listener) {
+        this.listener = listener;
     }
 
     enum IOContextResult {

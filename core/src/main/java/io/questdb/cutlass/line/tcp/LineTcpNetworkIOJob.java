@@ -156,6 +156,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     private boolean handleIO(LineTcpConnectionContext context) {
         if (!context.invalid()) {
+            context.setListener(scheduler.getListener()); //todo: find better place
             switch (context.handleIO(this)) {
                 case NEEDS_READ:
                     context.getDispatcher().registerChannel(context, IOOperation.READ);

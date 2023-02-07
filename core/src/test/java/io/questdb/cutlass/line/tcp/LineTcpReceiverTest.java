@@ -321,7 +321,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    @Ignore
     public void testDropTable() throws Exception {
         Assume.assumeTrue(walEnabled);
         configOverrideMaxUncommittedRows(2);
@@ -647,7 +646,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    @Ignore
     public void testQueueBufferOverflowDoesNotCrashVM() throws Exception {
         msgBufferSize = 64 * 1024;
         runInContext((receiver) -> {
