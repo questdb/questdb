@@ -85,7 +85,6 @@
                 <version>3.8.1</version>
                 <configuration>
                     <compilerArgs>
-                        <arg>${compilerArg0}</arg>
                         <arg>${compilerArg1}</arg>
                         <arg>${compilerArg2}</arg>
                     </compilerArgs>
@@ -227,7 +226,6 @@
                         </executions>
                         <configuration>
                             <additionalJOptions>
-                                <additionalJOption>${compilerArg0}</additionalJOption>
                                 <additionalJOption>${compilerArg1}</additionalJOption>
                                 <additionalJOption>${compilerArg2}</additionalJOption>
                             </additionalJOptions>
@@ -257,7 +255,6 @@
                         </executions>
                         <configuration>
                             <additionalJOptions>
-                                <additionalJOption>${compilerArg0}</additionalJOption>
                                 <additionalJOption>${compilerArg1}</additionalJOption>
                                 <additionalJOption>${compilerArg2}</additionalJOption>
                             </additionalJOptions>
