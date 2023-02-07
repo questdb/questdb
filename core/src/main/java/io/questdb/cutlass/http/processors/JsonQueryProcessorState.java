@@ -60,6 +60,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = 7;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
+    private int queryTimestampIndex;
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
@@ -123,6 +124,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnSkewList.clear();
         columnTypesAndFlags.clear();
         columnNames.clear();
+        queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
         record = null;
         if (recordCursorFactory != null) {
@@ -635,6 +637,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             logTimings();
             socket.bookmark();
             socket.put(']');
+            socket.put(',').putQuoted("timestamp").put(':').put(queryTimestampIndex);
             socket.put(',').putQuoted("count").put(':').put(count);
             if (timings) {
                 socket.put(',').putQuoted("timings").put(':')
@@ -813,6 +816,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();
+        this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectByteCharSequence columnNames = header.getUrlParam("cols");
         int columnCount;
