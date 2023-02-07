@@ -269,6 +269,26 @@ public class RecordComparatorCompiler {
                     getterNameA = "getFloat";
                     comparatorClass = Numbers.class;
                     break;
+                case ColumnType.GEOBYTE:
+                    fieldType = "B";
+                    getterNameA = "getGeoByte";
+                    comparatorClass = Byte.class;
+                    break;
+                case ColumnType.GEOSHORT:
+                    fieldType = "S";
+                    getterNameA = "getGeoShort";
+                    comparatorClass = Short.class;
+                    break;
+                case ColumnType.GEOINT:
+                    fieldType = "I";
+                    getterNameA = "getGeoInt";
+                    comparatorClass = Integer.class;
+                    break;
+                case ColumnType.GEOLONG:
+                    fieldType = "J";
+                    getterNameA = "getGeoLong";
+                    comparatorClass = Long.class;
+                    break;
                 case ColumnType.INT:
                     fieldType = "I";
                     getterNameA = "getInt";

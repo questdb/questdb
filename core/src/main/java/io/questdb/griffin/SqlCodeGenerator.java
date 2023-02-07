@@ -210,11 +210,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
         final ObjList<QueryColumn> columns = model.getColumns();
+        CharSequence symbolToken = null;
+        int timestampIdx = metadata.getTimestampIndex();
+
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
             final ExpressionNode node = column.getAst();
 
-            if (node.type != ExpressionNode.LITERAL) {
+            if (node.type == LITERAL) {
+                int idx = metadata.getColumnIndex(node.token);
+                if (idx < 0) {
+                    return false;
+                }
+
+                int columnType = metadata.getColumnType(idx);
+                if (columnType == ColumnType.TIMESTAMP) {
+                    if (idx != timestampIdx) {
+                        return false;
+                    }
+                } else if (columnType == ColumnType.SYMBOL) {
+                    if (symbolToken == null) {
+                        symbolToken = node.token;
+                    } else if (!Chars.equalsIgnoreCase(symbolToken, node.token)) {
+                        return false; //more than one key symbol column
+                    }
+                } else {
+                    return false;
+                }
+            } else {
                 ExpressionNode columnAst = column.getAst();
                 CharSequence token = columnAst.token;
                 if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastKeyword(token)) {
@@ -2483,26 +2506,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     timestampIndex
             );
 
-
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
             boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
             if (allGroupsFirstLast) {
                 SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
                 if (symbolFilter != null) {
-                    return new SampleByFirstLastRecordCursorFactory(
-                            factory,
-                            timestampSampler,
-                            groupByMetadata,
-                            model.getColumns(),
-                            metadata,
-                            timezoneNameFunc,
-                            timezoneNameFuncPos,
-                            offsetFunc,
-                            offsetFuncPos,
-                            timestampIndex,
-                            symbolFilter,
-                            configuration.getSampleByIndexSearchPageSize()
-                    );
+                    int symbolColIndex = getSampleBySymbolKeyIndex(model, metadata);
+                    if (symbolColIndex == -1 || symbolFilter.getColumnIndex() == symbolColIndex) {
+                        return new SampleByFirstLastRecordCursorFactory(
+                                factory,
+                                timestampSampler,
+                                groupByMetadata,
+                                model.getColumns(),
+                                metadata,
+                                timezoneNameFunc,
+                                timezoneNameFuncPos,
+                                offsetFunc,
+                                offsetFuncPos,
+                                timestampIndex,
+                                symbolFilter,
+                                configuration.getSampleByIndexSearchPageSize()
+                        );
+                    }
                 }
             }
 
@@ -4244,6 +4269,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @NotNull
     private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
+    }
+
+    private int getSampleBySymbolKeyIndex(QueryModel model, RecordMetadata metadata) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type == LITERAL) {
+                int idx = metadata.getColumnIndex(node.token);
+                int columnType = metadata.getColumnType(idx);
+
+                if (columnType == ColumnType.SYMBOL) {
+                    return idx;
+                }
+            }
+        }
+
+        return -1;
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {

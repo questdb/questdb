@@ -3025,15 +3025,15 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByFirstLast() throws Exception {
-        assertPlan("create table a ( l long, s string, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;",
-                "select s, first(i), last(sym), first(l) " +
+        assertPlan("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;",
+                "select sym, first(i), last(s), first(l) " +
                         "from a " +
                         "where sym in ('S') " +
                         "and   ts > 0::timestamp and ts < 100::timestamp " +
                         "sample by 1h",
                 "SampleByFirstLast\n" +
-                        "  keys: [s]\n" +
-                        "  values: [first(i), last(sym), first(l)]\n" +
+                        "  keys: [sym]\n" +
+                        "  values: [first(i), last(s), first(l)]\n" +
                         "    DeferredSingleSymbolFilterDataFrame\n" +
                         "        Index forward scan on: sym deferred: true\n" +
                         "          filter: sym='S'\n" +
