@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -43,16 +44,15 @@ public class IODispatcherTimeoutsTest {
     private static final String HOST = "127.0.0.1";
     private static final int PORT = 9001;
     final static IODispatcherConfiguration dispatcherConf = new DefaultIODispatcherConfiguration();
-    final static WorkerPool workerPool = new WorkerPool(() -> 2);
+    static WorkerPool workerPool;
     final static IODispatcher<TestConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new MutableIOContextFactory<>(TestConnectionContext::new, 8));
     final static TestRequestProcessor processor = new TestRequestProcessor();
-    private static long requestedTimeoutMillis = -1L;
-    private static boolean adjustOnRead = false;
-    private static int readDelayJitter = 0;
-    private static int timeoutDelayJitter = 0;
+    private static long timeoutMillis = -1L;
+    private static boolean readjustOnRead = false;
     private static Rnd rnd = new Rnd();
     @BeforeClass
     public static void setUpStatic() {
+        workerPool = new WorkerPool(() -> 1);
         workerPool.assign(dispatcher);
         workerPool.assign((workerId, runStatus) -> dispatcher.processIOQueue(processor));
         workerPool.start();
@@ -60,12 +60,14 @@ public class IODispatcherTimeoutsTest {
 
     @AfterClass
     public static void tearDownStatic() {
+        workerPool.halt();
+        workerPool = null;
     }
 
     @Test
     public void testNoTicks() throws Exception {
-        requestedTimeoutMillis = 10;
-        adjustOnRead = false;
+        timeoutMillis = 10;
+        readjustOnRead = false;
         assertMemoryLeak(() -> {
            tick(100, 150);
         });
@@ -73,8 +75,8 @@ public class IODispatcherTimeoutsTest {
 
     @Test
     public void testRegularTicksAndTimeouts() throws Exception {
-        requestedTimeoutMillis = 10;
-        adjustOnRead = false;
+        timeoutMillis = 10;
+        readjustOnRead = false;
         assertMemoryLeak(() -> {
             tick(100, 20);
         });
@@ -82,10 +84,8 @@ public class IODispatcherTimeoutsTest {
 
     @Test
     public void testAdjustNextOnEveryRead() throws Exception {
-        requestedTimeoutMillis = 10;
-        adjustOnRead = true;
-        readDelayJitter = 5;
-        timeoutDelayJitter = 5;
+        timeoutMillis = 10;
+        readjustOnRead = true;
 
         assertMemoryLeak(() -> {
             tick(100, 20);
@@ -94,44 +94,23 @@ public class IODispatcherTimeoutsTest {
 
     @Test
     public void testSeveralParallelConnection() throws Exception {
-        requestedTimeoutMillis = 10;
-        adjustOnRead = false;
+        timeoutMillis = 10;
+        readjustOnRead = false;
         assertMemoryLeak(() -> {
             nParallelConnection(8, rnd);
         });
     }
 
-    @Test
-    public void testSeveralParallelConnectionWithJitter() throws Exception {
-        requestedTimeoutMillis = 10;
-        adjustOnRead = false;
-        readDelayJitter = 5;
-        timeoutDelayJitter = 5;
-        assertMemoryLeak(() -> {
-            nParallelConnection(8, rnd);
-        });
-    }
     @Test
     public void testSeveralParallelConnectionAdjust() throws Exception {
-        requestedTimeoutMillis = 10;
-        adjustOnRead = true;
+        timeoutMillis = 10;
+        readjustOnRead = true;
         Rnd rnd = new Rnd();
         assertMemoryLeak(() -> {
             nParallelConnection(22, rnd);
         });
     }
 
-    @Test
-    public void testSeveralParallelConnectionAdjustWithJitter() throws Exception {
-        requestedTimeoutMillis = 10;
-        adjustOnRead = true;
-        readDelayJitter = 5;
-        timeoutDelayJitter = 5;
-        Rnd rnd = new Rnd();
-        assertMemoryLeak(() -> {
-            nParallelConnection(22, rnd);
-        });
-    }
     private static void nParallelConnection(int N, Rnd rnd) throws InterruptedException {
         Thread[] threads = new Thread[N];
         for (int i = 0; i < threads.length; i++) {
@@ -196,14 +175,13 @@ public class IODispatcherTimeoutsTest {
 
     private static class TestConnectionContext extends AbstractMutableIOContext<TestConnectionContext> {
         private long nextMillis = 0;
-        private long lastTimeoutAt = 0;
-        private long lastReadAt = 0;
+        private long prevTimeoutMillis = 0;
+        private long prevReadMillis = 0;
 
         @Override
         public void clear() {
             nextMillis = 0;
-            lastReadAt = 0;
-            lastTimeoutAt = 0;
+            prevTimeoutMillis = 0;
             LOG.debug().$("context fd: ").$(fd).$(" cleared").$();
         }
 
@@ -218,11 +196,13 @@ public class IODispatcherTimeoutsTest {
 
                 int n = Net.recv(getFd(), buffer, TICK.length());
                 if (n > 0) {
-                    if (readDelayJitter > 0) {
-                        Os.sleep(rnd.nextInt(readDelayJitter));
+                    long now = Os.currentTimeMicros() / Timestamps.MILLI_MICROS;
+                    if (readjustOnRead) {
+                        // in real life isTimeout and onRead will be called from different threads.
+                        prevReadMillis = now;
+                        nextMillis = now + timeoutMillis;
                     }
-                    lastReadAt = Os.currentTimeMicros() / Timestamps.MILLI_MICROS;
-                    LOG.debug().$("tick ").$(lastReadAt).$();
+                    LOG.debug().$("read ").$(now).$();
                     getDispatcher().registerChannel(this, IOOperation.READ);
                 } else {
                     getDispatcher().disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);
@@ -239,24 +219,26 @@ public class IODispatcherTimeoutsTest {
         @Override
         public boolean isTimeout(long nowMillis) {
             if (nowMillis >= nextMillis) {
-                nextMillis = nowMillis + requestedTimeoutMillis;
+                nextMillis = nowMillis + timeoutMillis;
                 return true;
-            }
-            if (adjustOnRead) {
-                nextMillis = Math.max(lastTimeoutAt, lastReadAt) + requestedTimeoutMillis;
             }
             return false;
         }
 
         public void onTimeout() {
-            long now = Os.currentTimeMicros() / Timestamps.MILLI_MICROS;
-            long d = now - lastTimeoutAt;
-            Assert.assertTrue(lastTimeoutAt == 0 || d >= requestedTimeoutMillis || d <= 2 * requestedTimeoutMillis);
-            if (timeoutDelayJitter > 0) {
-                Os.sleep(rnd.nextInt(timeoutDelayJitter));
-            }
-            lastTimeoutAt = now;
+            long now = MillisecondClockImpl.INSTANCE.getTicks();
             LOG.debug().$("timeout: ").$(now).$();
+
+            long delta = now - prevTimeoutMillis;
+            if (readjustOnRead) {
+                // timeout should be always timeoutMillis away from the latest read event
+                Assert.assertTrue(prevReadMillis == 0 || now - prevReadMillis >= timeoutMillis);
+            } else {
+                // not much we can guarantee here. delta can be less than timeoutMillis due to queue processing/delay,
+                // but we should not lose timeouts anyway (delta <= 2 * timeoutMillis)
+                Assert.assertTrue(prevTimeoutMillis == 0 || delta <= 2 * timeoutMillis);
+            }
+            prevTimeoutMillis = now;
         }
     }
 
@@ -264,9 +246,7 @@ public class IODispatcherTimeoutsTest {
         @Override
         public boolean onRequest(int operation, TestConnectionContext context) {
             boolean io = false;
-            if (IOOperation.isTimeout(operation)) {
-                context.onTimeout();
-            }
+
             if (IOOperation.isRead(operation)) {
                 context.onRead();
                 io = true;
@@ -277,7 +257,11 @@ public class IODispatcherTimeoutsTest {
             }
 
             if (!io) {
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
+                // trigger if idle only
+                if (IOOperation.isTimeout(operation)) {
+                    context.onTimeout();
+                    context.getDispatcher().registerChannel(context, IOOperation.READ);
+                }
             }
             return true;
         }
