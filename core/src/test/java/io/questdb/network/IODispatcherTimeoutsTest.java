@@ -30,14 +30,17 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.network.IODispatcher.*;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
+@RunWith(Parameterized.class)
 public class IODispatcherTimeoutsTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTimeoutsTest.class);
     private static final String TICK = "tick";
@@ -50,16 +53,26 @@ public class IODispatcherTimeoutsTest {
     private static long timeoutMillis = -1L;
     private static boolean readjustOnRead = false;
     private static Rnd rnd = new Rnd();
-    @BeforeClass
-    public static void setUpStatic() {
-        workerPool = new WorkerPool(() -> 1);
+    private final int workerCount;
+    public IODispatcherTimeoutsTest(int workerCount) {
+        this.workerCount = workerCount;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{{1}, {4}});
+    }
+
+    @Before
+    public void setUp() {
+        workerPool = new WorkerPool(() -> workerCount);
         workerPool.assign(dispatcher);
         workerPool.assign((workerId, runStatus) -> dispatcher.processIOQueue(processor));
         workerPool.start();
     }
 
-    @AfterClass
-    public static void tearDownStatic() {
+    @After
+    public void tearDown() {
         workerPool.halt();
         workerPool = null;
     }
@@ -92,6 +105,15 @@ public class IODispatcherTimeoutsTest {
         });
     }
 
+    @Test
+    public void testAdjustNextOnEveryRead2() throws Exception {
+        timeoutMillis = 50;
+        readjustOnRead = true;
+
+        assertMemoryLeak(() -> {
+            tick(100, 5);
+        });
+    }
     @Test
     public void testSeveralParallelConnection() throws Exception {
         timeoutMillis = 10;
@@ -177,6 +199,8 @@ public class IODispatcherTimeoutsTest {
         private long nextMillis = 0;
         private long prevTimeoutMillis = 0;
         private long prevReadMillis = 0;
+        private long readProcessing = Long.MIN_VALUE;
+        private long timeoutProcessing = Long.MIN_VALUE;
 
         @Override
         public void clear() {
@@ -191,9 +215,9 @@ public class IODispatcherTimeoutsTest {
         }
 
         public void onRead() {
+            readProcessing = Long.MAX_VALUE;
             final long buffer = Unsafe.malloc(TICK.length(), MemoryTag.NATIVE_DEFAULT);
             try {
-
                 int n = Net.recv(getFd(), buffer, TICK.length());
                 if (n > 0) {
                     long now = Os.currentTimeMicros() / Timestamps.MILLI_MICROS;
@@ -209,6 +233,7 @@ public class IODispatcherTimeoutsTest {
                 }
             } finally {
                 Unsafe.free(buffer, TICK.length(), MemoryTag.NATIVE_DEFAULT);
+                readProcessing = Long.MIN_VALUE;
             }
         }
 
@@ -218,6 +243,9 @@ public class IODispatcherTimeoutsTest {
 
         @Override
         public boolean isTimeout(long nowMillis) {
+            // The dispatcher should not attempt to check the timeout while processing read or timeout event
+            Assert.assertTrue(nowMillis > readProcessing);
+            Assert.assertTrue(nowMillis > timeoutProcessing);
             if (nowMillis >= nextMillis) {
                 nextMillis = nowMillis + timeoutMillis;
                 return true;
@@ -226,6 +254,7 @@ public class IODispatcherTimeoutsTest {
         }
 
         public void onTimeout() {
+            timeoutProcessing = Long.MAX_VALUE;
             long now = MillisecondClockImpl.INSTANCE.getTicks();
             LOG.debug().$("timeout: ").$(now).$();
 
@@ -239,6 +268,7 @@ public class IODispatcherTimeoutsTest {
                 Assert.assertTrue(prevTimeoutMillis == 0 || delta <= 2 * timeoutMillis);
             }
             prevTimeoutMillis = now;
+            timeoutProcessing = Long.MIN_VALUE;
         }
     }
 
