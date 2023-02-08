@@ -51,6 +51,8 @@ public class IODispatcherTimeoutsTest {
     final static IODispatcher<TestConnectionContext> dispatcher = IODispatchers.create(dispatcherConf, new MutableIOContextFactory<>(TestConnectionContext::new, 8));
     final static TestRequestProcessor processor = new TestRequestProcessor();
     private static long timeoutMillis = -1L;
+    private static long timeoutCount = 0L;
+    private static long readCount = 0L;
     private static boolean readjustOnRead = false;
     private static Rnd rnd = new Rnd();
     private final int workerCount;
@@ -75,6 +77,8 @@ public class IODispatcherTimeoutsTest {
     public void tearDown() {
         workerPool.halt();
         workerPool = null;
+        timeoutCount = 0;
+        readCount = 0;
     }
 
     @Test
@@ -82,7 +86,10 @@ public class IODispatcherTimeoutsTest {
         timeoutMillis = 10;
         readjustOnRead = false;
         assertMemoryLeak(() -> {
-           tick(100, 150);
+            int N = 1;
+            tick(N, 150);
+            Assert.assertTrue(timeoutCount >= 2 * 150/timeoutMillis);
+            Assert.assertEquals(N, readCount);
         });
     }
 
@@ -90,18 +97,23 @@ public class IODispatcherTimeoutsTest {
     public void testRegularTicksAndTimeouts() throws Exception {
         timeoutMillis = 10;
         readjustOnRead = false;
+        int N = 10;
         assertMemoryLeak(() -> {
-            tick(100, 20);
+            tick(N, 20);
+            Assert.assertTrue(timeoutCount >= ((N + 1)*20) / timeoutMillis);
+            Assert.assertEquals(N, readCount);
         });
     }
 
     @Test
     public void testAdjustNextOnEveryRead() throws Exception {
-        timeoutMillis = 10;
+        timeoutMillis = 20;
         readjustOnRead = true;
 
         assertMemoryLeak(() -> {
-            tick(100, 20);
+            tick(10, 20);
+            Assert.assertEquals(10, readCount);
+            Assert.assertTrue(timeoutCount > 10);
         });
     }
 
@@ -111,7 +123,9 @@ public class IODispatcherTimeoutsTest {
         readjustOnRead = true;
 
         assertMemoryLeak(() -> {
-            tick(100, 5);
+            tick(10, 5);
+            Assert.assertEquals(10, readCount);
+            Assert.assertEquals(1, timeoutCount); // unlucky one, always delayed
         });
     }
     @Test
@@ -139,9 +153,8 @@ public class IODispatcherTimeoutsTest {
             threads[i] = new Thread() {
                 @Override
                 public void run() {
-                    int durationJitter = rnd.nextInt(25);
                     int delayJitter = rnd.nextInt(5);
-                    tick(100 + durationJitter, 20 + delayJitter);
+                    tick(10, 20 + delayJitter);
                 }
             };
         }
@@ -157,7 +170,7 @@ public class IODispatcherTimeoutsTest {
         Os.sleep(100);
     }
 
-    private static void tick(long durationMillis, long delayMillis) {
+    private static void tick(long N, long delayMillis) {
         long bufSize = TICK.length();
         long inf = Net.getAddrInfo(HOST, PORT);
         int fd = Net.socketTcp(true);
@@ -172,10 +185,8 @@ public class IODispatcherTimeoutsTest {
                 long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
                 Chars.asciiStrCpy(TICK, buf);
                 try {
-                    long durationUs = durationMillis * Timestamps.MILLI_MICROS;
-                    long startUs = Os.currentTimeMicros();
                     Os.sleep(delayMillis);
-                    while (Os.currentTimeMicros() - durationUs < startUs) {
+                    for (int i = 0; i < N; i++) {
                         int n = Net.send(fd, buf, TICK.length());
                         if (n < 0) {
                             LOG.error().$("connection lost").$();
@@ -220,6 +231,7 @@ public class IODispatcherTimeoutsTest {
             try {
                 int n = Net.recv(getFd(), buffer, TICK.length());
                 if (n > 0) {
+                    readCount+=1;
                     long now = Os.currentTimeMicros() / Timestamps.MILLI_MICROS;
                     if (readjustOnRead) {
                         // in real life isTimeout and onRead will be called from different threads.
@@ -254,6 +266,7 @@ public class IODispatcherTimeoutsTest {
         }
 
         public void onTimeout() {
+            timeoutCount+=1;
             timeoutProcessing = Long.MAX_VALUE;
             long now = MillisecondClockImpl.INSTANCE.getTicks();
             LOG.debug().$("timeout: ").$(now).$();
