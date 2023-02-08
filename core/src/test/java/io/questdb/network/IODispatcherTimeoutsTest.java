@@ -75,7 +75,6 @@ public class IODispatcherTimeoutsTest {
 
     @After
     public void tearDown() {
-        workerPool.halt();
         workerPool = null;
         timeoutCount = 0;
         readCount = 0;
@@ -133,7 +132,7 @@ public class IODispatcherTimeoutsTest {
         timeoutMillis = 10;
         readjustOnRead = false;
         assertMemoryLeak(() -> {
-            nParallelConnection(8, rnd);
+            nParallelConnection(8, 10, 50);
         });
     }
 
@@ -143,34 +142,42 @@ public class IODispatcherTimeoutsTest {
         readjustOnRead = true;
         Rnd rnd = new Rnd();
         assertMemoryLeak(() -> {
-            nParallelConnection(22, rnd);
+            nParallelConnection(22, 10, 20);
         });
     }
 
-    private static void nParallelConnection(int N, Rnd rnd) throws InterruptedException {
+    private static void nParallelConnection(int N, int pingCount, long pingDelay) throws InterruptedException {
         Thread[] threads = new Thread[N];
         for (int i = 0; i < threads.length; i++) {
             threads[i] = new Thread() {
                 @Override
                 public void run() {
                     int delayJitter = rnd.nextInt(5);
-                    tick(10, 20 + delayJitter);
+                    long delay = pingDelay + delayJitter;
+                    tickInner(pingCount, delay);
+                    Os.sleep(delay);
                 }
             };
         }
 
         for (int i = 0; i < threads.length; i++) {
-            int startJitter = rnd.nextInt(100);
+            int startJitter = rnd.nextInt(10);
             Os.sleep(startJitter);
             threads[i].start();
         }
         for (int i = 0; i < threads.length; i++) {
            threads[i].join();
         }
-        Os.sleep(100);
+        workerPool.halt();
     }
 
     private static void tick(long N, long delayMillis) {
+       tickInner(N, delayMillis);
+       Os.sleep(delayMillis);
+       workerPool.halt();
+    }
+
+    private static void tickInner(long N, long delayMillis) {
         long bufSize = TICK.length();
         long inf = Net.getAddrInfo(HOST, PORT);
         int fd = Net.socketTcp(true);
@@ -202,7 +209,6 @@ public class IODispatcherTimeoutsTest {
         } finally {
             Net.freeAddrInfo(inf);
             Net.close(fd);
-            Os.sleep(100); // wait for the scheduler to close the contexts
         }
     }
 
