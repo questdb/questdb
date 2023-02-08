@@ -144,10 +144,8 @@ public class CairoEngine implements Closeable, WriterSource {
         if (convertedTables != null) {
             for (int i = 0, n = convertedTables.size(); i < n; i++) {
                 final TableToken token = convertedTables.get(i);
-                if (!token.isWal()) {
-                    try (TableWriter writer = getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "tableTypeConversion")) {
-                        writer.commitSeqTxn(0);
-                    }
+                try (TableWriter writer = getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "tableTypeConversion")) {
+                    writer.commitSeqTxn(0);
                 }
             }
         }

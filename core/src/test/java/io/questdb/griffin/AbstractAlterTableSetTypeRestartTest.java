@@ -28,7 +28,9 @@ import io.questdb.AbstractBootstrapTest;
 import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
@@ -79,6 +81,18 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
                     "count\n" +
                             count + "\n"
             );
+        }
+    }
+
+    static void setSeqTxn(CairoEngine engine, TableToken token, long seqTxn) {
+        try (final TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "test")) {
+            writer.commitSeqTxn(seqTxn);
+        }
+    }
+
+    static void assertSeqTxn(CairoEngine engine, TableToken token, long expectedSeqTxn) {
+        try (final TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, token)) {
+            assertEquals(expectedSeqTxn, reader.getTxFile().getSeqTxn());
         }
     }
 
