@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.log.LogFactory;
 
 public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
 
@@ -113,5 +114,9 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 throw ex;
             }
         }
+    }
+
+    static {
+        LOG = LogFactory.getLog(WalWriterPool.class);
     }
 }

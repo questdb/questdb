@@ -815,6 +815,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                     TableUpdateDetails removed = netIoJob.removeTableUpdateDetails(measurementName);
                     assert tud == removed;
                     removed.releaseWriter(true);
+                    if (listener != null) {
+                        listener.onEvent(tud.getTableToken(), 1);
+                    }
                     removed.close();
                 }
                 tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser);

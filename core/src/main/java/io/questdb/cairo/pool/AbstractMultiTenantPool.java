@@ -42,12 +42,12 @@ import java.util.Map;
 public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
-    private static final Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
     private static final int NEXT_OPEN = 0;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long UNLOCKED = -1L;
+    static Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
@@ -313,7 +313,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                             casFailures++;
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodbye();
-                                LOG.info().$("shutting down. '").utf8(r.getTableToken().getDirName()).$("' is left behind").$();
+                                Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                                // This code branch should be in tests only.
+                                // Release the item, to not block the pool, but throw an exception to fail the test
+                                throw CairoException.nonCritical().put("shutting down. '").put(r.getTableToken().getDirName()).put("' is left behind");
                             }
                         }
                     }

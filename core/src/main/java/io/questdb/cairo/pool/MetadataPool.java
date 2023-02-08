@@ -27,6 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.log.LogFactory;
 
 public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataTenant> {
     private final CairoEngine engine;
@@ -153,5 +154,9 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         public void refresh() {
             reload();
         }
+    }
+
+    static {
+        LOG = LogFactory.getLog(MetadataPool.class);
     }
 }
