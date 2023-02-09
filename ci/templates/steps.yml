@@ -8,7 +8,7 @@ steps:
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
     inputs:
-      key: '"questdb_main" | "$(Agent.OS)" | $(jdk) | "maven"'
+      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
       restoreKeys: |
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
