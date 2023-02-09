@@ -34,6 +34,7 @@ steps:
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
         -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
         -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
