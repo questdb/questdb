@@ -329,7 +329,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         if (leftBehind != null) {
             // This code branch should be in tests only.
             // Release the item, to not block the pool, but throw an exception to fail the test
-            throw CairoException.nonCritical().put(leftBehind.getDirName()).put("' is left behind on pool shutdown");
+            throw CairoException.nonCritical().put('\'').put(leftBehind.getDirName()).put("' is left behind on pool shutdown");
         }
 
         // when we are timing out entries the result is "true" if there was any work done
