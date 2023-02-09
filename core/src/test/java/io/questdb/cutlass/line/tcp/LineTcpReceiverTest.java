@@ -1704,13 +1704,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             }, "shutdown thread").start();
 
-            for (int i = 1000; i < 1000000; i++) {
+            int i = 1000;
+            // run until throws exception or will be killed by CI
+            while (true) {
                 sender.metric(tableName)
                         .field("id", i)
                         .$(i * 1_000_000L);
                 sender.flush();
+                i++;
+                Os.sleep(100);
             }
-            Assert.fail("Expected LineSenderException");
         } catch (LineSenderException lse) {
             //expected
         } finally {
