@@ -233,9 +233,9 @@ public class WalWriter implements TableWriterAPI {
         if (isOpen()) {
             try {
                 if (!distressed) {
-                    // This WAL writer will never be re-used, no rollback needed.
                     rollback();
                 }
+                // if distressed then WAL writer will never be re-used, no rollback needed.
             } finally {
                 doClose(true);
             }
