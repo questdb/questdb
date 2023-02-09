@@ -8,8 +8,9 @@ steps:
     condition: eq(variables['os'], 'Linux')
   - task: Cache@2
     inputs:
-      key: '"questdb_main" | "maven"'
+      key: '"questdb_main" | "$(Agent.OS)" | $(jdk) | "maven"'
       restoreKeys: |
+        "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
   - task: Maven@3
     displayName: "Compile with Maven"
@@ -17,7 +18,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile)  -Dhttp.keepAlive=false"
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile)  -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
     condition:
       or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
@@ -32,7 +33,8 @@ steps:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
-        -DfailIfNoTests=false"
+        -DfailIfNoTests=false
+        -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
@@ -49,7 +51,7 @@ steps:
       options:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
