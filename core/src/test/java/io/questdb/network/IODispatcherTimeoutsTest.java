@@ -189,9 +189,12 @@ public class IODispatcherTimeoutsTest {
             workerPool.freeOnExit(dispatcher);
             final TestRequestProcessor processor = new TestRequestProcessor();
             workerPool.assign((workerId, runStatus) -> dispatcher.processIOQueue(processor));
-            workerPool.start();
-            runnable.run();
-            workerPool.close();
+            try {
+                workerPool.start();
+                runnable.run();
+            } finally {
+                workerPool.close();
+            }
         });
     }
 
