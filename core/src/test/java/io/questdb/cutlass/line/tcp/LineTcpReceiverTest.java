@@ -336,7 +336,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                 Chars.contains(name, weather) &&
                                 --count == 0
                 ) {
-                    mayDrainWalQueue();
                     dropWeatherTable();
                 }
                 return super.openRW(name, opts);
@@ -349,8 +348,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
                     weather + ",location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
                     weather + ",location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
-                    weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
-            send(receiver, lineData, weather, WAIT_ILP_TABLE_RELEASE);
+                    weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n" +
+                    "done ok=t\n";
+            sendLingerWaitILPRelease(receiver, lineData, weather, "done");
 
             mayDrainWalQueue();
 
@@ -687,7 +687,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
                     meteorology + ",location=south temperature=80 1465839830101000200\n";
 
-            sendLinger(receiver, lineData, weather, meteorology);
+            sendLingerWaitILPRelease(receiver, lineData, weather, meteorology);
 
             mayDrainWalQueue();
 

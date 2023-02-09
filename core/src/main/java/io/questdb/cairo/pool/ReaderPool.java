@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.TestOnly;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
@@ -130,9 +129,5 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 throw ex;
             }
         }
-    }
-
-    static {
-        LOG = LogFactory.getLog(ReaderPool.class);
     }
 }
