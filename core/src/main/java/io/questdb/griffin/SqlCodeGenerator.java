@@ -219,10 +219,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (node.type == LITERAL) {
                 int idx = metadata.getColumnIndex(node.token);
-                if (idx < 0) {
-                    return false;
-                }
-
                 int columnType = metadata.getColumnType(idx);
                 if (columnType == ColumnType.TIMESTAMP) {
                     if (idx != timestampIdx) {
