@@ -96,6 +96,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -237,6 +239,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampAddr,
                 srcTimestampSize,
                 partitionMutates,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter
         );
@@ -291,6 +295,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcTimestampAddr = task.getSrcTimestampAddr();
         final long srcTimestampSize = task.getSrcTimestampSize();
         final boolean partitionMutates = task.isPartitionMutates();
+        final long newPartitionSize = task.getNewPartitionSize();
+        final long oldPartitionSize = task.getOldPartitionSize();
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
 
@@ -345,6 +351,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcTimestampAddr,
                 srcTimestampSize,
                 partitionMutates,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter
         );
@@ -459,6 +467,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -520,6 +530,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter
                 );
             }
@@ -763,6 +775,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
@@ -773,13 +787,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             } finally {
                 tableWriter.o3NotifyPartitionUpdate(
                         timestampMin,
-                        timestampMax,
                         partitionTimestamp,
-                        srcOooPartitionLo,
-                        srcOooPartitionHi,
+                        newPartitionSize,
+                        oldPartitionSize,
                         partitionMutates,
-                        srcOooMax,
-                        srcDataMax
+                        srcOooPartitionHi + 1 < srcOooMax
                 );
             }
         } finally {

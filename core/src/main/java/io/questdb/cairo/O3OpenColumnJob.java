@@ -72,6 +72,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int indexBlockCapacity,
             MemoryMA dstFixMem,
             MemoryMA dstVarMem,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long columnNameTxn
@@ -102,6 +104,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixMem,
                         dstVarMem,
                         dstLen,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter
                 );
                 break;
@@ -126,6 +130,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             0,
                             dstFixMem,
                             dstLen,
+                            newPartitionSize,
+                            oldPartitionSize,
                             tableWriter
                     );
                     break;
@@ -155,6 +161,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixMem,
                         dstLen,
                         tableWriter,
+                        newPartitionSize,
+                        oldPartitionSize,
                         indexWriter,
                         columnNameTxn
                 );
@@ -217,6 +225,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long colTopSinkAddr = task.getColTopSinkAddr();
         final int columnIndex = task.getColumnIndex();
         final long columnNameTxn = task.getColumnNameTxn();
+        final long newPartitionSize = task.getNewPartitionSize();
+        final long oldPartitionSize = task.getOldPartitionSize();
 
         subSeq.done(cursor);
 
@@ -259,6 +269,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 indexBlockCapacity,
                 activeFixFd,
                 activeVarFd,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter,
                 colTopSinkAddr,
@@ -306,6 +318,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int indexBlockCapacity,
             int activeFixFd,
             int activeVarFd,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -341,6 +355,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter,
                         colTopSinkAddr,
@@ -386,6 +402,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter,
                         colTopSinkAddr,
@@ -433,6 +451,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter,
                         colTopSinkAddr,
@@ -461,6 +481,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         partitionTimestamp,
                         srcDataMax,
                         indexBlockCapacity,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter,
                         columnNameTxn
@@ -495,6 +517,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             MemoryMA dstFixMem,
             long dstLen,
             TableWriter tableWriter,
+            long newPartitionSize,
+            long oldPartitionSize,
             BitmapIndexWriter indexWriter,
             long columnNameTxn
     ) {
@@ -601,6 +625,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcTimestampAddr,
                 srcTimestampSize,
                 false,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter
         );
@@ -626,6 +652,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -710,6 +738,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         null,
                         null,
                         dstLen,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter
                 );
                 break;
@@ -734,6 +764,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             srcTimestampSize,
                             null,
                             dstLen,
+                            newPartitionSize,
+                            oldPartitionSize,
                             tableWriter
                     );
                     break;
@@ -784,6 +816,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         null,
                         dstLen,
                         tableWriter,
+                        newPartitionSize,
+                        oldPartitionSize,
                         indexWriter,
                         columnNameTxn
                 );
@@ -809,6 +843,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long partitionTimestamp,
             long srcDataMax,
             int indexBlockCapacity,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long columnNameTxn
@@ -913,6 +949,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 false, // partition does not mutate above the append line
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter
         );
@@ -936,6 +974,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             MemoryMA dstFixMem,
             long dstLen,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter
     ) {
         int dstFixFd = 0;
@@ -1024,6 +1064,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcTimestampAddr,
                 srcTimestampSize,
                 false,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 null
         );
@@ -1051,6 +1093,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             MemoryMA dstFixMem,
             MemoryMA dstVarMem,
             long dstLen,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter
     ) {
         long dstFixAddr = 0;
@@ -1161,6 +1205,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcTimestampAddr,
                 srcTimestampSize,
                 false,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 null
         );
@@ -1225,6 +1271,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long suffixLo,
             long suffixHi,
             int indexBlockCapacity,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -1296,6 +1344,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) << shl;
                 prefixHi -= srcDataTop;
+            } else if (prefixType == O3_BLOCK_NONE) {
+                dstFixAppendOffset1 = 0;
             } else {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
             }
@@ -1400,6 +1450,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcTimestampFd,
                 srcTimestampAddr,
                 srcTimestampSize,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter
         );
@@ -1443,6 +1495,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -1490,6 +1544,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         -activeFixFd,
                         -activeVarFd,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         colTopSinkAddr,
                         columnNameTxn
@@ -1533,6 +1589,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         suffixLo,
                         suffixHi,
                         indexBlockCapacity,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter,
                         colTopSinkAddr,
@@ -1579,6 +1637,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -1676,6 +1736,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         srcDataFixFd,
                         srcDataVarFd,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         colTopSinkAddr,
                         columnNameTxn
@@ -1743,6 +1805,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         suffixLo,
                         suffixHi,
                         indexBlockCapacity,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter,
                         colTopSinkAddr,
@@ -1790,6 +1854,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             int srcDataFixFd,
             int srcDataVarFd,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             long colTopSinkAddr,
             long columnNameTxn
@@ -2096,6 +2162,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcTimestampFd,
                 srcTimestampAddr,
                 srcTimestampSize,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 null
         );
@@ -2150,6 +2218,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -2205,6 +2275,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     partitionMutates,
+                    newPartitionSize,
+                    oldPartitionSize,
                     tableWriter,
                     indexWriter
             );
@@ -2259,6 +2331,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     partitionMutates,
+                    newPartitionSize,
+                    oldPartitionSize,
                     tableWriter,
                     indexWriter
             );
@@ -2315,6 +2389,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -2372,6 +2448,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     partitionMutates,
+                    newPartitionSize,
+                    oldPartitionSize,
                     tableWriter,
                     indexWriter
             );
@@ -2426,6 +2504,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     partitionMutates,
+                    newPartitionSize,
+                    oldPartitionSize,
                     tableWriter,
                     indexWriter
             );
@@ -2482,6 +2562,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -2535,6 +2617,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcTimestampAddr,
                 srcTimestampSize,
                 partitionMutates,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter
         );
@@ -2592,6 +2676,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             int srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -2647,6 +2733,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter
                 );
@@ -2701,6 +2789,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter
                 );
@@ -2758,6 +2848,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter
                 );
@@ -2812,6 +2904,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter
                 );
@@ -2866,6 +2960,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter
                 );
@@ -2925,6 +3021,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter
                 );
@@ -2979,6 +3077,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         partitionMutates,
+                        newPartitionSize,
+                        oldPartitionSize,
                         tableWriter,
                         indexWriter
                 );

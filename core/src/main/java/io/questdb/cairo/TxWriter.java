@@ -548,7 +548,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    private void updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
+    public void updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
         if (partitionIndex > -1) {
             updatePartitionSizeByIndex(partitionIndex, partitionSize);
         } else {

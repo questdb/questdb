@@ -112,6 +112,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
 
+            final long newPartitionSize = srcOooHi - srcOooLo + 1;
             publishOpenColumnTasks(
                     txn,
                     columns,
@@ -144,6 +145,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     0,
                     timestampIndex,
                     sortedTimestampsAddr,
+                    newPartitionSize,
+                    newPartitionSize,
                     tableWriter,
                     columnCounter,
                     o3Basket,
@@ -163,6 +166,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int suffixType;
             long suffixLo;
             long suffixHi;
+            long newPartitionSize;
+            long oldPartitionSize;
             final int openColumnMode;
 
             try {
@@ -476,6 +481,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
                     }
                 }
+
+                final long partitionSize = prefixHi - prefixLo + 1
+                        + mergeDataHi - mergeDataLo + 1
+                        + mergeO3Hi - mergeO3Lo + 1
+                        + suffixHi - suffixLo + 1;
+
+                newPartitionSize = partitionSize;
+                oldPartitionSize = partitionSize;
+
+                if (prefixType == O3_BLOCK_DATA && prefixHi > 1000) {
+                    // large prefix copy, better to split the partition
+                    partitionTimestamp = o3TimestampLo;
+                    prefixType = O3_BLOCK_NONE;
+                    mergeType = O3_BLOCK_MERGE;
+                    newPartitionSize -= prefixHi + 1;
+                    oldPartitionSize = prefixHi + 1;
+                }
             } catch (Throwable e) {
                 LOG.error().$("process existing partition error [table=").utf8(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
@@ -524,6 +546,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampSize,
                     timestampIndex,
                     sortedTimestampsAddr,
+                    newPartitionSize,
+                    oldPartitionSize,
                     tableWriter,
                     columnCounter,
                     o3Basket,
@@ -654,6 +678,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int indexBlockCapacity,
             int activeFixFd,
             int activeVarFd,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -705,6 +731,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampSize,
                     activeFixFd,
                     activeVarFd,
+                    newPartitionSize,
+                    oldPartitionSize,
                     tableWriter,
                     indexWriter,
                     colTopSinkAddr,
@@ -751,6 +779,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexBlockCapacity,
                     activeFixFd,
                     activeVarFd,
+                    newPartitionSize,
+                    oldPartitionSize,
                     tableWriter,
                     indexWriter,
                     colTopSinkAddr,
@@ -800,6 +830,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampSize,
             int activeFixFd,
             int activeVarFd,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -846,6 +878,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexBlockCapacity,
                 activeFixFd,
                 activeVarFd,
+                newPartitionSize,
+                oldPartitionSize,
                 tableWriter,
                 indexWriter,
                 colTopSinkAddr,
@@ -886,6 +920,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampSize,
             int timestampIndex,
             long sortedTimestampsAddr,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
@@ -1020,6 +1056,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcTimestampSize,
                                 activeFixFd,
                                 activeVarFd,
+                                newPartitionSize,
+                                oldPartitionSize,
                                 tableWriter,
                                 indexWriter,
                                 colTopSinkAddr + (long) i * Long.BYTES,
@@ -1067,6 +1105,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexBlockCapacity,
                                 activeFixFd,
                                 activeVarFd,
+                                newPartitionSize,
+                                oldPartitionSize,
                                 tableWriter,
                                 indexWriter,
                                 colTopSinkAddr + (long) i * Long.BYTES,

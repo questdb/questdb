@@ -46,6 +46,8 @@ public class O3OpenColumnTask {
     private long mergeOOOHi;
     private long mergeOOOLo;
     private int mergeType;
+    private long newPartitionSize;
+    private long oldPartitionSize;
     private long oooTimestampLo;
     private int openColumnMode;
     private AtomicInteger partCounter;
@@ -133,6 +135,14 @@ public class O3OpenColumnTask {
 
     public int getMergeType() {
         return mergeType;
+    }
+
+    public long getNewPartitionSize() {
+        return newPartitionSize;
+    }
+
+    public long getOldPartitionSize() {
+        return oldPartitionSize;
     }
 
     public long getOooTimestampLo() {
@@ -286,6 +296,8 @@ public class O3OpenColumnTask {
             int indexBlockCapacity,
             int activeFixFd,
             int activeVarFd,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
@@ -335,5 +347,7 @@ public class O3OpenColumnTask {
         this.colTopSinkAddr = colTopSinkAddr;
         this.columnIndex = columnIndex;
         this.columnNameTxn = columnNameTxn;
+        this.newPartitionSize = newPartitionSize;
+        this.oldPartitionSize = oldPartitionSize;
     }
 }

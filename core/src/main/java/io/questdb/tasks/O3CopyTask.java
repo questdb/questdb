@@ -51,6 +51,8 @@ public class O3CopyTask extends AbstractLockable {
     private long dstVarSize;
     private int indexBlockCapacity;
     private BitmapIndexWriter indexWriter;
+    private long newPartitionSize;
+    private long oldPartitionSize;
     private AtomicInteger partCounter;
     private boolean partitionMutates;
     private long partitionTimestamp;
@@ -160,6 +162,14 @@ public class O3CopyTask extends AbstractLockable {
 
     public BitmapIndexWriter getIndexWriter() {
         return indexWriter;
+    }
+
+    public long getNewPartitionSize() {
+        return newPartitionSize;
+    }
+
+    public long getOldPartitionSize() {
+        return oldPartitionSize;
     }
 
     public AtomicInteger getPartCounter() {
@@ -331,6 +341,8 @@ public class O3CopyTask extends AbstractLockable {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
+            long newPartitionSize,
+            long oldPartitionSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -382,6 +394,8 @@ public class O3CopyTask extends AbstractLockable {
         this.srcTimestampAddr = srcTimestampAddr;
         this.srcTimestampSize = srcTimestampSize;
         this.partitionMutates = partitionMutates;
+        this.newPartitionSize = newPartitionSize;
+        this.oldPartitionSize = oldPartitionSize;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
     }
