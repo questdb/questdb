@@ -481,11 +481,11 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+    // TODO our test for insert data in table
+
     public void createTab() throws SqlException {
         compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
     }
-
-    // TODO our test for insert data in table
 
     @Test
     public void testQuestDBStateMachineAtEmptyTableState() throws Exception {
@@ -516,49 +516,7 @@ public class InsertTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testInsertEscapeString() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE EscapeInsert (field STRING);", sqlExecutionContext);
-            CompiledQuery cq = compiler.compile("INSERT INTO EscapeInsert(field) values('My name''s Tim. I love eating Lay''s.');", sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertOperation insert = cq.getInsertOperation();
-            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
 
-            String expected = "field\n" +
-                    "My name's Tim. I love eating Lay's.\n";
-
-            assertReaderCheckWal(expected, "EscapeInsert");
-        });
-    }
-
-    public void createTab() throws SqlException {
-        compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
-    }
-
-    @Test
-    public void testQuestDBStateMachineAtEmptyTableState() throws Exception {
-        assertMemoryLeak(() -> {
-                    createTab();
-                    assertSql("'tab'", "id\ttext\n");
-                }
-        );
-    }
-
-    @Test
-    public void testQuestDBStateMachineAtNonEmptyTableStateInsert() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createTab();
-                    executeInsert("insert into tab values (1, 'test')");
-                    assertSql("'tab'", "id\ttext\n" +
-                            "1\ttest\n");
-                }
-        );
-    }
 
     @Test
     public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
