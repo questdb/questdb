@@ -77,10 +77,14 @@ public class UpdateTest extends AbstractGriffinTest {
         testInsertAfterFailed(true);
     }
 
+    public void createTab() throws SqlException {
+        compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
+    }
+
     @Test
     public void testQuestDBStateMachineAtEmptyTableStateUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
+            createTab();
             executeUpdate("update tab set text = 'test2' where text = 'test'");
             assertSql("'tab'", "id\ttext\n");
         });
@@ -89,7 +93,7 @@ public class UpdateTest extends AbstractGriffinTest {
     @Test
     public void testQuestDBStateMachineAtNonEmptyTableStateUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
+            createTab();
             executeInsert("insert into tab values (1, 'test');");
             executeUpdate("update tab set text = 'test2' where text = 'test'");
             assertSql("'tab'", "id\ttext\n" +
