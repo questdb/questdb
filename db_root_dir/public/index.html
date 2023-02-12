@@ -1,0 +1,167 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="icon" href="/assets/favicon.ico">
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>QuestDB · Console</title>
+<script defer="defer" src="/qdb.js"></script><link href="/qdb.css" rel="stylesheet"></head>
+
+<body class="mini-navbar pace-done">
+    <div id="root"></div>
+
+    <div id="page-wrapper" class="gray-bg">
+        <div class="js-sql-panel" id="console"></div>
+        <div class="js-import-panel">
+          <div id="import-menu" class="row wrapper border-bottom white-bg page-heading">
+            <div class="section-title">
+              <i class="fa fa-upload"></i>
+              import
+            </div>
+            <div class="section-nav">
+              <button id="btnImportClearSelected" class="btn btn-white btn-sm btn-icon" disabled="disabled">
+                <i class="fa fa-times"></i>
+                Clear
+              </button>
+              <button id="btnRetry" class="btn btn-white btn-sm" title disabled="disabled">
+                <i class="fa fa-upload"></i>
+              </button>
+              <button id="btnImportCancel" class="btn btn-white btn-sm" title disabled="disabled">
+                <i class="fa fa-stop"></i>
+              </button>
+            </div>
+          </div>
+        
+          <div class="wrapper wrapper-content">
+            <div class="row">
+              <div class="col-lg-12">
+                <div id="import-top" class="ibox-content">
+                  <div id="dragTarget" class="drag-target drag-idle">
+                    <div>
+                      <i class="fa fa-copy fa-3x" style="margin: 0 15px 20px 0"></i>
+                      <i class="fa fa-folder-open fa-3x" style="margin: 0 15px 20px 0"></i>
+                      <i class="fa fa-file-alt fa-3x" style="margin: 0 15px 20px 0"></i>
+                    </div>
+                    <h2 style="font-weight: 500">
+                      Import CSV file
+                    </h2>
+                    <div style="font-size: 14pt; font-weight: 100">
+                      <a id="js-browse-files" href="#">click here to browse</a>
+                    </div>
+        
+                    <form action="#" style="height: 0;">
+                      <input id="js-browse-files-input" type="file" style="visibility: hidden; height: 0;" multiple="multiple">
+                    </form>
+                  </div>
+        
+                  <div class="import-note">
+                    Suitable for small batches of CSV file upload.
+                    For database migrations, we recommend the
+                    <a target="_blank" rel="noopener noreferrer" href="https://questdb.io/docs/guides/importing-data">
+                      COPY SQL command</a>.
+                  </div>
+        
+                  <div id="import-file-list">
+                    <div class="ud-header-row">
+                      <div class="ud-header ud-h0">Actions</div>
+                      <div class="ud-header ud-h1">File name</div>
+                      <div class="ud-header ud-h2">Query</div>
+                      <div class="ud-header ud-h3">Size</div>
+                      <div class="ud-header ud-h4">Total rows</div>
+                      <div class="ud-header ud-h5">Failed rows</div>
+                      <div class="ud-header ud-h6">Header</div>
+                      <div class="ud-header ud-h7">Status</div>
+                    </div>
+                    <div class="ud-canvas"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+        
+            <div id="import-splitter" class="splitter"></div>
+        
+            <div class="row" id="import-detail">
+              <div class="col-lg-12">
+                <div id="js-import-editor">
+                  <div class="ibox-content">
+                    <div class="row">
+                      <div class="col-lg-12">
+                        <div class="stats-switcher-viewport">
+                          <div class="stats-switcher">
+                            <div class="row vertical-align import-imported-table">
+                              <div class="col-xs-3">
+                                <i class="fa fa-table fa-2x"></i>
+                              </div>
+                              <div class="col-xs-9 text-right">
+                                <h3 class="font-bold">
+                                  <i class="fa fa-link"></i>
+                                  <span class="js-import-tab-name"></span>
+                                </h3>
+                              </div>
+                            </div>
+                            <div class="import-stats">
+                              <div class="import-imported-stats pull-right">
+                                <i class="fa fa-thumbs-o-down"></i>
+                                &nbsp;
+                                <span class="js-rejected-row-count"> 1023003 </span>
+                                rows
+                              </div>
+                              <div class="import-imported-stats">
+                                <i class="fa fa-thumbs-o-up"></i>
+                                &nbsp;
+                                <span class="js-imported-row-count"> 15000000 </span>
+                                rows
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <div class="col-lg-12">
+                          <div class="import-stats-chart">
+                            <div class="import-rejected pull-right"></div>
+                            <div class="import-imported"></div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <div class="col-lg-12">
+                          <div class="grid">
+                            <div class="ud-header-row">
+                              <div class="ud-header gh-1">
+                                <i class="fa fa-hashtag"></i>
+                              </div>
+                              <div class="ud-header gh-2">Column name</div>
+                              <div class="ud-header gh-3">Type</div>
+                              <div class="ud-header gh-4">Pattern</div>
+                              <div class="ud-header gh-5">Locale</div>
+                              <div class="ud-header gh-6">Errors</div>
+                            </div>
+                            <div class="ud-canvas"></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div id="js-import-error" class="panel panel-danger">
+                  <div class="panel-heading">Import failed</div>
+                  <div class="panel-body">
+                    <div class="col-sm-7 js-message">
+                      Server rejected file due to unsupported file format.
+                    </div>
+                  </div>
+                </div>
+                <div id="js-import-placeholder"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="js-settings-panel" id="settings"></div>
+    </div>
+
+    <div id="sideMenu"></div>
+    <div id="modal"></div>
+</body>
+</html>
