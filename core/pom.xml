@@ -90,8 +90,8 @@
                         <arg>${compilerArg2}</arg>
                     </compilerArgs>
                     <fork>true</fork>
-                    <source>${javac.compile.source}</source>
-                    <target>${javac.compile.target}</target>
+                    <source>18</source>
+                    <target>18</target>
                     <testExcludes>
                         <exclude>${excludePattern1}</exclude>
                     </testExcludes>

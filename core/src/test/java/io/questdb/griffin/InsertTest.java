@@ -485,11 +485,21 @@ public class InsertTest extends AbstractGriffinTest {
         compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
     }
 
+    // TODO our test for insert data in table
+
     @Test
     public void testQuestDBStateMachineAtEmptyTableState() throws Exception {
         assertMemoryLeak(() -> {
                     createTab();
                     assertSql("'tab'", "id\ttext\n");
+                    assertQuery(
+                            "count\n" +
+                                    "0\n",
+                            "select count() from tab",
+                            null,
+                            false,
+                            true
+                    );
                 }
         );
     }

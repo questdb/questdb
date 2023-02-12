@@ -127,29 +127,45 @@ public class TruncateTest extends AbstractGriffinTest {
         });
     }
 
+    // TODO our test for truncate table
+
+    public void createTab() throws SqlException {
+        compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
+    }
+
     @Test
     public void testQuestDBStateMachineAtEmptyTableStateTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                Assert.assertNull(compiler.compile("truncate table 'tab'", sqlExecutionContext));
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(15, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
-            }
+            createTab();
+            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table tab;", sqlExecutionContext).getType());
+            assertSql("'tab'", "id\ttext\n");
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from tab",
+                    null,
+                    false,
+                    true
+            );
         });
     }
+
 
     @Test
     public void testQuestDBStateMachineAtNonEmptyTableStateTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                Assert.assertNull(compiler.compile("truncate table 'tab'", sqlExecutionContext));
-                assertSql("'tab'", "id\ttext\n");
-            } catch (SqlException e) {
-                Assert.assertEquals(15, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
-            }
+            createTab();
+            executeInsert("insert into tab values (1, 'test')");
+            Assert.assertEquals(TRUNCATE, compiler.compile("truncate table tab;", sqlExecutionContext).getType());
+            assertSql("'tab'", "id\ttext\n");
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "select count() from tab",
+                    null,
+                    false,
+                    true
+            );
         });
     }
 
