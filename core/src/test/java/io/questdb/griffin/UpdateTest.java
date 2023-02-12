@@ -77,8 +77,6 @@ public class UpdateTest extends AbstractGriffinTest {
         testInsertAfterFailed(true);
     }
 
-    // TODO our test for update data
-
     public void createTab() throws SqlException {
         compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
     }
@@ -89,14 +87,6 @@ public class UpdateTest extends AbstractGriffinTest {
             createTab();
             executeUpdate("update tab set text = 'test2' where text = 'test'");
             assertSql("'tab'", "id\ttext\n");
-            assertQuery(
-                    "count\n" +
-                            "0\n",
-                    "select count() from tab",
-                    null,
-                    false,
-                    true
-            );
         });
     }
 
@@ -107,7 +97,7 @@ public class UpdateTest extends AbstractGriffinTest {
             executeInsert("insert into tab values (1, 'test');");
             executeUpdate("update tab set text = 'test2' where text = 'test'");
             assertSql("'tab'", "id\ttext\n" +
-                                            "1\ttest2\n");
+                    "1\ttest2\n");
         });
     }
 
