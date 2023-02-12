@@ -482,6 +482,27 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testQuestDBStateMachineAtEmptyTableState() throws Exception {
+        assertMemoryLeak(() -> {
+                    compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
+                    assertSql("'tab'", "id\ttext\n");
+                }
+        );
+    }
+
+    @Test
+    public void testQuestDBStateMachineAtNonEmptyTableStateInsert() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
+                    executeInsert("insert into tab values (1, 'test')");
+                    assertSql("'tab'", "id\ttext\n" +
+                                                    "1\ttest\n");
+                }
+        );
+    }
+
+    @Test
     public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t2021-01-03T00:00:00.000000Z\n";
