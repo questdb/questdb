@@ -58,6 +58,7 @@ public class AbstractO3Test {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static int dataAppendPageSize = -1;
+    protected static int partitionO3SplitThreashold = -1;
     protected static CharSequence root;
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -336,6 +337,11 @@ public class AbstractO3Test {
                     public int getO3ColumnMemorySize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
+
+                    @Override
+                    public long getPartitionO3SplitThreshold() {
+                        return partitionO3SplitThreashold;
+                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration, LOG);
@@ -385,6 +391,11 @@ public class AbstractO3Test {
                     @Override
                     public int getO3PurgeDiscoveryQueueCapacity() {
                         return 0;
+                    }
+
+                    @Override
+                    public long getPartitionO3SplitThreshold() {
+                        return partitionO3SplitThreashold;
                     }
                 };
                 TestUtils.execute(null, runnable, configuration, LOG);

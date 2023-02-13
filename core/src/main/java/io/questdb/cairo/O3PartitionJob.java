@@ -482,15 +482,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                final long partitionSize = prefixHi - prefixLo + 1
-                        + mergeDataHi - mergeDataLo + 1
-                        + mergeO3Hi - mergeO3Lo + 1
-                        + suffixHi - suffixLo + 1;
+                final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
 
                 newPartitionSize = partitionSize;
                 oldPartitionSize = partitionSize;
 
-                if (prefixType == O3_BLOCK_DATA && prefixHi > 1000) {
+                if (prefixType == O3_BLOCK_DATA && prefixHi > tableWriter.getPartitionO3SplitThreshold()) {
                     // large prefix copy, better to split the partition
                     partitionTimestamp = o3TimestampLo;
                     prefixType = O3_BLOCK_NONE;

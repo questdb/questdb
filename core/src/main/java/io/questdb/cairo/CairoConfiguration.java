@@ -235,6 +235,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    long getPartitionO3SplitThreshold();
+
     int getQueryCacheEventQueueCapacity();
 
     default Rnd getRandom() {

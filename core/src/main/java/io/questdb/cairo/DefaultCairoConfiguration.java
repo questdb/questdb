@@ -419,6 +419,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionO3SplitThreshold() {
+        return 1_000_000L;
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
     }

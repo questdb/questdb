@@ -413,6 +413,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionO3SplitThreshold() {
+        return conf.getPartitionO3SplitThreshold();
+    }
+
+    @Override
     public int getQueryCacheEventQueueCapacity() {
         return conf.getQueryCacheEventQueueCapacity();
     }

@@ -2009,6 +2009,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             iFile(pathToPartition.trimTo(pDirNameLen), columnName, columnNameTxn);
             dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
+            if (prefixType == O3_BLOCK_NONE) {
+                dstFixSize -= (prefixHi + 1) * Long.BYTES;
+            }
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             if (directIoFlag) {
                 ff.fadvise(dstFixFd, 0, dstFixSize, Files.POSIX_FADV_RANDOM);
@@ -2020,6 +2023,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstVarSize = srcDataVarSize - srcDataVarOffset
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
+
+            if (prefixType == O3_BLOCK_NONE) {
+                dstVarSize -= O3Utils.getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr);
+            }
+
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
             if (directIoFlag) {
                 ff.fadvise(dstVarFd, 0, dstVarSize, Files.POSIX_FADV_RANDOM);
@@ -2030,6 +2038,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) * Long.BYTES;
                 prefixHi -= srcDataTop;
+            } else if (prefixType == O3_BLOCK_NONE) {
+                dstFixAppendOffset1 = 0;
             } else {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1) * Long.BYTES;
             }

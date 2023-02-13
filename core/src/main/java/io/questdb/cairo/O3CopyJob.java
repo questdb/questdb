@@ -791,7 +791,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         newPartitionSize,
                         oldPartitionSize,
                         partitionMutates,
-                        srcOooPartitionHi + 1 < srcOooMax
+                        srcOooPartitionHi + 1 == srcOooMax
                 );
             }
         } finally {

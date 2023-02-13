@@ -1850,6 +1850,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getPartitionO3SplitThreshold() {
+            return 1_000_000L;
+        }
+
+        @Override
         public int getQueryCacheEventQueueCapacity() {
             return queryCacheEventQueueCapacity;
         }

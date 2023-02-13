@@ -83,7 +83,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
-    private static final int PARTITION_UPDATE_SINK_ENTRY_SIZE = 8;
+    private static final int PARTITION_UPDATE_SINK_ENTRY_SIZE = 5;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
     private static final int ROW_ACTION_O3 = 3;
@@ -1148,6 +1148,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return txWriter.getTransientRowCount();
         }
         return txWriter.getPartitionSize(partitionIndex);
+    }
+
+    public long getPartitionO3SplitThreshold() {
+        return configuration.getPartitionO3SplitThreshold();
     }
 
     public long getPartitionTimestamp(int partitionIndex) {
@@ -4192,10 +4196,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // the partition is kept, and its tail rewritten.
             // The new partition overlaps in time with the previous one.
             partitionTimestamp = txWriter.getPartitionTimestamp(partitionTimestamp);
-            partitionIndex = txWriter.getPartitionIndex(partitionTimestamp) * LONGS_PER_TX_ATTACHED_PARTITION;
+            partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         }
 
-        if (partitionTimestamp == lastPartitionTimestamp) {
+        if (partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
             if (partitionMutates) {
                 // Last partition is rewritten.
                 closeActivePartition(true);
@@ -4226,6 +4230,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
             txWriter.bumpPartitionTableVersion();
             txWriter.updateAttachedPartitionSizeByIndex(newPartitionIndex, newPartitionTimestamp, newPartitionSize, txWriter.txn);
+            if (partitionTimestamp == lastPartitionTimestamp) {
+                // Close last partition without truncating it.
+                long committedLastPartitionSize = txWriter.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
+                closeActivePartition(committedLastPartitionSize);
+                txWriter.fixedRowCount += oldPartitionSize;
+                if (isLastWrittenPartition) {
+                    txWriter.transientRowCount = newPartitionSize;
+                }
+            }
         }
 
         if (partitionMutates && newPartitionTimestamp == partitionTimestamp) {
@@ -5962,15 +5975,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void resizePartitionUpdateSink(long o3TimestampMin, long o3TimestampMax) {
-        int maxPartitionsAffected = (int) ((o3TimestampMax - o3TimestampMin) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy) + 2);
-        int size = maxPartitionsAffected * PARTITION_UPDATE_SINK_ENTRY_SIZE;
         if (o3PartitionUpdateSink == null) {
-            o3PartitionUpdateSink = new DirectLongList(size, MemoryTag.NATIVE_O3);
+            o3PartitionUpdateSink = new DirectLongList(2 * PARTITION_UPDATE_SINK_ENTRY_SIZE, MemoryTag.MMAP_TABLE_WRITER);
+        } else {
+            o3PartitionUpdateSink.clear();
         }
-        o3PartitionUpdateSink.setCapacity(size);
-        o3PartitionUpdateSink.setPos(size);
-        o3PartitionUpdateSink.zero(-1);
-        o3PartitionUpdateSink.set(0, txWriter.getPartitionTimestamp(o3TimestampMin));
     }
 
     private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
@@ -6496,7 +6505,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3DoneLatch.countDown();
     }
 
-    void o3NotifyPartitionUpdate(
+    synchronized void o3NotifyPartitionUpdate(
             long timestampMin,
             long partitionTimestamp,
             final long newPartitionSize,
@@ -6504,16 +6513,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean partitionMutates,
             boolean isLastWrittenPartition
     ) {
-        long basePartitionTs = o3PartitionUpdateSink.get(0);
-        int partitionSinkIndex = (int) ((partitionTimestamp - basePartitionTs) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy));
-        int offset = partitionSinkIndex * PARTITION_UPDATE_SINK_ENTRY_SIZE;
-
-        o3PartitionUpdateSink.set(offset, partitionTimestamp);
-        o3PartitionUpdateSink.set(offset + 1, timestampMin);
-        o3PartitionUpdateSink.set(offset + 2, newPartitionSize);
-        o3PartitionUpdateSink.set(offset + 3, oldPartitionSize);
+        o3PartitionUpdateSink.add(partitionTimestamp);
+        o3PartitionUpdateSink.add(timestampMin);
+        o3PartitionUpdateSink.add(newPartitionSize);
+        o3PartitionUpdateSink.add(oldPartitionSize);
         long flags = Numbers.encodeLowHighInts(partitionMutates ? 1 : 0, isLastWrittenPartition ? 1 : 0);
-        o3PartitionUpdateSink.set(offset + 4, flags);
+        o3PartitionUpdateSink.add(flags);
 
         o3ClockDownPartitionUpdateCount();
     }
