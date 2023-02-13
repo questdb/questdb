@@ -369,8 +369,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
                 int fd = context.getFd();
                 final long id = pending.get(row, OPM_ID);
-                if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                    LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(id)
+                if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, 0) < 0) {
+                    LOG.critical().$("internal error: epoll_ctl clear event failure [id=").$(id)
                             .$(", err=").$(nf.errno()).I$();
                 } else {
                     publishOperation(IOOperation.HEARTBEAT, context);
