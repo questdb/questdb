@@ -128,32 +128,6 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testQuestDBStateMachineAtEmptyTableStateTruncate() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Assert.assertNull(compiler.compile("truncate table 'tab'", sqlExecutionContext));
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(15, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
-            }
-        });
-    }
-
-    @Test
-    public void testQuestDBStateMachineAtNonEmptyTableStateTruncate() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                Assert.assertNull(compiler.compile("truncate table 'tab'", sqlExecutionContext));
-                assertSql("'tab'", "id\ttext\n");
-            } catch (SqlException e) {
-                Assert.assertEquals(15, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
-            }
-        });
-    }
-
-    @Test
     public void testHappyPath() throws Exception {
         assertMemoryLeak(
                 () -> {
