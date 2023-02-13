@@ -197,6 +197,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 operation = IOOperation.READ;
             }
 
+            int epollCmd = EpollAccessor.EPOLL_CTL_MOD;
             if (requestedOperation == IOOperation.HEARTBEAT) {
                 for (int i = 0, n = pending.size(); i < n; i++) {
                     if (pending.get(i, OPM_FD) == fd) {
@@ -210,6 +211,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         pending.set(opRow, context);
                         operation = (int) pending.get(opRow, OPM_OPERATION);
                         pending.deleteRow(i);
+                        epollCmd = EpollAccessor.EPOLL_CTL_ADD;
                         break;
                     }
                 }
@@ -227,7 +229,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
             final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
-            if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_MOD, epollOp) < 0) {
+            if (epoll.control(fd, opId, epollCmd, epollOp) < 0) {
                 LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
                         .$(", err=").$(nf.errno()).I$();
             }
@@ -369,8 +371,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
                 int fd = context.getFd();
                 final long id = pending.get(row, OPM_ID);
-                if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, 0) < 0) {
-                    LOG.critical().$("internal error: epoll_ctl clear event failure [id=").$(id)
+                if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                    LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(id)
                             .$(", err=").$(nf.errno()).I$();
                 } else {
                     publishOperation(IOOperation.HEARTBEAT, context);
