@@ -46,7 +46,6 @@ public class FSMTest extends AbstractGriffinTest {
 
     // TODO our tests of Insert Data
     // state transition 1 : empty table -> operation: insert data -> non-empty table
-    // state transition 2 : non-empty table -> operation: insert data -> non-empty table
 
     public void createTab() throws SqlException {
         compiler.compile("create table tab (id int, text string)", sqlExecutionContext);
@@ -70,7 +69,7 @@ public class FSMTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testQuestDBStateMachineAtNonEmptyTableStateInsert() throws Exception {
+    public void testQuestDBStateMachineAtEmptyTableStateInsert() throws Exception {
         assertMemoryLeak(
                 () -> {
                     createTab();
