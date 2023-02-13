@@ -40,7 +40,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     // OPM_XYZ = 3 is defined in the child classes
     protected static final int OPM_FD = 1;
     protected static final int OPM_OPERATION = 2;
-    protected static final int OPM_TIMESTAMP = 0;
+    protected static final int OPM_CREATE_TIMESTAMP = 0;
+    protected static final int OPM_HEARTBEAT_TIMESTAMP = 4;
+    protected static final int OPM_DISABLE = 5;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     protected final int activeConnectionLimit;
@@ -58,7 +60,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final MCSequence ioEventSubSeq;
     protected final NetworkFacade nf;
-    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(4);
+    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(6);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
@@ -73,7 +75,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private int port;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     private long testConnectionBuf;
-
+    protected long heartbeatIntervalMs;
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory
@@ -110,6 +112,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
+        this.heartbeatIntervalMs = -1; //todo: config
 
         createListenFd();
         listening = true;
@@ -203,9 +206,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         // all rows below watermark will be registered with epoll (or similar)
         int r = pending.addRow();
         LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
-        pending.set(r, OPM_TIMESTAMP, timestamp);
+        pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
+        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
         pending.set(r, OPM_OPERATION, -1);
+        pending.set(r, OPM_DISABLE, 0);
         pending.set(r, ioContextFactory.newInstance(fd, this));
         pendingAdded(r);
     }

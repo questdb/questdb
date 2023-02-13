@@ -74,6 +74,12 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 pendingEvents.deleteRow(eventRow);
             }
         }
+        for (int i = 0, n = pending.size(); i < n; i++) {
+           if (context.getFd() == pending.get(i, OPM_FD)) {
+               pending.deleteRow(i);
+               break;
+           }
+        }
         doDisconnect(context, reason);
     }
 
@@ -83,17 +89,20 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             kqueue.setWriteOffset(offset);
 
             final int fd = (int) pending.get(i, OPM_FD);
-            final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
+            long disable = pending.get(i, OPM_DISABLE);
+            if (disable == 0) { //todo: remove this if ???
+                final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
 
-            if (operation == IOOperation.READ) {
-                kqueue.readFD(fd, pending.get(i, OPM_ID));
-            } else {
-                kqueue.writeFD(fd, pending.get(i, OPM_ID));
-            }
-            if (++index > capacity - 1) {
-                registerWithKQueue(index);
-                index = 0;
-                offset = 0;
+                if (operation == IOOperation.READ) {
+                    kqueue.readFD(fd, pending.get(i, OPM_ID));
+                } else {
+                    kqueue.writeFD(fd, pending.get(i, OPM_ID));
+                }
+                if (++index > capacity - 1) {
+                    registerWithKQueue(index);
+                    index = 0;
+                    offset = 0;
+                }
             }
         }
         if (index > 0) {
@@ -101,7 +110,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
     }
 
-    private boolean handleSocketOperation(long id) {
+    private boolean handleSocketOperation(long id, long timestamp) {
         // find row in pending for two reasons:
         // 1. find payload
         // 2. remove row from pending, remaining rows will be timed out
@@ -175,12 +184,13 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         return idSeq++ << 1;
     }
 
-    private void processIdleConnections(long deadline) {
+    private int processIdleConnections(long deadline) {
         int count = 0;
-        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < deadline; i++, count++) {
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_CREATE_TIMESTAMP) < deadline; i++, count++) {
             doDisconnect(pending.get(i), pending.get(i, OPM_ID), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
+        return count;
     }
 
     private boolean processRegistrations(long timestamp) {
@@ -208,12 +218,32 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 operation = IOOperation.READ;
             }
 
-            int opRow = pending.addRow();
-            pending.set(opRow, OPM_TIMESTAMP, timestamp);
-            pending.set(opRow, OPM_FD, fd);
-            pending.set(opRow, OPM_ID, opId);
-            pending.set(opRow, OPM_OPERATION, requestedOperation);
-            pending.set(opRow, context);
+            if (requestedOperation == IOOperation.HEARTBEAT) {
+                for (int i = 0, n = pending.size(); i < n; i++) {
+                    if (pending.get(i, OPM_FD) == fd) {
+                        int opRow = pending.addRow();
+                        pending.set(opRow, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                        pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                        pending.set(opRow, OPM_FD, fd);
+                        pending.set(opRow, OPM_ID, opId);
+                        pending.set(opRow, OPM_OPERATION, pending.get(i, OPM_OPERATION));
+                        pending.set(opRow, OPM_DISABLE, 0);
+                        pending.set(opRow, context);
+                        operation = (int) pending.get(opRow, OPM_OPERATION);
+                        pending.deleteRow(i);
+                        break;
+                    }
+                }
+            } else {
+                int opRow = pending.addRow();
+                pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_FD, fd);
+                pending.set(opRow, OPM_ID, opId);
+                pending.set(opRow, OPM_OPERATION, requestedOperation);
+                pending.set(opRow, OPM_DISABLE, 0);
+                pending.set(opRow, context);
+            }
 
             kqueue.setWriteOffset(offset);
             if (operation == IOOperation.READ) {
@@ -349,7 +379,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                     handleSuspendEvent(id);
                     continue;
                 }
-                if (handleSocketOperation(id)) {
+                if (handleSocketOperation(id, timestamp)) {
                     useful = true;
                     watermark--;
                 }
@@ -368,9 +398,31 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
         // process timed out connections
         final long deadline = timestamp - idleConnectionTimeout;
-        if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < deadline) {
-            processIdleConnections(deadline);
+        if (pending.size() > 0 && pending.get(0, OPM_CREATE_TIMESTAMP) < deadline) {
+            watermark -= processIdleConnections(deadline);
             useful = true;
+        }
+
+        // process timers
+        for (int row = watermark - 1; row >= 0; --row) {
+            final C context = pending.get(row);
+            long hbts = pending.get(row, OPM_HEARTBEAT_TIMESTAMP);
+            long disable = pending.get(row, OPM_DISABLE);
+            if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
+                int fd = context.getFd();
+                kqueue.setWriteOffset(0);
+                kqueue.removeFD(fd);
+                if (kqueue.register(1) != 0) {
+                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
+                    LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
+                            .$(", err=").$(nf.errno()).I$();
+                } else {
+                    publishOperation(IOOperation.HEARTBEAT, context);
+                    // keep it in the pending list but update ts
+                    pending.set(row, OPM_DISABLE, 1);
+                    useful = true;
+                }
+            }
         }
 
         return processRegistrations(timestamp) || useful;

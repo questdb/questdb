@@ -81,6 +81,10 @@ public class PGWireServer implements Closeable {
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
+                        if (operation == IOOperation.HEARTBEAT) {
+                            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+                            return true;
+                        }
                         jobContext.handleClientOperation(context, operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                         return true;
