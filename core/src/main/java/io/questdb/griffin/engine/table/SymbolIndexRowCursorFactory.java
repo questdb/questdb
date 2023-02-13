@@ -81,7 +81,7 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putColumnName(columnIndex);
-        sink.attr("filter").putColumnName(columnIndex).val('=').val(symbolKey);
+        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putBaseColumnName(columnIndex);
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbolKey);
     }
 }

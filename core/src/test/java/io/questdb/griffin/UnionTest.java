@@ -277,6 +277,155 @@ public class UnionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByIsNotIgnoredInExceptsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  except " +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInExceptsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  except " +
+                        "  (select sym, max(x) from x order by sym limit 2,3)" +
+                        "  except " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInIntersectsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  intersect " +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInIntersectsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  intersect " +
+                        "  (select sym, max(x) from x order by sym limit 2,3)" +
+                        "  intersect " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionAllsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union all" +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, true);
+    }
+
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionAllsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union all" +
+                        "  (select sym, max(x) from x order by sym limit 2,3) " +
+                        "  union all " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, true);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union " +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union " +
+                        "  (select sym, max(x) from x order by sym limit 2,3)" +
+                        "  union " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, false);
+    }
+
+    @Test
     public void testSetOperationsAllowsOrderByAndLimitInAllSubqueries() throws Exception {
         String template = "select * from (select x from t #CLAUSE0# ) " +
                 "#SET# " +
