@@ -95,8 +95,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
                 if (operation == IOOperation.READ) {
                     kqueue.readFD(fd, pending.get(i, OPM_ID));
+                    pending.set(i, OPM_OPERATION, IOOperation.READ);
                 } else {
                     kqueue.writeFD(fd, pending.get(i, OPM_ID));
+                    pending.set(i, OPM_OPERATION, IOOperation.WRITE);
                 }
                 if (++index > capacity - 1) {
                     registerWithKQueue(index);
