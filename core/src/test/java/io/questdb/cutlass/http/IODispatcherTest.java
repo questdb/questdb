@@ -151,22 +151,6 @@ public class IODispatcherTest {
         }
     }
 
-    @Test
-    public void queryReturnsEncodedNonprintableCharacters() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                        "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
-                        "81\r\n" +
-                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"timestamp\":-1,\"count\":1}\r\n"
-                                + "00\r\n"
-                                + "\r\n"
-                ));
-    }
-
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -5603,6 +5587,22 @@ public class IODispatcherTest {
 
                     Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
                 });
+    }
+
+    @Test
+    public void testQueryReturnsEncodedNonPrintableCharacters() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                        "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
+                        "81\r\n" +
+                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"timestamp\":-1,\"count\":1}\r\n"
+                                + "00\r\n"
+                                + "\r\n"
+                ));
     }
 
     @Test
