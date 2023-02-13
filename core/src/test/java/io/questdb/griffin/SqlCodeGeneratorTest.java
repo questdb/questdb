@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
@@ -6929,6 +6930,33 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testSelectDistinctWithColumnAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table my_table as (select x as id from long_sequence(1))", sqlExecutionContext).getType();
+            try (RecordCursorFactory factory = compiler.compile("select distinct id as foo from my_table", sqlExecutionContext).getRecordCursorFactory()) {
+                RecordMetadata metadata = factory.getMetadata();
+                Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
+                assertCursor("foo\n" +
+                        "1\n", factory, true, true, false);
+            }
+        });
+    }
+
+    @Test
+    public void testSelectDistinctWithColumnAliasAndTableFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (id long)", sqlExecutionContext).getType());
+            try (RecordCursorFactory factory = compiler.compile("select distinct x as foo from long_sequence(1)", sqlExecutionContext).getRecordCursorFactory()) {
+                RecordMetadata metadata = factory.getMetadata();
+                Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
+
+                assertCursor("foo\n" +
+                        "1\n", factory, true, true, false);
+            }
+        });
     }
 
     @Ignore("result order is currently dependent on stability of sorting method")
