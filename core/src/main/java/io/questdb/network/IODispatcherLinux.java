@@ -74,22 +74,32 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 pendingEvents.deleteRow(eventRow);
             }
         }
+        for (int i = 0, n = pending.size(); i < n; i++) {
+            if (context.getFd() == pending.get(i, OPM_FD)) {
+                pending.deleteRow(i);
+                break;
+            }
+        }
         doDisconnect(context, reason);
     }
 
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             final long id = pending.get(i, OPM_ID);
-            if (
-                    epoll.control(
-                            (int) pending.get(i, OPM_FD),
-                            id,
-                            EpollAccessor.EPOLL_CTL_ADD,
-                            initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                    ) < 0
-            ) {
-                LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
-                        .$(", err=").$(nf.errno()).I$();
+            final int fd = (int) pending.get(i, OPM_FD);
+            long disable = pending.get(i, OPM_DISABLE);
+            if (disable == 0) { //todo: remove this if ???
+                if (
+                        epoll.control(
+                                fd,
+                                id,
+                                EpollAccessor.EPOLL_CTL_ADD,
+                                initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                        ) < 0
+                ) {
+                    LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
+                            .$(", err=").$(nf.errno()).I$();
+                }
             }
         }
     }
@@ -155,12 +165,13 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         return idSeq++ << 1;
     }
 
-    private void processIdleConnections(long idleTimestamp) {
+    private int processIdleConnections(long idleTimestamp) {
         int count = 0;
-        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < idleTimestamp; i++, count++) {
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_CREATE_TIMESTAMP) < idleTimestamp; i++, count++) {
             doDisconnect(pending.get(i), pending.get(i, OPM_ID), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
+        return count;
     }
 
     private boolean processRegistrations(long timestamp) {
@@ -186,12 +197,32 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 operation = IOOperation.READ;
             }
 
-            int opRow = pending.addRow();
-            pending.set(opRow, OPM_TIMESTAMP, timestamp);
-            pending.set(opRow, OPM_FD, fd);
-            pending.set(opRow, OPM_ID, opId);
-            pending.set(opRow, OPM_OPERATION, requestedOperation);
-            pending.set(opRow, context);
+            if (requestedOperation == IOOperation.HEARTBEAT) {
+                for (int i = 0, n = pending.size(); i < n; i++) {
+                    if (pending.get(i, OPM_FD) == fd) {
+                        int opRow = pending.addRow();
+                        pending.set(opRow, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                        pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                        pending.set(opRow, OPM_FD, fd);
+                        pending.set(opRow, OPM_ID, opId);
+                        pending.set(opRow, OPM_OPERATION, pending.get(i, OPM_OPERATION));
+                        pending.set(opRow, OPM_DISABLE, 0);
+                        pending.set(opRow, context);
+                        operation = (int) pending.get(opRow, OPM_OPERATION);
+                        pending.deleteRow(i);
+                        break;
+                    }
+                }
+            } else {
+                int opRow = pending.addRow();
+                pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_FD, fd);
+                pending.set(opRow, OPM_ID, opId);
+                pending.set(opRow, OPM_OPERATION, requestedOperation);
+                pending.set(opRow, OPM_DISABLE, 0);
+                pending.set(opRow, context);
+            }
 
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
@@ -325,9 +356,29 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
         // process timed out connections
         final long idleTimestamp = timestamp - idleConnectionTimeout;
-        if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < idleTimestamp) {
-            processIdleConnections(idleTimestamp);
+        if (pending.size() > 0 && pending.get(0, OPM_CREATE_TIMESTAMP) < idleTimestamp) {
+            watermark -= processIdleConnections(idleTimestamp);
             useful = true;
+        }
+
+        // process timers
+        for (int row = watermark - 1; row >= 0; --row) {
+            final C context = pending.get(row);
+            long hbts = pending.get(row, OPM_HEARTBEAT_TIMESTAMP);
+            long disable = pending.get(row, OPM_DISABLE);
+            if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
+                int fd = context.getFd();
+                final long id = pending.get(row, OPM_ID);
+                if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                    LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(id)
+                            .$(", err=").$(nf.errno()).I$();
+                } else {
+                    publishOperation(IOOperation.HEARTBEAT, context);
+                    // keep it in the pending list but update ts
+                    pending.set(row, OPM_DISABLE, 1);
+                    useful = true;
+                }
+            }
         }
 
         return processRegistrations(timestamp) || useful;
@@ -335,6 +386,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
     @Override
     protected void unregisterListenerFd() {
-        this.epoll.removeListen(serverFd);
+        epoll.removeListen(serverFd);
     }
 }

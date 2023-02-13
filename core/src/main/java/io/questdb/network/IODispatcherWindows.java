@@ -70,7 +70,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             useful = true;
 
             int r = pending.addRow();
-            pending.set(r, OPM_TIMESTAMP, timestamp);
+            pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
             pending.set(r, OPM_FD, context.getFd());
             pending.set(r, OPM_OPERATION, operation);
             pending.set(r, context);
@@ -157,7 +157,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 }
             }
 
-            final long ts = pending.get(i, OPM_TIMESTAMP);
+            final long ts = pending.get(i, OPM_CREATE_TIMESTAMP);
             final int fd = (int) pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;

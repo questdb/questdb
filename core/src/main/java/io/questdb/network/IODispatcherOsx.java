@@ -75,10 +75,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             }
         }
         for (int i = 0, n = pending.size(); i < n; i++) {
-           if (context.getFd() == pending.get(i, OPM_FD)) {
-               pending.deleteRow(i);
-               break;
-           }
+            if (context.getFd() == pending.get(i, OPM_FD)) {
+                pending.deleteRow(i);
+                break;
+            }
         }
         doDisconnect(context, reason);
     }
@@ -399,9 +399,9 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
 
         // process timed out connections
-        final long deadline = timestamp - idleConnectionTimeout;
-        if (pending.size() > 0 && pending.get(0, OPM_CREATE_TIMESTAMP) < deadline) {
-            watermark -= processIdleConnections(deadline);
+        final long idleTimestamp = timestamp - idleConnectionTimeout;
+        if (pending.size() > 0 && pending.get(0, OPM_CREATE_TIMESTAMP) < idleTimestamp) {
+            watermark -= processIdleConnections(idleTimestamp);
             useful = true;
         }
 
