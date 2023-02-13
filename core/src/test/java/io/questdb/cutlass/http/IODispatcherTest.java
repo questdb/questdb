@@ -8221,6 +8221,9 @@ public class IODispatcherTest {
                                         dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                     }
                                     break;
+                                case IOOperation.HEARTBEAT:
+                                    dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+                                    break;
                                 default:
                                     dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                             }
