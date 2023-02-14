@@ -35,6 +35,9 @@ public class WithClauseModel implements Mutable {
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
     private QueryModel model;
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> originalWithClauses;
+
+    /* Size of withClauses at time of `of()` method call . We need to maintain the 'snapshot' because
+       map can grow and subsequent WITH clause can override table used by current one, leading to stack overflow on re-evaluation .*/
     private int originalWithClausesSize;
     private int position;
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses;
@@ -50,6 +53,7 @@ public class WithClauseModel implements Mutable {
         model = null;
         originalWithClauses = null;
         originalWithClausesSize = -1;
+        withClausesInitialized = false;
         withClauses = null;
     }
 
