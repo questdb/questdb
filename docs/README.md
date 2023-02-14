@@ -38,7 +38,7 @@ Transitions between these two states are executed through two primary actions, r
 4. When we wish to clear the contents of the table, we can `Truncate table` by executing a TRUNCATE TABLE statement in SQL. This causes all data within the table to be removed, effectively making the table empty once again. Upon successful execution of the TRUNCATE TABLE statement, the database transitions back to the `Empty Table` state.
 
 <p align="center">
-  <img src="FSM.png" />
+  <img  src="FSM.png"  />
 </p>
 
 ## 3. New JUnit Test Cases of Finite State Machine <a name="third"></a>
