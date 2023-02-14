@@ -5,7 +5,7 @@ name: Docs to PDF
 on:
   push:
     branches:
-     - main
+     - master
     # Paths can be used to only trigger actions when you have edited certain files, such as a file within the /docs directory
     paths:
       - 'docs/**'
@@ -28,4 +28,3 @@ jobs:
         with:
           name: theGeneratedPDF
           path: docs
-          if-no-files-found: error
