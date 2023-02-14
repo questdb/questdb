@@ -38,7 +38,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
     protected static final int OPM_CREATE_TIMESTAMP = 0;
-    protected static final int OPM_DISABLE = 5;
     // OPM_XYZ = 3 is defined in the child classes
     protected static final int OPM_FD = 1;
     protected static final int OPM_HEARTBEAT_TIMESTAMP = 4;
@@ -60,7 +59,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final MCSequence ioEventSubSeq;
     protected final NetworkFacade nf;
-    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(6);
+    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(5);
+    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(5);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
@@ -127,6 +127,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         processDisconnects(Long.MAX_VALUE);
         for (int i = 0, n = pending.size(); i < n; i++) {
             doDisconnect(pending.get(i), DISCONNECT_SRC_SHUTDOWN);
+        }
+
+        for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
+            doDisconnect(pendingHeartbeats.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
         interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
@@ -212,7 +216,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
         pending.set(r, OPM_OPERATION, -1);
-        pending.set(r, OPM_DISABLE, 0);
         pending.set(r, ioContextFactory.newInstance(fd, this));
         pendingAdded(r);
     }
@@ -247,6 +250,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
     private void disconnectContext(IOEvent<C> event) {
         doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
+        //todo: hashmap or id in event?
+        int fd = event.context.getFd();
+        for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
+            if (fd == pendingHeartbeats.get(i, OPM_FD)) {
+                pendingHeartbeats.deleteRow(i);
+                break;
+            }
+        }
     }
 
     protected void accept(long timestamp) {
@@ -304,19 +315,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         }
     }
 
-    protected void doDisconnect(C context, int src, boolean removeFromPending) {
-        doDisconnect(context, src);
-        if (removeFromPending) {
-            for (int i = 0, n = pending.size(); i < n; i++) {
-                if (context.getFd() == pending.get(i, OPM_FD)) {
-                    pending.deleteRow(i);
-                    break;
-                }
-            }
-        }
-    }
-
-    private void doDisconnect(C context, int src) {
+    protected void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
             return;
         }

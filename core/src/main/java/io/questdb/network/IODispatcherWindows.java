@@ -69,13 +69,21 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             interestSubSeq.done(cursor);
             if (operation == IOOperation.HEARTBEAT) {
                 boolean found = false;
-                for (int i = 0, n = pending.size(); i < n; i++) {
-                    if (pending.get(i, OPM_FD) == fd) {
-                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
-                        pending.set(i, OPM_DISABLE, 0);
-                        LOG.debug().$("processing heartbeat registration [fd=").$(fd)
-                                .$(", op=").$(pending.get(i, OPM_OPERATION)).I$();
+                for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
+                    if (pendingHeartbeats.get(i, OPM_FD) == fd) {
+                        operation = (int) pendingHeartbeats.get(i, OPM_OPERATION);
+
+                        int r = pending.addRow();
+                        pending.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                        pending.set(r, OPM_FD, fd);
+                        pending.set(r, OPM_OPERATION, operation);
+                        pending.set(r, context);
+
+                        pendingHeartbeats.deleteRow(i);
                         found = true;
+                        LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                                .$(", op=").$(operation).I$();
                         break;
                     }
                 }
@@ -88,7 +96,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
                 pending.set(r, OPM_FD, context.getFd());
                 pending.set(r, OPM_OPERATION, operation);
-                pending.set(r, OPM_DISABLE, 0);
                 pending.set(r, context);
             }
             useful = true;
@@ -163,6 +170,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         readFdSet.reset();
         writeFdSet.reset();
         long deadline = timestamp - idleConnectionTimeout;
+        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
         for (int i = 0, n = pending.size(); i < n; ) {
             final C context = pending.get(i);
 
@@ -175,7 +183,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 }
             }
 
-            final long ts = pending.get(i, OPM_CREATE_TIMESTAMP);
             final int fd = (int) pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
@@ -184,8 +191,8 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 // new operation case
 
                 // check if the connection was idle for too long
-                if (ts < deadline) {
-                    doDisconnect(context, DISCONNECT_SRC_IDLE, false);
+                if (pending.get(i, OPM_CREATE_TIMESTAMP) < deadline) {
+                    doDisconnect(context, DISCONNECT_SRC_IDLE);
                     pending.deleteRow(i);
                     n--;
                     if (i < watermark) {
@@ -194,12 +201,20 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     useful = true;
                     continue;
                 }
-                long hbts = pending.get(i, OPM_HEARTBEAT_TIMESTAMP);
-                long disable = pending.get(i, OPM_DISABLE);
-                if (i < watermark && disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
+
+                if (i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
                     publishOperation(IOOperation.HEARTBEAT, context);
-                    // keep it in the pending list but update ts
-                    pending.set(i, OPM_DISABLE, 1);
+
+                    int r = pendingHeartbeats.addRow();
+                    pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                    pendingHeartbeats.set(r, OPM_HEARTBEAT_TIMESTAMP, pending.get(i, OPM_HEARTBEAT_TIMESTAMP));
+                    pendingHeartbeats.set(r, OPM_FD, fd);
+                    pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
+                    pendingHeartbeats.set(r, context);
+
+                    pending.deleteRow(i);
+                    n--;
+                    watermark--;
                     useful = true;
                 } else {
                     int operation = (int) pending.get(i, OPM_OPERATION);
@@ -222,7 +237,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 if (suspendEvent != null) {
                     // the event is still pending, check if we have a client disconnect
                     if (testConnection(context.getFd())) {
-                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT, false);
+                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
                         pending.deleteRow(i);
                         n--;
                         watermark--;

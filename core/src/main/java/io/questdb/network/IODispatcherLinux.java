@@ -74,28 +74,19 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 pendingEvents.deleteRow(eventRow);
             }
         }
-        doDisconnect(context, reason, true);
+        doDisconnect(context, reason);
     }
 
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             final long id = pending.get(i, OPM_ID);
             final int fd = (int) pending.get(i, OPM_FD);
-            long disable = pending.get(i, OPM_DISABLE);
             int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
-            if (disable == 0) { //todo: remove this if ???
-                if (
-                        epoll.control(
-                                fd,
-                                id,
-                                EpollAccessor.EPOLL_CTL_ADD,
-                                operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                        ) < 0
-                ) {
-                    LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
-                            .$(", err=").$(nf.errno()).I$();
-                }
+            int event = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
+            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, event) < 0) {
+                LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
+                        .$(", err=").$(nf.errno()).I$();
             }
         }
     }
@@ -180,28 +171,40 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             interestSubSeq.done(cursor);
 
             useful = true;
-            long opId = -1;
+            long opId = nextOpId();
             final int fd = context.getFd();
+
             int operation = requestedOperation;
             final SuspendEvent suspendEvent = context.getSuspendEvent();
-
             int epollCmd = EpollAccessor.EPOLL_CTL_MOD;
             if (requestedOperation == IOOperation.HEARTBEAT) {
-                for (int i = 0, n = pending.size(); i < n; i++) {
-                    if (pending.get(i, OPM_FD) == fd) {
-                        operation = (int) pending.get(i, OPM_OPERATION);
-                        opId = pending.get(i, OPM_ID);
+                boolean found = false;
+                for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
+                    if (pendingHeartbeats.get(i, OPM_FD) == fd) {
                         epollCmd = EpollAccessor.EPOLL_CTL_ADD;
+                        opId = pendingHeartbeats.get(i, OPM_ID);
+                        operation = (int) pendingHeartbeats.get(i, OPM_OPERATION);
+
+                        int r = pending.addRow();
+                        pending.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                        pending.set(r, OPM_FD, fd);
+                        pending.set(r, OPM_ID, opId);
+                        pending.set(r, OPM_OPERATION, operation);
+                        pending.set(r, context);
+
+                        pendingHeartbeats.deleteRow(i);
+                        found = true;
                         LOG.debug().$("processing heartbeat registration [fd=").$(fd)
                                 .$(", op=").$(operation)
                                 .$(", id=").$(opId).I$();
-                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
-                        pending.set(i, OPM_DISABLE, 0);
                         break;
                     }
                 }
+                if (!found) {
+                    continue;
+                }
             } else {
-                opId = nextOpId();
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", id=").$(opId).I$();
@@ -212,35 +215,29 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 pending.set(opRow, OPM_FD, fd);
                 pending.set(opRow, OPM_ID, opId);
                 pending.set(opRow, OPM_OPERATION, requestedOperation);
-                pending.set(opRow, OPM_DISABLE, 0);
                 pending.set(opRow, context);
-
-                if (suspendEvent != null) {
-                    // ok, the operation was suspended, so we need to track the suspend event
-                    final long eventId = nextEventId();
-                    LOG.debug().$("registering suspend event [fd=").$(fd)
-                            .$(", op=").$(operation)
-                            .$(", eventId=").$(eventId)
-                            .$(", suspendedOpId=").$(opId)
-                            .$(", deadline=").$(suspendEvent.getDeadline()).I$();
-
-                    int eventRow = pendingEvents.addRow();
-                    pendingEvents.set(eventRow, EVM_ID, eventId);
-                    pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
-                    pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
-
-                    if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-                        LOG.critical().$("internal error: epoll_ctl add suspend event failure [id=").$(eventId)
-                                .$(", err=").$(nf.errno()).I$();
-                    }
-                }
             }
-
-            assert opId != -1;
 
             if (suspendEvent != null) {
                 // if the operation was suspended, we request a read to be able to detect a client disconnect
                 operation = IOOperation.READ;
+                // ok, the operation was suspended, so we need to track the suspend event
+                final long eventId = nextEventId();
+                LOG.debug().$("registering suspend event [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", eventId=").$(eventId)
+                        .$(", suspendedOpId=").$(opId)
+                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
+
+                int eventRow = pendingEvents.addRow();
+                pendingEvents.set(eventRow, EVM_ID, eventId);
+                pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
+                pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
+
+                if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
+                    LOG.critical().$("internal error: epoll_ctl add suspend event failure [id=").$(eventId)
+                            .$(", err=").$(nf.errno()).I$();
+                }
             }
 
             // we re-arm epoll globally, in that even when we disconnect
@@ -360,12 +357,10 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             useful = true;
         }
 
-        // process timers
+        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
         for (int row = watermark - 1; row >= 0; --row) {
             final C context = pending.get(row);
-            long hbts = pending.get(row, OPM_HEARTBEAT_TIMESTAMP);
-            long disable = pending.get(row, OPM_DISABLE);
-            if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
+            if (pending.get(row, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
                 final int fd = context.getFd();
                 final long id = pending.get(row, OPM_ID);
                 if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
@@ -373,8 +368,16 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                             .$(", err=").$(nf.errno()).I$();
                 } else {
                     publishOperation(IOOperation.HEARTBEAT, context);
-                    // keep it in the pending list but update ts
-                    pending.set(row, OPM_DISABLE, 1);
+
+                    int r = pendingHeartbeats.addRow();
+                    pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(row, OPM_CREATE_TIMESTAMP));
+                    pendingHeartbeats.set(r, OPM_HEARTBEAT_TIMESTAMP, pending.get(row, OPM_HEARTBEAT_TIMESTAMP));
+                    pendingHeartbeats.set(r, OPM_FD, fd);
+                    pendingHeartbeats.set(r, OPM_ID, pending.get(row, OPM_ID));
+                    pendingHeartbeats.set(r, OPM_OPERATION, pending.get(row, OPM_OPERATION));
+                    pendingHeartbeats.set(r, context);
+
+                    pending.deleteRow(row);
                     useful = true;
                 }
             }
