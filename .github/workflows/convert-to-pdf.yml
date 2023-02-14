@@ -21,7 +21,6 @@ jobs:
         with:
           input_dir: docs
           output_dir: docs/
-          images_dir: docs
           build_html: false
       - uses: actions/upload-artifact@v1
         with:
