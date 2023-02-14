@@ -37,12 +37,12 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+    protected static final int OPM_CREATE_TIMESTAMP = 0;
+    protected static final int OPM_DISABLE = 5;
     // OPM_XYZ = 3 is defined in the child classes
     protected static final int OPM_FD = 1;
-    protected static final int OPM_OPERATION = 2;
-    protected static final int OPM_CREATE_TIMESTAMP = 0;
     protected static final int OPM_HEARTBEAT_TIMESTAMP = 4;
-    protected static final int OPM_DISABLE = 5;
+    protected static final int OPM_OPERATION = 2;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     protected final int activeConnectionLimit;
@@ -69,13 +69,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private final int sndBufSize;
     private final int testConnectionBufSize;
     protected boolean closed = false;
+    protected long heartbeatIntervalMs;
     protected int serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
     private int port;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     private long testConnectionBuf;
-    protected long heartbeatIntervalMs;
+
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory

@@ -198,9 +198,6 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         if (IOOperation.HEARTBEAT == operation) {
-            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-            processor.parkRequest(this, false);
-            resumeProcessor = processor;
             dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
             return true;
         }
