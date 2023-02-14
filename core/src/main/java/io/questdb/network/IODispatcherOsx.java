@@ -212,7 +212,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 for (int i = 0, n = pending.size(); i < n; i++) {
                     if (pending.get(i, OPM_FD) == fd) {
                         opId = pending.get(i, OPM_ID);
-                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                         pending.set(i, OPM_DISABLE, 0);
                         operation = (int) pending.get(i, OPM_OPERATION);
                         found = true;
