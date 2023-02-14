@@ -2916,7 +2916,8 @@ class SqlOptimiser {
      * select a,b from X order by ts limit -10 -> select a,b  from (select * from X order by ts desc limit 10) order by ts asc
      * select a,b from X order by ts desc limit -10 -> select a,b from (select * from X order by ts asc limit 10) order by ts desc
      *
-     * @param model input model
+     * @param model            input model
+     * @param executionContext execution context
      */
     private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         QueryModel current = model;
