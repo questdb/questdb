@@ -7621,7 +7621,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "union all " +
                         "select-virtual ['a' k, sum] 'a' k, sum from " +
                         "(select-group-by [sum(z) sum] sum(z) sum from " +
-                        "(select-choose [t, z] z, t from (select [t, z] from c order by t)) " +
+                        "(select-choose [t, z] z, t from (select [t, z] from c) order by t) " +
                         "timestamp (t) sample by 6h)" +
                         ") order by x",
                 "select x from " +
@@ -7672,7 +7672,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x, t] x, t from (select [x, t] from a) union select-choose [y, t] y, t from (select [y, t] from b) union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
+                "select-choose x from " +
+                        "(select-choose [x, t] x, t from (select [x, t] from a) " +
+                        "union select-choose [y, t] y, t from (select [y, t] from b) " +
+                        "union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum " +
+                        "from (select-choose [t, z] z, t from (select [t, z] from c) order by t) timestamp (t) sample by 6h)) " +
+                        "order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),

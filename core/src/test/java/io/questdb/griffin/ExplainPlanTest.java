@@ -599,6 +599,35 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExplainDeferredSingleSymbolFilterDataFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab \n" +
+                    "(\n" +
+                    "   id symbol index,\n" +
+                    "   ts timestamp,\n" +
+                    "   val double  \n" +
+                    ") timestamp(ts);");
+            compile("insert into tab values ( 'XXX', 0::timestamp, 1 );");
+
+            assertPlan("  select\n" +
+                            "   ts,\n" +
+                            "    id, \n" +
+                            "    last(val)\n" +
+                            "  from tab\n" +
+                            "  where id = 'XXX' \n" +
+                            "  sample by 15m ALIGN to CALENDAR\n",
+                    "SampleByFirstLast\n" +
+                            "  keys: [ts, id]\n" +
+                            "  values: [last(val)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id\n" +
+                            "          filter: id=1\n" +
+                            "        Frame forward scan on: tab\n");
+
+        });
+    }
+
+    @Test
     public void testExplainInsert() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( l long, d double)");

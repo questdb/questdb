@@ -773,6 +773,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             }
         });
 
+        final long walPublisherCurrent = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
         new Thread(() -> {
             OperationFuture alterOperationFuture = null;
             try {
@@ -782,8 +783,8 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     getFirstLatch.await(10 * Timestamps.SECOND_MILLIS);
                 } else {
                     // Wait for the next txn notification which would mean an INSERT.
-                    Sequence txnNotificationSequence = engine.getMessageBus().getWalTxnNotificationSubSequence();
-                    while (txnNotificationSequence.next() < 0) {
+                    Sequence txnPubSequence = engine.getMessageBus().getWalTxnNotificationPubSequence();
+                    while (txnPubSequence.current() == walPublisherCurrent) {
                         Os.pause();
                     }
                 }
