@@ -189,12 +189,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             long opId = -1;
             final int fd = context.getFd();
             int operation = requestedOperation;
-
             final SuspendEvent suspendEvent = context.getSuspendEvent();
-            if (suspendEvent != null) {
-                // if the operation was suspended, we request a read to be able to detect a client disconnect 
-                operation = IOOperation.READ;
-            }
 
             int epollCmd = EpollAccessor.EPOLL_CTL_MOD;
             if (requestedOperation == IOOperation.HEARTBEAT) {
@@ -248,6 +243,11 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             }
 
             assert opId != -1;
+
+            if (suspendEvent != null) {
+                // if the operation was suspended, we request a read to be able to detect a client disconnect
+                operation = IOOperation.READ;
+            }
 
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
