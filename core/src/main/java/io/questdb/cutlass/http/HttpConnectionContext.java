@@ -198,6 +198,9 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         if (IOOperation.HEARTBEAT == operation) {
+            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
+            processor.parkRequest(this, false);
+            resumeProcessor = processor;
             dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
             return true;
         }
@@ -239,14 +242,14 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         HttpConnectionContext r = super.of(fd, dispatcher);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
-            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            this.responseSink.close();
+            recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            responseSink.close();
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
-                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             }
-            this.responseSink.of(fd);
+            responseSink.of(fd);
         }
         return r;
     }
@@ -522,10 +525,13 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
-        HttpRequestProcessor processor = selector.select(headerParser.getUrl());
-
+        HttpRequestProcessor processor = null;
+        final CharSequence url = headerParser.getUrl();
+        if (url != null) {
+            processor = selector.select(url);
+        }
         if (processor == null) {
-            processor = selector.getDefaultProcessor();
+            return selector.getDefaultProcessor();
         }
         return processor;
     }

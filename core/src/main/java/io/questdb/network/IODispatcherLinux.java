@@ -184,12 +184,9 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             interestSubSeq.done(cursor);
 
             useful = true;
-            final long opId = nextOpId();
+            long opId = -1;
             final int fd = context.getFd();
             int operation = requestedOperation;
-            LOG.debug().$("processing registration [fd=").$(fd)
-                    .$(", op=").$(operation)
-                    .$(", id=").$(opId).I$();
 
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             if (suspendEvent != null) {
@@ -201,21 +198,22 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             if (requestedOperation == IOOperation.HEARTBEAT) {
                 for (int i = 0, n = pending.size(); i < n; i++) {
                     if (pending.get(i, OPM_FD) == fd) {
-                        int opRow = pending.addRow();
-                        pending.set(opRow, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
-                        pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
-                        pending.set(opRow, OPM_FD, fd);
-                        pending.set(opRow, OPM_ID, opId);
-                        pending.set(opRow, OPM_OPERATION, pending.get(i, OPM_OPERATION));
-                        pending.set(opRow, OPM_DISABLE, 0);
-                        pending.set(opRow, context);
-                        operation = (int) pending.get(opRow, OPM_OPERATION);
-                        pending.deleteRow(i);
+                        opId = pending.get(i, OPM_ID);
                         epollCmd = EpollAccessor.EPOLL_CTL_ADD;
+                        LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                                .$(", op=").$(operation)
+                                .$(", id=").$(opId).I$();
+                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                        pending.set(i, OPM_DISABLE, 0);
                         break;
                     }
                 }
             } else {
+                opId = nextOpId();
+                LOG.debug().$("processing registration [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(opId).I$();
+
                 int opRow = pending.addRow();
                 pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
                 pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
@@ -224,7 +222,29 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 pending.set(opRow, OPM_OPERATION, requestedOperation);
                 pending.set(opRow, OPM_DISABLE, 0);
                 pending.set(opRow, context);
+
+                if (suspendEvent != null) {
+                    // ok, the operation was suspended, so we need to track the suspend event
+                    final long eventId = nextEventId();
+                    LOG.debug().$("registering suspend event [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", eventId=").$(eventId)
+                            .$(", suspendedOpId=").$(opId)
+                            .$(", deadline=").$(suspendEvent.getDeadline()).I$();
+
+                    int eventRow = pendingEvents.addRow();
+                    pendingEvents.set(eventRow, EVM_ID, eventId);
+                    pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
+                    pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
+
+                    if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
+                        LOG.critical().$("internal error: epoll_ctl add suspend event failure [id=").$(eventId)
+                                .$(", err=").$(nf.errno()).I$();
+                    }
+                }
             }
+
+            assert opId != -1;
 
             // we re-arm epoll globally, in that even when we disconnect
             // because we have to remove FD from epoll
@@ -232,26 +252,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             if (epoll.control(fd, opId, epollCmd, epollOp) < 0) {
                 LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
                         .$(", err=").$(nf.errno()).I$();
-            }
-
-            if (suspendEvent != null) {
-                // ok, the operation was suspended, so we need to track the suspend event
-                final long eventId = nextEventId();
-                LOG.debug().$("registering suspend event [fd=").$(fd)
-                        .$(", op=").$(operation)
-                        .$(", eventId=").$(eventId)
-                        .$(", suspendedOpId=").$(opId)
-                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
-
-                int eventRow = pendingEvents.addRow();
-                pendingEvents.set(eventRow, EVM_ID, eventId);
-                pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
-                pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
-
-                if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-                    LOG.critical().$("internal error: epoll_ctl add suspend event failure [id=").$(eventId)
-                            .$(", err=").$(nf.errno()).I$();
-                }
             }
         }
         return useful;
