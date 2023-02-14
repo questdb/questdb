@@ -1,0 +1,31 @@
+# .github/workflows/convert-to-pdf.yml
+
+name: Docs to PDF
+# This workflow is triggered on pushes to the repository.
+on:
+  push:
+    branches:
+     - main
+    # Paths can be used to only trigger actions when you have edited certain files, such as a file within the /docs directory
+    paths:
+      - 'docs/**'
+      - '.github/**'
+
+jobs:
+  convert-to-pdf:
+    name: Build PDF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: baileyjm02/markdown-to-pdf@v1
+        with:
+          input_dir: docs
+          output_dir: docs/
+          images_dir: docs
+          image_import: docs
+          build_html: false
+      - uses: actions/upload-artifact@v1
+        with:
+          name: theGeneratedPDF
+          path: docs
+          if-no-files-found: error
