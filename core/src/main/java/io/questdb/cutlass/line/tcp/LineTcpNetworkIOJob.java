@@ -181,6 +181,10 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
+        if (operation == IOOperation.HEARTBEAT) {
+            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+            return true;
+        }
         if (handleIO(context)) {
             busyContext = context;
             LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
