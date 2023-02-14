@@ -69,7 +69,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 LOG.critical().$("internal error: suspend event not found [id=").$(id).I$();
             } else {
                 kqueue.setWriteOffset(0);
-                kqueue.removeFD(suspendEvent.getFd());
+                kqueue.removeReadFD(suspendEvent.getFd());
                 registerWithKQueue(1);
                 pendingEvents.deleteRow(eventRow);
             }
@@ -207,36 +207,35 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             interestSubSeq.done(cursor);
 
             useful = true;
-            final long opId = nextOpId();
+            long opId = -1;
             final int fd = context.getFd();
+
             int operation = requestedOperation;
-            LOG.debug().$("processing registration [fd=").$(fd)
-                    .$(", op=").$(operation)
-                    .$(", id=").$(opId).I$();
-
             final SuspendEvent suspendEvent = context.getSuspendEvent();
-            if (suspendEvent != null) {
-                // if the operation was suspended, we request a read to be able to detect a client disconnect 
-                operation = IOOperation.READ;
-            }
-
             if (requestedOperation == IOOperation.HEARTBEAT) {
+                boolean found = false;
                 for (int i = 0, n = pending.size(); i < n; i++) {
                     if (pending.get(i, OPM_FD) == fd) {
-                        int opRow = pending.addRow();
-                        pending.set(opRow, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
-                        pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
-                        pending.set(opRow, OPM_FD, fd);
-                        pending.set(opRow, OPM_ID, opId);
-                        pending.set(opRow, OPM_OPERATION, pending.get(i, OPM_OPERATION));
-                        pending.set(opRow, OPM_DISABLE, 0);
-                        pending.set(opRow, context);
-                        operation = (int) pending.get(opRow, OPM_OPERATION);
-                        pending.deleteRow(i);
+                        opId = pending.get(i, OPM_ID);
+                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                        pending.set(i, OPM_DISABLE, 0);
+                        operation = (int) pending.get(i, OPM_OPERATION);
+                        found = true;
+                        LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                                .$(", op=").$(operation)
+                                .$(", id=").$(opId).I$();
                         break;
                     }
                 }
+                if (!found) {
+                    continue;
+                }
             } else {
+                opId = nextOpId();
+                LOG.debug().$("processing registration [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(opId).I$();
+
                 int opRow = pending.addRow();
                 pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
                 pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
@@ -245,6 +244,35 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 pending.set(opRow, OPM_OPERATION, requestedOperation);
                 pending.set(opRow, OPM_DISABLE, 0);
                 pending.set(opRow, context);
+
+                if (suspendEvent != null) {
+                    // ok, the operation was suspended, so we need to track the suspend event
+                    final long eventId = nextEventId();
+                    LOG.debug().$("registering suspend event [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", eventId=").$(eventId)
+                            .$(", suspendedOpId=").$(opId)
+                            .$(", deadline=").$(suspendEvent.getDeadline()).I$();
+
+                    int eventRow = pendingEvents.addRow();
+                    pendingEvents.set(eventRow, EVM_ID, eventId);
+                    pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
+                    pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
+
+                    kqueue.setWriteOffset(offset);
+                    kqueue.readFD(suspendEvent.getFd(), eventId);
+                    offset += KqueueAccessor.SIZEOF_KEVENT;
+                    if (++count > capacity - 1) {
+                        registerWithKQueue(count);
+                        count = offset = 0;
+                    }
+                }
+            }
+            assert opId != -1;
+
+            if (suspendEvent != null) {
+                // if the operation was suspended, we request a read to be able to detect a client disconnect
+                operation = IOOperation.READ;
             }
 
             kqueue.setWriteOffset(offset);
@@ -257,29 +285,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             if (++count > capacity - 1) {
                 registerWithKQueue(count);
                 count = offset = 0;
-            }
-
-            if (suspendEvent != null) {
-                // ok, the operation was suspended, so we need to track the suspend event
-                final long eventId = nextEventId();
-                LOG.debug().$("registering suspend event [fd=").$(fd)
-                        .$(", op=").$(operation)
-                        .$(", eventId=").$(eventId)
-                        .$(", suspendedOpId=").$(opId)
-                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
-
-                int eventRow = pendingEvents.addRow();
-                pendingEvents.set(eventRow, EVM_ID, eventId);
-                pendingEvents.set(eventRow, EVM_OPERATION_ID, opId);
-                pendingEvents.set(eventRow, EVM_DEADLINE, suspendEvent.getDeadline());
-
-                kqueue.setWriteOffset(offset);
-                kqueue.readFD(suspendEvent.getFd(), eventId);
-                offset += KqueueAccessor.SIZEOF_KEVENT;
-                if (++count > capacity - 1) {
-                    registerWithKQueue(count);
-                    count = offset = 0;
-                }
             }
         }
 
@@ -308,7 +313,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             assert suspendEvent != null;
             kqueue.setWriteOffset(offset);
-            kqueue.removeFD(suspendEvent.getFd());
+            kqueue.removeReadFD(suspendEvent.getFd());
             offset += KqueueAccessor.SIZEOF_KEVENT;
             if (++index > capacity - 1) {
                 registerWithKQueue(index);
@@ -413,7 +418,12 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
                 int fd = context.getFd();
                 kqueue.setWriteOffset(0);
-                kqueue.removeFD(fd);
+                long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(row, OPM_OPERATION);
+                if (op == IOOperation.READ) {
+                    kqueue.removeReadFD(fd);
+                } else {
+                    kqueue.removeWriteFD(fd);
+                }
                 if (kqueue.register(1) != 0) {
                     // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
                     LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
