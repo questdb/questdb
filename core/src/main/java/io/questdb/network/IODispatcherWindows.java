@@ -73,10 +73,9 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                     if (pending.get(i, OPM_FD) == fd) {
                         pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                         pending.set(i, OPM_DISABLE, 0);
-                        operation = (int) pending.get(i, OPM_OPERATION);
-                        found = true;
                         LOG.debug().$("processing heartbeat registration [fd=").$(fd)
-                                .$(", op=").$(operation).I$();
+                                .$(", op=").$(pending.get(i, OPM_OPERATION)).I$();
+                        found = true;
                         break;
                     }
                 }
@@ -86,8 +85,10 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             } else {
                 int r = pending.addRow();
                 pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
+                pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
                 pending.set(r, OPM_FD, context.getFd());
                 pending.set(r, OPM_OPERATION, operation);
+                pending.set(r, OPM_DISABLE, 0);
                 pending.set(r, context);
             }
             useful = true;
