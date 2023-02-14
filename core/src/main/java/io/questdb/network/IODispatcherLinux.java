@@ -74,13 +74,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 pendingEvents.deleteRow(eventRow);
             }
         }
-        for (int i = 0, n = pending.size(); i < n; i++) {
-            if (context.getFd() == pending.get(i, OPM_FD)) {
-                pending.deleteRow(i);
-                break;
-            }
-        }
-        doDisconnect(context, reason);
+        doDisconnect(context, reason, true);
     }
 
     private void enqueuePending(int watermark) {

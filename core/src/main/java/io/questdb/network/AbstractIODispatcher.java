@@ -113,7 +113,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
-        this.heartbeatIntervalMs = 5; //todo: config
+        this.heartbeatIntervalMs = -1; //todo: replace after test
+//        this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
 
         createListenFd();
         listening = true;
@@ -303,7 +304,19 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         }
     }
 
-    protected void doDisconnect(C context, int src) {
+    protected void doDisconnect(C context, int src, boolean removeFromPending) {
+        doDisconnect(context, src);
+        if (removeFromPending) {
+            for (int i = 0, n = pending.size(); i < n; i++) {
+                if (context.getFd() == pending.get(i, OPM_FD)) {
+                    pending.deleteRow(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    private void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
             return;
         }

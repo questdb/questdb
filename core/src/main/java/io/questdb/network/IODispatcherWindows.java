@@ -65,15 +65,33 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
+            final int fd = context.getFd();
             interestSubSeq.done(cursor);
-
+            if (operation == IOOperation.HEARTBEAT) {
+                boolean found = false;
+                for (int i = 0, n = pending.size(); i < n; i++) {
+                    if (pending.get(i, OPM_FD) == fd) {
+                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                        pending.set(i, OPM_DISABLE, 0);
+                        LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                                .$(", op=").$(pending.get(i, OPM_OPERATION)).I$();
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    continue;
+                }
+            } else {
+                int r = pending.addRow();
+                pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
+                pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(r, OPM_FD, context.getFd());
+                pending.set(r, OPM_OPERATION, operation);
+                pending.set(r, OPM_DISABLE, 0);
+                pending.set(r, context);
+            }
             useful = true;
-
-            int r = pending.addRow();
-            pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
-            pending.set(r, OPM_FD, context.getFd());
-            pending.set(r, OPM_OPERATION, operation);
-            pending.set(r, context);
         }
         return useful;
     }
@@ -129,7 +147,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         boolean useful = false;
         fds.clear();
-
+        int watermark = pending.size();
         // collect reads into hash map
         if (count > 0) {
             queryFdSets(timestamp);
@@ -167,35 +185,47 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
                 // check if the connection was idle for too long
                 if (ts < deadline) {
-                    doDisconnect(context, DISCONNECT_SRC_IDLE);
+                    doDisconnect(context, DISCONNECT_SRC_IDLE, false);
                     pending.deleteRow(i);
                     n--;
+                    if (i < watermark) {
+                        watermark--;
+                    }
                     useful = true;
                     continue;
                 }
-
-                int operation = (int) pending.get(i, OPM_OPERATION);
-                i++;
-                if (suspendEvent != null) {
-                    // if the operation was suspended, we request a read to be able to detect a client disconnect
-                    operation = IOOperation.READ;
-                }
-
-                if (operation == IOOperation.READ) {
-                    readFdSet.add(fd);
-                    readFdCount++;
+                long hbts = pending.get(i, OPM_HEARTBEAT_TIMESTAMP);
+                long disable = pending.get(i, OPM_DISABLE);
+                if (i < watermark && disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
+                    publishOperation(IOOperation.HEARTBEAT, context);
+                    // keep it in the pending list but update ts
+                    pending.set(i, OPM_DISABLE, 1);
+                    useful = true;
                 } else {
-                    writeFdSet.add(fd);
-                    writeFdCount++;
+                    int operation = (int) pending.get(i, OPM_OPERATION);
+                    i++;
+                    if (suspendEvent != null) {
+                        // if the operation was suspended, we request a read to be able to detect a client disconnect
+                        operation = IOOperation.READ;
+                    }
+
+                    if (operation == IOOperation.READ) {
+                        readFdSet.add(fd);
+                        readFdCount++;
+                    } else {
+                        writeFdSet.add(fd);
+                        writeFdCount++;
+                    }
                 }
             } else {
                 // select()'ed operation case
                 if (suspendEvent != null) {
                     // the event is still pending, check if we have a client disconnect
                     if (testConnection(context.getFd())) {
-                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
+                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT, false);
                         pending.deleteRow(i);
                         n--;
+                        watermark--;
                     } else {
                         i++; // just skip to the next operation
                     }
@@ -214,6 +244,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
                 pending.deleteRow(i);
                 n--;
+                watermark--;
             }
         }
 

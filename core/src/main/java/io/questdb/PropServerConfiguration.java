@@ -363,6 +363,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpNetConnectionQueueTimeout;
     private int lineTcpNetConnectionRcvBuf;
     private long lineTcpNetConnectionTimeout;
+    private long lineTcpNetConnectionHeartbeatInterval;
     private LineProtoTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
@@ -957,6 +958,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 // deprecated
                 this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
                 this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT, this.lineTcpNetConnectionTimeout);
+
+                this.lineTcpNetConnectionHeartbeatInterval = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
 
                 // deprecated
                 this.lineTcpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT, 5_000);
@@ -2481,6 +2484,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getTimeout() {
             return httpNetConnectionTimeout;
         }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
     }
 
     private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -2559,8 +2567,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             return netTestConnectionBufferSize;
         }
 
+        @Override
         public long getTimeout() {
             return httpMinNetConnectionTimeout;
+        }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return -1L;
         }
     }
 
@@ -3008,6 +3022,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getTimeout() {
             return lineTcpNetConnectionTimeout;
         }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return lineTcpNetConnectionHeartbeatInterval;
+        }
     }
 
     private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolConfiguration {
@@ -3431,8 +3450,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             return netTestConnectionBufferSize;
         }
 
+        @Override
         public long getTimeout() {
             return pgNetIdleConnectionTimeout;
+        }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return -1L;
         }
     }
 
