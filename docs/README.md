@@ -37,7 +37,7 @@ Transitions between these two states are executed through two primary actions, r
 3. Once in the `Non-empty Table` state, we have the ability to `Update data` within the table. This can be achieved by executing an UPDATE statement in SQL. Importantly, performing this action does not result in a transition of the database state, as the contents of the table have changed, but the overall state of the table remains `Non-empty Table`.
 4. When we wish to clear the contents of the table, we can `Truncate table` by executing a TRUNCATE TABLE statement in SQL. This causes all data within the table to be removed, effectively making the table empty once again. Upon successful execution of the TRUNCATE TABLE statement, the database transitions back to the `Empty Table` state.
 
-![FSM.png](./FSM.png)
+![FSM.png](images/FSM.png)
 
 ## 3. New JUnit Test Cases of Finite State Machine <a name="third"></a>
 
