@@ -201,7 +201,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         LOG.debug().$("processing heartbeat registration [fd=").$(fd)
                                 .$(", op=").$(operation)
                                 .$(", id=").$(opId).I$();
-                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                        pending.set(i, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                         pending.set(i, OPM_DISABLE, 0);
                         break;
                     }
