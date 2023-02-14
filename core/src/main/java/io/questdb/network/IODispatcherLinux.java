@@ -198,6 +198,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             if (requestedOperation == IOOperation.HEARTBEAT) {
                 for (int i = 0, n = pending.size(); i < n; i++) {
                     if (pending.get(i, OPM_FD) == fd) {
+                        operation = (int) pending.get(i, OPM_OPERATION);
                         opId = pending.get(i, OPM_ID);
                         epollCmd = EpollAccessor.EPOLL_CTL_ADD;
                         LOG.debug().$("processing heartbeat registration [fd=").$(fd)
@@ -369,7 +370,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             long hbts = pending.get(row, OPM_HEARTBEAT_TIMESTAMP);
             long disable = pending.get(row, OPM_DISABLE);
             if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
-                int fd = context.getFd();
+                final int fd = context.getFd();
                 final long id = pending.get(row, OPM_ID);
                 if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
                     LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(id)
