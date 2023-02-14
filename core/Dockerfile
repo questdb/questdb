@@ -64,9 +64,6 @@ EXPOSE 9000/tcp
 EXPOSE 8812/tcp
 EXPOSE 9009/tcp
 
-RUN ulimit -S unlimited
-RUN ulimit -H unlimited
-
 #
 # Run QuestDB when the container launches
 #
