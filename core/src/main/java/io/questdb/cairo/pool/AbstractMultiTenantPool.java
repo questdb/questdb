@@ -42,12 +42,12 @@ import java.util.Map;
 public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
-    private static final Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
     private static final int NEXT_OPEN = 0;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long UNLOCKED = -1L;
+    private final Log LOG = LogFactory.getLog(this.getClass());
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
@@ -297,6 +297,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
+        TableToken leftBehind = null;
         for (Entry<T> e : entries.values()) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
@@ -313,7 +314,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                             casFailures++;
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodbye();
+                                Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                                 LOG.info().$("shutting down. '").utf8(r.getTableToken().getDirName()).$("' is left behind").$();
+                                leftBehind = r.getTableToken();
                             }
                         }
                     }
@@ -321,6 +324,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                 // this does not release the next
                 e = e.next;
             } while (e != null);
+        }
+
+        if (leftBehind != null) {
+            // This code branch should be in tests only.
+            // Release the item, to not block the pool, but throw an exception to fail the test
+            throw CairoException.nonCritical().put('\'').put(leftBehind.getDirName()).put("' is left behind on pool shutdown");
         }
 
         // when we are timing out entries the result is "true" if there was any work done
