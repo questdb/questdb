@@ -111,7 +111,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
-        runFuzz(new Rnd(9989589446059L, 1674664094387L));//TestUtils.generateRandom(LOG));
+        runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
@@ -154,7 +154,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteWithQuickSortEnabled() throws Exception {
         configOverrideO3QuickSortEnabled(true);
-        Rnd rnd = new Rnd();
+        Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(10));
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1);
         setFuzzCounts(
@@ -174,7 +174,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWriteO3DataOnlyBig() throws Exception {
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
-        runFuzz(new Rnd(617024653517375L, 1675032603413L));
+        runFuzz(TestUtils.generateRandom(LOG));
     }
 
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
