@@ -88,13 +88,15 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             final long id = pending.get(i, OPM_ID);
             final int fd = (int) pending.get(i, OPM_FD);
             long disable = pending.get(i, OPM_DISABLE);
+            int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
+            pending.set(i, OPM_OPERATION, operation);
             if (disable == 0) { //todo: remove this if ???
                 if (
                         epoll.control(
                                 fd,
                                 id,
                                 EpollAccessor.EPOLL_CTL_ADD,
-                                initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                                operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
                         ) < 0
                 ) {
                     LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
@@ -369,9 +371,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             final C context = pending.get(row);
             long hbts = pending.get(row, OPM_HEARTBEAT_TIMESTAMP);
             long disable = pending.get(row, OPM_DISABLE);
-            int operation = (int) pending.get(row, OPM_OPERATION);
-            // we only care about non-pending connections with no in-flight heartbeats
-            if (operation != -1 && disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
+            if (disable == 0 && hbts < timestamp - heartbeatIntervalMs) {
                 final int fd = context.getFd();
                 final long id = pending.get(row, OPM_ID);
                 if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
