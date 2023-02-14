@@ -74,7 +74,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.hasDescendingOrder());
         IntList preTouchColumnTypes = null;
         if (preTouchColumns) {
             preTouchColumnTypes = new IntList();
@@ -127,7 +127,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             order = baseOrder;
         }
 
-        if (order == ORDER_DESC && rowsRemaining != Long.MAX_VALUE) {
+        if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
             if (rowsRemaining > maxNegativeLimit) {
                 throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
             }

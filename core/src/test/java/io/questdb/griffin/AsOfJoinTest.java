@@ -278,6 +278,21 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
+        testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
+    }
+
+    @Test
+    public void testExplicitTimestampIsNotNecessaryWhenLtJoiningExplicitlyOrderedTables() throws Exception {
+        testExplicitTimestampIsNotNecessaryWhenJoining("lt join", "ts");
+    }
+
+    @Test
+    public void testExplicitTimestampIsNotNecessaryWhenSpliceJoiningExplicitlyOrderedTables() throws Exception {
+        testExplicitTimestampIsNotNecessaryWhenJoining("splice join", null);
+    }
+
+    @Test
     public void testLtJoin() throws Exception {
         final String expected = "tag\thi\tlo\tts\tts1\n" +
                 "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
@@ -784,5 +799,15 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, false, false);
         });
+    }
+
+    private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
+        assertQuery("ts\ty\tts1\ty1\n",
+                "select * from " +
+                        "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
+                        joinType +
+                        "(select * from x order by ts limit 5) b",
+                "create table x (ts timestamp, y int) timestamp(ts)",
+                timestamp, false);
     }
 }

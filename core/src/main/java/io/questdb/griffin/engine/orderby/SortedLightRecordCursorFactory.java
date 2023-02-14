@@ -78,6 +78,11 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return SortedRecordCursorFactory.hasDescendingOrder(sortColumnFilter);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }

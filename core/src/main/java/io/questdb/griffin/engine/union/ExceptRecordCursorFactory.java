@@ -61,6 +61,11 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return factoryA.hasDescendingOrder();
+    }
+
+    @Override
     protected void _close() {
         Misc.free(cursor);
         super._close();

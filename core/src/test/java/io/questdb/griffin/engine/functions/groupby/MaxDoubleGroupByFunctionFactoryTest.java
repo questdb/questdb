@@ -308,7 +308,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
-                null,
+                "k",
                 true,
                 true,
                 true

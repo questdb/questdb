@@ -3398,7 +3398,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000) created_at" +
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day",
-                null,
+                "timestamp###DESC",
                 true,
                 false,
                 false);

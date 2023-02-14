@@ -55,6 +55,7 @@ import io.questdb.std.Rows;
 class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
+    private final boolean hasDescendingOrder;
 
     private final PageAddressCacheRecord record;
     private int frameIndex;
@@ -69,8 +70,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     // Buffer used to accumulate all filtered row ids.
     private DirectLongList rows;
 
-    public AsyncFilteredNegativeLimitRecordCursor() {
+    public AsyncFilteredNegativeLimitRecordCursor(boolean hasDescendingOrder) {
         this.record = new PageAddressCacheRecord();
+        this.hasDescendingOrder = hasDescendingOrder;
     }
 
     @Override
@@ -171,8 +173,14 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
                 if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isActive()) {
                     // Copy rows into the buffer.
-                    for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
-                        rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                    if (hasDescendingOrder) {
+                        for (long i = 0; i < frameRowCount && rowCount < rowLimit; i++, rowCount++) {
+                            rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                        }
+                    } else {
+                        for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
+                            rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                        }
                     }
 
                     if (rowCount >= rowLimit) {

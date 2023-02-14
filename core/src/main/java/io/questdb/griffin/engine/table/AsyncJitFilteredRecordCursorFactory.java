@@ -82,7 +82,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.hasDescendingOrder());
         MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
         IntList preTouchColumnTypes = null;
@@ -145,7 +145,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             order = baseOrder;
         }
 
-        if (order == ORDER_DESC && rowsRemaining != Long.MAX_VALUE) {
+        if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
             if (rowsRemaining > maxNegativeLimit) {
                 throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
             }

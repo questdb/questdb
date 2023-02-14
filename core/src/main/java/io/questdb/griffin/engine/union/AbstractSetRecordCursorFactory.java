@@ -36,10 +36,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
+    protected final RecordCursorFactory factoryA;
+    protected final RecordCursorFactory factoryB;
     private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
-    private final RecordCursorFactory factoryA;
-    private final RecordCursorFactory factoryB;
     protected AbstractSetRecordCursor cursor;
 
     public AbstractSetRecordCursorFactory(

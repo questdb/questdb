@@ -66,7 +66,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void test2partitionsSelectLastN() throws Exception {
         prepare2partitionsTable();
 
-        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
+        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3", true);
     }
 
     @Test
@@ -406,7 +406,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testNormalTableSelectLastN() throws Exception {
         prepareNormalTable();
 
-        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
+        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3", true);
     }
 
     @Test
@@ -491,7 +491,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
     public void testPartitionPerRowSelectLastN() throws Exception {
         preparePartitionPerRowTable();
 
-        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
+        assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3", true);
     }
 
     @Test

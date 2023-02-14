@@ -1080,7 +1080,7 @@ public class CopyTest extends AbstractGriffinTest {
                 "select line,ts,d,description from x limit -10",
                 "ts",
                 true,
-                false
+                true
         );
 
         assertQuery("cnt\n1001\n", "select count(*) cnt from x", null, false, true);
