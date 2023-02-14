@@ -54,6 +54,10 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
+    default boolean isInterpolationSupported() {
+        return false;
+    }
+
     default boolean isScalar() {
         return true;
     }

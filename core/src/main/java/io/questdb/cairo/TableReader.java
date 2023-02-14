@@ -355,6 +355,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         return getSymbolMapReader(columnIndex).newSymbolTableView();
     }
 
+    /**
+     * Opens given partition for reading.
+     *
+     * @param partitionIndex partition index
+     * @return partition size in rows
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
+     */
     public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1L) {

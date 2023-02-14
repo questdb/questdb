@@ -138,6 +138,8 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isColumnPreTouchEnabled();
 
+    boolean isParallelFilterEnabled();
+
     boolean isTimestampRequired();
 
     boolean isWalApplication();
@@ -154,7 +156,10 @@ public interface SqlExecutionContext extends Closeable {
 
     void setNowAndFixClock(long now);
 
+    void setParallelFilterEnabled(boolean parallelFilterEnabled);
+
     void setRandom(Rnd rnd);
 
-    void storeTelemetry(short event, short origin);
+    default void storeTelemetry(short event, short origin) {
+    }
 }

@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -52,6 +53,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
 
     /**
      * @return the next element in the data frame
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     @Nullable DataFrame next();
 
@@ -61,6 +63,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
      *
      * @return true when reload data has changed, false otherwise
      */
+    @TestOnly
     boolean reload();
 
     /**
@@ -72,7 +75,8 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource {
      * Positions data frame at the given row number.
      *
      * @param rowCount absolute row number in table. Rows are numbered 0...row_count-1
-     * @return data frame and position (lo) of given rowCount (according to cursor order) .
+     * @return data frame and position (lo) of given rowCount (according to cursor order).
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     default @Nullable DataFrame skipTo(long rowCount) {
         throw new UnsupportedOperationException();

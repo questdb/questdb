@@ -45,6 +45,8 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class SampleByTest extends AbstractGriffinTest {
     private final static Log LOG = LogFactory.getLog(SampleByTest.class);
 
@@ -492,8 +494,8 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testGroupByFail() throws Exception {
         assertMemoryLeak(() -> {
-
-            compiler.compile("create table x as " +
+            compiler.compile(
+                    "create table x as " +
                             "(" +
                             "select" +
                             " x," +
@@ -530,7 +532,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
-                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            cursor.hasNext();
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -1766,7 +1769,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
                         "), index(s) timestamp(k) partition by DAY",
-                true);
+                false);
     }
 
     @Test
@@ -2287,6 +2290,97 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarFillNoneWithoutKey1() throws Exception {
+        assertQuery(
+                "ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:01:30.000000Z\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where ts > '2022-12-01T00:00:30.000000Z' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 3 from long_sequence(1)  " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarFillNoneWithoutKey2() throws Exception {
+        assertQuery(
+                "ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:00:30.000000Z\t1\t1.5\t2\t2\n" +
+                        "2022-12-01T00:01:30.000000Z\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where ts < '2022-12-01T00:01:31.000000Z' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 3 from long_sequence(1)  " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarFillNullWithKey1() throws Exception {
+        assertQuery(
+                "ts\ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:00:00.000000Z\ts2\tNaN\tNaN\tNaN\tNaN\n" +
+                        "2022-12-01T00:01:00.000000Z\ts2\t2\t2.0\t2\t2\n" +
+                        "2022-12-01T00:02:00.000000Z\ts2\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, s, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m fill(null) align to calendar  )" +
+                        "where s != 's1' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 's1', 2 union all " +
+                        "select '2022-12-01T00:01:36.000000Z'::timestamp, 's2', 2 union all " +
+                        "select '2022-12-01T00:02:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToCalendarFillNullWithKey2() throws Exception {
+        assertQuery(
+                "ts\ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:00:00.000000Z\ts1\t1\t1.5\t2\t2\n" +
+                        "2022-12-01T00:01:00.000000Z\ts1\tNaN\tNaN\tNaN\tNaN\n" +
+                        "2022-12-01T00:02:00.000000Z\ts1\tNaN\tNaN\tNaN\tNaN\n",
+                "select * from (" +
+                        "select ts, s, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m fill(null) align to calendar  )" +
+                        "where s != 's2' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 's1', 2 union all " +
+                        "select '2022-12-01T00:01:36.000000Z'::timestamp, 's2', 2 union all " +
+                        "select '2022-12-01T00:02:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
     public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
         assertQuery("k\tcount\n" +
                         "1970-01-03T00:00:00.000000Z\t6\n",
@@ -2298,7 +2392,49 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, true);
+                        ") timestamp(k) partition by NONE", "k", false, true, false);
+    }
+
+    @Test
+    public void testSampleByAlignToFirstObservationFillNoneWithKey() throws Exception {
+        assertQuery(
+                "ts\ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:01:30.000000Z\ts2\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, s, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where s != 's1' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 's1' as s, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 's1', 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleByAlignToFirstObservationFillNoneWithoutKey() throws Exception {
+        assertQuery(
+                "ts\tfirst\tavg\tlast\tmax\n" +
+                        "2022-12-01T00:01:30.000000Z\t3\t3.0\t3\t3\n",
+                "select * from (" +
+                        "select ts, first(val), avg(val), last(val), max(val)" +
+                        "from x " +
+                        "sample by 1m)" +
+                        "where ts > '2022-12-01T00:00:30.000000Z' ",
+                "create table x as " +
+                        "(" +
+                        "select '2022-12-01T00:00:30.000000Z'::timestamp as ts, 1 as val union all " +
+                        "select '2022-12-01T00:00:35.000000Z'::timestamp, 2 union all " +
+                        "select '2022-12-01T00:01:31.000000Z'::timestamp, 3 from long_sequence(1)  " +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                false
+        );
     }
 
     @Test
@@ -2313,7 +2449,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, true);
+                        ") timestamp(k) partition by NONE", "k", false, true, false);
     }
 
     @Test
@@ -2423,6 +2559,46 @@ public class SampleByTest extends AbstractGriffinTest {
                 713,
                 "not a TIMESTAMP"
         );
+    }
+
+    @Test
+    public void testSampleByAllowsPredicatePushdown() throws Exception {
+        String plan = "Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
+                "    SampleBy\n" +
+                "      keys: [tstmp,sym]\n" +
+                "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                "        SelectedRecord\n" +
+                "            Async JIT Filter\n" +
+                "              filter: sym='B'\n" +
+                "              workers: 1\n" +
+                "                DataFrame\n" +
+                "                    Row forward scan\n" +
+                "                    Frame forward scan on: #TABLE#\n";
+
+        testSampleByPushdown("", "align to calendar", plan);
+        testSampleByPushdown("none", "align to calendar", plan);
+    }
+
+    @Test
+    public void testSampleByAllowsPredicatePushdownWhenTsIsNotIncludedInColumnList() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertPlan("select * from (" +
+                            "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                            "from x " +
+                            "sample by 1m align to calendar ) " +
+                            "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
+                    "SampleBy\n" +
+                            "  keys: [tstmp,sym]\n" +
+                            "  values: [first(val),avg(val),last(val),max(val)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async Filter\n" +
+                            "          filter: ((ts2>=1669852800000000 and sym='B') and 0<length(sym)*ts2::long)\n" +
+                            "          workers: 1\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n");
+        });
     }
 
     @Test
@@ -2543,6 +2719,86 @@ public class SampleByTest extends AbstractGriffinTest {
                         "   from" +
                         "   long_sequence(120)" +
                         ") timestamp(k)", null, false);
+    }
+
+    @Test
+    public void testSampleByDisallowsPredicatePushdown() throws Exception {
+        for (String align : Arrays.asList("align to calendar", "align to first observation", "")) {
+            for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
+                if (isNone(fill) && "align to calendar".equals(align)) {
+                    continue;
+                }
+
+                String plan = "Filter filter: ((tstmp>=1669852800000000 and sym='B') and 0<length(sym)*tstmp::long)\n" +
+                        "    SampleBy\n" +
+                        (isNone(fill) ? "" : "      fill: " + fill + "\n") +
+                        "      keys: [tstmp,sym]\n" +
+                        "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                        "        SelectedRecord\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: #TABLE#\n";
+
+                testSampleByPushdown(fill, align, plan);
+            }
+        }
+    }
+
+    @Test
+    public void testSampleByDoesntAllowNonTimestampPredicatePushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab as (\n" +
+                    "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
+                    "from long_sequence(6) ) timestamp(ts)");
+
+            assertQuery("ts\tv\ts\n" +
+                            "2022-12-01T01:11:00.000000Z\t1\tA\n" +
+                            "2022-12-01T01:22:00.000000Z\t2\tA\n" +
+                            "2022-12-01T01:33:00.000000Z\t3\tB\n" +
+                            "2022-12-01T01:44:00.000000Z\t4\tB\n" +
+                            "2022-12-01T01:55:00.000000Z\t5\tB\n" +
+                            "2022-12-01T02:06:00.000000Z\t6\tB\n",
+                    "select * from tab", "ts", true, true);
+
+            assertPlan("select * from (select ts, s, first(v)  from tab sample by 30m fill(prev)) where s = 'B'",
+                    "SelectedRecord\n" +
+                            "    Filter filter: s='B'\n" +
+                            "        SampleBy\n" +
+                            "          fill: prev\n" +
+                            "          keys: [s,ts]\n" +
+                            "          values: [first(v)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n");
+
+            assertQuery("ts\ts\tfirst\n" +
+                            "2022-12-01T01:11:00.000000Z\tB\t3\n" +
+                            "2022-12-01T01:41:00.000000Z\tB\t4\n",
+                    "select * from (select ts, s, first(v) from tab sample by 30m fill(prev)) where s = 'B' ",
+                    "ts", false);
+        });
+    }
+
+    @Test
+    public void testSampleByDoesntAllowTimestampPredicatePushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab as (\n" +
+                    "select dateadd('m', 10*x::int, '2022-12-01T01:00:00.000000Z') ts, x v\n" +
+                    "from long_sequence(6) ) timestamp(ts)");
+
+            assertPlan("select * from (select ts, first(v) from tab sample by 30m fill(prev)) where ts > '2022-12-01T01:10:00.000000Z'",
+                    "Filter filter: 1669857000000000<ts\n" +
+                            "    SampleByFillPrev\n" +
+                            "      values: [first(v)]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n");
+
+            assertQuery("ts\tfirst\n" +
+                            "2022-12-01T01:40:00.000000Z\t4\n",
+                    "select * from (select ts, first(v) from tab sample by 30m fill(prev)) where ts > '2022-12-01T01:10:00.000000Z' ",
+                    "ts", false);
+        });
     }
 
     @Test
@@ -3145,7 +3401,45 @@ public class SampleByTest extends AbstractGriffinTest {
                 null,
                 true,
                 false,
-                true);
+                false);
+    }
+
+    @Test
+    public void testSampleByWithPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab as (\n" +
+                    "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
+                    "from long_sequence(6) ) timestamp(ts)");
+
+            assertQuery("ts\tv\ts\n" +
+                            "2022-12-01T01:11:00.000000Z\t1\tA\n" +
+                            "2022-12-01T01:22:00.000000Z\t2\tA\n" +
+                            "2022-12-01T01:33:00.000000Z\t3\tB\n" +
+                            "2022-12-01T01:44:00.000000Z\t4\tB\n" +
+                            "2022-12-01T01:55:00.000000Z\t5\tB\n" +
+                            "2022-12-01T02:06:00.000000Z\t6\tB\n",
+                    "select * from tab", "ts", true, true);
+
+            String query = "select ts, s, first(v) from tab where s = 'B' and ts > '2022-12-01T00:00:00.000000Z'  sample by 30m fill(prev)";
+
+            assertPlan(query,
+                    "SampleBy\n" +
+                            "  fill: prev\n" +
+                            "  keys: [ts,s]\n" +
+                            "  values: [first(v)]\n" +
+                            "    Async Filter\n" +
+                            "      filter: s='B'\n" +
+                            "      workers: 1\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: tab\n" +
+                            "              intervals: [static=[1669852800000001,9223372036854775807]\n");
+
+            assertQuery("ts\ts\tfirst\n" +
+                            "2022-12-01T01:33:00.000000Z\tB\t3\n" +
+                            "2022-12-01T02:03:00.000000Z\tB\t6\n",
+                    query, "ts", false);
+        });
     }
 
     @Test
@@ -3941,9 +4235,14 @@ public class SampleByTest extends AbstractGriffinTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (
+                                RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine))
+                        ) {
                             // with mmap count = 5 we should get failure in cursor
-                            factory.getCursor(AllowAllSqlSecurityContext.instance(engine));
+                            // noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -9645,6 +9944,10 @@ public class SampleByTest extends AbstractGriffinTest {
         };
     }
 
+    private boolean isNone(String fill) {
+        return "".equals(fill) || "none".equals(fill);
+    }
+
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
@@ -9673,4 +9976,38 @@ public class SampleByTest extends AbstractGriffinTest {
             }
         });
     }
+
+    private void testSampleByPushdown(String fill, String alignTo, String plan) throws Exception {
+        testSampleByPushdownWithDesignatedTs(fill, alignTo, plan);
+        testSampleByPushdownWithoutDesignatedTs(fill, alignTo, plan);
+    }
+
+    private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
+            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String query = "select * from (" +
+                    "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m " + fillOpt + " " + alignTo + " ) " +
+                    "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
+            String actualPlan = plan.replace("#TABLE#", "x");
+            assertPlan(query, actualPlan);
+        });
+    }
+
+    private void testSampleByPushdownWithoutDesignatedTs(String fill, String alignTo, String plan) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
+            String fillOpt = fill.length() == 0 ? "" : "fill(" + fill + ")";
+            String query = "select * from (" +
+                    "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                    "from y timestamp(ts) " +
+                    "sample by 1m " + fillOpt + " " + alignTo + " ) " +
+                    "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
+            String actualPlan = plan.replace("#TABLE#", "y");
+            assertPlan(query, actualPlan);
+        });
+    }
+
 }

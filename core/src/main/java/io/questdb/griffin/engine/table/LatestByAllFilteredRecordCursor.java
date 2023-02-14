@@ -28,10 +28,9 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -39,7 +38,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
+class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
     protected final Function filter;
     private final Map map;
@@ -68,22 +67,24 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
     }
 
     @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        if (!isOpen()) {
+            map.reopen();
+        }
+        filter.init(this, executionContext);
+        super.of(dataFrameCursor, executionContext);
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Row backward scan");
         sink.attr("filter").val(filter);
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-        if (!isOpen()) {
-            map.reopen();
-        }
-        filter.init(this, executionContext);
-
+    protected void buildTreeMap() {
         DataFrame frame;
-        while ((frame = this.dataFrameCursor.next()) != null) {
+        while ((frame = dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;

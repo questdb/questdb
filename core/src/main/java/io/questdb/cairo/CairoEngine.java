@@ -27,8 +27,10 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
+import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -40,12 +42,15 @@ import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -68,11 +73,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
-    private final MPSequence telemetryPubSeq;
-    private final RingQueue<TelemetryTask> telemetryQueue;
-    private final SCSequence telemetrySubSeq;
+    private final Telemetry<TelemetryTask> telemetry;
+    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TextImportExecutionContext textImportExecutionContext;
-    // initial value of unpublishedWalTxnCount is 1 because we want to scan for unapplied WAL transactions on startup
+    // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
@@ -95,16 +99,8 @@ public class CairoEngine implements Closeable, WriterSource {
         this.metadataPool = new MetadataPool(configuration, this);
         this.walWriterPool = new WalWriterPool(configuration, this);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-        if (configuration.getTelemetryConfiguration().getEnabled()) {
-            this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
-            this.telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
-            this.telemetrySubSeq = new SCSequence();
-            telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
-        } else {
-            this.telemetryQueue = null;
-            this.telemetryPubSeq = null;
-            this.telemetrySubSeq = null;
-        }
+        this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
+        this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
         try {
             this.tableIdGenerator.open();
@@ -127,13 +123,31 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
+        // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList<TableToken> convertedTables;
         try {
-            this.tableNameRegistry = configuration.isReadOnlyInstance() ?
-                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-            this.tableNameRegistry.reloadTableNameCache();
+            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);
         } catch (Throwable e) {
             close();
             throw e;
+        }
+
+        try {
+            tableNameRegistry = configuration.isReadOnlyInstance() ?
+                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
+            tableNameRegistry.reloadTableNameCache(convertedTables);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+
+        if (convertedTables != null) {
+            for (int i = 0, n = convertedTables.size(); i < n; i++) {
+                final TableToken token = convertedTables.get(i);
+                try (TableWriter writer = getWriter(AllowAllCairoSecurityContext.INSTANCE, token, "tableTypeConversion")) {
+                    writer.commitSeqTxn(0);
+                }
+            }
         }
     }
 
@@ -157,7 +171,8 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
-        Misc.free(telemetryQueue);
+        Misc.free(telemetry);
+        Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
     }
 
@@ -474,10 +489,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTableToken(dirName, tableId);
     }
 
-    public TableToken getTableTokenByDirName(CharSequence dirName) {
-        return tableNameRegistry.getTokenByDirName(dirName);
-    }
-
     public TableToken getTableTokenIfExists(CharSequence tableName) {
         return tableNameRegistry.getTableToken(tableName);
     }
@@ -508,16 +519,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(tableToken);
     }
 
-    public Sequence getTelemetryPubSequence() {
-        return telemetryPubSeq;
+    public Telemetry<TelemetryTask> getTelemetry() {
+        return telemetry;
     }
 
-    public RingQueue<TelemetryTask> getTelemetryQueue() {
-        return telemetryQueue;
-    }
-
-    public SCSequence getTelemetrySubSequence() {
-        return telemetrySubSeq;
+    public Telemetry<TelemetryWalTask> getTelemetryWal() {
+        return telemetryWal;
     }
 
     public TextImportExecutionContext getTextImportExecutionContext() {
@@ -700,7 +707,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void reloadTableNames() {
-        tableNameRegistry.reloadTableNameCache();
+        reloadTableNames(null);
+    }
+
+    @TestOnly
+    public void reloadTableNames(ObjList<TableToken> convertedTables) {
+        tableNameRegistry.reloadTableNameCache(convertedTables);
     }
 
     public int removeDirectory(@Transient Path path, CharSequence dir) {
@@ -767,6 +779,11 @@ public class CairoEngine implements Closeable, WriterSource {
         this.writerPool.setPoolListener(poolListener);
         this.readerPool.setPoolListener(poolListener);
         this.walWriterPool.setPoolListener(poolListener);
+    }
+
+    @TestOnly
+    public void setReaderListener(ReaderPool.ReaderListener readerListener) {
+        readerPool.setTableReaderListener(readerListener);
     }
 
     public void unlock(

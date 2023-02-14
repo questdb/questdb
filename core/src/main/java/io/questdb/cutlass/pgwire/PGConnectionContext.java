@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -1724,15 +1724,15 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         int errno = ex.getErrno();
         CharSequence message = ex.getFlyweightMessage();
         prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
-        if (errno == CairoException.NON_CRITICAL) {
-            LOG.error()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+        if (ex.isCritical()) {
+            LOG.critical()
+                    .$("error [msg=`").utf8(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         } else {
-            LOG.critical()
-                    .$("error [msg=`").$(message).$('`')
-                    .$(", errno=`").$(errno)
+            LOG.error()
+                    .$("error [msg=`").utf8(message)
+                    .$("`, errno=").$(errno)
                     .I$();
         }
     }
@@ -1807,7 +1807,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareErrorResponse(position, message);
         LOG.error()
                 .$("error [pos=").$(position)
-                .$(", msg=`").$(message).$('`')
+                .$(", msg=`").utf8(message).$('`')
                 .I$();
     }
 
@@ -2025,7 +2025,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void processCompiledQuery(CompiledQuery cq) throws SqlException {
-        sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
+        sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
 
         switch (cq.getType()) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
@@ -2529,7 +2529,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         sqlExecutionContext.getCairoSecurityContext(),
                         path,
                         tableToken
-                )) {
+                )
+        ) {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
@@ -2566,8 +2567,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final RecordMetadata metadata = currentFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
         final long cursorRowCount = currentCursor.size();
-        this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
-        this.resumeProcessor = cursorResumeProcessor;
+        if (maxRows > 0) {
+            this.maxRows = cursorRowCount > 0 ? Long.min(maxRows, cursorRowCount) : maxRows;
+        } else {
+            this.maxRows = Long.MAX_VALUE;
+        }
+        resumeProcessor = cursorResumeProcessor;
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, commandCompleteResumeProcessor);
     }

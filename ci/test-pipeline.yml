@@ -123,7 +123,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              options: "compile -DskipTests"
+              options: "compile -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: "1.11"
           - download: current
             artifact: jacoco-coverage
@@ -135,7 +135,8 @@ stages:
               options:
                 "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
                 -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
-                -DcoverDiff=$(COVERAGE_DIFF)"
+                -DcoverDiff=$(COVERAGE_DIFF)
+                -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar

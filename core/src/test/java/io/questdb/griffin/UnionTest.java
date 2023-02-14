@@ -230,7 +230,7 @@ public class UnionTest extends AbstractGriffinTest {
                         "except " +
                         "select 1  " +
                         "union all " +
-                        "select 3 from long_sequence(1) limit 1", null, null, false, true, true);
+                        "select 3 from long_sequence(1) limit 1", null, null, false, true, false);
     }
 
     @Test
@@ -248,9 +248,9 @@ public class UnionTest extends AbstractGriffinTest {
         assertQuery("x\n0\n2\n",
                 "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
     }
 
     @Test
@@ -258,9 +258,9 @@ public class UnionTest extends AbstractGriffinTest {
         assertQuery("x\n0\n2\n",
                 "select * from (select 1 x union all select 2 union all select 3 from long_sequence(1) order by abs(x) desc limit 2) " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
     }
 
     @Test
@@ -271,9 +271,158 @@ public class UnionTest extends AbstractGriffinTest {
                 "select * from " +
                         "(select 1 x union all select 2 union all select 3 from long_sequence(1) order by x*2 desc limit 2) " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x*2 limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInExceptsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  except " +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInExceptsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  except " +
+                        "  (select sym, max(x) from x order by sym limit 2,3)" +
+                        "  except " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInIntersectsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  intersect " +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInIntersectsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  intersect " +
+                        "  (select sym, max(x) from x order by sym limit 2,3)" +
+                        "  intersect " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, true, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionAllsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union all" +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, true);
+    }
+
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionAllsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union all" +
+                        "  (select sym, max(x) from x order by sym limit 2,3) " +
+                        "  union all " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, true);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionsSecondSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union " +
+                        "  (select sym, max(x) from x order by sym limit 2,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, false);
+    }
+
+    @Test
+    public void testOrderByIsNotIgnoredInUnionsThirdSubquery() throws Exception {
+        assertQuery("sym\tmax\n" +
+                        "GWFFYUDEYY\t99\n" +
+                        "RXPEHNRXGZ\t100\n" +
+                        "SXUXIBBTGP\t88\n" +
+                        "VTJWCPSWHY\t97\n",
+                "select * from " +
+                        "(" +
+                        "  (select sym, max(x) from x order by sym limit 0,2)" +
+                        "  union " +
+                        "  (select sym, max(x) from x order by sym limit 2,3)" +
+                        "  union " +
+                        "  (select sym, max(x) from x order by sym limit 3,4)" +
+                        ");",
+                "create table x as (" +
+                        "  select x, rnd_symbol(4, 10, 10, 0) sym " +
+                        "  from long_sequence(100) );",
+                null, false, true, false);
     }
 
     @Test
@@ -1158,8 +1307,8 @@ public class UnionTest extends AbstractGriffinTest {
                 "with q as  (select 1 x union all select 2 union all select 3 from long_sequence(1) order by x desc limit 2) " +
                         "select * from q " +
                         "intersect " +
-                        "select * from (select x from long_sequence(4) order by x limit 2  ) " +
+                        "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, true);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true, false);
     }
 }

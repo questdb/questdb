@@ -68,7 +68,7 @@ public class JoinTest extends AbstractGriffinTest {
             compile("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
         });
 
-        //query "2"
+        // query "2"
         assertQuery("name\tage\tmember\taddress\tts\n" +
                         "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
                         "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
@@ -78,7 +78,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "left join table_2 as b \n" +
                         "   on a.ts = b.ts ", null, "ts", false, true, false);
 
-        //query "3"
+        // query "3"
         assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
                         "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
                         "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
@@ -88,7 +88,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "left join table_2 as b \n" +
                         "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ", null, "ts", false, true, false);
 
-        //query "4" - same as "3" but between is replaced with >= and <=
+        // query "4" - same as "3" but between is replaced with >= and <=
         assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
                         "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
                         "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
@@ -3324,7 +3324,7 @@ public class JoinTest extends AbstractGriffinTest {
             compile("create table t1 (i int, s1 string)");
             compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
-            compile("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
+            compile("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
             assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
                     "i\ts1\tj\ts2\n" +
@@ -3425,6 +3425,24 @@ public class JoinTest extends AbstractGriffinTest {
                             "2\tb\t1970-01-01T00:00:00.000002Z\tNaN\t\t\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionCondition18() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 symbol)");
+            compile("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
+            compile("create table t2 (j int, s2 symbol)");
+            compile("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "i\ts1\tj\ts2\n" +
+                            "1\ta\t1\ta\n" +
+                            "2\tb\tNaN\t\n" +
+                            "3\tc\t3\tc\n" +
+                            "4\td\tNaN\t\n" +
+                            "5\te\tNaN\t\n");
         });
     }
 
@@ -3981,6 +3999,23 @@ public class JoinTest extends AbstractGriffinTest {
                             "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
                             "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
                             "3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z\n");
+        });
+    }
+
+    @Test
+    public void testLtJoinWithoutCondition2() throws Exception {
+        // Here we test case when all slave records have newer timestamps than what's in the master table.
+        assertMemoryLeak(() -> {
+            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
+            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            compile("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
+
+            assertSql("select * from t1 lt join t2",
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n");
         });
     }
 
@@ -4648,13 +4683,13 @@ public class JoinTest extends AbstractGriffinTest {
             executeInsert("insert into bids values(103, 5);");
 
             String query =
-                    "SELECT \n" +
+                    "select \n" +
                             "    b.timebid timebid,\n" +
                             "    a.timeask timeask, \n" +
                             "    b.b b, \n" +
                             "    a.a a\n" +
-                            "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
-                            "    SPLICE JOIN\n" +
+                            "from (select b.bid b, b.ts timebid from bids b) b \n" +
+                            "    splice join\n" +
                             "(select a.ask a, a.ts timeask from asks a) a\n" +
                             "WHERE (b.timebid != a.timeask);";
 
@@ -4873,7 +4908,6 @@ public class JoinTest extends AbstractGriffinTest {
                     "jnw9\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t1970-01-01T00:00:00.000003Z\n" +
                     "zfuq\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t1970-01-01T00:00:00.000004Z\n" +
                     "hp4m\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t1970-01-01T00:00:00.000005Z\n";
-
 
             compiler.compile(
                     "create table x as (select" +

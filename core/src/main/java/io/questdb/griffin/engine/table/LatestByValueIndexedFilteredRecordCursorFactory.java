@@ -45,7 +45,7 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
+        cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
         this.filter = filter;
     }
 
@@ -69,8 +69,10 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
-            throws SqlException {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         cursor.of(dataFrameCursor, executionContext);
         return cursor;
     }

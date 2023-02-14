@@ -734,6 +734,31 @@ class SqlOptimiser {
         return model;
     }
 
+    //pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
+    //pushing for other fill options or sample by first observation could alter result 
+    private boolean canPushToSampleBy(final QueryModel model, ObjList<CharSequence> expressionColumns) {
+        ObjList<ExpressionNode> fill = model.getSampleByFill();
+        int fillCount = fill.size();
+        boolean isFillNone = fillCount == 0 || (fillCount == 1 && SqlKeywords.isNoneKeyword(fill.getQuick(0).token));
+
+        if (!isFillNone || model.getSampleByOffset() == null) {
+            return false;
+        }
+
+        CharSequence timestamp = findTimestamp(model);
+        if (timestamp == null) {
+            return true;
+        }
+
+        for (int i = 0, n = expressionColumns.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(expressionColumns.get(i), timestamp)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private boolean checkForAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -1566,6 +1591,22 @@ class SqlOptimiser {
         }
     }
 
+    private CharSequence findTimestamp(QueryModel model) {
+        if (model != null) {
+            CharSequence timestamp;
+            if (model.getTimestamp() != null) {
+                timestamp = model.getTimestamp().token;
+            } else {
+                timestamp = findTimestamp(model.getNestedModel());
+            }
+
+            if (timestamp != null) {
+                return model.getColumnNameToAliasMap().get(timestamp);
+            }
+        }
+        return null;
+    }
+
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
         orderByAdvice.clear();
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -2002,12 +2043,12 @@ class SqlOptimiser {
                     }
 
                     final QueryModel nested = parent.getNestedModel();
-                    if (
-                            nested == null
-                                    || nested.getLatestBy().size() > 0
-                                    || nested.getLimitLo() != null
-                                    || nested.getLimitHi() != null
-                                    || nested.getUnionModel() != null
+                    if (nested == null
+                            || nested.getLatestBy().size() > 0
+                            || nested.getLimitLo() != null
+                            || nested.getLimitHi() != null
+                            || nested.getUnionModel() != null
+                            || (nested.getSampleBy() != null && !canPushToSampleBy(nested, literalCollectorANames))
                     ) {
                         // there is no nested model for this table, keep where clause element with this model
                         addWhereNode(parent, node);
@@ -2865,14 +2906,9 @@ class SqlOptimiser {
     private QueryModel rewriteOrderBy(QueryModel model) throws SqlException {
         // find base model and check if there is "group-by" model in between
         // when we are dealing with "group by" model some implicit "order by" columns have to be dropped,
-        // for example:
-        // select a, sum(b) from T order by c
-        //
-        // above is valid but sorting on "c" would be redundant. However, in the following example
-        //
+        // However, in the following example
         // select a, b from T order by c
-        //
-        // ordering is does affect query result
+        // ordering does affect query result
         QueryModel result = model;
         QueryModel base = model;
         QueryModel baseParent = model;
@@ -2883,6 +2919,15 @@ class SqlOptimiser {
 
         while (base.getBottomUpColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
             baseParent = base;
+
+            final QueryModel union = base.getUnionModel();
+            if (union != null) {
+                final QueryModel rewritten = rewriteOrderBy(union);
+                if (rewritten != union) {
+                    base.setUnionModel(rewritten);
+                }
+            }
+
             base = base.getNestedModel();
             if (base.getLimitLo() != null) {
                 limitModel = base;

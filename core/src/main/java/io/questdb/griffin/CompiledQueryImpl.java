@@ -53,7 +53,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private CharSequence statementName;
     private TextLoader textLoader;
     private short type;
-    private UpdateOperation updateOperation;
+    private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
         updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
@@ -82,8 +82,8 @@ public class CompiledQueryImpl implements CompiledQuery {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
             case UPDATE:
-                updateOperation.withSqlStatement(sqlStatement);
-                return updateOperationDispatcher.execute(updateOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
+                updateOp.withSqlStatement(sqlStatement);
+                return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
@@ -134,7 +134,7 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @Override
     public UpdateOperation getUpdateOperation() {
-        return updateOperation;
+        return updateOp;
     }
 
     public CompiledQuery of(short type) {
@@ -151,13 +151,18 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public CompiledQuery ofTableSetType() {
+        type = TABLE_SET_TYPE;
+        return this;
+    }
+
     public CompiledQuery ofUnlock() {
         type = UNLOCK;
         return this;
     }
 
     public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
-        this.updateOperation = updateOperation;
+        this.updateOp = updateOperation;
         this.type = UPDATE;
         return this;
     }

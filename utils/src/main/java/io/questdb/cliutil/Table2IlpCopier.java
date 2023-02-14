@@ -60,7 +60,6 @@ public class Table2IlpCopier {
                     }
                     int timestampIndex = getTimestampIndex(columnNames, columnTypes, params.getSourceTimestampColumnName());
 
-
                     try (Sender sender = buildLineTcpSender(params)) {
                         String tableName = params.getDestinationTableName();
 
@@ -75,7 +74,6 @@ public class Table2IlpCopier {
                                     System.out.println(totalSentLines + " lines, " + linesPerSec + " lines/sec");
                                     start = microsecondClock.getTicks();
                                 }
-
                             }
                         } catch (Exception th) {
                             try {

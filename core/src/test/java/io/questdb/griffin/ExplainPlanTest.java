@@ -477,7 +477,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testCastFloatToDouble() throws Exception {
-        assertPlan("select rnd_float()::double) ",
+        assertPlan("select rnd_float()::double ",
                 "VirtualRecord\n" +
                         "  functions: [rnd_float()::double]\n" +
                         "    long_sequence count: 1\n");
@@ -596,6 +596,35 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    VirtualRecord\n" +
                         "      functions: [x,1]\n" +
                         "        long_sequence count: 10\n");
+    }
+
+    @Test
+    public void testExplainDeferredSingleSymbolFilterDataFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab \n" +
+                    "(\n" +
+                    "   id symbol index,\n" +
+                    "   ts timestamp,\n" +
+                    "   val double  \n" +
+                    ") timestamp(ts);");
+            compile("insert into tab values ( 'XXX', 0::timestamp, 1 );");
+
+            assertPlan("  select\n" +
+                            "   ts,\n" +
+                            "    id, \n" +
+                            "    last(val)\n" +
+                            "  from tab\n" +
+                            "  where id = 'XXX' \n" +
+                            "  sample by 15m ALIGN to CALENDAR\n",
+                    "SampleByFirstLast\n" +
+                            "  keys: [ts, id]\n" +
+                            "  values: [last(val)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id\n" +
+                            "          filter: id=1\n" +
+                            "        Frame forward scan on: tab\n");
+
+        });
     }
 
     @Test
@@ -919,6 +948,67 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "  }\n" +
                         "]\n",
                 " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2", null, null, false, true, true);
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses1() throws SqlException {
+        assertPlan("(select 1)",
+                "VirtualRecord\n" +
+                        "  functions: [1]\n" +
+                        "    long_sequence count: 1\n");
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses2() throws Exception {
+        assertPlan("create table x ( i int)",
+                "(select * from x)",
+                "DataFrame\n" +
+                        "    Row forward scan\n" +
+                        "    Frame forward scan on: x\n");
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses3() throws Exception {
+        assertPlan("create table x ( i int)",
+                "((select * from x))",
+                "DataFrame\n" +
+                        "    Row forward scan\n" +
+                        "    Frame forward scan on: x\n");
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses4() throws Exception {
+        assertPlan("create table x ( i int)",
+                "((x))",
+                "DataFrame\n" +
+                        "    Row forward scan\n" +
+                        "    Frame forward scan on: x\n");
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses5() throws Exception {
+        assertPlan("CREATE TABLE trades (\n" +
+                        "  symbol SYMBOL,\n" +
+                        "  side SYMBOL,\n" +
+                        "  price DOUBLE,\n" +
+                        "  amount DOUBLE,\n" +
+                        "  timestamp TIMESTAMP\n" +
+                        ") timestamp (timestamp) PARTITION BY DAY",
+                "((select last(timestamp) as x, last(price) as btcusd " +
+                        "from trades " +
+                        "where symbol = 'BTC-USD' " +
+                        "and timestamp > dateadd('m', -30, now()) ) " +
+                        "timestamp(x))",
+                "SelectedRecord\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      values: [last(timestamp),last(price)]\n" +
+                        "        Async JIT Filter\n" +
+                        "          filter: symbol='BTC-USD'\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Interval forward scan on: trades\n" +
+                        "                  intervals: [static=[0,9223372036854775807,281481419161601,4294967296] dynamic=[dateadd('m',-30,now())]]\n");
     }
 
     @Test

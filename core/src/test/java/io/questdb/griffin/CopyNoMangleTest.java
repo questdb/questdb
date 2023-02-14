@@ -66,7 +66,7 @@ public class CopyNoMangleTest extends AbstractGriffinTest {
                 "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true,
-                true
+                false
         );
 
         testCopy(stmt, test);

@@ -347,7 +347,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "rnd_symbol('g', 'd', 'f') s, " +
                     "timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(40)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
             assertQuery("x\ts\tts\n",
                     "t where s in ('a', 'b') latest on ts partition by s",
@@ -366,7 +366,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "rnd_symbol(10000, 1, 15, 1000) s, " +
                     "timestamp_sequence(0, 1000*1000L) ts " +
                     "from long_sequence(1000000)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
             String distinctSymbols = selectDistinctSym("t", 500, "s");
 
@@ -426,7 +426,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "rnd_symbol('a', 'b', null) s, " +
                     "timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(49)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
             assertQuery("ts\tx\ts\n" +
                             "1970-01-02T22:00:00.000000Z\t47\tb\n" +
@@ -460,7 +460,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
                     "timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(49)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
             assertQuery("ts\tx\ts\n" +
                             "1970-01-02T17:00:00.000000Z\t42\td\n" +
@@ -548,6 +548,28 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByWithInAndNotInAllBindVariablesIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "), index(s) timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "a");
+            bindVariableService.setStr("sym2", "b");
+            bindVariableService.setStr("sym3", "b");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n",
+                    "select ts, s from t " +
+                            "where s in (:sym1, :sym2) and s != :sym3 " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
     public void testLatestByWithInAndNotInAllBindVariablesNonEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t as (" +
@@ -582,6 +604,168 @@ public class LatestByTest extends AbstractGriffinTest {
                             "1970-01-02T23:00:00.000000Z\ta\n",
                     "select ts, s from t " +
                             "where s in ('a', 'b', 'c') and s != :sym " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithNotInAllBindVariablesMultipleValues() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "d");
+            bindVariableService.setStr("sym2", null);
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T22:00:00.000000Z\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n" +
+                            "1970-01-03T00:00:00.000000Z\tc\n",
+                    "select ts, s from t " +
+                            "where s not in (:sym1, :sym2) " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", null);
+            bindVariableService.setStr("sym2", "a");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T22:00:00.000000Z\tb\n" +
+                            "1970-01-03T00:00:00.000000Z\tc\n",
+                    "select ts, s from t " +
+                            "where s not in (:sym1, :sym2) " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithNotInAllBindVariablesMultipleValuesFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "d");
+            bindVariableService.setStr("sym2", null);
+            bindVariableService.setStr("sym3", "d");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T14:00:00.000000Z\ta\n" +
+                            "1970-01-02T16:00:00.000000Z\tb\n" +
+                            "1970-01-02T19:00:00.000000Z\tc\n",
+                    "select ts, s from t " +
+                            "where s not in (:sym1, :sym2) and s2 = :sym3 " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "), index(s) timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "d");
+            bindVariableService.setStr("sym2", null);
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T22:00:00.000000Z\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n" +
+                            "1970-01-03T00:00:00.000000Z\tc\n",
+                    "select ts, s from t " +
+                            "where s not in (:sym1, :sym2) " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", null);
+            bindVariableService.setStr("sym2", "a");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T22:00:00.000000Z\tb\n" +
+                            "1970-01-03T00:00:00.000000Z\tc\n",
+                    "select ts, s from t " +
+                            "where s not in (:sym1, :sym2) " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexedFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "), index(s), index(s2) timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "d");
+            bindVariableService.setStr("sym2", null);
+            bindVariableService.setStr("sym3", "d");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T14:00:00.000000Z\ta\n" +
+                            "1970-01-02T16:00:00.000000Z\tb\n" +
+                            "1970-01-02T19:00:00.000000Z\tc\n",
+                    "select ts, s from t " +
+                            "where s not in (:sym1, :sym2) and s2 = :sym3 " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithNotInAllBindVariablesSingleValue() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "c");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T22:00:00.000000Z\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n",
+                    "select ts, s from t " +
+                            "where s <> :sym " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithNotInAllBindVariablesSingleValueIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    "), index(s) timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "c");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T22:00:00.000000Z\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n",
+                    "select ts, s from t " +
+                            "where s <> :sym " +
                             "latest on ts partition by s",
                     "ts",
                     true,
@@ -641,7 +825,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "rnd_symbol('a', 'b', null) s, " +
                     "timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(49)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
             assertQuery("x\ts\tts\n" +
                             "44\tb\t1970-01-02T19:00:00.000000Z\n" +
@@ -681,7 +865,7 @@ public class LatestByTest extends AbstractGriffinTest {
                         "rnd_symbol('a', 'b', null) s, " +
                         "timestamp_sequence(0, 60*60*1000*1000L) ts " +
                         "from long_sequence(49)" +
-                        ") timestamp(ts) Partition by DAY",
+                        ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into t values (1000, 'c', '1970-01-02T20:00')",
                 "x\ts\tts\n" +
@@ -724,7 +908,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "rnd_symbol('a', 'b', null) s, " +
                     "timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(49)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
             assertQuery("x\ts\tts\n" +
                             "48\ta\t1970-01-02T23:00:00.000000Z\n" +
@@ -757,7 +941,7 @@ public class LatestByTest extends AbstractGriffinTest {
                     "rnd_symbol('a', 'b', null) s, " +
                     "timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(49)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
             assertQuery("x\ts\tts\n" +
                             "35\ta\t1970-01-02T10:00:00.000000Z\n" +

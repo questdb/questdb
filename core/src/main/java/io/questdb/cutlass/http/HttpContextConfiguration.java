@@ -29,9 +29,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface HttpContextConfiguration {
 
-    Runnable NONE = () -> {
-    };
-
     boolean allowDeflateBeforeSend();
 
     MillisecondClock getClock();
@@ -57,10 +54,6 @@ public interface HttpContextConfiguration {
     int getSendBufferSize();
 
     boolean getServerKeepAlive();
-
-    default Runnable onPeerDisconnect() {
-        return NONE;
-    }
 
     boolean readOnlySecurityContext();
 }

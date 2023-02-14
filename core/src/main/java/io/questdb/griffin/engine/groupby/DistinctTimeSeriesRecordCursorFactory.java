@@ -39,10 +39,6 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
-    // this sink is used to copy recordKeyMap keys to dataMap
-    public static final byte COMPUTE_NEXT = 0;
-    public static final byte NO_ROWS = 2;
-    public static final byte REUSE_CURRENT = 1;
     protected final RecordCursorFactory base;
     private final DistinctTimeSeriesRecordCursor cursor;
 
@@ -108,6 +104,11 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     }
 
     private static class DistinctTimeSeriesRecordCursor implements RecordCursor {
+        private static final byte COMPUTE_NEXT = 1;
+        private static final byte INIT_FIRST_TIMESTAMP = 0;
+        private static final byte NO_ROWS = 3;
+        private static final byte REUSE_CURRENT = 2;
+
         private final Map dataMap;
         private final RecordSink recordSink;
         private final int timestampIndex;
@@ -153,6 +154,18 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public boolean hasNext() {
+            if (state == INIT_FIRST_TIMESTAMP) {
+                // first iteration to get initial timestamp value
+                if (baseCursor.hasNext()) {
+                    prevTimestamp = record.getTimestamp(timestampIndex);
+                    prevRowId = record.getRowId();
+                    state = REUSE_CURRENT;
+                } else {
+                    // edge case - base cursor is empty, avoid calling hasNext() again
+                    state = NO_ROWS;
+                }
+            }
+
             if (state == COMPUTE_NEXT) {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -169,7 +182,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                 }
                 return false;
             }
-            boolean next = state == REUSE_CURRENT;
+
+            boolean next = (state == REUSE_CURRENT);
             state = COMPUTE_NEXT;
             return next;
         }
@@ -181,24 +195,14 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
             if (!isOpen) {
-                this.isOpen = true;
-                this.dataMap.reopen();
+                isOpen = true;
+                dataMap.reopen();
             }
             this.baseCursor = baseCursor;
-            this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-            this.record = baseCursor.getRecord();
-            this.recordB = baseCursor.getRecordB();
-
-
-            // first iteration to get initial timestamp value
-            if (baseCursor.hasNext()) {
-                prevTimestamp = record.getTimestamp(timestampIndex);
-                prevRowId = record.getRowId();
-                state = REUSE_CURRENT;
-            } else {
-                // edge case - base cursor is empty, avoid calling hasNext() again
-                state = NO_ROWS;
-            }
+            circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            record = baseCursor.getRecord();
+            recordB = baseCursor.getRecordB();
+            state = INIT_FIRST_TIMESTAMP;
             return this;
         }
 

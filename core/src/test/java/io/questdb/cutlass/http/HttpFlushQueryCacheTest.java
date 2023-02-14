@@ -41,8 +41,8 @@ import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class HttpFlushQueryCacheTest {
 
-    private static final String JSON_DDL_RESPONSE = "0d\r\n" +
-            "{\"ddl\":\"OK\"}\n\r\n" +
+    private static final String JSON_DDL_RESPONSE = "0c\r\n" +
+            "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
     @Rule
@@ -75,8 +75,8 @@ public class HttpFlushQueryCacheTest {
                     "ON t1.id = t2.id\n" +
                     "LIMIT 1";
             sendAndReceiveBasicSelect(sql, "\r\n" +
-                    "012b\r\n" +
-                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                    "0139\r\n" +
+                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"timestamp\":1,\"count\":1}\r\n" +
                     "00\r\n" +
                     "\r\n");
 
@@ -86,8 +86,8 @@ public class HttpFlushQueryCacheTest {
             // flush query cache and verify that the memory gets released
             sql = "SELECT flush_query_cache()";
             sendAndReceiveBasicSelect(sql, "\r\n" +
-                    "7d\r\n" +
-                    "{\"query\":\"SELECT flush_query_cache()\",\"columns\":[{\"name\":\"flush_query_cache\",\"type\":\"BOOLEAN\"}],\"dataset\":[[true]],\"count\":1}\r\n" +
+                    "8c\r\n" +
+                    "{\"query\":\"SELECT flush_query_cache()\",\"columns\":[{\"name\":\"flush_query_cache\",\"type\":\"BOOLEAN\"}],\"dataset\":[[true]],\"timestamp\":-1,\"count\":1}\r\n" +
                     "00\r\n" +
                     "\r\n");
 
@@ -107,8 +107,6 @@ public class HttpFlushQueryCacheTest {
     private static void sendAndReceive(String request, CharSequence response) throws InterruptedException {
         new SendAndReceiveRequestBuilder()
                 .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
-                .withExpectDisconnect(false)
-                .withRequestCount(1)
                 .execute(request, response);
     }
 

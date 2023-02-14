@@ -87,7 +87,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true, false);
     }
 
     @Test
@@ -104,7 +104,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  desc \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time###DESC", true, true, true);
+                "sensor_time###DESC", true, true, false);
     }
 
     @Test
@@ -169,7 +169,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true, false);
     }
 
     @Test
@@ -186,7 +186,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  desc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time###DESC", true, true, true);
+                "sensor_time###DESC", true, true, false);
     }
 
     @Test
@@ -219,7 +219,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true, false);
     }
 
     @Test
@@ -236,7 +236,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  desc \n" +
                         "limit -5; ",
                 DDL,
-                "sensor_time###DESC", true, true, true);
+                "sensor_time###DESC", true, true, false);
     }
 
     @Test
@@ -310,7 +310,7 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time  asc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time", true, true, true);
+                "sensor_time", true, true, false);
     }
 
     @Test
@@ -327,6 +327,6 @@ public class OrderByWithAsyncFilterTest extends AbstractGriffinTest {
                         "order by sensor_time desc \n" +
                         "limit 5; ",
                 DDL,
-                "sensor_time###DESC", true, true, true);
+                "sensor_time###DESC", true, true, false);
     }
 }

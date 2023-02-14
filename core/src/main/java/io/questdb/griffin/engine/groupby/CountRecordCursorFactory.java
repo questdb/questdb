@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final GenericRecordMetadata DEFAULT_COUNT_METADATA = new GenericRecordMetadata();
@@ -51,19 +52,8 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        try (RecordCursor baseCursor = base.getCursor(executionContext)) {
-            final long size = baseCursor.size();
-            if (size < 0) {
-                long count = 0;
-                while (baseCursor.hasNext()) {
-                    count++;
-                }
-                cursor.of(count);
-            } else {
-                cursor.of(size);
-            }
-            return cursor;
-        }
+        cursor.of(base.getCursor(executionContext));
+        return cursor;
     }
 
     @Override
@@ -89,11 +79,13 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
+        private RecordCursor baseCursor;
         private long count;
         private boolean hasNext = true;
 
         @Override
         public void close() {
+            baseCursor = Misc.free(baseCursor);
         }
 
         @Override
@@ -103,6 +95,12 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            if (baseCursor != null) {
+                while (baseCursor.hasNext()) {
+                    count++;
+                }
+                baseCursor = Misc.free(baseCursor);
+            }
             if (hasNext) {
                 hasNext = false;
                 return true;
@@ -120,8 +118,15 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
             hasNext = true;
         }
 
-        private void of(long count) {
-            this.count = count;
+        private void of(RecordCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            final long size = baseCursor.size();
+            if (size < 0) {
+                count = 0;
+            } else {
+                count = size;
+                this.baseCursor = Misc.free(baseCursor);
+            }
             toTop();
         }
 

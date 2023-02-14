@@ -281,7 +281,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sum(d1) from tb1 where d1 < 0.2",
                         null,
-                        true,
+                        false,
                         readOnlyExecutionContext,
                         true
                 );
@@ -311,7 +311,9 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                     null,
-                    false, readOnlyExecutionContext);
+                    false,
+                    readOnlyExecutionContext
+            );
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
                 setMaxCircuitBreakerChecks(2);
@@ -320,7 +322,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                         null,
-                        false, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
@@ -426,14 +430,18 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym2\td\nGZ\t0.006817672510656014\nGZ\t0.0014986299883373855\nGZ\t0.007868356216637062\nGZ\t0.007985454958725269\nGZ\t0.0011075361080621349\nRX\t4.016718301054212E-4\nRX\t0.006651203432318287\nRX\t6.503932953429992E-4\nRX\t0.0072398675350549\nRX\t0.0016532800623808575\n",
                     "select sym2, d from tb1 where d < 0.01 order by sym2",
                     null,
-                    true, readOnlyExecutionContext);
+                    true,
+                    readOnlyExecutionContext
+            );
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym2, d from tb1 order by sym2",
                         null,
-                        true, readOnlyExecutionContext);
+                        true,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Maximum number of pages (11) breached"));
@@ -460,14 +468,18 @@ public class SecurityTest extends AbstractGriffinTest {
                             "PEHN\tIPHZ\n",
                     "select distinct sym1, sym2 from tb1 where d < 0.07",
                     null,
-                    true, readOnlyExecutionContext);
+                    true,
+                    readOnlyExecutionContext
+            );
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select distinct sym1, sym2 from tb1",
                         null,
-                        true, readOnlyExecutionContext);
+                        true,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -495,14 +507,18 @@ public class SecurityTest extends AbstractGriffinTest {
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
-                        false, sqlExecutionContext);
+                        false,
+                        sqlExecutionContext
+                );
                 try {
                     assertQuery(
                             memoryRestrictedCompiler,
                             "TOO MUCH",
                             "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
-                            false, readOnlyExecutionContext);
+                            false,
+                            readOnlyExecutionContext
+                    );
                     Assert.fail();
                 } catch (Exception ex) {
                     Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -533,14 +549,18 @@ public class SecurityTest extends AbstractGriffinTest {
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
-                        false, sqlExecutionContext);
+                        false,
+                        sqlExecutionContext
+                );
                 try {
                     assertQuery(
                             memoryRestrictedCompiler,
                             "TOO MUCH",
                             "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                             null,
-                            false, readOnlyExecutionContext);
+                            false,
+                            readOnlyExecutionContext
+                    );
                     Assert.fail();
                 } catch (Exception ex) {
                     Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -569,14 +589,18 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
-                    false, sqlExecutionContext);
+                    false,
+                    sqlExecutionContext
+            );
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
-                        false, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -600,7 +624,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select ts, d from tb1 LATEST ON ts PARTITION BY d",
                         "ts",
-                        true, readOnlyExecutionContext);
+                        true,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -636,14 +662,18 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
-                    false, sqlExecutionContext);
+                    false,
+                    sqlExecutionContext
+            );
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                         null,
-                        false, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -665,14 +695,18 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\n",
                     "select sym, d from tb1 where d < 0.3 ORDER BY d",
                     null,
-                    true, readOnlyExecutionContext);
+                    true,
+                    readOnlyExecutionContext
+            );
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym, d from tb1 where d < 0.5 ORDER BY d",
                         null,
-                        true, readOnlyExecutionContext);
+                        true,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
@@ -696,7 +730,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear)",
                         "ts",
-                        true, readOnlyExecutionContext);
+                        true,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -745,7 +781,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null)",
                         null,
-                        true, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -769,7 +807,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev)",
                         null,
-                        true, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -793,7 +833,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0)",
                         null,
-                        true, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -820,14 +862,18 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
                     null,
-                    false, readOnlyExecutionContext);
+                    false,
+                    readOnlyExecutionContext
+            );
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
                         null,
-                        false, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
@@ -854,14 +900,18 @@ public class SecurityTest extends AbstractGriffinTest {
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1",
                     null,
-                    true, readOnlyExecutionContext);
+                    true,
+                    readOnlyExecutionContext
+            );
             try {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
                         null,
-                        true, readOnlyExecutionContext);
+                        true,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
@@ -1010,5 +1060,4 @@ public class SecurityTest extends AbstractGriffinTest {
                 true,
                 false);
     }
-
 }

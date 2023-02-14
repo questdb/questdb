@@ -234,11 +234,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     @Override
-    public void reopen() {
-        super.reopen();
-    }
-
-    @Override
     public long size() {
         return currentValues;
     }

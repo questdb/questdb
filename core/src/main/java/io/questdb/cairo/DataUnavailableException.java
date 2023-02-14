@@ -39,14 +39,14 @@ public class DataUnavailableException extends CairoException {
 
     private SuspendEvent event;
 
-    public static DataUnavailableException instance(CharSequence table, CharSequence partition, SuspendEvent event) {
+    public static DataUnavailableException instance(TableToken tableToken, CharSequence partition, SuspendEvent event) {
         DataUnavailableException ex = tlException.get();
         ex.message.clear();
         ex.errno = CairoException.NON_CRITICAL;
         ex.event = event;
-        ex.put("partition is located in cold storage, query will be suspended [table=").put(table)
-            .put(", partition=").put(partition)
-            .put(']');
+        ex.put("partition is located in cold storage, query will be suspended [table=").put(tableToken)
+                .put(", partition=").put(partition)
+                .put(']');
         return ex;
     }
 

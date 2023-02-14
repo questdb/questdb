@@ -27,8 +27,8 @@ API for bulk imports and exports.
 QuestDB is well suited for financial market data, application metrics, sensor
 data, real-time analytics, dashboards, and infrastructure monitoring.
 
-QuestDB implements ANSI SQL with native time-series SQL semantics. These SQL
-semantics make it simple to correlate data from multiple sources using
+QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
+extensions make it simple to correlate data from multiple sources using
 relational and time-series joins. We achieve high performance by adopting a
 column-oriented storage model, parallelized vector execution, SIMD instructions,
 and low-latency techniques. The entire codebase is built from the ground up in

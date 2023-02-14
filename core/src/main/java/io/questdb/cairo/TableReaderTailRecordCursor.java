@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.TestOnly;
 
 public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
 
@@ -34,7 +35,7 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
 
     public void bookmark() {
         lastRowId = recordA.getRowId();
-        this.txn = reader.getTxn();
+        txn = reader.getTxn();
     }
 
     @Override
@@ -56,7 +57,7 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
             } else {
                 seekToLastSeenRow();
             }
-            this.txn = reader.getTxn();
+            txn = reader.getTxn();
             return true;
         }
 
@@ -74,20 +75,21 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
         return false;
     }
 
-    public void toBottom() {
-        lastRowId = Rows.toRowID(reader.getPartitionCount() - 1, reader.getTransientRowCount() - 1);
-        startFrom(lastRowId);
-        this.txn = reader.getTxn();
-        this.dataVersion = reader.getDataVersion();
-    }
-
     private void seekToLastSeenRow() {
         if (lastRowId > -1) {
             startFrom(lastRowId);
         } else {
             // this is first time this cursor opens
             toTop();
-            this.dataVersion = reader.getDataVersion();
+            dataVersion = reader.getDataVersion();
         }
+    }
+
+    @TestOnly
+    void toBottom() {
+        lastRowId = Rows.toRowID(reader.getPartitionCount() - 1, reader.getTransientRowCount() - 1);
+        startFrom(lastRowId);
+        txn = reader.getTxn();
+        dataVersion = reader.getDataVersion();
     }
 }

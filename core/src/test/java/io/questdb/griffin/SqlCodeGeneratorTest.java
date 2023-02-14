@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
@@ -307,7 +308,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "cc\n" +
                         "cc\n" +
                         "cc\n",
-                "select * from x2 where sym in (select distinct sym from x2 where sym  in (select distinct sym from x2 where sym = 'cc')) and test_match()",
+                "select * from x2 where sym in (select distinct sym from x2 where sym in (select distinct sym from x2 where sym = 'cc')) and test_match()",
                 "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
                 null
         );
@@ -912,7 +913,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "24.45295612285482\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+                        "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n");
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
@@ -5205,7 +5206,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         factory,
                         true,
                         true,
-                        true
+                        false
                 );
             }
         });
@@ -6488,8 +6489,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
+                        " from long_sequence(20)" +
                         "),index(b) timestamp(k) partition by MONTH",
                 null,
                 "insert into x select * from (" +
@@ -6930,6 +6930,33 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testSelectDistinctWithColumnAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table my_table as (select x as id from long_sequence(1))", sqlExecutionContext).getType();
+            try (RecordCursorFactory factory = compiler.compile("select distinct id as foo from my_table", sqlExecutionContext).getRecordCursorFactory()) {
+                RecordMetadata metadata = factory.getMetadata();
+                Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
+                assertCursor("foo\n" +
+                        "1\n", factory, true, true, false);
+            }
+        });
+    }
+
+    @Test
+    public void testSelectDistinctWithColumnAliasAndTableFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(CREATE_TABLE, compiler.compile("create table my_table (id long)", sqlExecutionContext).getType());
+            try (RecordCursorFactory factory = compiler.compile("select distinct x as foo from long_sequence(1)", sqlExecutionContext).getRecordCursorFactory()) {
+                RecordMetadata metadata = factory.getMetadata();
+                Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
+
+                assertCursor("foo\n" +
+                        "1\n", factory, true, true, false);
+            }
+        });
     }
 
     @Ignore("result order is currently dependent on stability of sorting method")

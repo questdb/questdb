@@ -129,6 +129,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelFilterEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return false;
     }
@@ -163,10 +168,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setRandom(Rnd rnd) {
+    public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
     }
 
     @Override
-    public void storeTelemetry(short event, short origin) {
+    public void setRandom(Rnd rnd) {
     }
 }

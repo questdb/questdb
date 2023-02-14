@@ -380,6 +380,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBadAlias() throws Exception {
+        assertIdentifierError("select 'a' ! ");
+        assertIdentifierError("select 'a' } ");
+        assertIdentifierError("select 'a' { ");
+        assertIdentifierError("select 'a' ] ");
+        assertIdentifierError("select 'a' : ");
+        assertIdentifierError("select 'a' ? ");
+        assertIdentifierError("select 'a' @ ");
+        assertIdentifierError("select 'a' ) ");
+        assertIdentifierError("select 'a' $ ");
+        assertIdentifierError("select 'a' 0 ");
+        assertIdentifierError("select 'a' 12 ");
+        assertIdentifierError("select 'a' \"\"\" ");
+        assertIdentifierError("select 'a' \"\" ");
+        assertIdentifierError("select 'a' \" ");
+        assertIdentifierError("select 'a' ''' ");
+        assertIdentifierError("select 'a' '' ");
+        assertIdentifierError("select 'a' ' ");
+        assertIdentifierError("select 'a' ``` ");
+        assertIdentifierError("select 'a' `` ");
+        assertIdentifierError("select 'a' ` ");
+    }
+
+    @Test
     public void testBadTableExpression() throws Exception {
         assertSyntaxError(")", 0, "table name expected");
     }
@@ -2386,9 +2410,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testEmptyColumnAliasDisallowed() throws Exception {
-        assertSyntaxError("select x as '' from long_sequence(1)", 15, "column alias");
-        assertSyntaxError("select 'x' '' from long_sequence(1)", 14, "column alias");
-        assertSyntaxError("select x as \"\" from long_sequence(1)", 15, "column alias");
+        assertSyntaxError("select x as '' from long_sequence(1)", 12, "non-empty identifier");
+        assertSyntaxError("select 'x' '' from long_sequence(1)", 11, "non-empty identifier");
+        assertSyntaxError("select x as \"\" from long_sequence(1)", 12, "non-empty identifier");
     }
 
     @Test
@@ -2621,7 +2645,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testExplainWithBadOption() throws Exception {
-        assertSyntaxError("explain (xyz) select * from x", 9, "unexpected explain option found",
+        assertSyntaxError("explain (xyz) select * from x", 21, "unexpected token: *",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithBadSql1() throws Exception {
+        assertSyntaxError("explain select 1)", 16, "identifier should start with a letter or '_'",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithBadSql2() throws Exception {
+        assertSyntaxError("explain select 1))", 16, "identifier should start with a letter or '_'",
                 modelOf("x").col("x", ColumnType.INT));
     }
 
@@ -2642,6 +2678,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testExplainWithMissingFormat() throws Exception {
         assertSyntaxError("explain (format) select * from x", 15, "unexpected explain format found",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses1() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain (select x from x) ", ExecutionModel.EXPLAIN,
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testExplainWithQueryInParentheses2() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ",
+                "explain (x) ", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT));
     }
 
@@ -2887,6 +2937,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING).col("orderId", ColumnType.INT).col("productId", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testGoodNonQuotedAlias() throws SqlException {
+        assertColumnNames("select 'a' a", "a");
+        assertColumnNames("select 'a' _", "_");
+        assertColumnNames("select 'a' a1$_", "a1$_");
+        assertColumnNames("select 'a' _a1$", "_a1$");
     }
 
     @Test
@@ -7563,7 +7621,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "union all " +
                         "select-virtual ['a' k, sum] 'a' k, sum from " +
                         "(select-group-by [sum(z) sum] sum(z) sum from " +
-                        "(select-choose [t, z] z, t from (select [t, z] from c order by t)) " +
+                        "(select-choose [t, z] z, t from (select [t, z] from c) order by t) " +
                         "timestamp (t) sample by 6h)" +
                         ") order by x",
                 "select x from " +
@@ -7614,7 +7672,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x, t] x, t from (select [x, t] from a) union select-choose [y, t] y, t from (select [y, t] from b) union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
+                "select-choose x from " +
+                        "(select-choose [x, t] x, t from (select [x, t] from a) " +
+                        "union select-choose [y, t] y, t from (select [y, t] from b) " +
+                        "union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum " +
+                        "from (select-choose [t, z] z, t from (select [t, z] from c) order by t) timestamp (t) sample by 6h)) " +
+                        "order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -7816,6 +7879,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
+    }
+
+    private void assertIdentifierError(String query) throws Exception {
+        assertSyntaxError(query, 11, "identifier");
     }
 
     private void assertPartitionByOverOrderByAcceptsDirection(String orderInQuery, String orderInModel) throws SqlException {

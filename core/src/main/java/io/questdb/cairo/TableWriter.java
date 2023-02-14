@@ -1538,7 +1538,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void processWalData(
+    public long processWalData(
             @Transient Path walPath,
             boolean inOrder,
             long rowLo,
@@ -1581,10 +1581,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
+            return rowsAdded;
         } else {
             // Keep in memory last committed seq txn, but do not write it to _txn file.
             txWriter.setSeqTxn(seqTxn);
         }
+        return 0L;
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
@@ -3287,12 +3289,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
     }
 
-    private void initialiseFirstWalCommit() {
-        if (denseIndexers.size() == 0) {
-            populateDenseIndexerList();
-        }
-    }
-
     private boolean isLastPartitionColumnsOpen() {
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0) {
@@ -3453,7 +3449,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
         // we will check new partitionTimestampHi value against the limit to see if the writer
         // will have to switch partition internally
-        long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
         try {
             o3RowCount += o3MoveUncommitted(timestampIndex);
 
@@ -3997,9 +3992,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     destDataAddr,
                     0L
             );
-            if (rowCount == 4857 || destIndex.getLong(rowCount << 3) != src1DataSize + lagDataSize) {
-                int asdf = 0;
-            }
         } else if (type == ColumnType.BINARY) {
             Vect.oooMergeCopyBinColumn(
                     mergedTimestampAddress,

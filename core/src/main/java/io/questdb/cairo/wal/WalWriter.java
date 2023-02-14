@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -71,6 +72,7 @@ public class WalWriter implements TableWriterAPI {
     private final MetadataValidatorService metaValidatorSvc = new MetadataValidatorService();
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
+    private final Metrics metrics;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final Path path;
@@ -103,7 +105,12 @@ public class WalWriter implements TableWriterAPI {
     private boolean txnOutOfOrder = false;
     private int walLockFd = -1;
 
-    public WalWriter(CairoConfiguration configuration, TableToken tableToken, TableSequencerAPI tableSequencerAPI) {
+    public WalWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            TableSequencerAPI tableSequencerAPI,
+            Metrics metrics
+    ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
@@ -115,6 +122,7 @@ public class WalWriter implements TableWriterAPI {
         this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(tableToken).concat(walName);
         this.rootLen = path.length();
+        this.metrics = metrics;
         this.open = true;
 
         try {
@@ -224,7 +232,10 @@ public class WalWriter implements TableWriterAPI {
     public void close() {
         if (isOpen()) {
             try {
-                rollback();
+                if (!distressed) {
+                    rollback();
+                }
+                // if distressed then WAL writer will never be re-used, no rollback needed.
             } finally {
                 doClose(true);
             }
@@ -238,10 +249,12 @@ public class WalWriter implements TableWriterAPI {
         try {
             if (inTransaction()) {
                 LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
+                final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
+                metrics.getWalMetrics().addRowsWritten(rowsToCommit);
                 return seqTxn;
             }
         } catch (CairoException ex) {
@@ -1764,10 +1777,10 @@ public class WalWriter implements TableWriterAPI {
         }
 
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
-            final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
             int key;
             if (utf16Value != null) {
-                int index = utf16Map.keyIndex(utf16Value);
+                final CharSequenceIntHashMap utf16Map = symbolMaps.getQuick(columnIndex);
+                final int index = utf16Map.keyIndex(utf16Value);
                 if (index > -1) {
                     key = symbolMapReader.keyOf(utf16Value);
                     if (key == SymbolTable.VALUE_NOT_FOUND) {

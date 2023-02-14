@@ -121,6 +121,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         private final Map joinKeyMap;
         private final OuterJoinRecord record;
         private final LongChain slaveChain;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
@@ -134,10 +136,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 CairoConfiguration configuration
         ) {
             super(columnSplit);
-            this.joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
-            this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
-            this.record = new OuterJoinRecord(columnSplit, nullRecord);
-            this.isOpen = true;
+            joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
+            slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+            record = new OuterJoinRecord(columnSplit, nullRecord);
+            isOpen = true;
         }
 
         @Override
@@ -157,6 +159,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public boolean hasNext() {
+            if (!isMapBuilt) {
+                buildMapOfSlaveRecords();
+                isMapBuilt = true;
+            }
+
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
@@ -179,56 +186,57 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 }
                 return true;
             }
-
             return false;
         }
 
         @Override
         public long size() {
-            return -1L;
+            return -1;
         }
 
         @Override
         public void toTop() {
             masterCursor.toTop();
             slaveChainCursor = null;
+            if (!isMapBuilt) {
+                slaveCursor.toTop();
+                joinKeyMap.clear();
+                slaveChain.clear();
+            }
         }
 
-        private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            try {
-                final Record record = slaveCursor.getRecord();
-                while (slaveCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    MapKey key = joinKeyMap.withKey();
-                    key.put(record, slaveKeySink);
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        final long offset = slaveChain.put(record.getRowId(), -1);
-                        value.putLong(0, offset);
-                        value.putLong(1, offset);
-                    } else {
-                        value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
-                    }
+        private void buildMapOfSlaveRecords() {
+            final Record record = slaveCursor.getRecord();
+            while (slaveCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+
+                MapKey key = joinKeyMap.withKey();
+                key.put(record, slaveKeySink);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    final long offset = slaveChain.put(record.getRowId(), -1);
+                    value.putLong(0, offset);
+                    value.putLong(1, offset);
+                } else {
+                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
                 }
-            } catch (Throwable t) {
-                close();
-                throw t;
             }
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            if (!this.isOpen) {
-                this.isOpen = true;
-                this.slaveChain.reopen();
-                this.joinKeyMap.reopen();
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            if (!isOpen) {
+                isOpen = true;
+                slaveChain.reopen();
+                joinKeyMap.reopen();
             }
-            buildMapOfSlaveRecords(slaveCursor, circuitBreaker);
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecordB();
-            this.record.of(masterRecord, slaveRecord);
-            this.slaveChainCursor = null;
+            this.circuitBreaker = circuitBreaker;
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecordB();
+            record.of(masterRecord, slaveRecord);
+            slaveChainCursor = null;
+            isMapBuilt = false;
         }
     }
 }

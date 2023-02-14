@@ -28,17 +28,18 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
+class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final int symbolKey;
-    private boolean empty;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean hasNext;
+    private boolean isFindPending;
+    private boolean isRecordFound;
 
     public LatestByValueRecordCursor(int columnIndex, int symbolKey, @NotNull IntList columnIndexes) {
         super(columnIndexes);
@@ -48,11 +49,26 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements
 
     @Override
     public boolean hasNext() {
+        if (!isFindPending) {
+            findRecord();
+            toTop();
+            isFindPending = true;
+        }
         if (hasNext) {
             hasNext = false;
             return true;
         }
         return false;
+    }
+
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+        this.dataFrameCursor = dataFrameCursor;
+        recordA.of(dataFrameCursor.getTableReader());
+        recordB.of(dataFrameCursor.getTableReader());
+        circuitBreaker = executionContext.getCircuitBreaker();
+        isRecordFound = false;
+        isFindPending = false;
     }
 
     @Override
@@ -68,13 +84,10 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements
 
     @Override
     public void toTop() {
-        hasNext = !empty;
+        hasNext = isRecordFound;
     }
 
-    private void findRecord(SqlExecutionContext executionContext) {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-
-        empty = true;
+    private void findRecord() {
         DataFrame frame;
         OUT:
         while ((frame = this.dataFrameCursor.next()) != null) {
@@ -87,19 +100,10 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (key == symbolKey) {
-                    empty = false;
+                    isRecordFound = true;
                     break OUT;
                 }
             }
         }
-    }
-
-    @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        findRecord(executionContext);
-        toTop();
     }
 }

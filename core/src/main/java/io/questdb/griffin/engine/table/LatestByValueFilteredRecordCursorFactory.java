@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
 
-    private final AbstractDataFrameRecordCursor cursor;
+    private final DataFrameRecordCursor cursor;
     private final Function filter;
 
     public LatestByValueFilteredRecordCursorFactory(
