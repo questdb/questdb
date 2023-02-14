@@ -113,7 +113,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
-        this.heartbeatIntervalMs = -1; //todo: config
+        this.heartbeatIntervalMs = -1; //todo: replace after test
+//        this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
 
         createListenFd();
         listening = true;
