@@ -34,12 +34,10 @@ import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacadeImpl;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.*;
@@ -59,6 +57,9 @@ public class PropServerConfigurationTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     private final static Log LOG = LogFactory.getLog(PropServerConfigurationTest.class);
+
+    private final static Rnd rnd = new Rnd();
+    private final static StringSink sink = new StringSink();
     private static String root;
 
     @AfterClass
@@ -744,6 +745,67 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testNotValidAllowedVolumePaths0() throws Exception {
+        File volumeA = temp.newFolder("volumeA");
+        try {
+            String aliasA = "volumeA";
+            String aliasB = "volumeB";
+            String volumeAPath = volumeA.getAbsolutePath();
+            String volumeBPath = "banana";
+
+            Properties properties = new Properties();
+            sink.clear();
+            loadVolumePath(aliasA, volumeAPath);
+            sink.put(',');
+            loadVolumePath(aliasB, volumeBPath);
+            properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), sink.toString());
+            try {
+                new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "inaccessible volume [path=banana]");
+            }
+        } finally {
+            Assert.assertTrue(volumeA.delete());
+        }
+    }
+
+    @Test
+    public void testNotValidAllowedVolumePaths1() throws Exception {
+        File volumeB = temp.newFolder("volumeB");
+        try {
+            String aliasA = "volumeA";
+            String aliasB = "volumeB";
+            String volumeAPath = "coconut";
+            String volumeBPath = volumeB.getAbsolutePath();
+            Properties properties = new Properties();
+            sink.clear();
+            loadVolumePath(aliasA, volumeAPath);
+            sink.put(',');
+            loadVolumePath(aliasB, volumeBPath);
+            properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), sink.toString());
+            try {
+                new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "inaccessible volume [path=coconut]");
+            }
+        } finally {
+            Assert.assertTrue(volumeB.delete());
+        }
+    }
+
+    @Test
+    public void testNotValidAllowedVolumePaths2() throws Exception {
+        String p = ",";
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), p);
+        try {
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "invalid syntax, missing alias at offset 0");
+        }
+    }
+
+    @Test
     public void testObsoleteValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.timeout", "10000");
@@ -1176,6 +1238,52 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testValidAllowedVolumePaths0() throws Exception {
+        File volumeA = temp.newFolder("volumeA");
+        File volumeB = temp.newFolder("volumeB");
+        File volumeC = temp.newFolder("volumeC");
+        try {
+            String aliasA = "volumeA";
+            String aliasB = "volumeB";
+            String aliasC = "volumeC";
+            String volumeAPath = volumeA.getAbsolutePath();
+            String volumeBPath = volumeB.getAbsolutePath();
+            String volumeCPath = volumeC.getAbsolutePath();
+            Properties properties = new Properties();
+            properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), "");
+            Assert.assertNull(PropServerConfiguration.validate(properties));
+            for (int i = 0; i < 20; i++) {
+                sink.clear();
+                loadVolumePath(aliasA, volumeAPath);
+                sink.put(',');
+                loadVolumePath(aliasB, volumeBPath);
+                sink.put(',');
+                loadVolumePath(aliasC, volumeCPath);
+                properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), sink.toString());
+                CairoConfiguration cairoConfig = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder()).getCairoConfiguration();
+
+                Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasA));
+                Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasB));
+                Assert.assertNotNull(cairoConfig.getVolumeDefinitions().resolveAlias(aliasC));
+                Assert.assertNull(cairoConfig.getVolumeDefinitions().resolveAlias("banana"));
+            }
+        } finally {
+            Assert.assertTrue(volumeA.delete());
+            Assert.assertTrue(volumeB.delete());
+            Assert.assertTrue(volumeC.delete());
+        }
+    }
+
+    @Test
+    public void testValidAllowedVolumePaths1() throws Exception {
+        String p = "   ";
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_VOLUMES.getPropertyPath(), p);
+        CairoConfiguration cairoConfig = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder()).getCairoConfiguration();
+        Assert.assertNull(cairoConfig.getVolumeDefinitions().resolveAlias("banana"));
+    }
+
+    @Test
     public void testValidConfiguration() {
         Properties properties = new Properties();
         properties.setProperty("http.net.connection.rcvbuf", "10000");
@@ -1205,5 +1313,21 @@ public class PropServerConfigurationTest {
 
     private String getRelativePath(String path) {
         return path + File.separator + ".." + File.separator + new File(path).getName();
+    }
+
+    private void loadVolumePath(String alias, String volumePath) {
+        randWhiteSpace();
+        sink.put(alias);
+        randWhiteSpace();
+        sink.put("->");
+        randWhiteSpace();
+        sink.put(volumePath);
+        randWhiteSpace();
+    }
+
+    private void randWhiteSpace() {
+        for (int i = 0, n = Math.abs(rnd.nextInt()) % 4; i < n; i++) {
+            sink.put(' ');
+        }
     }
 }

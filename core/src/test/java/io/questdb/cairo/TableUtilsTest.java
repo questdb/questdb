@@ -24,13 +24,15 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.TestFilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import org.junit.Assert;
-import org.junit.ClassRule;
-import org.junit.Test;
+import io.questdb.test.tools.TestUtils;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.TestName;
+
+import java.io.File;
+import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
 
@@ -38,6 +40,107 @@ public class TableUtilsTest {
     private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+
+    @Rule
+    public final TestName testName = new TestName();
+
+    private Path path;
+
+    @Before
+    public void setUp() throws IOException {
+        path = new Path();
+    }
+
+    @After
+    public void tearDown() {
+        Misc.free(path);
+    }
+
+    @Test
+    public void testCreateTableInVolumeFailsCauseTableExistsAsADir() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        String tableName = testName.getMethodName();
+        File dbRoot = temp.newFolder(tableName, "db");
+        File volumeRoot = temp.newFolder(tableName, "volume");
+        path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
+        Assert.assertTrue(new File(dbRoot, tableName).mkdir());
+        try {
+            TableUtils.createTableInVolume(
+                    FF,
+                    dbRoot.getAbsolutePath(),
+                    509,
+                    null,
+                    path,
+                    tableName,
+                    null,
+                    0,
+                    0);
+            Assert.fail();
+        } catch (CairoException e) {
+            path.of(dbRoot.getAbsolutePath()).concat(tableName).$();
+            TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists [path=" + path.toString() + ']');
+        } finally {
+            dbRoot.delete();
+            volumeRoot.delete();
+        }
+    }
+
+    @Test
+    public void testCreateTableInVolumeFailsCauseTableExistsAsADirInVolume() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        String tableName = testName.getMethodName();
+        File dbRoot = temp.newFolder(tableName, "db");
+        File volumeRoot = temp.newFolder(tableName, "volume");
+        path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
+        Assert.assertTrue(new File(volumeRoot, tableName).mkdir());
+        try {
+            TableUtils.createTableInVolume(
+                    FF,
+                    dbRoot.getAbsolutePath(),
+                    509,
+                    null,
+                    path,
+                    tableName,
+                    null,
+                    0,
+                    0);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "table directory already exists in volume [path=" + path.toString() + ']');
+        } finally {
+            dbRoot.delete();
+            volumeRoot.delete();
+        }
+    }
+
+    @Test
+    public void testCreateTableInVolumeFailsCauseTableExistsAsAFile() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        String tableName = testName.getMethodName();
+        File dbRoot = temp.newFolder(tableName, "db");
+        File volumeRoot = temp.newFolder(tableName, "volume");
+        path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
+        Assert.assertTrue(new File(dbRoot, tableName).createNewFile());
+        try {
+            TableUtils.createTableInVolume(
+                    FF,
+                    dbRoot.getAbsolutePath(),
+                    509,
+                    null,
+                    path,
+                    tableName,
+                    null,
+                    0,
+                    0);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "could not create soft link [src=" + path.toString() + ", tableDir=" + tableName + ']');
+            Assert.assertFalse(Files.exists(path));
+        } finally {
+            dbRoot.delete();
+            volumeRoot.delete();
+        }
+    }
 
     @Test
     public void testForeignDirectory() {

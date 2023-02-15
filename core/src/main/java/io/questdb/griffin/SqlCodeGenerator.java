@@ -67,9 +67,8 @@ import java.util.ArrayDeque;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
-import static io.questdb.griffin.model.ExpressionNode.CONSTANT;
+import static io.questdb.griffin.model.ExpressionNode.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
@@ -3031,24 +3030,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
 
+        QueryModel nested;
         QueryModel twoDeepNested;
         ExpressionNode tableNameEn;
 
         if (
                 model.getColumns().size() == 1
-                        && model.getNestedModel() != null
+                        && (nested = model.getNestedModel()) != null
                         && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                         && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
                         && twoDeepNested.getLatestBy().size() == 0
                         && (tableNameEn = twoDeepNested.getTableNameExpr()) != null
+                        && tableNameEn.type == ExpressionNode.LITERAL
                         && twoDeepNested.getWhereClause() == null
+                        && twoDeepNested.getJoinModels().size() == 1//no joins 
         ) {
             CharSequence tableName = tableNameEn.token;
             TableToken tableToken = executionContext.getTableToken(tableName);
             try (TableReader reader = executionContext.getReader(tableToken)) {
-                CharSequence columnName = model.getBottomUpColumnNames().get(0);
+                QueryColumn queryColumn = nested.getBottomUpColumns().get(0);
+                CharSequence physicalColumnName = queryColumn.getAst().token;
                 TableReaderMetadata readerMetadata = reader.getMetadata();
-                int columnIndex = readerMetadata.getColumnIndex(columnName);
+                int columnIndex = readerMetadata.getColumnIndex(physicalColumnName);
                 int columnType = readerMetadata.getColumnType(columnIndex);
 
                 final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();

@@ -784,6 +784,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             @Override
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
+                return exists(path);
+            }
+
+            @Override
             public int rmdir(Path name) {
                 if (Chars.endsWith(name, tab34_0)) {
                     return -1;
@@ -814,6 +819,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     return true;
                 }
                 return super.exists(path);
+            }
+
+            @Override
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
+                return exists(path);
             }
         };
 
@@ -905,6 +915,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     return true;
                 }
                 return super.exists(path);
+            }
+
+            @Override
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
+                return exists(path);
             }
 
             @Override
