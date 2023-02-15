@@ -29,7 +29,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
+public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final LongIntHashMap fds = new LongIntHashMap();
     private final FDSet readFdSet;
     private final SelectFacade sf;

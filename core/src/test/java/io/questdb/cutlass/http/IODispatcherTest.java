@@ -186,10 +186,10 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, operationId, context) -> {
+                                    (operation, context) -> {
                                         if (operation == IOOperation.WRITE) {
                                             Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                            context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                         }
                                         return true;
                                     }
@@ -404,7 +404,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, EmptyRescheduleContext)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         }
                     } finally {
@@ -5221,7 +5221,7 @@ public class IODispatcherTest {
                         do {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, EmptyRescheduleContext)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         } while (serverRunning.get());
                     } finally {
@@ -6230,7 +6230,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, EmptyRescheduleContext)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         }
                     } finally {
@@ -6405,7 +6405,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, EmptyRescheduleContext)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         }
                     } finally {
@@ -6561,7 +6561,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, EmptyRescheduleContext)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         }
                     } finally {
@@ -7473,7 +7473,7 @@ public class IODispatcherTest {
                                 while (serverRunning.get()) {
                                     dispatcher.run(0);
                                     dispatcher.processIOQueue(
-                                            (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, EmptyRescheduleContext)
+                                            (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                                     );
                                 }
                             } finally {
@@ -8161,30 +8161,43 @@ public class IODispatcherTest {
             final AtomicInteger nConnected = new AtomicInteger();
             final IntHashSet serverConnectedFds = new IntHashSet();
             final IntHashSet clientActiveFds = new IntHashSet();
-            IOContextFactory<IOContext> contextFactory = (fd, dispatcher) -> {
+            IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
                 nConnected.incrementAndGet();
-                return new IOContext() {
+                final int finalFd = fd;
+                return new TestIOContext() {
+                    private long heartbeatId;
+
                     @Override
                     public void close() {
-                        LOG.info().$(fd).$(" disconnected").$();
-                        serverConnectedFds.remove(fd);
+                        LOG.info().$(finalFd).$(" disconnected").$();
+                        serverConnectedFds.remove(finalFd);
                     }
 
                     @Override
-                    public IODispatcher<?> getDispatcher() {
+                    public long getAndResetHeartbeatId() {
+                        return heartbeatId;
+                    }
+
+                    @Override
+                    public IODispatcher<TestIOContext> getDispatcher() {
                         return dispatcher;
                     }
 
                     @Override
                     public int getFd() {
-                        return fd;
+                        return finalFd;
                     }
 
                     @Override
                     public boolean invalid() {
-                        return !serverConnectedFds.contains(fd);
+                        return !serverConnectedFds.contains(finalFd);
+                    }
+
+                    @Override
+                    public void setHeartbeatId(long heartbeatId) {
+                        this.heartbeatId = heartbeatId;
                     }
                 };
             };
@@ -8194,14 +8207,14 @@ public class IODispatcherTest {
             Thread serverThread;
             long sockAddr = 0;
             final CountDownLatch serverLatch = new CountDownLatch(1);
-            try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
                 final int resolvedPort = dispatcher.getPort();
                 sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
                 serverThread = new Thread("test-io-dispatcher") {
                     @Override
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-                        IORequestProcessor<IOContext> requestProcessor = (operation, operationId, context) -> {
+                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context) -> {
                             int fd = context.getFd();
                             int rc;
                             switch (operation) {
@@ -8222,7 +8235,7 @@ public class IODispatcherTest {
                                     }
                                     break;
                                 case IOOperation.HEARTBEAT:
-                                    dispatcher.registerChannel(context, IOOperation.HEARTBEAT, operationId);
+                                    dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                                     break;
                                 default:
                                     dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
@@ -8384,11 +8397,9 @@ public class IODispatcherTest {
         }
     }
 
-    private static class HelloContext implements IOContext {
+    private static class HelloContext extends IOContext<HelloContext> {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
-        private final IODispatcher<HelloContext> dispatcher;
-        private final int fd;
 
         public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             this.fd = fd;
@@ -8400,16 +8411,6 @@ public class IODispatcherTest {
         public void close() {
             Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
             closeLatch.countDown();
-        }
-
-        @Override
-        public IODispatcher<HelloContext> getDispatcher() {
-            return dispatcher;
-        }
-
-        @Override
-        public int getFd() {
-            return fd;
         }
 
         @Override
@@ -8461,5 +8462,11 @@ public class IODispatcherTest {
 
     static class Status {
         boolean valid;
+    }
+
+    private static class TestIOContext extends IOContext<TestIOContext> {
+        @Override
+        public void close() {
+        }
     }
 }

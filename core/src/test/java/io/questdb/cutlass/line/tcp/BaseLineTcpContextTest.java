@@ -307,7 +307,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public void disconnect(LineTcpConnectionContext context, int reason, long operationId) {
+            public void disconnect(LineTcpConnectionContext context, int reason) {
                 disconnected = true;
             }
 
@@ -332,7 +332,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public void registerChannel(LineTcpConnectionContext context, int operation, long operationId) {
+            public void registerChannel(LineTcpConnectionContext context, int operation) {
             }
 
             @Override

@@ -30,9 +30,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.TestOnly;
@@ -64,7 +64,7 @@ public class LineTcpReceiver implements Closeable {
             factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
         }
 
-        MutableIOContextFactory<LineTcpConnectionContext> contextFactory = new MutableIOContextFactory<>(
+        IOContextFactoryImpl<LineTcpConnectionContext> contextFactory = new IOContextFactoryImpl<>(
                 factory,
                 configuration.getConnectionPoolInitialCapacity()
         );

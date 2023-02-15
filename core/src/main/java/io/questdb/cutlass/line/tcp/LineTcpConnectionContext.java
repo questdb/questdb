@@ -29,7 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.AbstractMutableIOContext;
+import io.questdb.network.IOContext;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -37,7 +37,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 
-class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectionContext> {
+class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;

@@ -26,7 +26,7 @@ package io.questdb.network;
 
 import io.questdb.std.LongMatrix;
 
-public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher<C> {
+public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private static final int EVM_DEADLINE = 1;
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
@@ -164,7 +164,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(opId)
                         .$(", err=").$(nf.errno()).I$();
             } else {
-                publishOperation(IOOperation.HEARTBEAT, opId, context);
+                context.setHeartbeatId(opId);
+                publishOperation(IOOperation.HEARTBEAT, context);
 
                 final int operation = (int) pending.get(i, OPM_OPERATION);
                 int r = pendingHeartbeats.addRow();
@@ -214,7 +215,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             final IOEvent<C> event = interestQueue.get(cursor);
             final C context = event.context;
             final int requestedOperation = event.operation;
-            final long srcOpId = event.operationId;
+            final long srcOpId = context.getAndResetHeartbeatId();
             interestSubSeq.done(cursor);
 
             useful = true;

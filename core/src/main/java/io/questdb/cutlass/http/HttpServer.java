@@ -36,10 +36,10 @@ import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -83,7 +83,7 @@ public class HttpServer implements Closeable {
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, rescheduleContext);
+                        (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
@@ -231,7 +231,7 @@ public class HttpServer implements Closeable {
         HttpRequestProcessor newInstance();
     }
 
-    private static class HttpContextFactory extends MutableIOContextFactory<HttpConnectionContext> {
+    private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
         public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
             super(() -> new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());
         }

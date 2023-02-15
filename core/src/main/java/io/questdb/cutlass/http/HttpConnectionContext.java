@@ -37,7 +37,7 @@ import io.questdb.std.str.StdoutSink;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnectionContext> implements Locality, Retry {
+public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final boolean allowDeflateBeforeSend;
     private final CairoSecurityContext cairoSecurityContext;
@@ -196,9 +196,9 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         return totalBytesSent;
     }
 
-    public boolean handleClientOperation(int operation, long operationId, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+    public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         if (IOOperation.HEARTBEAT == operation) {
-            dispatcher.registerChannel(this, IOOperation.HEARTBEAT, operationId);
+            dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
             return true;
         }
 

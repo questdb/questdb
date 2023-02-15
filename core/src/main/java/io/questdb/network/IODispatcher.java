@@ -51,11 +51,7 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
     int DISCONNECT_REASON_TEST = 16;
     int DISCONNECT_REASON_UNKNOWN_OPERATION = 0;
 
-    void disconnect(C context, int reason, long operationId);
-
-    default void disconnect(C context, int reason) {
-        disconnect(context, reason, -1);
-    }
+    void disconnect(C context, int reason);
 
     int getConnectionCount();
 
@@ -65,9 +61,5 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
 
     boolean processIOQueue(IORequestProcessor<C> processor);
 
-    default void registerChannel(C context, int operation) {
-        registerChannel(context, operation, -1);
-    }
-
-    void registerChannel(C context, int operation, long operationId);
+    void registerChannel(C context, int operation);
 }

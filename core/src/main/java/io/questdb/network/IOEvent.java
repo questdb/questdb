@@ -27,6 +27,4 @@ package io.questdb.network;
 public class IOEvent<C extends IOContext> {
     public C context;
     public int operation;
-    // Optional operation identifier used to correlate heartbeats.
-    public long operationId;
 }

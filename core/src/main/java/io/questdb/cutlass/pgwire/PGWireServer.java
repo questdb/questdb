@@ -79,10 +79,10 @@ public class PGWireServer implements Closeable {
             queryCacheEventFanOut.and(queryCacheEventSubSeq);
 
             workerPool.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, operationId, context) -> {
+                private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
-                            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT, operationId);
+                            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
                             return true;
                         }
                         jobContext.handleClientOperation(context, operation);
@@ -151,7 +151,7 @@ public class PGWireServer implements Closeable {
         return workerPool;
     }
 
-    public static class PGConnectionContextFactory extends MutableIOContextFactory<PGConnectionContext> {
+    public static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,

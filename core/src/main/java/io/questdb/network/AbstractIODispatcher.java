@@ -32,7 +32,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
+public abstract class AbstractIODispatcher<C extends IOContext<C>> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int DISCONNECT_SRC_IDLE = 1;
     protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
@@ -129,12 +129,15 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             doDisconnect(pending.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
+        interestSubSeq.consumeAll(interestQueue, disconnectContextRef);
+        ioEventSubSeq.consumeAll(ioEventQueue, disconnectContextRef);
+
+        // Important: we need to process all queues before we iterate through pending heartbeats.
+        // Otherwise, we may end up closing the same context twice.
         for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
             doDisconnect(pendingHeartbeats.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
-        interestSubSeq.consumeAll(interestQueue, disconnectContextRef);
-        ioEventSubSeq.consumeAll(ioEventQueue, disconnectContextRef);
         if (serverFd > 0) {
             nf.close(serverFd, LOG);
             serverFd = -1;
@@ -144,7 +147,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public void disconnect(C context, int reason, long operationId) {
+    public void disconnect(C context, int reason) {
         LOG.info()
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
@@ -152,7 +155,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         final long cursor = disconnectPubSeq.nextBully();
         assert cursor > -1;
         disconnectQueue.get(cursor).context = context;
-        disconnectQueue.get(cursor).operationId = operationId;
         disconnectPubSeq.done(cursor);
     }
 
@@ -184,22 +186,20 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             IOEvent<C> event = ioEventQueue.get(cursor);
             C connectionContext = event.context;
             final int operation = event.operation;
-            final long operationId = event.operationId;
             ioEventSubSeq.done(cursor);
-            useful = processor.onRequest(operation, operationId, connectionContext);
+            useful = processor.onRequest(operation, connectionContext);
         }
 
         return useful;
     }
 
     @Override
-    public void registerChannel(C context, int operation, long operationId) {
+    public void registerChannel(C context, int operation) {
         long cursor = interestPubSeq.nextBully();
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
-        evt.operationId = operationId;
-        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).$(", opId=").$(operationId).I$();
+        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).I$();
         interestPubSeq.done(cursor);
     }
 
@@ -252,16 +252,19 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
-        final long heartbeatOpId = event.operationId;
-        if (heartbeatOpId != -1) {
-            int r = pendingHeartbeats.binarySearch(heartbeatOpId, OPM_ID);
-            if (r < 0) {
-                LOG.critical().$("internal error: heartbeat not found [opId=").$(heartbeatOpId).I$();
-            } else {
-                pendingHeartbeats.deleteRow(r);
+        C context = event.context;
+        if (context != null && !context.invalid()) {
+            final long heartbeatOpId = context.getAndResetHeartbeatId();
+            if (heartbeatOpId != -1) {
+                int r = pendingHeartbeats.binarySearch(heartbeatOpId, OPM_ID);
+                if (r < 0) {
+                    LOG.critical().$("internal error: heartbeat not found [opId=").$(heartbeatOpId).I$();
+                } else {
+                    pendingHeartbeats.deleteRow(r);
+                }
             }
         }
+        doDisconnect(context, DISCONNECT_SRC_QUEUE);
     }
 
     protected void accept(long timestamp) {
@@ -361,19 +364,13 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected void publishOperation(int operation, C context) {
-        publishOperation(operation, -1, context);
-    }
-
-    protected void publishOperation(int operation, long operationId, C context) {
         long cursor = ioEventPubSeq.nextBully();
         IOEvent<C> evt = ioEventQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
-        evt.operationId = operationId;
         ioEventPubSeq.done(cursor);
         LOG.debug().$("fired [fd=").$(context.getFd())
                 .$(", op=").$(operation)
-                .$(", opId=").$(operationId)
                 .$(", pos=").$(cursor).I$();
     }
 
