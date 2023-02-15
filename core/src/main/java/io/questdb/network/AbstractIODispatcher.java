@@ -113,8 +113,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
-        this.heartbeatIntervalMs = -1; //todo: replace after test
+        //todo: replace after tests
 //        this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
+        this.heartbeatIntervalMs = configuration.getHeartbeatInterval();
 
         createListenFd();
         listening = true;
@@ -216,7 +217,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         int r = pending.addRow();
         LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
         pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
-        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
         pending.set(r, OPM_FD, fd);
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, ioContextFactory.newInstance(fd, this));
