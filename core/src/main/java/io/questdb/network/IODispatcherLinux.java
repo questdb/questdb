@@ -30,7 +30,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private static final int EVM_DEADLINE = 1;
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
-    private static final int OPM_ID = 4;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final Epoll epoll;
     // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);

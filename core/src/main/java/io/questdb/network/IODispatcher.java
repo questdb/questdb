@@ -51,7 +51,11 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
     int DISCONNECT_REASON_TEST = 16;
     int DISCONNECT_REASON_UNKNOWN_OPERATION = 0;
 
-    void disconnect(C context, int reason);
+    void disconnect(C context, int reason, long operationId);
+
+    default void disconnect(C context, int reason) {
+        disconnect(context, reason, -1);
+    }
 
     int getConnectionCount();
 
