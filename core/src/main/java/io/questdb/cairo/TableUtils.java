@@ -285,97 +285,58 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").$(tableDir).$(']').$();
-        path.of(root).concat(tableDir);
-
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
+        LOG.debug().$("create table [name=").utf8(tableDir).I$();
+        path.of(root).concat(tableDir).$();
+        if (ff.isDirOrSoftLinkDir(path)) {
+            throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
-
-        final int rootLen = path.length();
-
-        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
-        try (MemoryMARW mem = memory) {
-            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            mem.jumpTo(0);
-            final int count = structure.getColumnCount();
-            path.trimTo(rootLen);
-            mem.putInt(count);
-            mem.putInt(structure.getPartitionBy());
-            int timestampIndex = structure.getTimestampIndex();
-            assert timestampIndex == -1 ||
-                    (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
-            mem.putInt(timestampIndex);
-            mem.putInt(tableVersion);
-            mem.putInt(tableId);
-            mem.putInt(structure.getMaxUncommittedRows());
-            mem.putLong(structure.getO3MaxLag());
-            mem.putLong(0); // Structure version.
-            mem.putInt(structure.isWalEnabled() ? 1 : 0);
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-            assert count > 0;
-
-            for (int i = 0; i < count; i++) {
-                mem.putInt(structure.getColumnType(i));
-                long flags = 0;
-                if (structure.isIndexed(i)) {
-                    flags |= META_FLAG_BIT_INDEXED;
-                }
-
-                if (structure.isSequential(i)) {
-                    flags |= META_FLAG_BIT_SEQUENTIAL;
-                }
-
-                mem.putLong(flags);
-                mem.putInt(structure.getIndexBlockCapacity(i));
-                // reserved
-                mem.skip(16);
+        int rootLen = path.length();
+        try {
+            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
-
-            for (int i = 0; i < count; i++) {
-                mem.putStr(structure.getColumnName(i));
-            }
-
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-                if (ColumnType.isSymbol(structure.getColumnType(i))) {
-                    createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            structure.getColumnName(i),
-                            COLUMN_NAME_TXN_NONE,
-                            structure.getSymbolCapacity(i),
-                            structure.getSymbolCacheFlag(i)
-                    );
-                    symbolMapCount++;
-                }
-            }
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
-
-            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            createColumnVersionFile(mem);
-            mem.close();
-
-            resetTodoLog(ff, path, rootLen, mem);
-            // allocate txn scoreboard
-            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
-
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
-            createTableNameFile(mem, getTableNameFromDirName(tableDir));
+            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
         } finally {
-            if (dirFd > 0) {
-                if (ff.fsync(dirFd) != 0) {
-                    LOG.error()
-                            .$("could not fsync [fd=").$(dirFd)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
-                }
-                ff.close(dirFd);
+            path.trimTo(rootLen);
+        }
+    }
+
+    public static void createTableInVolume(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        LOG.info().$("create table in volume [path=").utf8(path).I$();
+        Path normalPath = Path.getThreadLocal2(root).concat(tableDir).$();
+        assert normalPath != path;
+        if (ff.isDirOrSoftLinkDir(normalPath)) {
+            throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(normalPath).put(']');
+        }
+        // path has been set by CREATE TABLE ... [IN VOLUME 'path'].
+        // it is a valid directory, or link to a directory, checked at bootstrap
+        if (ff.isDirOrSoftLinkDir(path)) {
+            throw CairoException.critical(ff.errno()).put("table directory already exists in volume [path=").put(path).put(']');
+        }
+        int rootLen = path.length();
+        try {
+            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
             }
+            if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
+                if (ff.rmdir(path.slash$()) != 0) {
+                    LOG.error().$("cannot remove table directory in volume [errno=").$(ff.errno()).$(", path=").utf8(path.trimTo(rootLen).$()).I$();
+                }
+                throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
+            }
+            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
@@ -473,12 +434,15 @@ public final class TableUtils {
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
-        return exists(ff, path, root, name, 0, name.length());
+        return exists(ff, path.of(root).concat(name).$());
     }
 
-    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
-        path.of(root).concat(name, lo, hi).$();
-        if (ff.exists(path)) {
+    public static int existsInVolume(FilesFacade ff, Path volumePath, CharSequence name) {
+        return exists(ff, volumePath.concat(name).$());
+    }
+
+    private static int exists(FilesFacade ff, Path path) {
+        if (ff.exists(path)) { // it can also be a file, for example created with touch
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {
@@ -906,7 +870,7 @@ public final class TableUtils {
 
     public static void overwriteTableNameFile(Path tablePath, MemoryMARW memory, FilesFacade ff, TableToken newTableToken) {
         // Update name in _name file.
-        // This is potentially racy but the file only read on startup when the tables.d file is missing 
+        // This is potentially racy but the file only read on startup when the tables.d file is missing
         // so very limited circumstances.
         Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();
         memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);
@@ -1296,6 +1260,101 @@ public final class TableUtils {
                     .put(", offset=").put(offset)
                     .put(", value=").put(value)
                     .put(']');
+        }
+    }
+
+    private static void createTableFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
+        try (MemoryMARW mem = memory) {
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            mem.jumpTo(0);
+            final int count = structure.getColumnCount();
+            path.trimTo(rootLen);
+            mem.putInt(count);
+            mem.putInt(structure.getPartitionBy());
+            int timestampIndex = structure.getTimestampIndex();
+            assert timestampIndex == -1 ||
+                    (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
+            mem.putInt(timestampIndex);
+            mem.putInt(tableVersion);
+            mem.putInt(tableId);
+            mem.putInt(structure.getMaxUncommittedRows());
+            mem.putLong(structure.getO3MaxLag());
+            mem.putLong(0); // Structure version.
+            mem.putInt(structure.isWalEnabled() ? 1 : 0);
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
+            assert count > 0;
+
+            for (int i = 0; i < count; i++) {
+                mem.putInt(structure.getColumnType(i));
+                long flags = 0;
+                if (structure.isIndexed(i)) {
+                    flags |= META_FLAG_BIT_INDEXED;
+                }
+
+                if (structure.isSequential(i)) {
+                    flags |= META_FLAG_BIT_SEQUENTIAL;
+                }
+
+                mem.putLong(flags);
+                mem.putInt(structure.getIndexBlockCapacity(i));
+                // reserved
+                mem.skip(16);
+            }
+
+            for (int i = 0; i < count; i++) {
+                mem.putStr(structure.getColumnName(i));
+            }
+
+            // create symbol maps
+            int symbolMapCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (ColumnType.isSymbol(structure.getColumnType(i))) {
+                    createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            structure.getColumnName(i),
+                            COLUMN_NAME_TXN_NONE,
+                            structure.getSymbolCapacity(i),
+                            structure.getSymbolCacheFlag(i)
+                    );
+                    symbolMapCount++;
+                }
+            }
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
+
+            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            createColumnVersionFile(mem);
+            mem.close();
+
+            resetTodoLog(ff, path, rootLen, mem);
+            // allocate txn scoreboard
+            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
+            createTableNameFile(mem, getTableNameFromDirName(tableDir));
+        } finally {
+            if (dirFd > 0) {
+                if (ff.fsync(dirFd) != 0) {
+                    LOG.error()
+                            .$("could not fsync [fd=").$(dirFd)
+                            .$(", errno=").$(ff.errno())
+                            .I$();
+                }
+                ff.close(dirFd);
+            }
         }
     }
 

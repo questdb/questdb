@@ -25,11 +25,12 @@
 package io.questdb;
 
 public class ServerConfigurationException extends Exception {
+
     public ServerConfigurationException(String message) {
         super(message);
     }
 
     public static ServerConfigurationException forInvalidKey(String key, String value) {
-        return new ServerConfigurationException("invalid configuration value [key=" + key + ", value=" + value + "]");
+        return new ServerConfigurationException("invalid configuration value [key=" + key + ", value=" + value + ']');
     }
 }

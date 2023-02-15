@@ -46,6 +46,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
+    private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
@@ -778,6 +779,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalCommitSquashRowLimit() {
         return 512 * 1024;
+    }
+
+    @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return volumeDefinitions;
     }
 
     @Override

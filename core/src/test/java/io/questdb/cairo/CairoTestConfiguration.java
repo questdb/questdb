@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.VolumeDefinitions;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
@@ -36,6 +37,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     private final ConfigurationOverrides overrides;
     private final TelemetryConfiguration telemetryConfiguration;
+    private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, ConfigurationOverrides overrides) {
         super(root);
@@ -247,6 +249,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
+    }
+
+    @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return volumeDefinitions;
     }
 
     @Override

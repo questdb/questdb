@@ -205,7 +205,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int tableId
     ) {
         try (Path path = new Path()) {
-            switch (TableUtils.exists(ff, path, root, tableDir, 0, tableDir.length())) {
+            switch (TableUtils.exists(ff, path, root, tableDir)) {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {

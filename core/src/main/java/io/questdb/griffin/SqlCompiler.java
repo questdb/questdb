@@ -56,6 +56,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
+import java.util.function.Consumer;
 
 import static io.questdb.TelemetrySystemEvent.WAL_APPLY_RESUME;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -1607,13 +1608,42 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(name.position, "table already exists");
         }
 
+        // create table (...) ... in volume volumeAlias;
+        CharSequence volumeAlias = createTableModel.getVolumeAlias();
+        if (volumeAlias != null) {
+            CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+            if (volumePath != null) {
+                if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                    throw CairoException.critical(0).put("not a valid path for volume [alias=").put(volumeAlias).put(", path=").put(path).put(']');
+                }
+            } else {
+                throw SqlException.position(0).put("volume alias is not allowed [alias=").put(volumeAlias).put(']');
+            }
+        }
+
         if (createTableModel.getQueryModel() == null) {
             executionContext.getCairoSecurityContext().checkWritePermission();
             try {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
-                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel.isIgnoreIfExists(), createTableModel, false);
+                if (volumeAlias == null) {
+                    engine.createTable(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            createTableModel.isIgnoreIfExists(),
+                            createTableModel,
+                            false);
+                } else {
+                    engine.createTableInVolume(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            createTableModel.isIgnoreIfExists(),
+                            createTableModel,
+                            false);
+                }
             } catch (EntryUnavailableException e) {
                 throw SqlException.$(name.position, "table already exists");
             } catch (CairoException e) {
@@ -1624,7 +1654,28 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
             }
         } else {
-            createTableFromCursor(createTableModel, executionContext, name.position);
+            boolean keepLock = !createTableModel.isWalEnabled();
+            createTableFromCursorExecutor(createTableModel, executionContext, name.position, metadata -> {
+                if (volumeAlias == null) {
+                    engine.createTable(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            false,
+                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
+                            keepLock
+                    );
+                } else {
+                    engine.createTableInVolume(
+                            executionContext.getCairoSecurityContext(),
+                            mem,
+                            path,
+                            false,
+                            tableStructureAdapter.of(createTableModel, metadata, typeCast),
+                            keepLock
+                    );
+                }
+            });
         }
 
         if (createTableModel.getQueryModel() == null) {
@@ -1634,8 +1685,12 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext, int position) throws
-            SqlException {
+    private void createTableFromCursorExecutor(
+            CreateTableModel model,
+            SqlExecutionContext executionContext,
+            int position,
+            Consumer<RecordMetadata> createTableMethod
+    ) throws SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 final RecordCursor cursor = factory.getCursor(executionContext)
@@ -1643,16 +1698,8 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
-            boolean keepLock = !model.isWalEnabled();
 
-            engine.createTable(
-                    executionContext.getCairoSecurityContext(),
-                    mem,
-                    path,
-                    false,
-                    tableStructureAdapter.of(model, metadata, typeCast),
-                    keepLock
-            );
+            createTableMethod.accept(metadata);
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {

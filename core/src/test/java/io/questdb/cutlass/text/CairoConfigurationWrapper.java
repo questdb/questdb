@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.VolumeDefinitions;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
@@ -770,6 +771,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalCommitSquashRowLimit() {
         return conf.getWalCommitSquashRowLimit();
+    }
+
+    @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return conf.getVolumeDefinitions();
     }
 
     @Override
