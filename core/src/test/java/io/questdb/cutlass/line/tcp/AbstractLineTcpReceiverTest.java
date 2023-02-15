@@ -310,7 +310,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 break;
             case WAIT_ILP_TABLE_RELEASE:
                 receiver.setSchedulerListener((tableName1, event) -> {
-                    if (tableName1 != null && tablesToWaitFor.remove(tableName1.getTableName()) != null) {
+                    if (event == PoolListener.EV_RETURN && tableName1 != null && tablesToWaitFor.remove(tableName1.getTableName()) != null) {
                         releaseLatch.countDown();
                     }
                 });

@@ -6959,6 +6959,29 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testSelectDistinctWithColumnAliasOnExplicitJoin() throws Exception {
+        assertQuery("id\n" +
+                        "1\n" +
+                        "2\n",
+                "select distinct t1.id " +
+                        "from  tab t1 " +
+                        "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id)",
+                "create table tab as (select x as id from long_sequence(3))",
+                null, false, false, false);
+    }
+
+    @Test
+    public void testSelectDistinctWithColumnAliasOnImplicitJoin() throws Exception {
+        assertQuery("id\n" +
+                        "1\n" +
+                        "2\n",
+                "select distinct t1.id " +
+                        "from  tab t1, tab t2",
+                "create table tab as (select x as id from long_sequence(2))",
+                null, false, false, false);
+    }
+
     @Ignore("result order is currently dependent on stability of sorting method")
     // TODO: this is broken, the expected result order for "select * from tab" in the presence
     //  of repeated timestamps needs to be predefined and consistent, one of two alternatives:
