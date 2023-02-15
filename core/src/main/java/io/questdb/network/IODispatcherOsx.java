@@ -194,7 +194,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
                         .$(", err=").$(nf.errno()).I$();
             } else {
-                publishOperation(IOOperation.HEARTBEAT, context);
+                publishOperation(IOOperation.HEARTBEAT, opId, context);
 
                 final int operation = (int) pending.get(i, OPM_OPERATION);
                 int r = pendingHeartbeats.addRow();
