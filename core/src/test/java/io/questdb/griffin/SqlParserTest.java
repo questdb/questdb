@@ -31,11 +31,13 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -1466,6 +1468,150 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH");
+    }
+
+    @Test
+    public void testCreateTableInVolume() throws SqlException {
+        Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
+        assertCreateTable(
+                "create table tst0 (i INT) in volume 'volume'",
+                "create table tst0 (i int) in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst1 (i INT) in volume 'volume'",
+                "create table tst1 (i int) in volume volume");
+
+        assertCreateTable(
+                "create table tst2 (i INT, ts TIMESTAMP) timestamp(ts) in volume 'volume'",
+                "create table tst2 (i int, ts timestamp) timestamp(ts) in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst7 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
+                "create table tst7 (i symbol, ts timestamp), index(i capacity 32) in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) in volume 'volume'",
+                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst8 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst8 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+    }
+
+    @Test
+    public void testCreateTableInVolumeWal() throws SqlException {
+        Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
+
+        assertCreateTable(
+                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day wal in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day wal in volume 'volume'",
+                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+    }
+
+    @Test
+    public void testCreateTableInVolumeBypassWal() throws SqlException {
+        Assume.assumeFalse(Os.isWindows()); // soft links are not supported in Windows
+
+        assertCreateTable(
+                "create table tst3 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst3 (i int, ts timestamp) timestamp(ts) partition by day bypass wal in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst4 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst4 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst5 (i INT, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst5 (i int, ts timestamp) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+
+        assertCreateTable(
+                "create table tst6 (i SYMBOL capacity 128 cache index capacity 32, ts TIMESTAMP) timestamp(ts) partition by day in volume 'volume'",
+                "create table tst6 (i symbol, ts timestamp), index(i capacity 32) timestamp(ts) partition by day bypass wal with maxUncommittedRows=7, o3MaxLag=12d, in volume 'volume'");
+    }
+
+    @Test
+    public void testCreateTableInVolumeFail() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compile("create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR IN VOLUME 12", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                if (Os.isWindows()) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
+                } else {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=12]");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableInVolumeSyntaxError() throws Exception {
+        assertSyntaxError(
+                "create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR VOLUME peterson",
+                86,
+                "unexpected token: VOLUME");
+
+        assertSyntaxError(
+                "create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR IN peterson",
+                97,
+                "expected 'volume'");
+
+        assertSyntaxError(
+                "create table tst0 (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR IN VOLUME",
+                95,
+                "path for volume expected");
     }
 
     @Test
@@ -7621,7 +7767,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "union all " +
                         "select-virtual ['a' k, sum] 'a' k, sum from " +
                         "(select-group-by [sum(z) sum] sum(z) sum from " +
-                        "(select-choose [t, z] z, t from (select [t, z] from c order by t)) " +
+                        "(select-choose [t, z] z, t from (select [t, z] from c) order by t) " +
                         "timestamp (t) sample by 6h)" +
                         ") order by x",
                 "select x from " +
@@ -7672,7 +7818,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x, t] x, t from (select [x, t] from a) union select-choose [y, t] y, t from (select [y, t] from b) union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
+                "select-choose x from " +
+                        "(select-choose [x, t] x, t from (select [x, t] from a) " +
+                        "union select-choose [y, t] y, t from (select [y, t] from b) " +
+                        "union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum " +
+                        "from (select-choose [t, z] z, t from (select [t, z] from c) order by t) timestamp (t) sample by 6h)) " +
+                        "order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),

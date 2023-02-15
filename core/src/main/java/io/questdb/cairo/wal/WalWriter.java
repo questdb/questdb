@@ -232,7 +232,10 @@ public class WalWriter implements TableWriterAPI {
     public void close() {
         if (isOpen()) {
             try {
-                rollback();
+                if (!distressed) {
+                    rollback();
+                }
+                // if distressed then WAL writer will never be re-used, no rollback needed.
             } finally {
                 doClose(true);
             }

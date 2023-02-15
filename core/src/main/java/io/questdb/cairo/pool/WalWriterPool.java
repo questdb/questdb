@@ -79,8 +79,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                             return;
                         }
                     } else {
-                        super.close();
-                        pool.expelFromPool(this);
+                        try {
+                            super.close();
+                        } finally {
+                            pool.expelFromPool(this);
+                        }
                         return;
                     }
                 }

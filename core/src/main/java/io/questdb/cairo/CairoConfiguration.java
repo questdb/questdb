@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.VolumeDefinitions;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -406,6 +407,8 @@ public interface CairoConfiguration {
     int getWalApplyLookAheadTransactionCount();
 
     int getWalCommitSquashRowLimit();
+
+    VolumeDefinitions getVolumeDefinitions();
 
     boolean getWalEnabledDefault();
 

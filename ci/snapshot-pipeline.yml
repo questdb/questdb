@@ -28,7 +28,7 @@ stages:
               mavenPomFile: "core/pom.xml"
               goals: "package"
               options:
-                "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false"
+                "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: 1.11
           - bash: |
               cd "$(Build.SourcesDirectory)"/core
