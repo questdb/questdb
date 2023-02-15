@@ -1283,7 +1283,9 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getDate(i), lr.getDate(i));
                         break;
                     case ColumnType.TIMESTAMP:
-                        Assert.assertEquals(rr.getTimestamp(i), lr.getTimestamp(i));
+                        if (rr.getTimestamp(i) != lr.getTimestamp(i)) {
+                            Assert.assertEquals(Timestamps.toString(rr.getTimestamp(i)), Timestamps.toString(lr.getTimestamp(i)));
+                        }
                         break;
                     case ColumnType.DOUBLE:
                         Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);

@@ -248,13 +248,15 @@ public class WalWriter implements TableWriterAPI {
         checkDistressed();
         try {
             if (inTransaction()) {
-                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.getWalMetrics().addRowsWritten(rowsToCommit);
+                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                        .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
+                        .$(", minTimestamp=").$(txnMinTimestamp).$(", maxTimestamp=").$(txnMaxTimestamp).I$();
                 return seqTxn;
             }
         } catch (CairoException ex) {
