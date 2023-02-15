@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-class ReverseTableMapItem {
+public class ReverseTableMapItem {
     private final boolean isDropped;
     private final TableToken tableToken;
 
@@ -33,19 +33,19 @@ class ReverseTableMapItem {
         this.isDropped = isDropped;
     }
 
-    public static ReverseTableMapItem of(TableToken tableToken) {
-        return new ReverseTableMapItem(tableToken, false);
-    }
-
-    public static ReverseTableMapItem ofDropped(TableToken tableToken) {
-        return new ReverseTableMapItem(tableToken, true);
-    }
-
     public TableToken getToken() {
         return tableToken;
     }
 
     public boolean isDropped() {
         return isDropped;
+    }
+
+    static ReverseTableMapItem of(TableToken tableToken) {
+        return new ReverseTableMapItem(tableToken, false);
+    }
+
+    static ReverseTableMapItem ofDropped(TableToken tableToken) {
+        return new ReverseTableMapItem(tableToken, true);
     }
 }

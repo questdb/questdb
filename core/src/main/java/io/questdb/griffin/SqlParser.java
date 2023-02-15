@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
@@ -506,8 +503,6 @@ public final class SqlParser {
             model.setTimestamp(timestamp);
             tok = optTok(lexer);
         }
-        int maxUncommittedRows = configuration.getMaxUncommittedRows();
-        long o3MaxLag = configuration.getO3MaxLag();
 
         int walSetting = WAL_NOT_SET;
 
@@ -542,41 +537,60 @@ public final class SqlParser {
                     }
                 }
             }
+        }
+        final boolean isWalEnabled = configuration.isWalSupported() &&
+                PartitionBy.isPartitioned(model.getPartitionBy()) &&
+                ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
+        model.setWalEnabled(isWalEnabled);
 
-            if (tok != null && isWithKeyword(tok)) {
-                ExpressionNode expr;
-                while ((expr = expr(lexer, (QueryModel) null)) != null) {
-                    if (Chars.equals(expr.token, '=')) {
-                        if (isMaxUncommittedRowsKeyword(expr.lhs.token)) {
-                            try {
-                                maxUncommittedRows = Numbers.parseInt(expr.rhs.token);
-                            } catch (NumericException e) {
-                                throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
-                            }
-                        } else if (isO3MaxLagKeyword(expr.lhs.token)) {
-                            o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
-                        } else {
-                            throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
+        int maxUncommittedRows = configuration.getMaxUncommittedRows();
+        long o3MaxLag = configuration.getO3MaxLag();
+
+        if (tok != null && isWithKeyword(tok)) {
+            ExpressionNode expr;
+            while ((expr = expr(lexer, (QueryModel) null)) != null) {
+                if (Chars.equals(expr.token, '=')) {
+                    if (isMaxUncommittedRowsKeyword(expr.lhs.token)) {
+                        try {
+                            maxUncommittedRows = Numbers.parseInt(expr.rhs.token);
+                        } catch (NumericException e) {
+                            throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
                         }
-                        tok = optTok(lexer);
-                        if (null != tok && Chars.equals(tok, ',')) {
-                            continue;
-                        }
-                        break;
+                    } else if (isO3MaxLagKeyword(expr.lhs.token)) {
+                        o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                    } else {
+                        throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                     }
-                    throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
+                    tok = optTok(lexer);
+                    if (null != tok && Chars.equals(tok, ',')) {
+                        CharSequence peek = optTok(lexer);
+                        if (peek != null && isInKeyword(peek)) { // in volume
+                            tok = peek;
+                            break;
+                        }
+                        lexer.unparseLast();
+                        continue;
+                    }
+                    break;
                 }
+                throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
             }
         }
-
         model.setMaxUncommittedRows(maxUncommittedRows);
         model.setO3MaxLag(o3MaxLag);
-        final boolean isWalEnabled =
-                configuration.isWalSupported() && PartitionBy.isPartitioned(model.getPartitionBy()) && (
-                        (walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED
-                );
 
-        model.setWalEnabled(isWalEnabled);
+        if (tok != null && isInKeyword(tok)) {
+            tok = tok(lexer, "volume");
+            if (!isVolumeKeyword(tok)) {
+                throw SqlException.position(lexer.getPosition()).put("expected 'volume'");
+            }
+            tok = tok(lexer, "path for volume");
+            if (Os.isWindows()) {
+                throw SqlException.position(0).position(lexer.getPosition()).put("'in volume' is not supported on Windows");
+            }
+            model.setVolumeAlias(GenericLexer.unquote(tok));
+            tok = optTok(lexer);
+        }
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
