@@ -226,7 +226,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                     int r = pendingHeartbeats.addRow();
                     pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
-                    pendingHeartbeats.set(r, OPM_HEARTBEAT_TIMESTAMP, pending.get(i, OPM_HEARTBEAT_TIMESTAMP));
                     pendingHeartbeats.set(r, OPM_FD, fd);
                     pendingHeartbeats.set(r, OPM_ID, opId);
                     pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
