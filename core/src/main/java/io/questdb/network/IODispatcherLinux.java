@@ -164,11 +164,12 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(opId)
                         .$(", err=").$(nf.errno()).I$();
             } else {
-                publishOperation(IOOperation.HEARTBEAT, context);
+                publishOperation(IOOperation.HEARTBEAT, opId, context);
 
                 int r = pendingHeartbeats.addRow();
                 pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
                 pendingHeartbeats.set(r, OPM_FD, fd);
+                pendingHeartbeats.set(r, OPM_ID, opId);
                 pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
                 pendingHeartbeats.set(r, context);
             }
@@ -205,9 +206,10 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         boolean useful = false;
         long cursor;
         while ((cursor = interestSubSeq.next()) > -1) {
-            IOEvent<C> event = interestQueue.get(cursor);
-            C context = event.context;
-            int requestedOperation = event.operation;
+            final IOEvent<C> event = interestQueue.get(cursor);
+            final C context = event.context;
+            final int requestedOperation = event.operation;
+            final long srcOpId = event.operationId;
             interestSubSeq.done(cursor);
 
             useful = true;
@@ -218,31 +220,28 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             int epollCmd = EpollAccessor.EPOLL_CTL_MOD;
             if (requestedOperation == IOOperation.HEARTBEAT) {
-                boolean found = false;
-                // TODO include operation id into IOEvent, so that we can use binary search here
-                for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
-                    if (pendingHeartbeats.get(i, OPM_FD) == fd) {
-                        epollCmd = EpollAccessor.EPOLL_CTL_ADD;
-                        operation = (int) pendingHeartbeats.get(i, OPM_OPERATION);
+                assert srcOpId != -1;
 
-                        int r = pending.addRow();
-                        pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(i, OPM_CREATE_TIMESTAMP));
-                        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
-                        pending.set(r, OPM_FD, fd);
-                        pending.set(r, OPM_ID, opId);
-                        pending.set(r, OPM_OPERATION, operation);
-                        pending.set(r, context);
+                int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
+                if (heartbeatRow < 0) {
+                    continue; // The connection is already closed.
+                } else {
+                    epollCmd = EpollAccessor.EPOLL_CTL_ADD;
+                    operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
 
-                        pendingHeartbeats.deleteRow(i);
-                        found = true;
-                        LOG.debug().$("processing heartbeat registration [fd=").$(fd)
-                                .$(", op=").$(operation)
-                                .$(", id=").$(opId).I$();
-                        break;
-                    }
-                }
-                if (!found) {
-                    continue;
+                    int r = pending.addRow();
+                    pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
+                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                    pending.set(r, OPM_FD, fd);
+                    pending.set(r, OPM_ID, opId);
+                    pending.set(r, OPM_OPERATION, operation);
+                    pending.set(r, context);
+
+                    pendingHeartbeats.deleteRow(heartbeatRow);
+                    LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", srcId=").$(srcOpId)
+                            .$(", id=").$(opId).I$();
                 }
             } else {
                 LOG.debug().$("processing registration [fd=").$(fd)

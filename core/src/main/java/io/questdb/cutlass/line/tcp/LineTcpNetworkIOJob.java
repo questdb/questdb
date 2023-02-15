@@ -180,9 +180,9 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         return false;
     }
 
-    private boolean onRequest(int operation, LineTcpConnectionContext context) {
+    private boolean onRequest(int operation, long operationId, LineTcpConnectionContext context) {
         if (operation == IOOperation.HEARTBEAT) {
-            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT, operationId);
             return true;
         }
         if (handleIO(context)) {

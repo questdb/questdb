@@ -60,8 +60,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final MCSequence ioEventSubSeq;
     protected final NetworkFacade nf;
     protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(5);
-    // Two fewer columns than in pending matrix since we don't need OPM_HEARTBEAT_TIMESTAMP and OPM_XYZ here.
-    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(3);
+    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(5);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
@@ -184,20 +183,22 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             IOEvent<C> event = ioEventQueue.get(cursor);
             C connectionContext = event.context;
             final int operation = event.operation;
+            final long operationId = event.operationId;
             ioEventSubSeq.done(cursor);
-            useful = processor.onRequest(operation, connectionContext);
+            useful = processor.onRequest(operation, operationId, connectionContext);
         }
 
         return useful;
     }
 
     @Override
-    public void registerChannel(C context, int operation) {
+    public void registerChannel(C context, int operation, long operationId) {
         long cursor = interestPubSeq.nextBully();
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
-        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).I$();
+        evt.operationId = operationId;
+        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).$(", opId=").$(operationId).I$();
         interestPubSeq.done(cursor);
     }
 
@@ -350,19 +351,28 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected void processDisconnects(long epochMs) {
         disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
-            LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs).$("ms, closing listener [serverFd=").$(serverFd).I$();
+            LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
+                    .$("ms, closing listener [serverFd=").$(serverFd).I$();
             nf.close(serverFd);
             serverFd = -1;
         }
     }
 
     protected void publishOperation(int operation, C context) {
+        publishOperation(operation, -1, context);
+    }
+
+    protected void publishOperation(int operation, long operationId, C context) {
         long cursor = ioEventPubSeq.nextBully();
         IOEvent<C> evt = ioEventQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
+        evt.operationId = operationId;
         ioEventPubSeq.done(cursor);
-        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(operation).$(", pos=").$(cursor).$(']').$();
+        LOG.debug().$("fired [fd=").$(context.getFd())
+                .$(", op=").$(operation)
+                .$(", opId=").$(operationId)
+                .$(", pos=").$(cursor).I$();
     }
 
     protected abstract void registerListenerFd();

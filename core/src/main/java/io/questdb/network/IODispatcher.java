@@ -61,5 +61,9 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
 
     boolean processIOQueue(IORequestProcessor<C> processor);
 
-    void registerChannel(C context, int operation);
+    default void registerChannel(C context, int operation) {
+        registerChannel(context, operation, -1);
+    }
+
+    void registerChannel(C context, int operation, long operationId);
 }

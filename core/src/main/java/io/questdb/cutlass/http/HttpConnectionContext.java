@@ -196,9 +196,9 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         return totalBytesSent;
     }
 
-    public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+    public boolean handleClientOperation(int operation, long operationId, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         if (IOOperation.HEARTBEAT == operation) {
-            dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
+            dispatcher.registerChannel(this, IOOperation.HEARTBEAT, operationId);
             return true;
         }
 

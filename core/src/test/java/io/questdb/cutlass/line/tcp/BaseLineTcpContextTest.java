@@ -332,7 +332,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public void registerChannel(LineTcpConnectionContext context, int operation) {
+            public void registerChannel(LineTcpConnectionContext context, int operation, long operationId) {
             }
 
             @Override

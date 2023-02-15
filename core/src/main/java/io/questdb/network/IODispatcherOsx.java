@@ -406,6 +406,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final C context = pending.get(row);
             if (pending.get(row, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
                 int fd = context.getFd();
+                final long opId = pending.get(row, OPM_ID);
                 kqueue.setWriteOffset(0);
                 long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(row, OPM_OPERATION);
                 if (op == IOOperation.READ) {
@@ -423,6 +424,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                     int r = pendingHeartbeats.addRow();
                     pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(row, OPM_CREATE_TIMESTAMP));
                     pendingHeartbeats.set(r, OPM_FD, fd);
+                    pendingHeartbeats.set(r, OPM_ID, opId);
                     pendingHeartbeats.set(r, OPM_OPERATION, pending.get(row, OPM_OPERATION));
                     pendingHeartbeats.set(r, context);
 

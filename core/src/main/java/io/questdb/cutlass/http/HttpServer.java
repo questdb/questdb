@@ -83,7 +83,7 @@ public class HttpServer implements Closeable {
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
+                        (operation, operationId, context) -> context.handleClientOperation(operation, operationId, selector, rescheduleContext);
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {

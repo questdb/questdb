@@ -133,7 +133,7 @@ public class PongMain {
 
     private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {
         @Override
-        public boolean onRequest(int operation, PongConnectionContext context) {
+        public boolean onRequest(int operation, long operationId, PongConnectionContext context) {
             switch (operation) {
                 case IOOperation.READ:
                     context.receivePing();
