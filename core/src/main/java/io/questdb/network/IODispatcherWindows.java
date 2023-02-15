@@ -34,6 +34,8 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     private final FDSet readFdSet;
     private final SelectFacade sf;
     private final FDSet writeFdSet;
+    // used for heartbeats
+    private long idSeq = 1;
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
@@ -58,43 +60,57 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         LOG.info().$("closed").$();
     }
 
+    private long nextOpId() {
+        return idSeq++;
+    }
+
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
         while ((cursor = interestSubSeq.next()) > -1) {
-            IOEvent<C> evt = interestQueue.get(cursor);
-            C context = evt.context;
+            final IOEvent<C> evt = interestQueue.get(cursor);
+            final C context = evt.context;
             int operation = evt.operation;
+            final long srcOpId = context.getAndResetHeartbeatId();
+
+            final long opId = nextOpId();
             final int fd = context.getFd();
+
             interestSubSeq.done(cursor);
             if (operation == IOOperation.HEARTBEAT) {
-                boolean found = false;
-                for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
-                    if (pendingHeartbeats.get(i, OPM_FD) == fd) {
-                        operation = (int) pendingHeartbeats.get(i, OPM_OPERATION);
+                assert srcOpId != -1;
 
-                        int r = pending.addRow();
-                        pending.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
-                        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
-                        pending.set(r, OPM_FD, fd);
-                        pending.set(r, OPM_OPERATION, operation);
-                        pending.set(r, context);
+                int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
+                if (heartbeatRow < 0) {
+                    continue; // The connection is already closed.
+                } else {
+                    operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
 
-                        pendingHeartbeats.deleteRow(i);
-                        found = true;
-                        LOG.debug().$("processing heartbeat registration [fd=").$(fd)
-                                .$(", op=").$(operation).I$();
-                        break;
-                    }
-                }
-                if (!found) {
-                    continue;
+                    LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", srcId=").$(srcOpId)
+                            .$(", id=").$(opId).I$();
+
+                    int r = pending.addRow();
+                    pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
+                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                    pending.set(r, OPM_FD, fd);
+                    pending.set(r, OPM_ID, opId);
+                    pending.set(r, OPM_OPERATION, operation);
+                    pending.set(r, context);
+
+                    pendingHeartbeats.deleteRow(heartbeatRow);
                 }
             } else {
+                LOG.debug().$("processing registration [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(opId).I$();
+
                 int r = pending.addRow();
                 pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
-                pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                 pending.set(r, OPM_FD, context.getFd());
+                pending.set(r, OPM_ID, opId);
                 pending.set(r, OPM_OPERATION, operation);
                 pending.set(r, context);
             }
@@ -202,13 +218,17 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     continue;
                 }
 
+                // check if we have heartbeats to be sent
                 if (i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
+                    final long opId = pending.get(i, OPM_ID);
+                    context.setHeartbeatId(opId);
                     publishOperation(IOOperation.HEARTBEAT, context);
 
                     int r = pendingHeartbeats.addRow();
                     pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
                     pendingHeartbeats.set(r, OPM_HEARTBEAT_TIMESTAMP, pending.get(i, OPM_HEARTBEAT_TIMESTAMP));
                     pendingHeartbeats.set(r, OPM_FD, fd);
+                    pendingHeartbeats.set(r, OPM_ID, opId);
                     pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
                     pendingHeartbeats.set(r, context);
 
