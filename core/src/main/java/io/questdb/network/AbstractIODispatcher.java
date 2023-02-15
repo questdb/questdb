@@ -38,9 +38,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
     protected static final int OPM_CREATE_TIMESTAMP = 0;
-    // OPM_XYZ = 3 is defined in the child classes
+    // OPM_XYZ = 4 is defined in the child classes
     protected static final int OPM_FD = 1;
-    protected static final int OPM_HEARTBEAT_TIMESTAMP = 4;
+    protected static final int OPM_HEARTBEAT_TIMESTAMP = 3;
     protected static final int OPM_OPERATION = 2;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
@@ -60,7 +60,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final MCSequence ioEventSubSeq;
     protected final NetworkFacade nf;
     protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(5);
-    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(5);
+    // Two fewer columns than in pending matrix since we don't need OPM_HEARTBEAT_TIMESTAMP and OPM_XYZ here.
+    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(3);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
@@ -133,8 +134,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             doDisconnect(pendingHeartbeats.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
-        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
-        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
+        interestSubSeq.consumeAll(interestQueue, disconnectContextRef);
+        ioEventSubSeq.consumeAll(ioEventQueue, disconnectContextRef);
         if (serverFd > 0) {
             nf.close(serverFd, LOG);
             serverFd = -1;
@@ -347,7 +348,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected abstract void pendingAdded(int index);
 
     protected void processDisconnects(long epochMs) {
-        disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);
+        disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
             LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs).$("ms, closing listener [serverFd=").$(serverFd).I$();
             nf.close(serverFd);

@@ -30,7 +30,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private static final int EVM_DEADLINE = 1;
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
-    private static final int OPM_ID = 3;
+    private static final int OPM_ID = 4;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final Epoll epoll;
     // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
@@ -49,7 +49,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     @Override
     public void close() {
         super.close();
-        this.epoll.close();
+        epoll.close();
         LOG.info().$("closed").$();
     }
 
@@ -152,6 +152,46 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         return idSeq++ << 1;
     }
 
+    private void processHeartbeats(int watermark, long timestamp) {
+        int count = 0;
+        for (int i = 0; i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < timestamp; i++, count++) {
+            final C context = pending.get(i);
+
+            // De-register pending operation from epoll. We'll register it later when we get a heartbeat pong.
+            final int fd = context.getFd();
+            final long opId = pending.get(i, OPM_ID);
+            if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(opId)
+                        .$(", err=").$(nf.errno()).I$();
+            } else {
+                publishOperation(IOOperation.HEARTBEAT, context);
+
+                int r = pendingHeartbeats.addRow();
+                pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                pendingHeartbeats.set(r, OPM_FD, fd);
+                pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
+                pendingHeartbeats.set(r, context);
+            }
+
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                // Also, de-register suspend event from epoll.
+                int eventRow = pendingEvents.binarySearch(opId, EVM_OPERATION_ID);
+                if (eventRow < 0) {
+                    LOG.critical().$("internal error: suspend event not found on heartbeat [id=").$(opId).I$();
+                } else {
+                    final long eventId = pendingEvents.get(eventRow, EVM_ID);
+                    if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                        LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                                .$(", err=").$(nf.errno()).I$();
+                    }
+                    pendingEvents.deleteRow(eventRow);
+                }
+            }
+        }
+        pending.zapTop(count);
+    }
+
     private int processIdleConnections(long idleTimestamp) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_CREATE_TIMESTAMP) < idleTimestamp; i++, count++) {
@@ -171,7 +211,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             interestSubSeq.done(cursor);
 
             useful = true;
-            long opId = nextOpId();
+            final long opId = nextOpId();
             final int fd = context.getFd();
 
             int operation = requestedOperation;
@@ -179,14 +219,14 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             int epollCmd = EpollAccessor.EPOLL_CTL_MOD;
             if (requestedOperation == IOOperation.HEARTBEAT) {
                 boolean found = false;
+                // TODO include operation id into IOEvent, so that we can use binary search here
                 for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
                     if (pendingHeartbeats.get(i, OPM_FD) == fd) {
                         epollCmd = EpollAccessor.EPOLL_CTL_ADD;
-                        opId = pendingHeartbeats.get(i, OPM_ID);
                         operation = (int) pendingHeartbeats.get(i, OPM_OPERATION);
 
                         int r = pending.addRow();
-                        pending.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                        pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(i, OPM_CREATE_TIMESTAMP));
                         pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                         pending.set(r, OPM_FD, fd);
                         pending.set(r, OPM_ID, opId);
@@ -211,7 +251,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
                 int opRow = pending.addRow();
                 pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
-                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                 pending.set(opRow, OPM_FD, fd);
                 pending.set(opRow, OPM_ID, opId);
                 pending.set(opRow, OPM_OPERATION, requestedOperation);
@@ -357,30 +397,10 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             useful = true;
         }
 
-        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
-        for (int row = watermark - 1; row >= 0; --row) {
-            final C context = pending.get(row);
-            if (pending.get(row, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
-                final int fd = context.getFd();
-                final long id = pending.get(row, OPM_ID);
-                if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                    LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(id)
-                            .$(", err=").$(nf.errno()).I$();
-                } else {
-                    publishOperation(IOOperation.HEARTBEAT, context);
-
-                    int r = pendingHeartbeats.addRow();
-                    pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(row, OPM_CREATE_TIMESTAMP));
-                    pendingHeartbeats.set(r, OPM_HEARTBEAT_TIMESTAMP, pending.get(row, OPM_HEARTBEAT_TIMESTAMP));
-                    pendingHeartbeats.set(r, OPM_FD, fd);
-                    pendingHeartbeats.set(r, OPM_ID, pending.get(row, OPM_ID));
-                    pendingHeartbeats.set(r, OPM_OPERATION, pending.get(row, OPM_OPERATION));
-                    pendingHeartbeats.set(r, context);
-
-                    pending.deleteRow(row);
-                    useful = true;
-                }
-            }
+        // process heartbeat timers
+        if (watermark > 0 && pending.get(0, OPM_HEARTBEAT_TIMESTAMP) < timestamp) {
+            processHeartbeats(watermark, timestamp);
+            useful = true;
         }
 
         return processRegistrations(timestamp) || useful;

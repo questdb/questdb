@@ -30,7 +30,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     private static final int EVM_DEADLINE = 1;
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
-    private static final int OPM_ID = 3;
+    private static final int OPM_ID = 4;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final int capacity;
     private final Kqueue kqueue;
@@ -209,7 +209,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                         operation = (int) pendingHeartbeats.get(i, OPM_OPERATION);
 
                         int r = pending.addRow();
-                        pending.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                        pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(i, OPM_CREATE_TIMESTAMP));
                         pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                         pending.set(r, OPM_FD, fd);
                         pending.set(r, OPM_ID, opId);
@@ -422,9 +422,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
                     int r = pendingHeartbeats.addRow();
                     pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(row, OPM_CREATE_TIMESTAMP));
-                    pendingHeartbeats.set(r, OPM_HEARTBEAT_TIMESTAMP, pending.get(row, OPM_HEARTBEAT_TIMESTAMP));
                     pendingHeartbeats.set(r, OPM_FD, fd);
-                    pendingHeartbeats.set(r, OPM_ID, pending.get(row, OPM_ID));
                     pendingHeartbeats.set(r, OPM_OPERATION, pending.get(row, OPM_OPERATION));
                     pendingHeartbeats.set(r, context);
 
