@@ -196,12 +196,17 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             } else {
                 publishOperation(IOOperation.HEARTBEAT, context);
 
+                final int operation = (int) pending.get(i, OPM_OPERATION);
                 int r = pendingHeartbeats.addRow();
                 pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
                 pendingHeartbeats.set(r, OPM_FD, fd);
                 pendingHeartbeats.set(r, OPM_ID, opId);
-                pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
+                pendingHeartbeats.set(r, OPM_OPERATION, operation);
                 pendingHeartbeats.set(r, context);
+
+                LOG.debug().$("published heartbeat [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(opId).I$();
             }
 
             final SuspendEvent suspendEvent = context.getSuspendEvent();
@@ -258,6 +263,11 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 } else {
                     operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
 
+                    LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", srcId=").$(srcOpId)
+                            .$(", id=").$(opId).I$();
+
                     int r = pending.addRow();
                     pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
                     pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
@@ -267,10 +277,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                     pending.set(r, context);
 
                     pendingHeartbeats.deleteRow(heartbeatRow);
-                    LOG.debug().$("processing heartbeat registration [fd=").$(fd)
-                            .$(", op=").$(operation)
-                            .$(", srcId=").$(srcOpId)
-                            .$(", id=").$(opId).I$();
                 }
             } else {
                 LOG.debug().$("processing registration [fd=").$(fd)
