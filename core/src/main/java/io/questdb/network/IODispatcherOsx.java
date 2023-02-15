@@ -30,7 +30,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     private static final int EVM_DEADLINE = 1;
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
-    private static final int OPM_ID = 4;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final int capacity;
     private final Kqueue kqueue;

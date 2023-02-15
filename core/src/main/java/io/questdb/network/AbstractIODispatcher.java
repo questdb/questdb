@@ -38,9 +38,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
     protected static final int OPM_CREATE_TIMESTAMP = 0;
-    // OPM_XYZ = 4 is defined in the child classes
     protected static final int OPM_FD = 1;
     protected static final int OPM_HEARTBEAT_TIMESTAMP = 3;
+    protected static final int OPM_ID = 4;
     protected static final int OPM_OPERATION = 2;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
@@ -144,7 +144,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public void disconnect(C context, int reason) {
+    public void disconnect(C context, int reason, long operationId) {
         LOG.info()
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
@@ -152,6 +152,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         final long cursor = disconnectPubSeq.nextBully();
         assert cursor > -1;
         disconnectQueue.get(cursor).context = context;
+        disconnectQueue.get(cursor).operationId = operationId;
         disconnectPubSeq.done(cursor);
     }
 
@@ -252,12 +253,13 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
     private void disconnectContext(IOEvent<C> event) {
         doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
-        //todo: hashmap or id in event?
-        int fd = event.context.getFd();
-        for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
-            if (fd == pendingHeartbeats.get(i, OPM_FD)) {
-                pendingHeartbeats.deleteRow(i);
-                break;
+        final long heartbeatOpId = event.operationId;
+        if (heartbeatOpId != -1) {
+            int r = pendingHeartbeats.binarySearch(heartbeatOpId, OPM_ID);
+            if (r < 0) {
+                LOG.critical().$("internal error: heartbeat not found [opId=").$(heartbeatOpId).I$();
+            } else {
+                pendingHeartbeats.deleteRow(r);
             }
         }
     }
