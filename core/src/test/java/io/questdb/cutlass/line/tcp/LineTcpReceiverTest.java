@@ -350,7 +350,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
                     weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n" +
                     "done ok=t\n";
-            sendLingerWaitILPRelease(receiver, lineData, weather, "done");
+            sendWaitWalReleaseCount(receiver, lineData, 3);
 
             mayDrainWalQueue();
 
@@ -687,7 +687,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=north,source=sensor4 temp=70 1465839830101000200\n" +
                     meteorology + ",location=south temperature=80 1465839830101000200\n";
 
-            sendLingerWaitILPRelease(receiver, lineData, weather, meteorology);
+            sendWaitWalReleaseCount(receiver, lineData, 3);
 
             mayDrainWalQueue();
 
@@ -741,7 +741,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=south7 temperature=70 1465839830101000200\n" +
                     meteorology + ",location=south8 temperature=80 1465839830101000200\n";
 
-            sendLingerWaitILPRelease(receiver, lineData, weather, meteorology);
+            sendWaitWalReleaseCount(receiver, lineData, 3);
 
             mayDrainWalQueue();
             // two of the three commits go to the renamed table
@@ -1651,6 +1651,19 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void sendNoWait(LineTcpReceiver receiver, String lineData, String tableName) {
         send(receiver, lineData, tableName, WAIT_NO_WAIT);
+    }
+
+    private void sendWaitWalReleaseCount(LineTcpReceiver receiver, String lineData, int walReleaseCount) {
+        SOCountDownLatch releaseLatch = new SOCountDownLatch(walReleaseCount);
+        receiver.setSchedulerListener((tableName1, event) -> {
+            if (event == PoolListener.EV_RETURN && tableName1 != null) {
+                LOG.info().$("=== released WAL writer === ").$(tableName1.getDirName()).$(":").$(tableName1.getTableName()).$();
+                releaseLatch.countDown();
+            }
+        });
+
+        send(receiver, lineData, "dummy", WAIT_NO_WAIT);
+        releaseLatch.await(10 * Timestamps.SECOND_MICROS * 1000L);
     }
 
     private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool) throws SqlException {
