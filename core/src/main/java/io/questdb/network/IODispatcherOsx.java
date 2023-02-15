@@ -176,6 +176,52 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         return idSeq++ << 1;
     }
 
+    private void processHeartbeats(int watermark, long timestamp) {
+        int count = 0;
+        for (int i = 0; i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < timestamp; i++, count++) {
+            final C context = pending.get(i);
+
+            // De-register pending operation from epoll. We'll register it later when we get a heartbeat pong.
+            int fd = context.getFd();
+            final long opId = pending.get(i, OPM_ID);
+            kqueue.setWriteOffset(0);
+            long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(i, OPM_OPERATION);
+            if (op == IOOperation.READ) {
+                kqueue.removeReadFD(fd);
+            } else {
+                kqueue.removeWriteFD(fd);
+            }
+            if (kqueue.register(1) != 0) {
+                LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
+                        .$(", err=").$(nf.errno()).I$();
+            } else {
+                publishOperation(IOOperation.HEARTBEAT, context);
+
+                int r = pendingHeartbeats.addRow();
+                pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                pendingHeartbeats.set(r, OPM_FD, fd);
+                pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
+                pendingHeartbeats.set(r, context);
+            }
+
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                // Also, de-register suspend event from epoll.
+                int eventRow = pendingEvents.binarySearch(opId, EVM_OPERATION_ID);
+                if (eventRow < 0) {
+                    LOG.critical().$("internal error: suspend event not found on heartbeat [id=").$(opId).I$();
+                } else {
+                    final long eventId = pendingEvents.get(eventRow, EVM_ID);
+                    kqueue.setWriteOffset(0);
+                    kqueue.readFD(context.getFd(), eventId);
+                    registerWithKQueue(1);
+                    pendingEvents.deleteRow(eventRow);
+                }
+            }
+        }
+        pending.zapTop(count);
+    }
+
     private int processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_CREATE_TIMESTAMP) < deadline; i++, count++) {
@@ -204,6 +250,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             final SuspendEvent suspendEvent = context.getSuspendEvent();
             if (requestedOperation == IOOperation.HEARTBEAT) {
                 boolean found = false;
+                // TODO include operation id into IOEvent, so that we can use binary search here
                 for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
                     if (pendingHeartbeats.get(i, OPM_FD) == fd) {
                         operation = (int) pendingHeartbeats.get(i, OPM_OPERATION);
@@ -234,7 +281,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
                 int opRow = pending.addRow();
                 pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
-                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
                 pending.set(opRow, OPM_FD, fd);
                 pending.set(opRow, OPM_ID, opId);
                 pending.set(opRow, OPM_OPERATION, requestedOperation);
@@ -401,35 +448,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             useful = true;
         }
 
-        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
-        for (int row = watermark - 1; row >= 0; --row) {
-            final C context = pending.get(row);
-            if (pending.get(row, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
-                int fd = context.getFd();
-                kqueue.setWriteOffset(0);
-                long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(row, OPM_OPERATION);
-                if (op == IOOperation.READ) {
-                    kqueue.removeReadFD(fd);
-                } else {
-                    kqueue.removeWriteFD(fd);
-                }
-                if (kqueue.register(1) != 0) {
-                    // fd was closed and removed from epoll elsewhere, this is a context lifetime issue
-                    LOG.critical().$("internal error: kqueue remove fd failure [fd=").$(fd)
-                            .$(", err=").$(nf.errno()).I$();
-                } else {
-                    publishOperation(IOOperation.HEARTBEAT, context);
-
-                    int r = pendingHeartbeats.addRow();
-                    pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(row, OPM_CREATE_TIMESTAMP));
-                    pendingHeartbeats.set(r, OPM_FD, fd);
-                    pendingHeartbeats.set(r, OPM_OPERATION, pending.get(row, OPM_OPERATION));
-                    pendingHeartbeats.set(r, context);
-
-                    pending.deleteRow(row);
-                    useful = true;
-                }
-            }
+        // process heartbeat timers
+        if (watermark > 0 && pending.get(0, OPM_HEARTBEAT_TIMESTAMP) < timestamp) {
+            processHeartbeats(watermark, timestamp);
+            useful = true;
         }
 
         return processRegistrations(timestamp) || useful;
