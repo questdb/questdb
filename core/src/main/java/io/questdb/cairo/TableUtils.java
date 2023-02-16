@@ -88,8 +88,8 @@ public final class TableUtils {
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
-    // transaction file structure
 
+    // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
     public static final long TX_BASE_OFFSET_VERSION_64 = 0;
@@ -1033,6 +1033,12 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
+
+        txMem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
+        txMem.putLong(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
+
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
             txMem.putInt(baseOffset + offset, 0);

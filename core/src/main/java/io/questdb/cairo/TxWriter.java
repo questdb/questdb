@@ -294,6 +294,26 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         this.extensionListener = extensionListener;
     }
 
+    public void setLagMaxTimestamp(long timestamp) {
+        lagMaxTimestamp = timestamp;
+    }
+
+    public void setLagMinTimestamp(long timestamp) {
+        lagMinTimestamp = timestamp;
+    }
+
+    public void setLagOrdered(boolean ordered) {
+        lagOrdered = ordered;
+    }
+
+    public void setLagRowCount(int rowCount) {
+        lagRowCount = rowCount;
+    }
+
+    public void setLagTxnCount(int txnCount) {
+        lagTxnCount = txnCount;
+    }
+
     public void setMinTimestamp(long timestamp) {
         recordStructureVersion++;
         minTimestamp = timestamp;

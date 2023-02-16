@@ -31,9 +31,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class WriteApplyLogTest extends AbstractGriffinTest {
@@ -46,6 +48,9 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
 
     @Test
     public void testApplyOutOfOrder100k() throws Exception {
+        Assume.assumeFalse(Os.type == Os.OSX_ARM64);
+        // JVM crashes here regularly on OSX ARM64, fix should be released in JDK 17.0.7
+        // https://bugs.openjdk.org/browse/JDK-8296924
         testApplyOutOfOrder(100_000);
     }
 

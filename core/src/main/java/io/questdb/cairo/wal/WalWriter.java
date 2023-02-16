@@ -254,7 +254,7 @@ public class WalWriter implements TableWriterAPI {
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.getWalMetrics().addRowsWritten(rowsToCommit);
-                LOG.debug().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
+                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
                         .$(", minTimestamp=").$(txnMinTimestamp).$(", maxTimestamp=").$(txnMaxTimestamp).I$();
                 return seqTxn;
