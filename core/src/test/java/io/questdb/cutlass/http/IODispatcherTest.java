@@ -868,7 +868,6 @@ public class IODispatcherTest {
         final long tickCount = 1000;
         final long pingRndEveryN = 3;
         final int connections = 25;
-        final int port = 9003;
         AtomicInteger connected = new AtomicInteger(0);
 
         class TestClock implements MillisecondClock {
@@ -962,7 +961,7 @@ public class IODispatcherTest {
                     new DefaultIODispatcherConfiguration() {
                         @Override
                         public int getBindPort() {
-                            return port;
+                            return 9003;
                         }
 
                         @Override
@@ -992,7 +991,7 @@ public class IODispatcherTest {
                     fds[i] = fd;
                 }
 
-                long sockAddr = Net.sockaddr("127.0.0.1", port);
+                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 try {
                     Unsafe.getUnsafe().putByte(buf, (byte) '.');
 
