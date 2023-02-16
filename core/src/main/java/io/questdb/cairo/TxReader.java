@@ -71,7 +71,12 @@ public class TxReader implements Closeable, Mutable {
     protected long transientRowCount;
     protected long truncateVersion;
     protected long txn;
-    private int baseOffset;
+    int baseOffset;
+    long lagMaxTimestamp;
+    long lagMinTimestamp;
+    boolean lagOrdered;
+    int lagRowCount;
+    int lagTxnCount;
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
     private MemoryMR roTxMemBase;
@@ -118,6 +123,10 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
+        mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
+        mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
+        mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagTxnCount);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -152,6 +161,22 @@ public class TxReader implements Closeable, Mutable {
 
     public long getFixedRowCount() {
         return fixedRowCount;
+    }
+
+    public long getLagMaxTimestamp() {
+        return lagMaxTimestamp;
+    }
+
+    public long getLagMinTimestamp() {
+        return lagMinTimestamp;
+    }
+
+    public int getLagRowCount() {
+        return lagRowCount;
+    }
+
+    public int getLagTxnCount() {
+        return lagTxnCount;
     }
 
     public long getLastPartitionTimestamp() {
@@ -279,6 +304,10 @@ public class TxReader implements Closeable, Mutable {
         this.partitionBy = partitionBy;
     }
 
+    public boolean isLagOrdered() {
+        return lagOrdered;
+    }
+
     public boolean isPartitionReadOnly(int i) {
         return isPartitionReadOnlyByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -324,6 +353,12 @@ public class TxReader implements Closeable, Mutable {
             truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
             symbolColumnCount = symbolsSize / Long.BYTES;
+            lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
+            lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+            lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+            int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
+            lagTxnCount = Math.abs(lagTxnCountRaw);
+            lagOrdered = lagTxnCount > -1;
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
             Unsafe.getUnsafe().loadFence();
