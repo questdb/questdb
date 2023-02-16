@@ -171,7 +171,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         boolean useful = false;
         fds.clear();
         int watermark = pending.size();
-        LOG.debug().$("poll ts: ").$(timestamp).$(", wm: ").$(watermark).$();
         // collect reads into hash map
         if (count > 0) {
             queryFdSets(timestamp);
