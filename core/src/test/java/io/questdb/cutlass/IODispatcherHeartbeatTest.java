@@ -27,10 +27,7 @@ package io.questdb.cutlass;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -187,10 +184,12 @@ public class IODispatcherHeartbeatTest {
                         while (dispatcher.processIOQueue(processor)) ;
                     }
 
-                    // Verify that all connections were closed on idle timeout.
-                    for (int i = 0; i < fds.length; i++) {
-                        Assert.assertTrue(NetworkFacadeImpl.INSTANCE.testConnection(fds[i], buf, 1));
-                    }
+                    TestUtils.assertEventually(() -> {
+                        // Verify that all connections were closed on idle timeout.
+                        for (int i = 0; i < fds.length; i++) {
+                            Assert.assertTrue(NetworkFacadeImpl.INSTANCE.testConnection(fds[i], buf, 1));
+                        }
+                    }, 10);
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                     Net.freeSockAddr(sockAddr);
@@ -254,6 +253,7 @@ public class IODispatcherHeartbeatTest {
                     // Write to socket to generate a socket read.
                     Assert.assertEquals(1, Net.send(fd, buf, 1));
 
+                    Os.sleep(10); // make sure the read detected on tick == 0
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
@@ -403,6 +403,7 @@ public class IODispatcherHeartbeatTest {
                     // Write to socket to generate a socket read.
                     Assert.assertEquals(1, Net.send(fd, buf, 1));
 
+                    Os.sleep(10); // make sure the read detected on tick == 0
                     for (int i = 0; i < tickCount; i++) {
                         clock.setCurrent(i);
                         dispatcher.run(0);
