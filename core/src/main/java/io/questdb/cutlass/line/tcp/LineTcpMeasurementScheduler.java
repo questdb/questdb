@@ -80,7 +80,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
-    private final IOTableUpdateDetailsPool walIdleUpdateDetailsUtf8;
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
 
@@ -166,7 +165,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
         this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy());
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
-        walIdleUpdateDetailsUtf8 = new IOTableUpdateDetailsPool(ioWorkerPoolSize);
     }
 
     @Override
@@ -178,7 +176,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
-        Misc.free(walIdleUpdateDetailsUtf8);
 
         Misc.free(path);
         Misc.free(ddlMem);
@@ -227,8 +224,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             int readerWorkerId,
             long millis
     ) {
-        walIdleUpdateDetailsUtf8.closeIdle(millis, writerIdleTimeout, listener);
-
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
@@ -306,7 +301,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (tud.isWal()) {
                 tableUpdateDetailsUtf8.remove(tableNameUtf8);
-                walIdleUpdateDetailsUtf8.put(tableNameUtf8, tud);
             }
         }
     }
@@ -654,12 +648,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             @NotNull LineTcpParser parser
     ) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
-        TableUpdateDetails walCachedTud = walIdleUpdateDetailsUtf8.get(tableNameUtf8);
-        if (walCachedTud != null) {
-            netIoJob.addTableUpdateDetails(walCachedTud.getTableNameUtf8(), walCachedTud);
-            return walCachedTud;
-        }
-
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
         tableNameUtf16.clear();
         Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);
