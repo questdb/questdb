@@ -187,7 +187,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         readFdSet.reset();
         writeFdSet.reset();
         long deadline = timestamp - idleConnectionTimeout;
-        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
         for (int i = 0, n = pending.size(); i < n; ) {
             final C context = pending.get(i);
 
@@ -220,7 +219,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 }
 
                 // check if we have heartbeats to be sent
-                if (i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
+                if (i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < timestamp) {
                     final long opId = pending.get(i, OPM_ID);
                     context.setHeartbeatId(opId);
                     publishOperation(IOOperation.HEARTBEAT, context);
