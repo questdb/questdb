@@ -898,16 +898,20 @@ public class IODispatcherTest {
             }
 
             public void checkInvariant(int operation, long current) {
+                LOG.debug().$("fd: ").$(fd).$(" - check invariant ts: ").$(current).$(", op: ").$(operation).I$();
                 if (IOOperation.HEARTBEAT == operation) {
                     if (isPreviousEventHeartbeat) {
                         if (previousHeartbeatTs == 0) {
                             // +1, heartbeat triggered on the next tick
                             // +2, heartbeat recalculated on the next tick
+                            LOG.debug().$("first hb, delta").$(heartbeatInterval + 1).$();
                             Assert.assertEquals(heartbeatInterval + 1, current);
                         } else {
+                            LOG.debug().$("prev hb: ").$(previousHeartbeatTs).$();
                             Assert.assertEquals(heartbeatInterval + 2, current - previousHeartbeatTs);
                         }
                     } else {
+                        LOG.debug().$("prev io: ").$(previousReadTs).$();
                         Assert.assertEquals(heartbeatInterval + 2, current - previousReadTs);
                     }
 
