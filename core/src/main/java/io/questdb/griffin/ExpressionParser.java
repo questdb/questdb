@@ -176,7 +176,7 @@ class ExpressionParser {
         // validate is Query is allowed
         onNode(listener, node, argStackDepth);
         // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null);
+        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true);
         argStackDepth = onNode(listener, node, argStackDepth);
 
         // pop our control node if sub-query hasn't done it
