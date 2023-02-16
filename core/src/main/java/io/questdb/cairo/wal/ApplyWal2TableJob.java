@@ -101,7 +101,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationCompiler operationCompiler,
             Job.RunStatus runStatus
     ) {
-        long lastSequencerTxn = -1;
+        long lastSequencerTxn;
         long lastWriterTxn = -1;
         Path tempPath = Path.PATH.get();
 
@@ -150,8 +150,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .I$();
             return WAL_APPLY_FAILED;
         }
-        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();
-
         return lastWriterTxn;
     }
 
