@@ -862,6 +862,164 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testHeartbeats() throws Exception {
+        LOG.info().$("started testHeartbeat").$();
+        final long heartbeatInterval = 5;
+        final long tickCount = 1000;
+        final long pingRndEveryN = 3;
+        final int connections = 25;
+        AtomicInteger connected = new AtomicInteger(0);
+
+        class TestClock implements MillisecondClock {
+            volatile long tick = 0;
+
+            @Override
+            public long getTicks() {
+                return tick;
+            }
+
+            public void setCurrent(long tick) {
+                this.tick = tick;
+            }
+        }
+
+        class TestContext extends IOContext<TestContext> {
+            private final long buffer = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+            private final IODispatcher<TestContext> dispatcher;
+            private final int fd;
+            boolean isPreviousEventHeartbeat = true;
+            long previousHeartbeatTs;
+            long previousReadTs;
+
+            public TestContext(int fd, IODispatcher<TestContext> dispatcher) {
+                this.fd = fd;
+                this.dispatcher = dispatcher;
+            }
+
+            public void checkInvariant(int operation, long current) {
+                if ((IOOperation.HEARTBEAT == operation)) {
+                    if (isPreviousEventHeartbeat) {
+                        if (previousHeartbeatTs == 0) {
+                            // +1, heartbeat triggered on the next tick
+                            // +2, heartbeat recalculated on the next tick
+                            Assert.assertEquals(heartbeatInterval + 1, current);
+                        } else {
+                            Assert.assertEquals(heartbeatInterval + 2, current - previousHeartbeatTs);
+                        }
+                    } else {
+                        Assert.assertEquals(heartbeatInterval + 2, current - previousReadTs);
+                    }
+
+                    previousHeartbeatTs = current;
+                    isPreviousEventHeartbeat = true;
+                } else {
+                    Assert.assertEquals(1, Net.recv(getFd(), buffer, 1));
+                    previousReadTs = current;
+                    isPreviousEventHeartbeat = false;
+                }
+            }
+
+            @Override
+            public void close() {
+                Unsafe.free(buffer, 4, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            @Override
+            public IODispatcher<TestContext> getDispatcher() {
+                return dispatcher;
+            }
+
+            @Override
+            public int getFd() {
+                return fd;
+            }
+
+            @Override
+            public boolean invalid() {
+                return false;
+            }
+        }
+
+        class TestProcessor implements IORequestProcessor<TestContext> {
+            final TestClock clock;
+
+            public TestProcessor(TestClock clock) {
+                this.clock = clock;
+            }
+
+            @Override
+            public boolean onRequest(int operation, TestContext context) {
+                context.checkInvariant(operation, clock.getTicks());
+                context.getDispatcher().registerChannel(context, operation);
+                return true;
+            }
+        }
+
+        assertMemoryLeak(() -> {
+            TestClock clock = new TestClock();
+            try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
+                    new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public MillisecondClock getClock() {
+                            return clock;
+                        }
+
+                        @Override
+                        public long getHeartbeatInterval() {
+                            return heartbeatInterval;
+                        }
+                    },
+                    (fd, d) -> {
+                        connected.incrementAndGet();
+                        return new TestContext(fd, d);
+                    }
+
+            )) {
+                IORequestProcessor<TestContext> processor = new TestProcessor(clock);
+                Rnd rnd = new Rnd();
+                long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+
+                int[] fds = new int[connections];
+                for (int i = 0; i < fds.length; i++) {
+                    int fd = Net.socketTcp(true);
+                    Net.configureNonBlocking(fd);
+                    fds[i] = fd;
+                }
+
+                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                try {
+                    Unsafe.getUnsafe().putByte(buf, (byte) '.');
+
+                    for (int i = 0; i < fds.length; i++) {
+                        Net.connect(fds[i], sockAddr);
+                    }
+                    while (connected.get() != fds.length) {
+                        dispatcher.run(0);
+                        dispatcher.processIOQueue(processor);
+                    }
+
+                    for (int i = 0; i < tickCount; i++) {
+                        clock.setCurrent(i);
+                        if (rnd.nextBoolean() && i % pingRndEveryN == 0) {
+                            int idx = rnd.nextInt(fds.length);
+                            Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
+                        }
+                        dispatcher.run(0);
+                        while (dispatcher.processIOQueue(processor)) ;
+                    }
+                } finally {
+                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                    Net.freeSockAddr(sockAddr);
+
+                    for (int i = 0; i < fds.length; i++) {
+                        Net.close(fds[i]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHttpLong256AndCharImport() {
         // this script uploads text file:
         // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
@@ -7573,158 +7731,6 @@ public class IODispatcherTest {
                 300000000,
                 1000
         );
-    }
-
-    @Test
-    public void testHeartbeats() throws Exception {
-        LOG.info().$("started testHeartbeat").$();
-        final long heartbeatInterval = 5;
-        final long tickCount = 1000;
-        final long pingRndEveryN = 3;
-        final int connections = 25;
-        AtomicInteger connected = new AtomicInteger(0);
-        class TickClock implements MillisecondClock {
-            volatile long tick = 0;
-            @Override
-            public long getTicks() {
-                return tick;
-            }
-            public void setCurrent(long tick) {
-                this.tick = tick;
-            }
-        }
-
-        class TestContext extends IOContext<TestContext> {
-            private final long buffer = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-            private final IODispatcher<TestContext> dispatcher;
-            private final int fd;
-            long previousReadTs;
-            long previousHeartbeatTs;
-            boolean isPreviousEventHeartbeat = true;
-
-            public TestContext(int fd, IODispatcher<TestContext> dispatcher) {
-                this.fd = fd;
-                this.dispatcher = dispatcher;
-            }
-
-            @Override
-            public void close() {
-                Unsafe.free(buffer, 4, MemoryTag.NATIVE_DEFAULT);
-            }
-
-            @Override
-            public IODispatcher<TestContext> getDispatcher() {
-                return dispatcher;
-            }
-
-            @Override
-            public int getFd() {
-                return fd;
-            }
-
-            @Override
-            public boolean invalid() {
-                return false;
-            }
-            public void checkInvariant(int operation, long current) {
-                if ((IOOperation.HEARTBEAT == operation)) {
-                    if (isPreviousEventHeartbeat) {
-                        if (previousHeartbeatTs == 0) {
-                            // +1, heartbeat triggered on the next tick
-                            // +2, heartbeat recalculated on the next tick
-                            Assert.assertEquals(heartbeatInterval + 1, current);
-                        } else {
-                            Assert.assertEquals(heartbeatInterval + 2, current - previousHeartbeatTs);
-                        }
-                    } else {
-                        Assert.assertEquals(heartbeatInterval + 2, current - previousReadTs);
-                    }
-
-                    previousHeartbeatTs = current;
-                    isPreviousEventHeartbeat = true;
-                } else {
-                    Assert.assertEquals(1, Net.recv(getFd(), buffer, 1));
-                    previousReadTs = current;
-                    isPreviousEventHeartbeat = false;
-                }
-            }
-        }
-
-        class TestProcessor implements IORequestProcessor<TestContext> {
-            final TickClock clock;
-            public TestProcessor(TickClock clock) {
-                this.clock = clock;
-            }
-            @Override
-            public boolean onRequest(int operation, TestContext context) {
-                context.checkInvariant(operation, clock.getTicks());
-                context.getDispatcher().registerChannel(context, operation);
-                return true;
-            }
-        }
-
-        assertMemoryLeak(() -> {
-            TickClock clock = new TickClock();
-            try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public MillisecondClock getClock() {
-                            return clock;
-                        }
-
-                        @Override
-                        public long getHeartbeatInterval() {
-                            return heartbeatInterval;
-                        }
-                    },
-                    (fd, d) -> {
-                        connected.incrementAndGet();
-                        return new TestContext(fd, d);
-                    }
-
-            )) {
-                IORequestProcessor<TestContext> processor = new TestProcessor(clock);
-                Rnd rnd = new Rnd();
-                long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-
-                int[] fds = new int[connections];
-                for (int i = 0; i < fds.length; i++) {
-                    int fd = Net.socketTcp(true);
-                    Net.configureNonBlocking(fd);
-                    fds[i] = fd;
-                }
-
-                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                try {
-                    Unsafe.getUnsafe().putByte(buf, (byte)'.');
-
-                    for (int i = 0; i < fds.length; i++) {
-                        Net.connect(fds[i], sockAddr);
-                    }
-                    while (connected.get() != fds.length) {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(processor);
-                    }
-
-                    for (int i = 0; i < tickCount; i++) {
-                        clock.setCurrent(i);
-                        if (rnd.nextBoolean() && i % pingRndEveryN == 0) {
-                            int idx = rnd.nextInt(fds.length);
-                            Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
-                        }
-                        dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor));
-                    }
-                } finally {
-                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
-                    Net.freeSockAddr(sockAddr);
-
-                    for (int i = 0; i < fds.length; i++) {
-                        Net.close(fds[i]);
-                    }
-                }
-            }
-        });
     }
 
     private static void assertDownloadResponse(
