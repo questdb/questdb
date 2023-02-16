@@ -960,11 +960,6 @@ public class IODispatcherTest {
             try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration() {
                         @Override
-                        public int getBindPort() {
-                            return 9003;
-                        }
-
-                        @Override
                         public MillisecondClock getClock() {
                             return clock;
                         }

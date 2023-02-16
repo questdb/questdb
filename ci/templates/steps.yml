@@ -25,19 +25,17 @@ steps:
       'none'))
   - task: Maven@3
     displayName: "Run tests"
-    env:
-      QDB_DEBUG: 'true'
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        '--batch-mode --quiet -Dtest="IODispatcherTest#testHeartbeats"
+        "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-        -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)'
+        -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
