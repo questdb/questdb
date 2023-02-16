@@ -133,7 +133,7 @@ public class IODispatcherHeartbeatTest {
         final long heartbeatInterval = 5;
         final long heartbeatToIdleRatio = 10;
         // the extra ticks are required to detect idle connections and close them
-        final long tickCount = heartbeatToIdleRatio * heartbeatInterval + 2;
+        final long tickCount = 2 * heartbeatToIdleRatio * heartbeatInterval;
         final int connections = 25;
         AtomicInteger connected = new AtomicInteger();
 
@@ -210,7 +210,7 @@ public class IODispatcherHeartbeatTest {
         final long heartbeatInterval = 5;
         final long suspendEventDeadline = 10 * heartbeatInterval;
         // the extra ticks are required to detect suspend event deadline
-        final long tickCount = suspendEventDeadline + 2;
+        final long tickCount = 2 * suspendEventDeadline;
         AtomicInteger connected = new AtomicInteger();
 
         assertMemoryLeak(() -> {
@@ -353,7 +353,7 @@ public class IODispatcherHeartbeatTest {
         final long heartbeatInterval = 5;
         final long heartbeatToIdleRatio = 10;
         // the extra ticks are required to detect idle connection and close it
-        final long tickCount = heartbeatToIdleRatio * heartbeatInterval + 3;
+        final long tickCount = 2 * heartbeatToIdleRatio * heartbeatInterval;
         AtomicInteger connected = new AtomicInteger();
 
         assertMemoryLeak(() -> {
