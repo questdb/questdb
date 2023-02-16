@@ -270,9 +270,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
         return Net.socketUdp();
     }
 
-    /**
-     * Return true if a disconnect happened, false otherwise.
-     */
     @Override
     public boolean testConnection(int fd, long buffer, int bufferSize) {
         if (fd == -1) {

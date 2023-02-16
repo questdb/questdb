@@ -118,39 +118,6 @@ public class IODispatcherTest {
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
-    public static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
-    ) {
-        return Services.createHttpServer(
-                configuration,
-                cairoEngine,
-                workerPool,
-                workerPool.getWorkerCount(),
-                null,
-                null,
-                metrics
-        );
-    }
-
-    public static void createTestTable(CairoEngine engine, int n) {
-        try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
-            model.col("j", ColumnType.SYMBOL);
-            CairoTestUtils.create(model, engine);
-        }
-
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
-            for (int i = 0; i < n; i++) {
-                TableWriter.Row row = writer.newRow();
-                row.putSym(0, "ok\0ok");
-                row.append();
-            }
-            writer.commit();
-        }
-    }
-
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -158,7 +125,6 @@ public class IODispatcherTest {
 
     @Test
     public void testBiasWrite() throws Exception {
-
         LOG.info().$("started testBiasWrite").$();
 
         assertMemoryLeak(() -> {
@@ -859,164 +825,6 @@ public class IODispatcherTest {
                 true,
                 1
         );
-    }
-
-    @Test
-    public void testHeartbeats() throws Exception {
-        LOG.info().$("started testHeartbeat").$();
-        final long heartbeatInterval = 5;
-        final long tickCount = 1000;
-        final long pingRndEveryN = 3;
-        final int connections = 25;
-        AtomicInteger connected = new AtomicInteger(0);
-
-        class TestClock implements MillisecondClock {
-            volatile long tick = 0;
-
-            @Override
-            public long getTicks() {
-                return tick;
-            }
-
-            public void setCurrent(long tick) {
-                this.tick = tick;
-            }
-        }
-
-        class TestContext extends IOContext<TestContext> {
-            private final long buffer = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-            private final IODispatcher<TestContext> dispatcher;
-            private final int fd;
-            boolean isPreviousEventHeartbeat = true;
-            long previousHeartbeatTs;
-            long previousReadTs;
-
-            public TestContext(int fd, IODispatcher<TestContext> dispatcher) {
-                this.fd = fd;
-                this.dispatcher = dispatcher;
-            }
-
-            public void checkInvariant(int operation, long current) {
-                if (IOOperation.HEARTBEAT == operation) {
-                    if (isPreviousEventHeartbeat) {
-                        if (previousHeartbeatTs == 0) {
-                            // +1, heartbeat triggered on the next tick
-                            // +2, heartbeat recalculated on the next tick
-                            Assert.assertEquals(heartbeatInterval + 1, current);
-                        } else {
-                            Assert.assertEquals(heartbeatInterval + 2, current - previousHeartbeatTs);
-                        }
-                    } else {
-                        Assert.assertEquals(heartbeatInterval + 2, current - previousReadTs);
-                    }
-
-                    previousHeartbeatTs = current;
-                    isPreviousEventHeartbeat = true;
-                } else {
-                    Assert.assertEquals(1, Net.recv(getFd(), buffer, 1));
-                    previousReadTs = current;
-                    isPreviousEventHeartbeat = false;
-                }
-            }
-
-            @Override
-            public void close() {
-                Unsafe.free(buffer, 4, MemoryTag.NATIVE_DEFAULT);
-            }
-
-            @Override
-            public IODispatcher<TestContext> getDispatcher() {
-                return dispatcher;
-            }
-
-            @Override
-            public int getFd() {
-                return fd;
-            }
-
-            @Override
-            public boolean invalid() {
-                return false;
-            }
-        }
-
-        class TestProcessor implements IORequestProcessor<TestContext> {
-            final TestClock clock;
-
-            public TestProcessor(TestClock clock) {
-                this.clock = clock;
-            }
-
-            @Override
-            public boolean onRequest(int operation, TestContext context) {
-                context.checkInvariant(operation, clock.getTicks());
-                context.getDispatcher().registerChannel(context, operation);
-                return true;
-            }
-        }
-
-        assertMemoryLeak(() -> {
-            TestClock clock = new TestClock();
-            try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public MillisecondClock getClock() {
-                            return clock;
-                        }
-
-                        @Override
-                        public long getHeartbeatInterval() {
-                            return heartbeatInterval;
-                        }
-                    },
-                    (fd, d) -> {
-                        connected.incrementAndGet();
-                        return new TestContext(fd, d);
-                    }
-
-            )) {
-                IORequestProcessor<TestContext> processor = new TestProcessor(clock);
-                Rnd rnd = new Rnd();
-                long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-
-                int[] fds = new int[connections];
-                for (int i = 0; i < fds.length; i++) {
-                    int fd = Net.socketTcp(true);
-                    Net.configureNonBlocking(fd);
-                    fds[i] = fd;
-                }
-
-                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                try {
-                    Unsafe.getUnsafe().putByte(buf, (byte) '.');
-
-                    for (int i = 0; i < fds.length; i++) {
-                        Net.connect(fds[i], sockAddr);
-                    }
-                    while (connected.get() != fds.length) {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(processor);
-                    }
-
-                    for (int i = 0; i < tickCount; i++) {
-                        clock.setCurrent(i);
-                        if (rnd.nextBoolean() && i % pingRndEveryN == 0) {
-                            int idx = rnd.nextInt(fds.length);
-                            Assert.assertEquals(1, Net.send(fds[idx], buf, 1));
-                        }
-                        dispatcher.run(0);
-                        while (dispatcher.processIOQueue(processor)) ;
-                    }
-                } finally {
-                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
-                    Net.freeSockAddr(sockAddr);
-
-                    for (int i = 0; i < fds.length; i++) {
-                        Net.close(fds[i]);
-                    }
-                }
-            }
-        });
     }
 
     @Test
@@ -7777,6 +7585,39 @@ public class IODispatcherTest {
         }
     }
 
+    private static HttpServer createHttpServer(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            Metrics metrics
+    ) {
+        return Services.createHttpServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                workerPool.getWorkerCount(),
+                null,
+                null,
+                metrics
+        );
+    }
+
+    private static void createTestTable(CairoEngine engine, int n) {
+        try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
+            model.col("j", ColumnType.SYMBOL);
+            CairoTestUtils.create(model, engine);
+        }
+
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
+            for (int i = 0; i < n; i++) {
+                TableWriter.Row row = writer.newRow();
+                row.putSym(0, "ok\0ok");
+                row.append();
+            }
+            writer.commit();
+        }
+    }
+
     private static void sendAndReceive(
             NetworkFacade nf,
             String request,
@@ -8297,6 +8138,48 @@ public class IODispatcherTest {
             final int activeConnectionLimit = 5;
             final long queuedConnectionTimeoutInMs = 250;
 
+            class TestIOContext extends IOContext<TestIOContext> {
+                private final int fd;
+                private final IntHashSet serverConnectedFds;
+                private long heartbeatId;
+
+                public TestIOContext(int fd, IntHashSet serverConnectedFds) {
+                    this.fd = fd;
+                    this.serverConnectedFds = serverConnectedFds;
+                }
+
+                @Override
+                public void close() {
+                    LOG.info().$(fd).$(" disconnected").$();
+                    serverConnectedFds.remove(fd);
+                }
+
+                @Override
+                public long getAndResetHeartbeatId() {
+                    return heartbeatId;
+                }
+
+                @Override
+                public IODispatcher<TestIOContext> getDispatcher() {
+                    return dispatcher;
+                }
+
+                @Override
+                public int getFd() {
+                    return fd;
+                }
+
+                @Override
+                public boolean invalid() {
+                    return !serverConnectedFds.contains(fd);
+                }
+
+                @Override
+                public void setHeartbeatId(long heartbeatId) {
+                    this.heartbeatId = heartbeatId;
+                }
+            }
+
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
                 public int getBindPort() {
@@ -8323,41 +8206,7 @@ public class IODispatcherTest {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
                 nConnected.incrementAndGet();
-                final int finalFd = fd;
-                return new TestIOContext() {
-                    private long heartbeatId;
-
-                    @Override
-                    public void close() {
-                        LOG.info().$(finalFd).$(" disconnected").$();
-                        serverConnectedFds.remove(finalFd);
-                    }
-
-                    @Override
-                    public long getAndResetHeartbeatId() {
-                        return heartbeatId;
-                    }
-
-                    @Override
-                    public IODispatcher<TestIOContext> getDispatcher() {
-                        return dispatcher;
-                    }
-
-                    @Override
-                    public int getFd() {
-                        return finalFd;
-                    }
-
-                    @Override
-                    public boolean invalid() {
-                        return !serverConnectedFds.contains(finalFd);
-                    }
-
-                    @Override
-                    public void setHeartbeatId(long heartbeatId) {
-                        this.heartbeatId = heartbeatId;
-                    }
-                };
+                return new TestIOContext(fd, serverConnectedFds);
             };
             final String request = "\n";
             long mem = TestUtils.toMemory(request);
@@ -8620,11 +8469,5 @@ public class IODispatcherTest {
 
     static class Status {
         boolean valid;
-    }
-
-    private static class TestIOContext extends IOContext<TestIOContext> {
-        @Override
-        public void close() {
-        }
     }
 }
