@@ -897,7 +897,7 @@ public class IODispatcherTest {
             }
 
             public void checkInvariant(int operation, long current) {
-                if ((IOOperation.HEARTBEAT == operation)) {
+                if (IOOperation.HEARTBEAT == operation) {
                     if (isPreviousEventHeartbeat) {
                         if (previousHeartbeatTs == 0) {
                             // +1, heartbeat triggered on the next tick
