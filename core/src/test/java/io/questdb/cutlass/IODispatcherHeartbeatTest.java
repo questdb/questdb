@@ -359,6 +359,7 @@ public class IODispatcherHeartbeatTest {
         @Override
         public void close() {
             Unsafe.free(buffer, 4, MemoryTag.NATIVE_DEFAULT);
+            suspendEvent = Misc.free(suspendEvent);
         }
 
         @Override
