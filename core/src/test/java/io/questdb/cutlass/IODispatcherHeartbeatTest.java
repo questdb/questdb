@@ -132,7 +132,7 @@ public class IODispatcherHeartbeatTest {
 
         final long heartbeatInterval = 5;
         final long heartbeatToIdleRatio = 10;
-        // the extra two ticks are required to detect idle connections and close them
+        // the extra ticks are required to detect idle connections and close them
         final long tickCount = heartbeatToIdleRatio * heartbeatInterval + 2;
         final int connections = 25;
         AtomicInteger connected = new AtomicInteger();
@@ -204,6 +204,75 @@ public class IODispatcherHeartbeatTest {
     }
 
     @Test
+    public void testHeartbeatsDoNotPreventSuspendEventDeadlines() throws Exception {
+        LOG.info().$("started testHeartbeatsDoNotPreventSuspendEventDeadlines").$();
+
+        final long heartbeatInterval = 5;
+        final long suspendEventDeadline = 10 * heartbeatInterval;
+        // the extra ticks are required to detect suspend event deadline
+        final long tickCount = suspendEventDeadline + 2;
+        AtomicInteger connected = new AtomicInteger();
+
+        assertMemoryLeak(() -> {
+            TestClock clock = new TestClock();
+            IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration() {
+                @Override
+                public MillisecondClock getClock() {
+                    return clock;
+                }
+
+                @Override
+                public long getHeartbeatInterval() {
+                    return heartbeatInterval;
+                }
+            };
+            try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
+                    ioDispatcherConfig,
+                    (fd, d) -> {
+                        connected.incrementAndGet();
+                        return new TestContext(fd, d, heartbeatInterval);
+                    }
+            )) {
+                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                suspendEvent.setDeadline(suspendEventDeadline);
+                IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
+                long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+
+                int fd = Net.socketTcp(true);
+                Net.configureNonBlocking(fd);
+
+                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                try {
+                    Unsafe.getUnsafe().putByte(buf, (byte) '.');
+
+                    Net.connect(fd, sockAddr);
+                    while (connected.get() != 1) {
+                        dispatcher.run(0);
+                        dispatcher.processIOQueue(processor);
+                    }
+
+                    // Write to socket to generate a socket read.
+                    Assert.assertEquals(1, Net.send(fd, buf, 1));
+
+                    for (int i = 0; i < tickCount; i++) {
+                        clock.setCurrent(i);
+                        dispatcher.run(0);
+                        while (dispatcher.processIOQueue(processor)) ;
+                    }
+
+                    // Verify that the event is closed due to the deadline.
+                    Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                } finally {
+                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                    Net.freeSockAddr(sockAddr);
+                    Misc.free(suspendEvent);
+                    Net.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSuspendEventDoesNotPreventHeartbeats() throws Exception {
         LOG.info().$("started testSuspendEventDoesNotPreventHeartbeats").$();
 
@@ -248,7 +317,7 @@ public class IODispatcherHeartbeatTest {
                         dispatcher.processIOQueue(processor);
                     }
 
-                    // Write to socket and mark the context as suspended.
+                    // Write to socket to generate a socket read.
                     Assert.assertEquals(1, Net.send(fd, buf, 1));
 
                     // Let the dispatcher spin and verify that heartbeats are sent.
@@ -267,6 +336,81 @@ public class IODispatcherHeartbeatTest {
                         while (dispatcher.processIOQueue(processor)) ;
                         Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
                     }, 10);
+                } finally {
+                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                    Net.freeSockAddr(sockAddr);
+                    Misc.free(suspendEvent);
+                    Net.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSuspendEventDoesNotPreventIdleDisconnects() throws Exception {
+        LOG.info().$("started testSuspendEventDoesNotPreventIdleDisconnects").$();
+
+        final long heartbeatInterval = 5;
+        final long heartbeatToIdleRatio = 10;
+        // the extra ticks are required to detect idle connection and close it
+        final long tickCount = heartbeatToIdleRatio * heartbeatInterval + 3;
+        AtomicInteger connected = new AtomicInteger();
+
+        assertMemoryLeak(() -> {
+            TestClock clock = new TestClock();
+            IODispatcherConfiguration ioDispatcherConfig = new DefaultIODispatcherConfiguration() {
+                @Override
+                public MillisecondClock getClock() {
+                    return clock;
+                }
+
+                @Override
+                public long getHeartbeatInterval() {
+                    return heartbeatInterval;
+                }
+
+                @Override
+                public long getTimeout() {
+                    return heartbeatToIdleRatio * heartbeatInterval;
+                }
+            };
+            try (IODispatcher<TestContext> dispatcher = IODispatchers.create(
+                    ioDispatcherConfig,
+                    (fd, d) -> {
+                        connected.incrementAndGet();
+                        return new TestContext(fd, d, heartbeatInterval);
+                    }
+            )) {
+                SuspendEvent suspendEvent = SuspendEventFactory.newInstance(ioDispatcherConfig);
+                IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
+                long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+
+                int fd = Net.socketTcp(true);
+                Net.configureNonBlocking(fd);
+
+                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                try {
+                    Unsafe.getUnsafe().putByte(buf, (byte) '.');
+
+                    Net.connect(fd, sockAddr);
+                    while (connected.get() != 1) {
+                        dispatcher.run(0);
+                        dispatcher.processIOQueue(processor);
+                    }
+
+                    // Write to socket to generate a socket read.
+                    Assert.assertEquals(1, Net.send(fd, buf, 1));
+
+                    for (int i = 0; i < tickCount; i++) {
+                        clock.setCurrent(i);
+                        dispatcher.run(0);
+                        while (dispatcher.processIOQueue(processor)) ;
+                    }
+
+                    // Verify that the connection is closed on idle timeout.
+                    Assert.assertTrue(NetworkFacadeImpl.INSTANCE.testConnection(fd, buf, 1));
+                    // Verify that the event is closed along with the context.
+                    Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                     Net.freeSockAddr(sockAddr);
