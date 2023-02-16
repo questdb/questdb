@@ -40,68 +40,50 @@ import io.questdb.std.str.StringSink;
 /**
  * Column types as numeric (integer) values
  */
-public final class ColumnType {
-    public static final short ARRAY_STRING = 27;
-    public static final short BINARY = 18;
+public final class ColumnType {    //@formatter:off
+    //@formatter:off
+    // Re-arranger cannot be switched off, see https://youtrack.jetbrains.com/issue/IDEA-117159
+    // This is workaround to stop field be re-arranged
     public static final short BOOLEAN = 1;
-    public static final short BYTE = 2;
-    public static final short CHAR = 4;
-    public static final short CURSOR = 20;
-    public static final short DATE = 7;
-    public static final short DOUBLE = 10;
-    public static final short FLOAT = 9;
-    public static final short GEOBYTE = 14;
-    public static final int GEOBYTE_MAX_BITS = 7;
-    //geohash bits <-> backing primitive types bit boundaries
-    public static final int GEOBYTE_MIN_BITS = 1;
+    public static final short BYTE = BOOLEAN + 1;       // = 2;
+    public static final short SHORT = BYTE + 1;         // = 3;
+    public static final short CHAR = SHORT + 1;         // = 4
+    public static final short INT = CHAR + 1;           // = 5;
+    public static final short LONG = INT + 1;           // = 6;
+    public static final short DATE = LONG + 1;          // = 7;
+    public static final short TIMESTAMP = DATE + 1;     // = 8;
+    public static final short FLOAT = TIMESTAMP + 1;    // = 9;
+    public static final short DOUBLE = FLOAT + 1;       // = 10;
+    public static final short STRING = DOUBLE + 1;      // = 11;
+    public static final short SYMBOL = STRING + 1;      // = 12;
+    public static final short LONG256 = SYMBOL + 1;     // = 13;
+    public static final short GEOBYTE = LONG256 + 1;    // = 14;
+    public static final short GEOSHORT = GEOBYTE + 1;   // = 15;
+    public static final short GEOINT = GEOSHORT + 1;    // = 16;
+    public static final short GEOLONG = GEOINT + 1;     // = 17;
+    public static final short BINARY = GEOLONG + 1;     // = 18;
+    public static final short UUID = BINARY + 1;        // = 19;
+    public static final short CURSOR = UUID + 1;        // = 20;
+    public static final short VAR_ARG = CURSOR  + 1;    // = 21;
+    public static final short RECORD = VAR_ARG + 1;     // = 22;
     // This type is not stored, it is used on function arguments to resolve overloads.
     // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
     // inside the MAX type value.
-    public static final short GEOHASH = 23;
-    public static final short GEOINT = 16;
-    public static final int GEOINT_MAX_BITS = 31;
-    public static final int GEOINT_MIN_BITS = 16;
-    public static final short GEOLONG = 17;
-    public static final int GEOLONG_MIN_BITS = 32;
-    public static final short GEOSHORT = 15;
-    public static final int GEOSHORT_MAX_BITS = 15;
-    public static final int GEOSHORT_MIN_BITS = 8;
-    public static final int GEO_HASH_MAX_BITS_LENGTH = 60;
-    public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
-    public static final short INT = 5;
-    public static final short LONG = 6;
-    public static final short LONG128 = 24; // Limited support, few tests only
-    public static final short LONG256 = 13;
-    public static final int NO_OVERLOAD = 10000;
-    public static final short NULL = 29;
+    public static final short GEOHASH = RECORD + 1;     // = 23;
+    public static final short LONG128 = GEOHASH + 1;    // = 24; // Limited support, few tests only
+    // PG specific types to work with 3rd party software with canned catalogue queries
+    public static final short REGCLASS = LONG128 + 1;   // = 25;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 26;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 27;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 28;
+    public static final short NULL = PARAMETER + 1;             // = 29;
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
-    public static final short PARAMETER = 28;
-    public static final short RECORD = 22;
-    // PG specific types to work with 3rd party software with canned catalogue queries
-    public static final short REGCLASS = 25;
-    public static final short REGPROCEDURE = 26;
-    public static final short SHORT = 3;
-    public static final short STRING = 11;
-    public static final short SYMBOL = 12;
-    public static final short TIMESTAMP = 8;
-    public static final short UNDEFINED = 0;
-    public static final short UUID = 19;
-    public static final short VAR_ARG = 21;
-    // column type version as written to the metadata file
-    public static final int VERSION = 426;
-    static final int[] GEO_TYPE_SIZE_POW2;
-    private static final int BITS_OFFSET = 8;
-    // this value has to be larger than MAX type and be power of 2
-    private static final int OVERLOAD_MATRIX_SIZE = 32;
-    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
-    private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
-    private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     // For function overload the priority is taken from left to right
-    private static final short[][] overloadPriority = {
+    private static final short[][] OVERLOAD_PRIORITY = {
             /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
             /* 1  BOOLEAN   */, {BOOLEAN}
             /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
@@ -123,6 +105,29 @@ public final class ColumnType {
             /* 18 BINARY    */, {BINARY}
             /* 19 UUID      */, {UUID, STRING}
     };
+    //@formatter:on
+
+    public static final int GEOBYTE_MAX_BITS = 7;
+    //geohash bits <-> backing primitive types bit boundaries
+    public static final int GEOBYTE_MIN_BITS = 1;
+    public static final int GEOINT_MAX_BITS = 31;
+    public static final int GEOINT_MIN_BITS = 16;
+    public static final int GEOLONG_MIN_BITS = 32;
+    public static final int GEOSHORT_MAX_BITS = 15;
+    public static final int GEOSHORT_MIN_BITS = 8;
+    public static final int GEO_HASH_MAX_BITS_LENGTH = 60;
+    public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
+    public static final int NO_OVERLOAD = 10000;
+    public static final short UNDEFINED = 0;
+    // column type version as written to the metadata file
+    public static final int VERSION = 426;
+    static final int[] GEO_TYPE_SIZE_POW2;
+    private static final int BITS_OFFSET = 8;
+    // this value has to be larger than MAX type and be power of 2
+    private static final int OVERLOAD_MATRIX_SIZE = 32;
+    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
+    private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
+    private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] overloadPriorityMatrix;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
 
@@ -361,8 +366,8 @@ public final class ColumnType {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (short i = UNDEFINED; i < MAX; i++) {
             for (short j = BOOLEAN; j <= MAX; j++) {
-                if (i < overloadPriority.length) {
-                    int index = indexOf(overloadPriority[i], j);
+                if (i < OVERLOAD_PRIORITY.length) {
+                    int index = indexOf(OVERLOAD_PRIORITY[i], j);
                     overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index != -1 ? index : NO_OVERLOAD;
                 } else {
                     overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;
