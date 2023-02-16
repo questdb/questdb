@@ -1557,7 +1557,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         txWriter.beginPartitionSizeUpdate();
         LOG.info().$("processing WAL [path=").$(walPath).$(", roLo=").$(rowLo)
-                .$(", seqTxn").$(seqTxn)
+                .$(", seqTxn=").$(seqTxn)
                 .$(", roHi=").$(rowHi)
                 .$(", tsMin=").$ts(o3TimestampMin).$(", tsMax=").$ts(o3TimestampMax)
                 .$(", commitToTimestamp=").$ts(commitToTimestamp)
@@ -1827,7 +1827,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             O3Basket o3Basket,
             long colTopSinkAddr
     ) {
-        long cursor = -1;// messageBus.getO3PartitionPubSeq().next();
+        long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
             O3PartitionTask task = messageBus.getO3PartitionQueue().get(cursor);
             task.of(
@@ -3940,7 +3940,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             final int type = metadata.getColumnType(i);
             if (timestampIndex != i && type > 0) {
-                long cursor = -1;//pubSeq.next();
+                long cursor = pubSeq.next();
                 if (cursor > -1) {
                     try {
                         final O3CallbackTask task = queue.get(cursor);
@@ -4547,7 +4547,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int colIndex = 0; colIndex < columnCount; colIndex++) {
             int columnType = metadata.getColumnType(colIndex);
             int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
-            long cursor = -1;//pubSeq.next();
+            long cursor = pubSeq.next();
 
             // Pass column index as -1 when it's designated timestamp column to o3 move method
             if (cursor > -1 && columnType > 0) {

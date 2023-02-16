@@ -258,10 +258,11 @@ class WalWriterEvents implements Closeable {
     }
 
     void rollback() {
-        eventMem.jumpTo(startOffset);
-        eventMem.putInt(-1);
+        eventMem.putInt(startOffset, -1);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, --txn - 1);
-        ff.truncate(indexFd, (txn + 1L) << 3);
+        // Do not truncate files, these files may be read by WAL Apply job at the moment.
+        // This is very rare case, WALE will not be written anymore after this call.
+        // Not truncating the files saves from reading complexity.
     }
 
     int truncate() {
