@@ -143,13 +143,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             busy = true;
         }
 
-        if (!busy) {
-            final long wallClockMillis = millisecondClock.getTicks();
-            if (wallClockMillis > nextCommitTime) {
-                nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, wallClockMillis);
-            }
-        }
-
         final long millis = millisecondClock.getTicks();
         if (millis > maintenanceJobDeadline) {
             busy = scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, millis);
@@ -163,6 +156,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     private boolean handleIO(LineTcpConnectionContext context) {
         if (!context.invalid()) {
+            context.setListener(scheduler.getListener()); //todo: find better place
             switch (context.handleIO(this)) {
                 case NEEDS_READ:
                     context.getDispatcher().registerChannel(context, IOOperation.READ);
@@ -182,6 +176,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
         if (operation == IOOperation.HEARTBEAT) {
+            context.doMaintenance(millisecondClock.getTicks(), workerId);
             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
             return true;
         }

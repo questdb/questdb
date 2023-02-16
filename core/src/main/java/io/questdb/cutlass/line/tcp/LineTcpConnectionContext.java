@@ -31,11 +31,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.TestOnly;
 
 class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -43,10 +43,12 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     protected final NetworkFacade nf;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final boolean disconnectOnError;
+    private final long maintenanceInterval;
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
     private final LineTcpMeasurementScheduler scheduler;
+    private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
     protected boolean peerDisconnected;
     protected long recvBufEnd;
     protected long recvBufPos;
@@ -54,6 +56,9 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     protected long recvBufStartOfMeasurement;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
+    private LineTcpReceiver.SchedulerListener listener;
+    private long maintenanceJobDeadline;
+    private long nextCommitTime;
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
@@ -65,6 +70,9 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
+        this.maintenanceInterval = configuration.getMaintenanceInterval();
+        this.maintenanceJobDeadline = milliClock.getTicks() + maintenanceInterval;
+        this.nextCommitTime = milliClock.getTicks();
     }
 
     @Override
@@ -72,12 +80,43 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         resetParser();
+        ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
+        for (int n = keys.size() - 1; n >= 0; --n) {
+            final ByteCharSequence tableNameUtf8 = keys.get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            tud.releaseWriter(true);
+            tud.close();
+            if (listener != null) {
+                // table going idle
+                listener.onEvent(tud.getTableToken(), 1);
+            }
+            tableUpdateDetailsUtf8.remove(tableNameUtf8);
+        }
     }
 
     @Override
     public void close() {
         this.fd = -1;
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
+        clear();
+    }
+
+    public void doMaintenance(long now, int workerId) {
+        if (now > nextCommitTime) {
+            System.err.println("doMaintenance commit at: " + now);
+            nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, now);
+        }
+
+        if (now > maintenanceJobDeadline) {
+            System.err.println("doMaintenance at: " + now);
+            if (!scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, now)) {
+                maintenanceJobDeadline = now + maintenanceInterval;
+            }
+        }
+    }
+
+    public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
+        return tableUpdateDetailsUtf8.get(tableName);
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -128,6 +167,10 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         }
     }
 
+    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
+    }
+
     /**
      * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
      * context and protocol parser such that all pointers that point to the incomplete measurement will remain
@@ -173,7 +216,7 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(netIoJob, parser)) {
+                            if (scheduler.scheduleEvent(netIoJob, this, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();
@@ -253,10 +296,25 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         return !peerDisconnected;
     }
 
+    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
+        if (keyIndex < 0) {
+            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
+            tableUpdateDetailsUtf8.removeAt(keyIndex);
+            return tud;
+        }
+        return null;
+    }
+
     protected void resetParser() {
         parser.of(recvBufStart);
         goodMeasurement = true;
         recvBufStartOfMeasurement = recvBufStart;
+    }
+
+    @TestOnly
+    void setListener(LineTcpReceiver.SchedulerListener listener) {
+        this.listener = listener;
     }
 
     enum IOContextResult {
