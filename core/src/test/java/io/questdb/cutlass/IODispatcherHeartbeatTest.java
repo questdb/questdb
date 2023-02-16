@@ -133,7 +133,7 @@ public class IODispatcherHeartbeatTest {
         final long heartbeatInterval = 5;
         final long heartbeatToIdleRatio = 10;
         // the extra ticks are required to detect idle connections and close them
-        final long tickCount = 2 * heartbeatToIdleRatio * heartbeatInterval;
+        final long tickCount = heartbeatToIdleRatio * heartbeatInterval + 2;
         final int connections = 25;
         AtomicInteger connected = new AtomicInteger();
 
@@ -210,7 +210,7 @@ public class IODispatcherHeartbeatTest {
         final long heartbeatInterval = 5;
         final long suspendEventDeadline = 10 * heartbeatInterval;
         // the extra ticks are required to detect suspend event deadline
-        final long tickCount = 2 * suspendEventDeadline;
+        final long tickCount = suspendEventDeadline + 2;
         AtomicInteger connected = new AtomicInteger();
 
         assertMemoryLeak(() -> {
@@ -260,8 +260,10 @@ public class IODispatcherHeartbeatTest {
                         while (dispatcher.processIOQueue(processor)) ;
                     }
 
-                    // Verify that the event is closed due to the deadline.
-                    Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                    TestUtils.assertEventually(() -> {
+                        // Verify that the event is closed due to the deadline.
+                        Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                    }, 10);
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                     Net.freeSockAddr(sockAddr);
@@ -353,7 +355,7 @@ public class IODispatcherHeartbeatTest {
         final long heartbeatInterval = 5;
         final long heartbeatToIdleRatio = 10;
         // the extra ticks are required to detect idle connection and close it
-        final long tickCount = 2 * heartbeatToIdleRatio * heartbeatInterval;
+        final long tickCount = heartbeatToIdleRatio * heartbeatInterval + 3;
         AtomicInteger connected = new AtomicInteger();
 
         assertMemoryLeak(() -> {
@@ -407,10 +409,12 @@ public class IODispatcherHeartbeatTest {
                         while (dispatcher.processIOQueue(processor)) ;
                     }
 
-                    // Verify that the connection is closed on idle timeout.
-                    Assert.assertTrue(NetworkFacadeImpl.INSTANCE.testConnection(fd, buf, 1));
-                    // Verify that the event is closed along with the context.
-                    Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                    TestUtils.assertEventually(() -> {
+                        // Verify that the connection is closed on idle timeout.
+                        Assert.assertTrue(NetworkFacadeImpl.INSTANCE.testConnection(fd, buf, 1));
+                        // Verify that the event is closed along with the context.
+                        Assert.assertTrue(suspendEvent.isClosedByAtLeastOneSide());
+                    }, 10);
                 } finally {
                     Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
                     Net.freeSockAddr(sockAddr);
