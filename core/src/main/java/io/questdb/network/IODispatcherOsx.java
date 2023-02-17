@@ -271,7 +271,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
                     int r = pending.addRow();
                     pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
-                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
                     pending.set(r, OPM_FD, fd);
                     pending.set(r, OPM_ID, opId);
                     pending.set(r, OPM_OPERATION, operation);
@@ -286,7 +286,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
                 int opRow = pending.addRow();
                 pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
-                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
                 pending.set(opRow, OPM_FD, fd);
                 pending.set(opRow, OPM_ID, opId);
                 pending.set(opRow, OPM_OPERATION, requestedOperation);
@@ -454,8 +454,9 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         }
 
         // process heartbeat timers
-        if (watermark > 0 && pending.get(0, OPM_HEARTBEAT_TIMESTAMP) < timestamp) {
-            processHeartbeats(watermark, timestamp);
+        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
+        if (watermark > 0 && pending.get(0, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
+            processHeartbeats(watermark, heartbeatTimestamp);
             useful = true;
         }
 
