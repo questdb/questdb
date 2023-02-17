@@ -214,7 +214,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         int r = pending.addRow();
         LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
         pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
-        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, ioContextFactory.newInstance(fd, this));

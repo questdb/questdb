@@ -93,7 +93,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                     int r = pending.addRow();
                     pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
-                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
                     pending.set(r, OPM_FD, fd);
                     pending.set(r, OPM_ID, opId);
                     pending.set(r, OPM_OPERATION, operation);
@@ -108,7 +108,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                 int r = pending.addRow();
                 pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
-                pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp + heartbeatIntervalMs);
+                pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
                 pending.set(r, OPM_FD, context.getFd());
                 pending.set(r, OPM_ID, opId);
                 pending.set(r, OPM_OPERATION, operation);
@@ -186,6 +186,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         readFdSet.reset();
         writeFdSet.reset();
         long deadline = timestamp - idleConnectionTimeout;
+        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
         for (int i = 0, n = pending.size(); i < n; ) {
             final C context = pending.get(i);
 
@@ -218,7 +219,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 }
 
                 // check if we have heartbeats to be sent
-                if (i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < timestamp) {
+                if (i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
                     final long opId = pending.get(i, OPM_ID);
                     context.setHeartbeatId(opId);
                     publishOperation(IOOperation.HEARTBEAT, context);
