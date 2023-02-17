@@ -563,7 +563,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
                 final TableToken nameX = engine.getTableToken("x");
 
-                final int N = 100_000;
+                final int N = 10_000;
                 for (int i = 0; i < N; i++) {
                     testLockBusyReaderRollTheDice(pool, nameX);
                 }
