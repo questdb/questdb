@@ -588,6 +588,27 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLtJoinNonKeyedTimestampStrictlyLower() throws Exception {
+        compiler.compile("create table bids (ts timestamp, bid int) timestamp(ts);", sqlExecutionContext);
+        compiler.compile("create table asks (ts timestamp, ask int) timestamp(ts);", sqlExecutionContext);
+        executeInsert("insert into bids values " +
+                "('2019-10-17T00:00:00.100000Z', 101), " +
+                "('2019-10-17T00:00:00.200000Z', 102)," +
+                "('2019-10-17T00:00:00.300000Z', 103)," +
+                "('2019-10-17T00:00:00.500000Z', 105)");
+        executeInsert("insert into asks values " +
+                "('2019-10-17T00:00:00.000000Z', 100), " +
+                "('2019-10-17T00:00:00.200000Z', 101)," +
+                "('2019-10-17T00:00:00.400000Z', 102)");
+
+        String query = "SELECT bids.ts timebid, asks.ts timeasks, bid, ask, bids.ts - asks.ts\n" +
+                "FROM bids\n" +
+                "LT JOIN asks;";
+        String expected = "ts\tbid\task\n";
+        assertQuery(expected, query, "timebid");
+    }
+
+    @Test
     public void testLtJoinOnRandomlyGeneratedColumn() throws Exception {
         final String expected = "tag\thi\tlo\n" +
                 "CC\t592859671\t-948263339\n" +
