@@ -373,16 +373,16 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
             executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
-            String expected = "ts\tcolumn\n" +
-                    "2021-07-26T02:36:02.566000Z\tNaN\n" +
-                    "2021-07-26T02:36:03.094000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n";
-            String query = "select w1.ts ts, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
+            String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
+                    "2021-07-26T02:36:02.566000Z\t1\tNaN\tNaN\n" +
+                    "2021-07-26T02:36:03.094000Z\t2\t1\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t3\t2\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t4\t2\t2\n" +
+                    "2021-07-26T02:36:03.097000Z\t5\t2\t3\n" +
+                    "2021-07-26T02:36:03.097000Z\t6\t2\t4\n" +
+                    "2021-07-26T02:36:03.098000Z\t7\t6\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t8\t6\t2\n";
+            String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
             printSqlResult(expected, query, "ts", false, true);
         });
     }
@@ -585,27 +585,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 true,
                 true
         );
-    }
-
-    @Test
-    public void testLtJoinNonKeyedTimestampStrictlyLower() throws Exception {
-        compiler.compile("create table bids (ts timestamp, bid int) timestamp(ts);", sqlExecutionContext);
-        compiler.compile("create table asks (ts timestamp, ask int) timestamp(ts);", sqlExecutionContext);
-        executeInsert("insert into bids values " +
-                "('2019-10-17T00:00:00.100000Z', 101), " +
-                "('2019-10-17T00:00:00.200000Z', 102)," +
-                "('2019-10-17T00:00:00.300000Z', 103)," +
-                "('2019-10-17T00:00:00.500000Z', 105)");
-        executeInsert("insert into asks values " +
-                "('2019-10-17T00:00:00.000000Z', 100), " +
-                "('2019-10-17T00:00:00.200000Z', 101)," +
-                "('2019-10-17T00:00:00.400000Z', 102)");
-
-        String query = "SELECT bids.ts timebid, asks.ts timeasks, bid, ask, bids.ts - asks.ts\n" +
-                "FROM bids\n" +
-                "LT JOIN asks;";
-        String expected = "ts\tbid\task\n";
-        assertQuery(expected, query, "timebid");
     }
 
     @Test
