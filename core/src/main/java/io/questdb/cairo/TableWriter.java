@@ -36,6 +36,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
@@ -236,6 +237,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private UpdateOperatorImpl updateOperatorImpl;
+    private WalTxnDetails walTxnDetails;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -1237,6 +1239,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return updateOperatorImpl;
     }
 
+    public WalTxnDetails getWalTnxDetails() {
+        return walTxnDetails;
+    }
+
     public boolean hasO3() {
         return o3MasterRef > -1;
     }
@@ -1393,6 +1399,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (maxTimestamp == Long.MIN_VALUE) {
             if (!isLastPartitionColumnsOpen()) {
                 openPartition(o3TimestampMin);
+                // If data is kept in lag on empty table, mark the partition it's stored
+                // as maxTimestamp.
+                txWriter.maxTimestamp = o3TimestampMin;
             }
         }
 
@@ -1418,7 +1427,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean copiedToMemory;
                 final boolean needsOrdering = !ordered || walLagRowCount > 0;
 
-                if (commitToTimestamp < txWriter.getLagMinTimestamp() && walLagRowCount + commitRowCount < MAX_WAL_LAG_ROWS) {
+                long totalUncommitted = walLagRowCount + commitRowCount;
+                boolean copyToLagOnly = commitToTimestamp < txWriter.getLagMinTimestamp()
+                        || (commitToTimestamp != Long.MAX_VALUE && totalUncommitted < metadata.getMaxUncommittedRows());
+
+                if (copyToLagOnly && totalUncommitted < MAX_WAL_LAG_ROWS) {
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
 
                     // Don't commit anything, move everything to memory instead.
@@ -1431,7 +1444,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walLagRowCount += commitRowCount;
                     txWriter.setLagRowCount((int) walLagRowCount);
                     txWriter.setLagOrdered(txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin);
-                    return -1L;
+                    return Long.MIN_VALUE;
                 }
 
                 long timestampAddr;
@@ -1444,7 +1457,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", walRowHi=").$(rowHi).I$();
 
                     o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath, 0);
-                    final long timestampMemorySize = (walLagRowCount + commitRowCount) << 4;
+                    final long timestampMemorySize = totalUncommitted << 4;
                     o3TimestampMem.jumpTo(timestampMemorySize);
                     o3TimestampMemCpy.jumpTo(timestampMemorySize);
 
@@ -1468,7 +1481,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // Sorted data is now sorted in memory copy of the data from mmap files
                     // Row indexes start from 0, not rowLo
-                    o3Hi = commitRowCount + walLagRowCount;
+                    o3Hi = totalUncommitted;
                     o3Lo = 0L;
                     walLagRowCount = 0L;
                     o3Columns = o3MemColumns;
@@ -1549,7 +1562,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
             long seqTxn,
-            long commitToTimestamp
+            boolean isTerminating
     ) {
         if (inTransaction()) {
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1558,7 +1571,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
 
+        physicallyWrittenRowsSinceLastCommit.set(0);
         txWriter.beginPartitionSizeUpdate();
+        long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+
         LOG.info().$("processing WAL [path=").$(walPath).$(", roLo=").$(rowLo)
                 .$(", roHi=").$(rowHi)
                 .$(", seqTxn=").$(seqTxn)
@@ -1566,10 +1582,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", commitToTimestamp=").$ts(commitToTimestamp)
                 .I$();
 
+        final long committedRowCount = txWriter.getRowCount();
         long maxCommittedTimestamp = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp);
 
-        if (maxCommittedTimestamp > -1L) {
-            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
+        if (maxCommittedTimestamp != Long.MIN_VALUE) {
             final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
             updateIndexes();
@@ -1579,7 +1595,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setSeqTxn(seqTxn);
                 txWriter.setLagTxnCount(0);
             } else {
-                txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
+                long committedTxn = walTxnDetails.getFullyCommittedTxn(txWriter.getSeqTxn(), seqTxn, maxCommittedTimestamp);
+                txWriter.setSeqTxn(committedTxn);
+                txWriter.setLagTxnCount((int) (seqTxn - committedTxn));
             }
 
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -1595,8 +1613,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // assert partitionTimestampInOrder("2022-03-03");
             return rowsAdded;
         } else {
+            // Nothing was committed to the table, only copied to LAG.
             // Keep in memory last committed seq txn, but do not write it to _txn file.
             txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
+            if (isTerminating) {
+                txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
+            }
         }
         return 0L;
     }
@@ -1614,6 +1636,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             Os.pause();
         }
+    }
+
+    public void readWalTxnDetails(TransactionLogCursor transactionLogCursor) {
+        if (walTxnDetails == null) {
+            // Lazy creation
+            walTxnDetails = new WalTxnDetails(ff);
+        }
+
+        transactionLogCursor.reset(Math.max(txWriter.getSeqTxn(), walTxnDetails.getLastSeqTxn()));
+        walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, rootLen, txWriter.getSeqTxn(), txWriter.getMaxTimestamp());
     }
 
     /**

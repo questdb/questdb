@@ -917,8 +917,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
             compile("rename table " + tableName + " to " + newTableName);
 
-            TableToken newTabledirectoryName = engine.getTableToken(newTableName);
-            Assert.assertEquals(table2directoryName.getDirName(), newTabledirectoryName.getDirName());
+            TableToken newTableDirectoryName = engine.getTableToken(newTableName);
+            Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
 
             drainWalQueue();
 
@@ -1110,7 +1110,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenApplyJobTerminatesEarlierLagFlushed() throws Exception {
+    public void testWhenApplyJobTerminatesEarlierLagCommitted() throws Exception {
         AtomicBoolean isTerminating = new AtomicBoolean();
         Job.RunStatus runStatus = isTerminating::get;
 
@@ -1147,13 +1147,14 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                 walApplyJob.run(0, runStatus);
 
-                assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                        "101\tdfd\t2022-02-24T01:01:00.000000Z\tasd\n" +
-                        "1\tAB\t2022-02-24T02:00:00.000000Z\tEF\n");
+                engine.releaseInactive();
 
                 isTerminating.set(false);
-                while (walApplyJob.run(0, runStatus)) {
-                }
+
+                while (walApplyJob.run(0, runStatus)) ;
+
+                engine.releaseInactive();
+
                 assertSql(tableName, "x\tsym\tts\tsym2\n" +
                         "101\tdfd\t2022-02-24T01:01:00.000000Z\tasd\n" +
                         "102\tdfd\t2022-02-24T01:02:00.000000Z\tasd\n" +

@@ -46,5 +46,7 @@ public interface TransactionLogCursor extends Closeable {
 
     boolean reset();
 
+    void reset(long txn);
+
     void toTop();
 }

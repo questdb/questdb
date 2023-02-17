@@ -410,6 +410,12 @@ public class TableTransactionLog implements Closeable {
         }
 
         @Override
+        public void reset(long txn) {
+            this.txnOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
+            this.txn = txn;
+        }
+
+        @Override
         public void toTop() {
             if (txnCount > -1L) {
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;

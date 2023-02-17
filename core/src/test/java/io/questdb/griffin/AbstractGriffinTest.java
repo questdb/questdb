@@ -350,15 +350,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static boolean couldObtainLock(Path path) {
-        final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path, false);
-        if (lockFd != -1L) {
-            TestFilesFacadeImpl.INSTANCE.close(lockFd);
-            return true;  // Could lock/unlock.
-        }
-        return false;  // Could not obtain lock.
-    }
-
     private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
         Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -1446,24 +1437,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            TableToken tableToken = engine.getTableToken(tableName);
-            path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
-        }
-    }
-
-    protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(engine.getTableToken(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Chars.toString(path), expectLocked, !could);
-        }
-    }
-
     protected void assertSegmentLockExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
@@ -1497,15 +1470,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                 sink,
                 expected
         );
-    }
-
-    protected void assertWalExistence(boolean expectExists, String tableName, int walId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            TableToken tableToken = engine.getTableToken(tableName);
-            path.of(root).concat(tableToken).concat("wal").put(walId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
-        }
     }
 
     protected void assertWalLockEngagement(boolean expectLocked, String tableName, int walId) {
