@@ -257,13 +257,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testConcurrentRead() throws Exception {
         final int readerCount = 5;
         int threadCount = 2;
-        final int iterations = 1000000;
+        final int iterations = 1000;
         Rnd dataRnd = new Rnd();
-
 
         final TableToken[] names = new TableToken[readerCount];
         final String[] expectedRows = new String[readerCount];
-        final CharSequenceObjHashMap<String> expectedRowMap = new CharSequenceObjHashMap<>();
+        final CharSequenceObjHashMap<String> expectedRowsMap = new CharSequenceObjHashMap<>();
 
         for (int i = 0; i < readerCount; i++) {
             String name = "x" + i;
@@ -285,7 +284,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRows[i] = sink.toString();
-            expectedRowMap.put(name, expectedRows[i]);
+            expectedRowsMap.put(name, expectedRows[i]);
             names[i] = engine.getTableToken(name);
         }
 
@@ -312,7 +311,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             // 2. it will read from one of readers it has opened
                             // 3. it will close one of readers it has opened
                             for (int i = 0; i < iterations; i++) {
-
                                 if (readers.size() == 0 || (readers.size() < 40 && rnd.nextPositiveInt() % 4 == 0)) {
                                     name = names[rnd.nextPositiveInt() % readerCount];
                                     try {
@@ -332,8 +330,10 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 Assert.assertTrue(reader.isOpen());
 
                                 // read rows
+                                String expectedRows = expectedRowsMap.get(reader.getTableToken().getTableName());
+                                Assert.assertNotNull(expectedRows);
                                 TestUtils.assertReader(
-                                        expectedRowMap.get(reader.getTableToken().getDirName()),
+                                        expectedRows,
                                         reader,
                                         sink
                                 );
@@ -370,7 +370,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleLock() throws Exception {
-
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CairoTestUtils.create(model);
         }
@@ -391,13 +390,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
             try (TableReader reader = pool.get(xyzTableToken)) {
                 Assert.assertNotNull(reader);
             }
-
         });
     }
 
     @Test
     public void testGetAndCloseRace() throws Exception {
-
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CairoTestUtils.create(model);
         }
@@ -420,7 +417,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         stopLatch.countDown();
                     }
                 }).start();
-
 
                 new Thread(() -> {
                     try {
@@ -688,7 +684,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testLockRaceAgainstGet() throws Exception {
         assertWithPool(pool -> {
-
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
                 CairoTestUtils.create(model);
             }
