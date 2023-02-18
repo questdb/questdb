@@ -32,6 +32,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 
@@ -52,6 +53,12 @@ public final class PartitionBy {
      */
     public static final int NONE = 3;
     public static final int YEAR = 2;
+
+    private static final String DAY_FMT = "yyyy-MM-dd";
+    private static final String HOUR_FMT = "yyyy-MM-ddTHH";
+    private static final String MONTH_FMT = "yyyy-MM";
+    private static final String WEEK_FMT = "YYYY-Www"; // year in upper case
+    private static final String YEAR_FMT = "yyyy";
     private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
     private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
     private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
@@ -118,6 +125,25 @@ public final class PartitionBy {
         }
     }
 
+    public static int getPartitionDirNameRootLen(int partitionBy) {
+        switch (partitionBy) {
+            case NONE:
+                return -1;
+            case DAY:
+                return DAY_FMT.length();
+            case WEEK:
+                return WEEK_FMT.length();
+            case MONTH:
+                return MONTH_FMT.length();
+            case YEAR:
+                return YEAR_FMT.length();
+            case HOUR:
+                return HOUR_FMT.length();
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+        }
+    }
+
     public static PartitionFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
@@ -156,29 +182,33 @@ public final class PartitionBy {
         return partitionBy != NONE;
     }
 
-    public static long parsePartitionDirName(CharSequence partitionName, int partitionBy) {
+    public static long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy) {
+        return parsePartitionDirName(partitionName, 0, partitionName.length(), partitionBy);
+    }
+
+    public static long parsePartitionDirName(@NotNull CharSequence partitionName, int lo, int hi, int partitionBy) {
         try {
-            return getPartitionDirFormatMethod(partitionBy).parse(partitionName, null);
+            return getPartitionDirFormatMethod(partitionBy).parse(partitionName, lo, hi, null);
         } catch (NumericException e) {
-            final CairoException ee = CairoException.critical(0);
+            final CairoException ee = CairoException.critical(0).put('\'');
             switch (partitionBy) {
                 case DAY:
-                    ee.put("'YYYY-MM-DD'");
+                    ee.put(DAY_FMT);
                     break;
                 case WEEK:
-                    ee.put("'YYYYWww'");
+                    ee.put(WEEK_FMT);
                     break;
                 case MONTH:
-                    ee.put("'YYYY-MM'");
+                    ee.put(MONTH_FMT);
                     break;
                 case YEAR:
-                    ee.put("'YYYY'");
+                    ee.put(YEAR_FMT);
                     break;
                 case HOUR:
-                    ee.put("'YYYY-MM-DDTHH'");
+                    ee.put(HOUR_FMT);
                     break;
             }
-            ee.put(" expected");
+            ee.put("' expected");
             throw ee;
         }
     }
@@ -326,11 +356,11 @@ public final class PartitionBy {
 
     static {
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        fmtDay = compiler.compile("yyyy-MM-dd");
-        fmtMonth = compiler.compile("yyyy-MM");
-        fmtYear = compiler.compile("yyyy");
-        fmtHour = compiler.compile("yyyy-MM-ddTHH");
-        fmtWeek = compiler.compile("YYYY-Www");
+        fmtDay = compiler.compile(DAY_FMT);
+        fmtMonth = compiler.compile(MONTH_FMT);
+        fmtYear = compiler.compile(YEAR_FMT);
+        fmtHour = compiler.compile(HOUR_FMT);
+        fmtWeek = compiler.compile(WEEK_FMT);
         fmtDefault = new DateFormat() {
             @Override
             public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {

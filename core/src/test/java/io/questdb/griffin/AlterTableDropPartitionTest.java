@@ -42,7 +42,23 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     @Test
-    public void testDropMalformedPartition() throws Exception {
+    public void testDropMalformedPartition0() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 72000000);
+
+                    try {
+                        compile("alter table x drop partition list '2017-01-no'", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertEquals(34, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected");
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testDropMalformedPartition1() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 72000000);
 
@@ -51,7 +67,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "'YYYY-MM-DD' expected");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "timestamp has too low resolution to determine partition [ts=2017-01]");
                     }
                 }
         );
@@ -79,8 +95,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionExpectName() throws Exception {
+    public void testDropPartitionExpectName0() throws Exception {
         assertFailure("alter table x drop partition list", 33, "partition name expected");
+    }
+
+    @Test
+    public void testDropPartitionExpectName1() throws Exception {
+        assertFailure("alter table x drop partition list,", 33, "partition name missing");
+    }
+
+    @Test
+    public void testDropPartitionExpectName2() throws Exception {
+        assertFailure("alter table x drop partition list;", 33, "partition name missing");
     }
 
     @Test
@@ -89,7 +115,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionListWithOneItem() throws Exception {
+    public void testDropPartitionListWithOneItem0() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
 
@@ -100,6 +126,29 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                    assertPartitionResult(expectedAfterDrop, "2018-01-07");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionListWithOneItem1() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+                    // names have extra characters
+                    Assert.assertEquals(ALTER, compile("alter table x DROP partition list '2018-01-05T23', '2018-01-07T15'", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -134,13 +183,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionNameMissing() throws Exception {
+    public void testDropPartitionNameMissing0() throws Exception {
         assertFailure("alter table x drop partition list ,", 34, "partition name missing");
     }
 
     @Test
+    public void testDropPartitionNameMissing1() throws Exception {
+        assertFailure("alter table x drop partition list ;", 34, "partition name missing");
+    }
+
+    @Test
     public void testDropPartitionNameMissing2() throws Exception {
-        assertFailure("alter table x drop partition list ;", 34, "'YYYY' expected");
+        assertFailure("alter table x drop partition list '202';", 34, "timestamp has too low resolution to determine partition [ts=202]");
     }
 
     @Test

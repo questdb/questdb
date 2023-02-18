@@ -1007,10 +1007,10 @@ public class SqlCompiler implements Closeable {
                 }
                 break;
             }
-            if (Chars.equals(tok, ',')) {
+            if (Chars.equals(tok, ',') || Chars.equals(tok, ';')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
             }
-            final CharSequence partitionName = GenericLexer.unquote(tok);
+            final CharSequence partitionName = GenericLexer.unquote(tok); // potentially a full timestamp, or part of it
             final int partitionNamePosition = lexer.lastTokenPosition();
 
             // reader == null means it's compilation for WAL table
@@ -1018,13 +1018,21 @@ public class SqlCompiler implements Closeable {
             if (reader != null) {
                 final long timestamp;
                 try {
-                    timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    // rtrim partition name to appropriate size
+                    int partitionBy = reader.getPartitionedBy();
+                    int len = PartitionBy.getPartitionDirNameRootLen(partitionBy);
+                    if (len == -1) {
+                        len = partitionName.length();
+                    } else if (partitionName.length() < len) {
+                        throw SqlException.position(lexer.lastTokenPosition())
+                                .put("timestamp has too low resolution to determine partition [ts=").put(partitionName).put(']');
+                    }
+                    timestamp = PartitionBy.parsePartitionDirName(partitionName, 0, len, partitionBy);
+                    alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
                 } catch (CairoException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
                             .put("[errno=").put(e.getErrno()).put(']');
                 }
-
-                alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
             }
 
             tok = SqlUtil.fetchNext(lexer);

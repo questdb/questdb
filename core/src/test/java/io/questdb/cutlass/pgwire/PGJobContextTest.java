@@ -1444,6 +1444,39 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindVariableDropLastPartition() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT & CONN_AWARE_SIMPLE_BINARY & CONN_AWARE_EXTENDED_PREPARED_TEXT, (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts) partition by month").execute();
+            connection.prepareStatement("insert into x values (12, '2023-02-11T11:12:22.116234Z')").execute();
+            connection.prepareStatement("insert into x values (13, '2023-02-19T16:42:00.333999Z')").execute();
+            connection.prepareStatement("insert into x values (13, '2023-03-21T03:52:00.999999Z')").execute();
+            connection.commit();
+
+            mayDrainWalQueue();
+            try (PreparedStatement ps = connection.prepareStatement("alter table x drop partition list ? ;")) {
+                ps.setString(1, "2023-03-29T23");
+                Assert.assertFalse(ps.execute());
+            }
+
+            mayDrainWalQueue();
+            try (
+                    PreparedStatement ps = connection.prepareStatement("x");
+                    ResultSet rs = ps.executeQuery()
+            ) {
+                sink.clear();
+                assertResultSet(
+                        "l[BIGINT],ts[TIMESTAMP]\n" +
+                                "12,2023-02-11 11:12:22.116234\n" +
+                                "13,2023-02-19 16:42:00.333999\n",
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableIsNotNullBinaryTransfer() throws Exception {
         testBindVariableIsNotNull(true);
     }

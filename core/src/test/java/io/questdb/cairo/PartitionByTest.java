@@ -188,27 +188,27 @@ public class PartitionByTest {
 
     @Test
     public void testDirectoryParseFailureByDay() {
-        assertParseFailure("'YYYY-MM-DD' expected", "2013-03", PartitionBy.DAY);
+        assertParseFailure("'yyyy-MM-dd' expected", "2013-03", PartitionBy.DAY);
     }
 
     @Test
     public void testDirectoryParseFailureByHour() {
-        assertParseFailure("'YYYY-MM-DDTHH' expected", "2013-03-12", PartitionBy.HOUR);
+        assertParseFailure("'yyyy-MM-ddTHH' expected", "2013-03-12", PartitionBy.HOUR);
     }
 
     @Test
     public void testDirectoryParseFailureByMonth() {
-        assertParseFailure("'YYYY-MM' expected", "2013-03-02", PartitionBy.MONTH);
+        assertParseFailure("'yyyy-MM' expected", "2013-03-02", PartitionBy.MONTH);
     }
 
     @Test
     public void testDirectoryParseFailureByWeek() {
-        assertParseFailure("'YYYYWww' expected", "2013-03-12", PartitionBy.WEEK);
+        assertParseFailure("'YYYY-Www' expected", "2013-03-12", PartitionBy.WEEK);
     }
 
     @Test
     public void testDirectoryParseFailureByYear() {
-        assertParseFailure("'YYYY' expected", "2013-03-12", PartitionBy.YEAR);
+        assertParseFailure("'yyyy' expected", "2013-03-12", PartitionBy.YEAR);
     }
 
     @Test
