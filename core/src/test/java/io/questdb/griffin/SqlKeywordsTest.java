@@ -196,4 +196,51 @@ public class SqlKeywordsTest {
         Assert.assertFalse(isPrevKeyword("pre1"));
         Assert.assertTrue(isPrevKeyword("prev"));
     }
+
+    /**
+     * Debugging and Testing Project
+     * New added test cases in SqlKeywords to enhance coverage in the white box test
+     */
+
+    @Test
+    public void testBy() {
+        Assert.assertFalse(isByKeyword("by0"));
+        Assert.assertTrue(isByKeyword("by"));
+    }
+
+    @Test
+    public void testExclusive() {
+        Assert.assertFalse(isExclusiveKeyword("exclusive0"));
+        Assert.assertTrue(isExclusiveKeyword("exclusive"));
+    }
+
+    @Test
+    public void testIntersect() {
+        Assert.assertFalse(isIntersectKeyword("intersect0"));
+        Assert.assertTrue(isIntersectKeyword("intersect"));
+    }
+
+    @Test
+    public void testWeek() {
+        Assert.assertFalse(isWeekKeyword("week0"));
+        Assert.assertTrue(isWeekKeyword("week"));
+    }
+
+    @Test
+    public void testWriter() {
+        Assert.assertFalse(isWriterKeyword("writer0"));
+        Assert.assertTrue(isWriterKeyword("writer"));
+    }
+
+    @Test
+    public void testYear() {
+        Assert.assertFalse(isYearKeyword("year0"));
+        Assert.assertTrue(isYearKeyword("year"));
+    }
+
+    @Test
+    public void testInto() {
+        Assert.assertFalse(isIntoKeyword("into0"));
+        Assert.assertTrue(isIntoKeyword("into"));
+    }
 }
