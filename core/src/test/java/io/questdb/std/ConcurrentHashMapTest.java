@@ -143,6 +143,39 @@ public class ConcurrentHashMapTest {
         assertEquals(1, ks1.size());
     }
 
+    // new added to test containsValue
+    @Test
+    public void testContainsValue() {
+        ConcurrentHashMap<String> map = new ConcurrentHashMap<>(4, false);
+        map.put("TABLE", "5");
+        assertTrue(map.containsValue("5"));
+        assertFalse(map.containsValue("0"));
+    }
+
+    // new added to test equals()
+    @Test
+    public void testEquals() {
+        ConcurrentHashMap<String> map = new ConcurrentHashMap<>(4, false);
+        map.put("TABLE", "5");
+        assertFalse(map.equals(identityMap()));
+    }
+
+    // new added to test hashCode()
+    @Test
+    public void testHashCode() {
+        ConcurrentHashMap<String> map = new ConcurrentHashMap<>(4, false);
+        map.put("TABLE", "5");
+        assertEquals(110115835, map.hashCode());
+    }
+
+    // new added to test toString()
+    @Test
+    public void testToString() {
+        ConcurrentHashMap<String> map = new ConcurrentHashMap<>(4, false);
+        map.put("TABLE", "5");
+        assertEquals("{TABLE=5}", map.toString());
+    }
+
     private static ConcurrentHashMap<String> identityMap() {
         ConcurrentHashMap<String> identity = new ConcurrentHashMap<>(3);
         assertTrue(identity.isEmpty());
