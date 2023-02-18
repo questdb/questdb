@@ -1432,6 +1432,53 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
+    /**
+     * Debugging and Testing Project
+     * New added test case, test methods in TableReaderSelectedColumnRecordCursor
+     * @throws Exception
+     */
+
+    @Test
+    public void testMethodsInTableReaderSelectedColumnRecordCursor() throws Exception {
+
+        TestUtils.assertMemoryLeak(() -> {
+
+            try (TableModel model = new TableModel(
+                    configuration,
+                    "char_test",
+                    PartitionBy.NONE
+            ).col("cc", ColumnType.STRING)) {
+                CairoTestUtils.create(model);
+            }
+            char[] data = {'a', 'b', 'f', 'g'};
+            try (TableWriter writer = newTableWriter(configuration, "char_test", metrics)) {
+
+                for (int i = 0, n = data.length; i < n; i++) {
+                    TableWriter.Row r = writer.newRow();
+                    r.putStr(0, data[i]);
+                    r.append();
+                }
+                writer.commit();
+            }
+
+
+            final IntList list = new IntList();
+            for (int i = 0; i < 10; i++) {  list.add(i); }
+            TableReaderSelectedColumnRecordCursor tableReaderCursor = new TableReaderSelectedColumnRecordCursor(list);
+
+            try (TableReader reader = newTableReader(configuration, "char_test")) {
+                tableReaderCursor.of(reader);
+                Boolean hasNextLine = tableReaderCursor.hasNext();
+                Assert.assertEquals(true, hasNextLine);
+
+                Record recordA = tableReaderCursor.getRecord();
+                Record recordB = tableReaderCursor.getRecordB();
+                Assert.assertEquals(recordA.getClass(), recordB.getClass());
+            }
+
+        });
+    }
+
     @Test
     public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
         ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
@@ -1702,6 +1749,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             try (TableReader reader = newTableReader(configuration, "char_test")) {
                 final RecordCursor cursor = reader.getCursor();
+
                 final Record record = cursor.getRecord();
                 int index = 0;
                 while (cursor.hasNext()) {
