@@ -1444,8 +1444,8 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testBindVariableDropLastPartition() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT & CONN_AWARE_SIMPLE_BINARY & CONN_AWARE_EXTENDED_PREPARED_TEXT, (connection, binary) -> {
+    public void testBindVariableDropLastPartitionList() throws Exception {
+        ConnectionAwareRunnable runnable = (connection, binary) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts) partition by month").execute();
             connection.prepareStatement("insert into x values (12, '2023-02-11T11:12:22.116234Z')").execute();
@@ -1473,7 +1473,12 @@ if __name__ == "__main__":
                         rs
                 );
             }
-        });
+        };
+
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
     }
 
     @Test

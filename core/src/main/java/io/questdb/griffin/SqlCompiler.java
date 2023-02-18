@@ -1016,7 +1016,6 @@ public class SqlCompiler implements Closeable {
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             if (reader != null) {
-                final long timestamp;
                 try {
                     // rtrim partition name to appropriate size
                     int partitionBy = reader.getPartitionedBy();
@@ -1027,7 +1026,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.lastTokenPosition())
                                 .put("timestamp has too low resolution to determine partition [ts=").put(partitionName).put(']');
                     }
-                    timestamp = PartitionBy.parsePartitionDirName(partitionName, 0, len, partitionBy);
+                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, 0, len, partitionBy);
                     alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
                 } catch (CairoException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
@@ -1046,7 +1045,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(this.alterOperationBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, TableToken tableToken, TableRecordMetadata metadata) throws SqlException {
