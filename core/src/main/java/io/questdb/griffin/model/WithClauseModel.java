@@ -24,36 +24,78 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.Nullable;
 
 public class WithClauseModel implements Mutable {
 
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
     private QueryModel model;
+    private LowerCaseCharSequenceObjHashMap<WithClauseModel> originalWithClauses;
+
+    /* Size of withClauses at time of `of()` method call . We need to maintain the 'snapshot' because
+       map can grow and subsequent WITH clause can override table used by current one, leading to stack overflow on re-evaluation .*/
+    private int originalWithClausesSize;
     private int position;
+    private LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses;
+
+    private boolean withClausesInitialized;
 
     private WithClauseModel() {
     }
 
     @Override
     public void clear() {
-        this.position = 0;
-        this.model = null;
+        position = 0;
+        model = null;
+        originalWithClauses = null;
+        originalWithClausesSize = -1;
+        withClausesInitialized = false;
+        withClauses = null;
     }
 
     public int getPosition() {
         return position;
     }
 
-    public void of(int position, QueryModel model) {
+    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
+        if (!withClausesInitialized) {
+            withClauses = getSubMap();
+            withClausesInitialized = true;
+        }
+        return withClauses;
+    }
+
+    public void of(int position, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, QueryModel model) {
         this.position = position;
         this.model = model;
+        this.originalWithClauses = withClauses;
+        this.originalWithClausesSize = withClauses.size();
     }
 
     public QueryModel popModel() {
-        QueryModel m = this.model;
-        this.model = null;
+        QueryModel m = model;
+        model = null;
         return m;
+    }
+
+    @Nullable
+    private LowerCaseCharSequenceObjHashMap<WithClauseModel> getSubMap() {
+        if (originalWithClausesSize == 0) {
+            return null;
+        } else {
+
+            LowerCaseCharSequenceObjHashMap<WithClauseModel> subMap = new LowerCaseCharSequenceObjHashMap<>();
+            ObjList<CharSequence> keys = originalWithClauses.keys();
+            for (int i = 0; i < originalWithClausesSize; i++) {
+                CharSequence key = keys.get(i);
+                WithClauseModel value = originalWithClauses.get(key);
+                subMap.put(key, value);
+            }
+            return subMap;
+        }
     }
 }
