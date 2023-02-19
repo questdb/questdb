@@ -126,6 +126,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFaultToleranceNPE() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
+            // sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 100000) t from long_sequence(20)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select * from x where npe()";
