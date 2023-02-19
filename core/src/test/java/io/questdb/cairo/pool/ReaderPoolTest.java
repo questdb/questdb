@@ -413,16 +413,13 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         pool.close();
-                    } catch (CairoException ce) {
-                        if (!ce.getMessage().contains("'xyz~' is left behind")) {
-                            // The other thread won, took a reader, and is left
-                            // behind, this is expected.
-                            exceptionCount.incrementAndGet();
-                            ce.printStackTrace();
-                        }
                     } catch (Exception e) {
-                        exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        if (e instanceof CairoException) {
+                            TestUtils.assertContains(((CairoException) e).getFlyweightMessage(), "'xyz~' is left behind");
+                        } else {
+                            exceptionCount.incrementAndGet();
+                            e.printStackTrace();
+                        }
                     } finally {
                         stopLatch.countDown();
                     }
