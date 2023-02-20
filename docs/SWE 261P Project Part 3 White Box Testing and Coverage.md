@@ -16,6 +16,7 @@
 4. [Conclusion](#fourth)
 
 ---
+<p style="page-break-after:always"></p>
 
 ## 1. Structural Testing <a name="first"></a>
 
@@ -30,6 +31,8 @@ The main advantages of structural testing are:
 However, one primary disadvantage of structural testing is that it may not detect all defects or errors, as some issues may only emerge under specific conditions or in production environments. Therefore, the main objective of structural testing is to increase confidence in the thoroughness of the testing process.
 
 In summary, structural testing is essential for ensuring the quality of the software application. By examining the application's internal structure, structural testing can reveal errors or defects that may not be detected through functional testing. This can help to enhance the overall functionality and reliability of the application, which is critical for ensuring that it meets the needs of its users.
+
+<p style="page-break-after:always"></p>
 
 ## 2. Coverage of the Existing Test Suite <a name="second"></a>
 
@@ -102,6 +105,8 @@ The testing of QuestDB is already quite comprehensive; however, classes and meth
     - Current Testing Coverage: 77% (class), 65% (method), 56% (line).
     - Functionality: the Network component in QuestDB is responsible for handling incoming and outgoing connections, as well as managing the flow of data between clients and the database. This includes handling client requests, processing incoming data, and sending responses back to the client.
     - Restriction of testing: testing the Network component may require the use of multiple systems and configurations, which can be time-consuming and expensive to set up and maintain. Additionally, the reliability and stability of the network itself can impact the results of network testing, making it difficult to accurately measure the performance and scalability of QuestDB in a distributed environment.
+
+<p style="page-break-after:always"></p>
 
 ## 3. New JUnit Test Cases of Structural Testing <a name="third"></a>
 
@@ -258,6 +263,8 @@ public void testToString() {
     assertEquals("{TABLE=5}", map.toString());
 }
 ```
+
+<p style="page-break-after:always"></p>
 
 ## 4. Conclusion <a name="fourth"></a>
 
