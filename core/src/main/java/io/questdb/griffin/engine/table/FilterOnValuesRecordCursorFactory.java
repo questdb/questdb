@@ -83,11 +83,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
             rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-            cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         } else {
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
-            cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         }
+        cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         this.followedOrderByAdvice = followedOrderByAdvice;
     }
 

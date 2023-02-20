@@ -2159,7 +2159,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int orderByColumnCount = columnNames.size();
 
             if (orderByColumnCount > 0) {
-
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
                 final int timestampIndex = metadata.getTimestampIndex();
 
@@ -2827,8 +2826,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // analyze order by clause on the current model and optimise out
                 // order by on analytic function if it matches the one on the model
                 final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                boolean dismissOrder;
-                if (osz > 0 && orderHash.size() > 0) {
+                boolean dismissOrder = false;
+                if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                     dismissOrder = true;
                     for (int j = 0; j < osz; j++) {
                         ExpressionNode node = ac.getOrderBy().getQuick(j);
@@ -2838,8 +2837,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             break;
                         }
                     }
-                } else {
-                    dismissOrder = false;
                 }
 
                 if (osz > 0 && !dismissOrder) {
