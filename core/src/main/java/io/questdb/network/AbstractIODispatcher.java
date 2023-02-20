@@ -41,6 +41,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected static final int OPM_FD = 1;
     protected static final int OPM_HEARTBEAT_TIMESTAMP = 3;
     protected static final int OPM_ID = 4;
+    protected static final int OPM_COLUMN_COUNT = OPM_ID + 1;
     protected static final int OPM_OPERATION = 2;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
@@ -59,8 +60,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final MCSequence ioEventSubSeq;
     protected final NetworkFacade nf;
-    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(5);
-    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(5);
+    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(OPM_COLUMN_COUNT);
+    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(OPM_COLUMN_COUNT);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
