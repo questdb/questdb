@@ -134,10 +134,6 @@ public class PongMain {
     private static class PongRequestProcessor implements IORequestProcessor<PongConnectionContext> {
         @Override
         public boolean onRequest(int operation, PongConnectionContext context) {
-            if (operation == IOOperation.HEARTBEAT) {
-                context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
-                return true;
-            }
             switch (operation) {
                 case IOOperation.READ:
                     context.receivePing();
@@ -145,6 +141,9 @@ public class PongMain {
                 case IOOperation.WRITE:
                     context.sendPong();
                     break;
+                case IOOperation.HEARTBEAT:
+                    context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+                    return false;
                 default:
                     context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
                     break;
