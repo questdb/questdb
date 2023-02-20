@@ -103,12 +103,10 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
 
     public void doMaintenance(long now, int workerId) {
         if (now > nextCommitTime) {
-            System.err.println("doMaintenance commit at: " + now);
             nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, now);
         }
 
         if (now > maintenanceJobDeadline) {
-            System.err.println("doMaintenance at: " + now);
             if (!scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, now)) {
                 maintenanceJobDeadline = now + maintenanceInterval;
             }
