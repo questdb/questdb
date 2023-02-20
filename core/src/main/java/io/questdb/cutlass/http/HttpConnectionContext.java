@@ -197,11 +197,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
-        if (IOOperation.HEARTBEAT == operation) {
-            dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
-            return true;
-        }
-
         boolean keepGoing;
         switch (operation) {
             case IOOperation.READ:
@@ -210,6 +205,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             case IOOperation.WRITE:
                 keepGoing = handleClientSend();
                 break;
+            case IOOperation.HEARTBEAT:
+                dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
+                return false;
             default:
                 dispatcher.disconnect(this, DISCONNECT_REASON_UNKNOWN_OPERATION);
                 keepGoing = false;
@@ -524,9 +522,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor = null;
         final CharSequence url = headerParser.getUrl();
-        if (url != null) {
-            processor = selector.select(url);
-        }
+        processor = selector.select(url);
         if (processor == null) {
             return selector.getDefaultProcessor();
         }

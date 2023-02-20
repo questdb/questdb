@@ -83,7 +83,7 @@ public class PGWireServer implements Closeable {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
-                            return true;
+                            return false;
                         }
                         jobContext.handleClientOperation(context, operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
