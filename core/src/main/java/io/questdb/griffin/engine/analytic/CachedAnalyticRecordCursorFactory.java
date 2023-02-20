@@ -102,6 +102,11 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return base.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
