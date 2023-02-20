@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableReaderTailRecordCursor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">TableReaderTailRecordCursor.java</span></div><h1>TableReaderTailRecordCursor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.std.Rows;
+import org.jetbrains.annotations.TestOnly;
+
+<span class="fc" id="L30">public class TableReaderTailRecordCursor extends TableReaderRecordCursor {</span>
+
+<span class="fc" id="L32">    private long dataVersion = -1;</span>
+<span class="fc" id="L33">    private long lastRowId = -1;</span>
+<span class="fc" id="L34">    private long txn = TableUtils.INITIAL_TXN;</span>
+
+    public void bookmark() {
+<span class="fc" id="L37">        lastRowId = recordA.getRowId();</span>
+<span class="fc" id="L38">        txn = reader.getTxn();</span>
+<span class="fc" id="L39">    }</span>
+
+    @Override
+    public boolean hasNext() {
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        if (super.hasNext()) {</span>
+<span class="fc" id="L44">            return true;</span>
+        }
+<span class="fc" id="L46">        bookmark();</span>
+<span class="fc" id="L47">        return false;</span>
+    }
+
+    public boolean reload() {
+        long txn;
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        if (reader.reload()) {</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">            if (reader.getDataVersion() != this.dataVersion) {</span>
+<span class="fc" id="L54">                lastRowId = -1;</span>
+<span class="fc" id="L55">                dataVersion = reader.getDataVersion();</span>
+<span class="fc" id="L56">                toTop();</span>
+            } else {
+<span class="fc" id="L58">                seekToLastSeenRow();</span>
+            }
+<span class="fc" id="L60">            txn = reader.getTxn();</span>
+<span class="fc" id="L61">            return true;</span>
+        }
+
+        // when reader is created against table that already has data
+        // TableReader.reload() would return 'false'. This method
+        // must return 'true' in those conditions
+
+<span class="fc" id="L68">        txn = reader.getTxn();</span>
+
+<span class="fc bfc" id="L70" title="All 2 branches covered.">        if (txn &gt; this.txn) {</span>
+<span class="fc" id="L71">            this.txn = txn;</span>
+<span class="fc" id="L72">            seekToLastSeenRow();</span>
+<span class="fc" id="L73">            return true;</span>
+        }
+<span class="fc" id="L75">        return false;</span>
+    }
+
+    private void seekToLastSeenRow() {
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        if (lastRowId &gt; -1) {</span>
+<span class="fc" id="L80">            startFrom(lastRowId);</span>
+        } else {
+            // this is first time this cursor opens
+<span class="fc" id="L83">            toTop();</span>
+<span class="fc" id="L84">            dataVersion = reader.getDataVersion();</span>
+        }
+<span class="fc" id="L86">    }</span>
+
+    @TestOnly
+    void toBottom() {
+<span class="fc" id="L90">        lastRowId = Rows.toRowID(reader.getPartitionCount() - 1, reader.getTransientRowCount() - 1);</span>
+<span class="fc" id="L91">        startFrom(lastRowId);</span>
+<span class="fc" id="L92">        txn = reader.getTxn();</span>
+<span class="fc" id="L93">        dataVersion = reader.getDataVersion();</span>
+<span class="fc" id="L94">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

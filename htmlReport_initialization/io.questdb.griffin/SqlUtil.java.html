@@ -1,0 +1,688 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SqlUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">SqlUtil.java</span></div><h1>SqlUtil.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.fastdouble.FastFloatParser;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
+
+<span class="nc" id="L45">public class SqlUtil {</span>
+
+<span class="fc" id="L47">    static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();</span>
+    private static final DateFormat[] DATE_FORMATS;
+    private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
+    private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
+    private static final int DATE_FORMATS_SIZE;
+
+    public static void addSelectStar(
+            QueryModel model,
+            ObjectPool&lt;QueryColumn&gt; queryColumnPool,
+            ObjectPool&lt;ExpressionNode&gt; expressionNodePool
+    ) throws SqlException {
+<span class="fc" id="L58">        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, &quot;*&quot;, &quot;*&quot;));</span>
+<span class="fc" id="L59">        model.setArtificialStar(true);</span>
+<span class="fc" id="L60">    }</span>
+
+    // used by Copier assembler
+    @SuppressWarnings(&quot;unused&quot;)
+    public static long dateToTimestamp(long millis) {
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        return millis != Numbers.LONG_NaN ? millis * 1000L : millis;</span>
+    }
+
+    /**
+     * Fetches next non-whitespace token that's not part of single or multiline comment.
+     *
+     * @param lexer input lexer
+     * @return with next valid token or null if end of input is reached .
+     */
+    public static CharSequence fetchNext(GenericLexer lexer) {
+<span class="fc" id="L75">        int blockCount = 0;</span>
+<span class="fc" id="L76">        boolean lineComment = false;</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        while (lexer.hasNext()) {</span>
+<span class="fc" id="L78">            CharSequence cs = lexer.next();</span>
+
+<span class="fc bfc" id="L80" title="All 2 branches covered.">            if (lineComment) {</span>
+<span class="pc bpc" id="L81" title="1 of 4 branches missed.">                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {</span>
+<span class="fc" id="L82">                    lineComment = false;</span>
+                }
+                continue;
+            }
+
+<span class="fc bfc" id="L87" title="All 2 branches covered.">            if (Chars.equals(&quot;--&quot;, cs)) {</span>
+<span class="fc" id="L88">                lineComment = true;</span>
+<span class="fc" id="L89">                continue;</span>
+            }
+
+<span class="fc bfc" id="L92" title="All 2 branches covered.">            if (Chars.equals(&quot;/*&quot;, cs)) {</span>
+<span class="fc" id="L93">                blockCount++;</span>
+<span class="fc" id="L94">                continue;</span>
+            }
+
+<span class="pc bpc" id="L97" title="1 of 4 branches missed.">            if (Chars.equals(&quot;*/&quot;, cs) &amp;&amp; blockCount &gt; 0) {</span>
+<span class="fc" id="L98">                blockCount--;</span>
+<span class="fc" id="L99">                continue;</span>
+            }
+
+<span class="fc bfc" id="L102" title="All 4 branches covered.">            if (blockCount == 0 &amp;&amp; GenericLexer.WHITESPACE.excludes(cs)) {</span>
+<span class="fc" id="L103">                return cs;</span>
+            }
+<span class="fc" id="L105">        }</span>
+<span class="fc" id="L106">        return null;</span>
+    }
+
+    public static byte implicitCastAsByte(long value, int fromType) {
+<span class="fc bfc" id="L110" title="All 4 branches covered.">        if (value &gt;= Byte.MIN_VALUE &amp;&amp; value &lt;= Byte.MAX_VALUE) {</span>
+<span class="fc" id="L111">            return (byte) value;</span>
+        }
+<span class="fc" id="L113">        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.BYTE);</span>
+    }
+
+    public static char implicitCastAsChar(long value, int fromType) {
+<span class="pc bpc" id="L117" title="1 of 4 branches missed.">        if (value &gt;= 0 &amp;&amp; value &lt;= 9) {</span>
+<span class="fc" id="L118">            return (char) (value + '0');</span>
+        }
+<span class="fc" id="L120">        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.CHAR);</span>
+    }
+
+    public static float implicitCastAsFloat(double value, int fromType) {
+<span class="fc bfc" id="L124" title="All 6 branches covered.">        if ((value &gt;= Float.MIN_VALUE &amp;&amp; value &lt;= Float.MAX_VALUE) || Double.isNaN(value)) {</span>
+<span class="fc" id="L125">            return (float) value;</span>
+        }
+<span class="fc" id="L127">        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.FLOAT);</span>
+    }
+
+    public static int implicitCastAsInt(long value, int fromType) {
+<span class="fc bfc" id="L131" title="All 4 branches covered.">        if (value &gt;= Integer.MIN_VALUE &amp;&amp; value &lt;= Integer.MAX_VALUE) {</span>
+<span class="fc" id="L132">            return (int) value;</span>
+        }
+
+<span class="fc" id="L135">        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.INT);</span>
+    }
+
+    public static short implicitCastAsShort(long value, int fromType) {
+<span class="fc bfc" id="L139" title="All 4 branches covered.">        if (value &gt;= Short.MIN_VALUE &amp;&amp; value &lt;= Short.MAX_VALUE) {</span>
+<span class="fc" id="L140">            return (short) value;</span>
+        }
+<span class="fc" id="L142">        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.SHORT);</span>
+    }
+
+    // used by bytecode assembler
+    @SuppressWarnings(&quot;unused&quot;)
+    public static byte implicitCastCharAsByte(char value, int toType) {
+<span class="fc" id="L148">        return implicitCastCharAsType(value, toType);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by copier bytecode assembler
+    public static byte implicitCastCharAsGeoHash(char value, int toType) {
+        int v;
+        // '0' .. '9' and 'A-Z', excl 'A', 'I', 'L', 'O'
+<span class="pc bpc" id="L156" title="1 of 14 branches missed.">        if ((value &gt;= '0' &amp;&amp; value &lt;= '9') || ((v = value | 32) &gt; 'a' &amp;&amp; v &lt;= 'z' &amp;&amp; v != 'i' &amp;&amp; v != 'l' &amp;&amp; v != 'o')) {</span>
+<span class="fc" id="L157">            int toBits = ColumnType.getGeoHashBits(toType);</span>
+<span class="fc bfc" id="L158" title="All 2 branches covered.">            if (toBits &lt; 5) {</span>
+                // widening
+<span class="fc" id="L160">                return (byte) GeoHashes.widen(GeoHashes.encodeChar(value), 5, toBits);</span>
+            }
+
+<span class="fc bfc" id="L163" title="All 2 branches covered.">            if (toBits == 5) {</span>
+<span class="fc" id="L164">                return GeoHashes.encodeChar(value);</span>
+            }
+        }
+<span class="fc" id="L167">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);</span>
+    }
+
+    public static byte implicitCastCharAsType(char value, int toType) {
+<span class="fc" id="L171">        byte v = (byte) (value - '0');</span>
+<span class="pc bpc" id="L172" title="1 of 4 branches missed.">        if (v &gt; -1 &amp;&amp; v &lt; 10) {</span>
+<span class="fc" id="L173">            return v;</span>
+        }
+<span class="fc" id="L175">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static byte implicitCastDoubleAsByte(double value) {
+<span class="fc bfc" id="L181" title="All 4 branches covered.">        if (value &gt;= Byte.MIN_VALUE &amp;&amp; value &lt;= Byte.MAX_VALUE) {</span>
+<span class="fc" id="L182">            return (byte) value;</span>
+        }
+
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        if (Double.isNaN(value)) {</span>
+<span class="fc" id="L186">            return 0;</span>
+        }
+
+<span class="fc" id="L189">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static float implicitCastDoubleAsFloat(double value) {
+<span class="fc" id="L195">        final double d = Math.abs(value);</span>
+<span class="fc bfc" id="L196" title="All 10 branches covered.">        if ((d &gt;= Float.MIN_VALUE &amp;&amp; d &lt;= Float.MAX_VALUE) || (Double.isNaN(value) || Double.isInfinite(value) || d == 0.0)) {</span>
+<span class="fc" id="L197">            return (float) value;</span>
+        }
+
+<span class="fc" id="L200">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.FLOAT);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static int implicitCastDoubleAsInt(double value) {
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        if (Double.isNaN(value)) {</span>
+<span class="fc" id="L207">            return Numbers.INT_NaN;</span>
+        }
+<span class="fc" id="L209">        return implicitCastAsInt((long) value, ColumnType.LONG);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static long implicitCastDoubleAsLong(double value) {
+<span class="fc bfc" id="L215" title="All 4 branches covered.">        if (value &gt; Long.MIN_VALUE &amp;&amp; value &lt;= Long.MAX_VALUE) {</span>
+<span class="fc" id="L216">            return (long) value;</span>
+        }
+
+<span class="fc bfc" id="L219" title="All 2 branches covered.">        if (Double.isNaN(value)) {</span>
+<span class="fc" id="L220">            return Numbers.LONG_NaN;</span>
+        }
+
+<span class="fc" id="L223">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.LONG);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static short implicitCastDoubleAsShort(double value) {
+<span class="fc bfc" id="L229" title="All 2 branches covered.">        if (Double.isNaN(value)) {</span>
+<span class="fc" id="L230">            return 0;</span>
+        }
+<span class="fc" id="L232">        return implicitCastAsShort((long) value, ColumnType.LONG);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static byte implicitCastFloatAsByte(float value) {
+<span class="fc bfc" id="L238" title="All 4 branches covered.">        if (value &gt;= Byte.MIN_VALUE &amp;&amp; value &lt;= Byte.MAX_VALUE) {</span>
+<span class="fc" id="L239">            return (byte) value;</span>
+        }
+
+<span class="fc bfc" id="L242" title="All 2 branches covered.">        if (Float.isNaN(value)) {</span>
+<span class="fc" id="L243">            return 0;</span>
+        }
+
+<span class="fc" id="L246">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static int implicitCastFloatAsInt(float value) {
+<span class="fc bfc" id="L252" title="All 4 branches covered.">        if (value &gt; Integer.MIN_VALUE &amp;&amp; value &lt;= Integer.MAX_VALUE) {</span>
+<span class="fc" id="L253">            return (int) value;</span>
+        }
+
+<span class="fc bfc" id="L256" title="All 2 branches covered.">        if (Float.isNaN(value)) {</span>
+<span class="fc" id="L257">            return Numbers.INT_NaN;</span>
+        }
+
+<span class="fc" id="L260">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.INT);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static long implicitCastFloatAsLong(float value) {
+<span class="fc bfc" id="L266" title="All 4 branches covered.">        if (value &gt; Long.MIN_VALUE &amp;&amp; value &lt;= Long.MAX_VALUE) {</span>
+<span class="fc" id="L267">            return (long) value;</span>
+        }
+
+<span class="fc bfc" id="L270" title="All 2 branches covered.">        if (Float.isNaN(value)) {</span>
+<span class="fc" id="L271">            return Numbers.LONG_NaN;</span>
+        }
+
+<span class="fc" id="L274">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.LONG);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static short implicitCastFloatAsShort(float value) {
+<span class="fc bfc" id="L280" title="All 4 branches covered.">        if (value &gt;= Short.MIN_VALUE &amp;&amp; value &lt;= Short.MAX_VALUE) {</span>
+<span class="fc" id="L281">            return (short) value;</span>
+        }
+
+<span class="fc bfc" id="L284" title="All 2 branches covered.">        if (Float.isNaN(value)) {</span>
+<span class="fc" id="L285">            return 0;</span>
+        }
+
+<span class="fc" id="L288">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.SHORT);</span>
+    }
+
+    public static long implicitCastGeoHashAsGeoHash(long value, int fromType, int toType) {
+<span class="fc" id="L292">        final int fromBits = ColumnType.getGeoHashBits(fromType);</span>
+<span class="fc" id="L293">        final int toBits = ColumnType.getGeoHashBits(toType);</span>
+<span class="pc bpc" id="L294" title="1 of 2 branches missed.">        assert fromBits &gt;= toBits;</span>
+<span class="fc" id="L295">        return GeoHashes.widen(value, fromBits, toBits);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static byte implicitCastIntAsByte(int value) {
+<span class="fc bfc" id="L301" title="All 2 branches covered.">        if (value != Numbers.INT_NaN) {</span>
+<span class="fc" id="L302">            return implicitCastAsByte(value, ColumnType.INT);</span>
+        }
+<span class="fc" id="L304">        return 0;</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static short implicitCastIntAsShort(int value) {
+<span class="fc bfc" id="L310" title="All 2 branches covered.">        if (value != Numbers.INT_NaN) {</span>
+<span class="fc" id="L311">            return implicitCastAsShort(value, ColumnType.INT);</span>
+        }
+<span class="fc" id="L313">        return 0;</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static byte implicitCastLongAsByte(long value) {
+<span class="fc bfc" id="L319" title="All 2 branches covered.">        if (value != Numbers.LONG_NaN) {</span>
+<span class="fc" id="L320">            return implicitCastAsByte(value, ColumnType.LONG);</span>
+        }
+<span class="fc" id="L322">        return 0;</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static int implicitCastLongAsInt(long value) {
+<span class="fc bfc" id="L328" title="All 2 branches covered.">        if (value != Numbers.LONG_NaN) {</span>
+<span class="fc" id="L329">            return implicitCastAsInt(value, ColumnType.LONG);</span>
+        }
+<span class="fc" id="L331">        return Numbers.INT_NaN;</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static short implicitCastLongAsShort(long value) {
+<span class="fc bfc" id="L337" title="All 2 branches covered.">        if (value != Numbers.LONG_NaN) {</span>
+<span class="fc" id="L338">            return implicitCastAsShort(value, ColumnType.LONG);</span>
+        }
+<span class="fc" id="L340">        return 0;</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    // used by the row copier
+    public static byte implicitCastShortAsByte(short value) {
+<span class="fc" id="L346">        return implicitCastAsByte(value, ColumnType.SHORT);</span>
+    }
+
+    public static byte implicitCastStrAsByte(CharSequence value) {
+<span class="fc bfc" id="L350" title="All 2 branches covered.">        if (value != null) {</span>
+            try {
+<span class="fc" id="L352">                int res = Numbers.parseInt(value);</span>
+<span class="fc bfc" id="L353" title="All 4 branches covered.">                if (res &gt;= Byte.MIN_VALUE &amp;&amp; res &lt;= Byte.MAX_VALUE) {</span>
+<span class="fc" id="L354">                    return (byte) res;</span>
+                }
+<span class="fc" id="L356">            } catch (NumericException ignore) {</span>
+<span class="fc" id="L357">            }</span>
+<span class="fc" id="L358">            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.BYTE);</span>
+        }
+<span class="fc" id="L360">        return 0;</span>
+    }
+
+    public static char implicitCastStrAsChar(CharSequence value) {
+<span class="fc bfc" id="L364" title="All 4 branches covered.">        if (value == null || value.length() == 0) {</span>
+<span class="fc" id="L365">            return 0;</span>
+        }
+
+<span class="fc bfc" id="L368" title="All 2 branches covered.">        if (value.length() == 1) {</span>
+<span class="fc" id="L369">            return value.charAt(0);</span>
+        }
+
+<span class="fc" id="L372">        throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);</span>
+    }
+
+    public static long implicitCastStrAsDate(CharSequence value) {
+<span class="fc bfc" id="L376" title="All 2 branches covered.">        if (value != null) {</span>
+<span class="fc" id="L377">            final int hi = value.length();</span>
+<span class="fc bfc" id="L378" title="All 2 branches covered.">            for (int i = 0; i &lt; DATE_FORMATS_SIZE; i++) {</span>
+                try {
+<span class="fc" id="L380">                    return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.enLocale);</span>
+<span class="fc" id="L381">                } catch (NumericException ignore) {</span>
+                }
+            }
+            try {
+<span class="fc" id="L385">                return Numbers.parseLong(value, 0, hi);</span>
+<span class="fc" id="L386">            } catch (NumericException e) {</span>
+<span class="fc" id="L387">                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DATE);</span>
+            }
+        }
+<span class="fc" id="L390">        return Numbers.LONG_NaN;</span>
+    }
+
+    public static double implicitCastStrAsDouble(CharSequence value) {
+<span class="fc bfc" id="L394" title="All 2 branches covered.">        if (value != null) {</span>
+            try {
+<span class="fc" id="L396">                return Numbers.parseDouble(value);</span>
+<span class="fc" id="L397">            } catch (NumericException e) {</span>
+<span class="fc" id="L398">                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.DOUBLE);</span>
+            }
+        }
+<span class="fc" id="L401">        return Double.NaN;</span>
+    }
+
+    public static float implicitCastStrAsFloat(CharSequence value) {
+<span class="fc bfc" id="L405" title="All 2 branches covered.">        if (value != null) {</span>
+            try {
+<span class="fc" id="L407">                return FastFloatParser.parseFloat(value, 0, value.length(), true);</span>
+<span class="fc" id="L408">            } catch (NumericException ignored) {</span>
+<span class="fc" id="L409">                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.FLOAT);</span>
+            }
+        }
+<span class="fc" id="L412">        return Float.NaN;</span>
+    }
+
+    public static int implicitCastStrAsInt(CharSequence value) {
+<span class="fc bfc" id="L416" title="All 2 branches covered.">        if (value != null) {</span>
+            try {
+<span class="fc" id="L418">                return Numbers.parseInt(value);</span>
+<span class="fc" id="L419">            } catch (NumericException e) {</span>
+<span class="fc" id="L420">                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.INT);</span>
+            }
+        }
+<span class="fc" id="L423">        return Numbers.INT_NaN;</span>
+    }
+
+    public static long implicitCastStrAsLong(CharSequence value) {
+<span class="fc bfc" id="L427" title="All 2 branches covered.">        if (value != null) {</span>
+            try {
+<span class="fc" id="L429">                return Numbers.parseLong(value);</span>
+<span class="fc" id="L430">            } catch (NumericException e) {</span>
+<span class="fc" id="L431">                throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.LONG);</span>
+            }
+        }
+<span class="fc" id="L434">        return Numbers.LONG_NaN;</span>
+    }
+
+    public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
+<span class="fc bfc" id="L438" title="All 2 branches covered.">        if (value != null) {</span>
+<span class="fc" id="L439">            Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);</span>
+        } else {
+<span class="fc" id="L441">            long256Acceptor.setAll(</span>
+<span class="fc" id="L442">                    Long256Impl.NULL_LONG256.getLong0(),</span>
+<span class="fc" id="L443">                    Long256Impl.NULL_LONG256.getLong1(),</span>
+<span class="fc" id="L444">                    Long256Impl.NULL_LONG256.getLong2(),</span>
+<span class="fc" id="L445">                    Long256Impl.NULL_LONG256.getLong3()</span>
+            );
+        }
+<span class="fc" id="L448">    }</span>
+
+    public static short implicitCastStrAsShort(@Nullable CharSequence value) {
+        try {
+<span class="fc bfc" id="L452" title="All 2 branches covered.">            return value != null ? Numbers.parseShort(value) : 0;</span>
+<span class="fc" id="L453">        } catch (NumericException ignore) {</span>
+<span class="fc" id="L454">            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.SHORT);</span>
+        }
+    }
+
+    public static long implicitCastStrAsTimestamp(CharSequence value) {
+<span class="fc bfc" id="L459" title="All 2 branches covered.">        if (value != null) {</span>
+            try {
+<span class="fc" id="L461">                return Numbers.parseLong(value);</span>
+<span class="fc" id="L462">            } catch (NumericException ignore) {</span>
+            }
+
+            // Parse as ISO with variable length.
+            try {
+<span class="fc" id="L467">                return IntervalUtils.parseFloorPartialTimestamp(value);</span>
+<span class="fc" id="L468">            } catch (NumericException ignore) {</span>
+            }
+
+<span class="fc" id="L471">            final int hi = value.length();</span>
+<span class="fc bfc" id="L472" title="All 2 branches covered.">            for (int i = 0; i &lt; DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {</span>
+                try {
+                    //
+<span class="fc" id="L475">                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, enLocale) * 1000L;</span>
+<span class="fc" id="L476">                } catch (NumericException ignore) {</span>
+                }
+            }
+
+<span class="fc" id="L480">            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.TIMESTAMP);</span>
+        }
+<span class="fc" id="L482">        return Numbers.LONG_NaN;</span>
+    }
+
+    public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
+<span class="fc bfc" id="L486" title="All 4 branches covered.">        if (str == null || str.length() == 0) {</span>
+<span class="fc" id="L487">            uuid.ofNull();</span>
+<span class="fc" id="L488">            return;</span>
+        }
+        try {
+<span class="fc" id="L491">            uuid.of(str);</span>
+<span class="fc" id="L492">        } catch (NumericException e) {</span>
+<span class="fc" id="L493">            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);</span>
+<span class="fc" id="L494">        }</span>
+<span class="fc" id="L495">    }</span>
+
+    public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink sink) {
+<span class="fc bfc" id="L498" title="All 2 branches covered.">        if (Uuid.isNull(lo, hi)) {</span>
+<span class="fc" id="L499">            return false;</span>
+        }
+<span class="fc" id="L501">        Numbers.appendUuid(lo, hi, sink);</span>
+<span class="fc" id="L502">        return true;</span>
+    }
+
+    /**
+     * Parses partial representation of timestamp with time zone.
+     *
+     * @param value      the characters representing timestamp
+     * @param tupleIndex the tuple index for insert SQL, which inserts multiple rows at once
+     * @param columnType the target column type, which might be different from timestamp
+     * @return epoch offset
+     * @throws ImplicitCastException inconvertible type error.
+     */
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int columnType) {
+        try {
+<span class="fc" id="L516">            return IntervalUtils.parseFloorPartialTimestamp(value);</span>
+<span class="fc" id="L517">        } catch (NumericException e) {</span>
+<span class="fc" id="L518">            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, ColumnType.STRING, columnType);</span>
+        }
+    }
+
+    static CharSequence createColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            int indexOfDot,
+            LowerCaseCharSequenceObjHashMap&lt;QueryColumn&gt; aliasToColumnMap
+    ) {
+<span class="fc" id="L528">        return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);</span>
+    }
+
+    static CharSequence createColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            int indexOfDot,
+            LowerCaseCharSequenceObjHashMap&lt;QueryColumn&gt; aliasToColumnMap,
+            boolean cleanColumnNames
+    ) {
+<span class="fc bfc" id="L538" title="All 4 branches covered.">        final boolean disallowed = cleanColumnNames &amp;&amp; disallowedAliases.contains(base);</span>
+
+        // short and sweet version
+<span class="fc bfc" id="L541" title="All 6 branches covered.">        if (indexOfDot == -1 &amp;&amp; !disallowed &amp;&amp; aliasToColumnMap.excludes(base)) {</span>
+<span class="fc" id="L542">            return base;</span>
+        }
+
+<span class="fc" id="L545">        final CharacterStoreEntry characterStoreEntry = store.newEntry();</span>
+
+<span class="fc bfc" id="L547" title="All 2 branches covered.">        if (indexOfDot == -1) {</span>
+<span class="fc bfc" id="L548" title="All 2 branches covered.">            if (disallowed) {</span>
+<span class="fc" id="L549">                characterStoreEntry.put(&quot;column&quot;);</span>
+            } else {
+<span class="fc" id="L551">                characterStoreEntry.put(base);</span>
+            }
+        } else {
+<span class="fc bfc" id="L554" title="All 2 branches covered.">            if (indexOfDot + 1 == base.length()) {</span>
+<span class="fc" id="L555">                characterStoreEntry.put(&quot;column&quot;);</span>
+            } else {
+<span class="fc" id="L557">                characterStoreEntry.put(base, indexOfDot + 1, base.length());</span>
+            }
+        }
+
+<span class="fc" id="L561">        int len = characterStoreEntry.length();</span>
+<span class="fc" id="L562">        int sequence = 0;</span>
+        while (true) {
+<span class="fc bfc" id="L564" title="All 2 branches covered.">            if (sequence &gt; 0) {</span>
+<span class="fc" id="L565">                characterStoreEntry.trimTo(len);</span>
+<span class="fc" id="L566">                characterStoreEntry.put(sequence);</span>
+            }
+<span class="fc" id="L568">            sequence++;</span>
+<span class="fc" id="L569">            CharSequence alias = characterStoreEntry.toImmutable();</span>
+<span class="fc bfc" id="L570" title="All 2 branches covered.">            if (aliasToColumnMap.excludes(alias)) {</span>
+<span class="fc" id="L571">                return alias;</span>
+            }
+<span class="fc" id="L573">        }</span>
+    }
+
+    static long expectMicros(CharSequence tok, int position) throws SqlException {
+<span class="fc" id="L577">        int k = -1;</span>
+
+<span class="fc" id="L579">        final int len = tok.length();</span>
+
+        // look for end of digits
+<span class="fc bfc" id="L582" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L583">            char c = tok.charAt(i);</span>
+<span class="fc bfc" id="L584" title="All 4 branches covered.">            if (c &lt; '0' || c &gt; '9') {</span>
+<span class="fc" id="L585">                k = i;</span>
+<span class="fc" id="L586">                break;</span>
+            }
+        }
+
+<span class="fc bfc" id="L590" title="All 2 branches covered.">        if (k == -1) {</span>
+<span class="fc" id="L591">            throw SqlException.$(position + len, &quot;expected interval qualifier in &quot;).put(tok);</span>
+        }
+
+        try {
+<span class="fc" id="L595">            long interval = Numbers.parseLong(tok, 0, k);</span>
+<span class="fc" id="L596">            int nChars = len - k;</span>
+<span class="fc bfc" id="L597" title="All 2 branches covered.">            if (nChars &gt; 2) {</span>
+<span class="fc" id="L598">                throw SqlException.$(position + k, &quot;expected 1/2 letter interval qualifier in &quot;).put(tok);</span>
+            }
+
+<span class="pc bpc" id="L601" title="1 of 6 branches missed.">            switch (tok.charAt(k)) {</span>
+                case 's':
+<span class="pc bpc" id="L603" title="1 of 2 branches missed.">                    if (nChars == 1) {</span>
+                        // seconds
+<span class="fc" id="L605">                        return interval * Timestamps.SECOND_MICROS;</span>
+                    }
+                    break;
+                case 'm':
+<span class="fc bfc" id="L609" title="All 2 branches covered.">                    if (nChars == 1) {</span>
+                        // minutes
+<span class="fc" id="L611">                        return interval * Timestamps.MINUTE_MICROS;</span>
+                    } else {
+<span class="fc bfc" id="L613" title="All 2 branches covered.">                        if (tok.charAt(k + 1) == 's') {</span>
+                            // millis
+<span class="fc" id="L615">                            return interval * Timestamps.MILLI_MICROS;</span>
+                        }
+                    }
+                    break;
+                case 'h':
+<span class="pc bpc" id="L620" title="1 of 2 branches missed.">                    if (nChars == 1) {</span>
+                        // hours
+<span class="fc" id="L622">                        return interval * Timestamps.HOUR_MICROS;</span>
+                    }
+                    break;
+                case 'd':
+<span class="pc bpc" id="L626" title="1 of 2 branches missed.">                    if (nChars == 1) {</span>
+                        // days
+<span class="fc" id="L628">                        return interval * Timestamps.DAY_MICROS;</span>
+                    }
+                    break;
+                case 'u':
+<span class="pc bpc" id="L632" title="2 of 4 branches missed.">                    if (nChars == 2 &amp;&amp; tok.charAt(k + 1) == 's') {</span>
+<span class="fc" id="L633">                        return interval;</span>
+                    }
+                    break;
+                default:
+                    break;
+            }
+<span class="fc" id="L639">        } catch (NumericException ex) {</span>
+            // Ignored
+<span class="fc" id="L641">        }</span>
+
+<span class="fc" id="L643">        throw SqlException.$(position + len, &quot;invalid interval qualifier &quot;).put(tok);</span>
+    }
+
+    static QueryColumn nextColumn(
+            ObjectPool&lt;QueryColumn&gt; queryColumnPool,
+            ObjectPool&lt;ExpressionNode&gt; sqlNodePool,
+            CharSequence alias,
+            CharSequence column
+    ) {
+<span class="fc" id="L652">        return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));</span>
+    }
+
+    static ExpressionNode nextLiteral(ObjectPool&lt;ExpressionNode&gt; pool, CharSequence token, int position) {
+<span class="fc" id="L656">        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);</span>
+    }
+
+    static {
+<span class="fc bfc" id="L660" title="All 2 branches covered.">        for (int i = 0, n = OperatorExpression.operators.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L661">            SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);</span>
+        }
+<span class="fc" id="L663">        SqlUtil.disallowedAliases.add(&quot;&quot;);</span>
+
+<span class="fc" id="L665">        final DateFormatCompiler milliCompiler = new DateFormatCompiler();</span>
+<span class="fc" id="L666">        final DateFormat pgDateTimeFormat = milliCompiler.compile(&quot;y-MM-dd HH:mm:ssz&quot;);</span>
+
+<span class="fc" id="L668">        DATE_FORMATS = new DateFormat[]{</span>
+                pgDateTimeFormat,
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                UTC_FORMAT
+        };
+
+<span class="fc" id="L675">        DATE_FORMATS_SIZE = DATE_FORMATS.length;</span>
+
+        // we are using &quot;millis&quot; compiler deliberately because clients encode millis into strings
+<span class="fc" id="L678">        DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{</span>
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                pgDateTimeFormat
+        };
+
+<span class="fc" id="L684">        DATE_FORMATS_FOR_TIMESTAMP_SIZE = DATE_FORMATS_FOR_TIMESTAMP.length;</span>
+
+<span class="fc" id="L686">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

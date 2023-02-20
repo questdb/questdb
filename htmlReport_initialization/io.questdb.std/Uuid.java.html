@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Uuid.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">Uuid.java</span></div><h1>Uuid.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.std.str.CharSink;
+
+public final class Uuid implements Sinkable {
+    public static final int FIRST_DASH_POS = 8;
+    public static final int FOURTH_DASH_POS = 23;
+    public static final int SECOND_DASH_POS = 13;
+    public static final int THIRD_DASH_POS = 18;
+    public static final int UUID_LENGTH = 36;
+
+<span class="fc" id="L36">    private long hi = Numbers.LONG_NaN;</span>
+<span class="fc" id="L37">    private long lo = Numbers.LONG_NaN;</span>
+
+<span class="fc" id="L39">    public Uuid(long lo, long hi) {</span>
+<span class="fc" id="L40">        of(lo, hi);</span>
+<span class="fc" id="L41">    }</span>
+
+<span class="fc" id="L43">    public Uuid() {</span>
+
+<span class="fc" id="L45">    }</span>
+
+    /**
+     * Check UUID string has the right length and dashes in the right places.
+     * It does not perform full validation of the UUID string.
+     * Call this method before calling {@link #parseHi(CharSequence)} or {@link #parseLo(CharSequence)}.
+     *
+     * @param uuid UUID string
+     * @throws NumericException if UUID string has wrong length or dashes in wrong places
+     */
+    public static void checkDashesAndLength(CharSequence uuid) throws NumericException {
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (uuid.length() != UUID_LENGTH) {</span>
+<span class="fc" id="L57">            throw NumericException.INSTANCE;</span>
+        }
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (uuid.charAt(FIRST_DASH_POS) != '-'</span>
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">                || uuid.charAt(SECOND_DASH_POS) != '-'</span>
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">                || uuid.charAt(THIRD_DASH_POS) != '-'</span>
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">                || uuid.charAt(FOURTH_DASH_POS) != '-') {</span>
+<span class="fc" id="L63">            throw NumericException.INSTANCE;</span>
+        }
+<span class="fc" id="L65">    }</span>
+
+    /**
+     * Check if UUID is null.
+     *
+     * @param lo low 64 bits of UUID
+     * @param hi high 64 bits of UUID
+     * @return true if UUID is null
+     */
+    public static boolean isNull(long lo, long hi) {
+<span class="pc bpc" id="L75" title="1 of 4 branches missed.">        return hi == Numbers.LONG_NaN &amp;&amp; lo == Numbers.LONG_NaN;</span>
+    }
+
+    /**
+     * Returns highest 64 bits of UUID.
+     * &lt;p&gt;
+     * This method assumes that UUID has correct length and dashes in correct positions
+     * Use {@link #checkDashesAndLength(CharSequence)} to validate that before calling this method.
+     * &lt;p&gt;
+     * Returned bits are in little-endian order.
+     *
+     * @param uuid uuid string
+     * @return high UUID bits
+     * @throws NumericException if UUID is not valid
+     */
+    public static long parseHi(CharSequence uuid) throws NumericException {
+        long hi1;
+        long hi2;
+        long hi3;
+<span class="fc" id="L94">        hi1 = Numbers.parseHexLong(uuid, 0, FIRST_DASH_POS);</span>
+<span class="fc" id="L95">        hi2 = Numbers.parseHexLong(uuid, FIRST_DASH_POS + 1, SECOND_DASH_POS);</span>
+<span class="fc" id="L96">        hi3 = Numbers.parseHexLong(uuid, SECOND_DASH_POS + 1, THIRD_DASH_POS);</span>
+<span class="fc" id="L97">        return (hi1 &lt;&lt; 32) | (hi2 &lt;&lt; 16) | hi3;</span>
+    }
+
+    /**
+     * Returns lowest 64 bits of UUID.
+     * &lt;p&gt;
+     * This method assumes that UUID has correct length and dashes in correct positions
+     * Use {@link #checkDashesAndLength(CharSequence)} to validate that before calling this method.
+     * &lt;p&gt;
+     * Returned bits are in little-endian order.
+     *
+     * @param uuid uuid string
+     * @return low UUID bits
+     * @throws NumericException if UUID is not valid
+     */
+    public static long parseLo(CharSequence uuid) throws NumericException {
+        long lo1;
+        long lo2;
+<span class="fc" id="L115">        lo1 = Numbers.parseHexLong(uuid, THIRD_DASH_POS + 1, FOURTH_DASH_POS);</span>
+<span class="fc" id="L116">        lo2 = Numbers.parseHexLong(uuid, FOURTH_DASH_POS + 1, UUID_LENGTH);</span>
+<span class="fc" id="L117">        return (lo1 &lt;&lt; 48) | lo2;</span>
+    }
+
+    @Override
+    public boolean equals(Object o) {
+<span class="fc bfc" id="L122" title="All 2 branches covered.">        if (this == o) {</span>
+<span class="fc" id="L123">            return true;</span>
+        }
+<span class="fc bfc" id="L125" title="All 4 branches covered.">        if (o == null || o.getClass() != Uuid.class) {</span>
+<span class="fc" id="L126">            return false;</span>
+        }
+<span class="fc" id="L128">        Uuid that = (Uuid) o;</span>
+<span class="pc bpc" id="L129" title="1 of 4 branches missed.">        return lo == that.lo &amp;&amp; hi == that.hi;</span>
+    }
+
+    public long getHi() {
+<span class="fc" id="L133">        return hi;</span>
+    }
+
+    public long getLo() {
+<span class="fc" id="L137">        return lo;</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="fc" id="L142">        return Hash.hash(lo, hi);</span>
+    }
+
+    public void of(long lo, long hi) {
+<span class="fc" id="L146">        this.lo = lo;</span>
+<span class="fc" id="L147">        this.hi = hi;</span>
+<span class="fc" id="L148">    }</span>
+
+    public void of(CharSequence uuid) throws NumericException {
+<span class="fc" id="L151">        checkDashesAndLength(uuid);</span>
+<span class="fc" id="L152">        this.lo = parseLo(uuid);</span>
+<span class="fc" id="L153">        this.hi = parseHi(uuid);</span>
+<span class="fc" id="L154">    }</span>
+
+    public void ofNull() {
+<span class="fc" id="L157">        this.lo = Numbers.LONG_NaN;</span>
+<span class="fc" id="L158">        this.hi = Numbers.LONG_NaN;</span>
+<span class="fc" id="L159">    }</span>
+
+    @Override
+    public void toSink(CharSink sink) {
+<span class="fc" id="L163">        Numbers.appendUuid(lo, hi, sink);</span>
+<span class="fc" id="L164">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SqlExecutionContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">SqlExecutionContext.java</span></div><h1>SqlExecutionContext.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.engine.analytic.AnalyticContext;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+
+public interface SqlExecutionContext extends Closeable {
+
+    void clearAnalyticContext();
+
+    @Override
+    default void close() {
+<span class="fc" id="L49">    }</span>
+
+    void configureAnalyticContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Transient @Nullable ColumnTypes keyTypes,
+            boolean isOrdered,
+            boolean baseSupportsRandomAccess
+    );
+
+    AnalyticContext getAnalyticContext();
+
+    default Rnd getAsyncRandom() {
+<span class="fc" id="L62">        return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());</span>
+    }
+
+    BindVariableService getBindVariableService();
+
+    @NotNull
+    CairoEngine getCairoEngine();
+
+    CairoSecurityContext getCairoSecurityContext();
+
+    @NotNull
+    SqlExecutionCircuitBreaker getCircuitBreaker();
+
+    boolean getCloneSymbolTables();
+
+    int getJitMode();
+
+    default @NotNull MessageBus getMessageBus() {
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">        return getCairoEngine().getMessageBus();</span>
+    }
+
+    default TableRecordMetadata getMetadata(TableToken tableToken) {
+<span class="fc" id="L84">        final CairoEngine engine = getCairoEngine();</span>
+<span class="fc" id="L85">        return engine.getMetadata(getCairoSecurityContext(), tableToken);</span>
+    }
+
+    default TableRecordMetadata getMetadata(TableToken tableToken, long structureVersion) {
+<span class="fc" id="L89">        final CairoEngine engine = getCairoEngine();</span>
+<span class="fc" id="L90">        return engine.getMetadata(getCairoSecurityContext(), tableToken, structureVersion);</span>
+    }
+
+    long getMicrosecondTimestamp();
+
+    long getNow();
+
+    QueryFutureUpdateListener getQueryFutureUpdateListener();
+
+    Rnd getRandom();
+
+    default TableReader getReader(TableToken tableName, long version) {
+<span class="fc" id="L102">        return getCairoEngine().getReader(getCairoSecurityContext(), tableName, version);</span>
+    }
+
+    default TableReader getReader(TableToken tableName) {
+<span class="fc" id="L106">        return getCairoEngine().getReader(getCairoSecurityContext(), tableName);</span>
+    }
+
+    long getRequestFd();
+
+    default int getSharedWorkerCount() {
+<span class="fc" id="L112">        return getWorkerCount();</span>
+    }
+
+    default int getStatus(Path path, TableToken tableName) {
+<span class="fc" id="L116">        return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);</span>
+    }
+
+    default TableToken getTableToken(CharSequence tableName) {
+<span class="fc" id="L120">        return getCairoEngine().getTableToken(tableName);</span>
+    }
+
+    default TableToken getTableToken(CharSequence tableName, int lo, int hi) {
+<span class="nc" id="L124">        return getCairoEngine().getTableToken(tableName, lo, hi);</span>
+    }
+
+    default TableToken getTableTokenIfExists(CharSequence tableName) {
+<span class="fc" id="L128">        return getCairoEngine().getTableTokenIfExists(tableName);</span>
+    }
+
+    default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
+<span class="fc" id="L132">        return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);</span>
+    }
+
+    int getWorkerCount();
+
+    void initNow();
+
+    boolean isColumnPreTouchEnabled();
+
+    boolean isParallelFilterEnabled();
+
+    boolean isTimestampRequired();
+
+    boolean isWalApplication();
+
+    void popTimestampRequiredFlag();
+
+    void pushTimestampRequiredFlag(boolean flag);
+
+    void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
+
+    void setJitMode(int jitMode);
+
+    void setNowAndFixClock(long now);
+
+    void setParallelFilterEnabled(boolean parallelFilterEnabled);
+
+    void setRandom(Rnd rnd);
+
+    default void storeTelemetry(short event, short origin) {
+<span class="nc" id="L164">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

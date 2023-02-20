@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SOCountDownLatch.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.mp</a> &gt; <span class="el_source">SOCountDownLatch.java</span></div><h1>SOCountDownLatch.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp;
+
+import io.questdb.std.Unsafe;
+
+import java.util.concurrent.locks.LockSupport;
+
+/**
+ * Single owner count down latch. This latch is mutable and it does not actively
+ */
+public class SOCountDownLatch implements CountDownLatchSPI {
+    private static final long VALUE_OFFSET;
+    private volatile int count;
+    private volatile Thread waiter;
+
+<span class="fc" id="L39">    public SOCountDownLatch(int count) {</span>
+<span class="fc" id="L40">        this.count = count;</span>
+<span class="fc" id="L41">    }</span>
+
+<span class="fc" id="L43">    public SOCountDownLatch() {</span>
+        // no-op
+<span class="fc" id="L45">    }</span>
+
+    public void await() {
+<span class="fc" id="L48">        this.waiter = Thread.currentThread();</span>
+<span class="fc bfc" id="L49" title="All 2 branches covered.">        while (getCount() &gt; 0) {</span>
+<span class="fc" id="L50">            LockSupport.park();</span>
+        }
+<span class="fc" id="L52">    }</span>
+
+    public boolean await(long nanos) {
+<span class="fc" id="L55">        this.waiter = Thread.currentThread();</span>
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (getCount() == 0) {</span>
+<span class="fc" id="L57">            return true;</span>
+        }
+
+        while (true) {
+<span class="fc" id="L61">            long start = System.nanoTime();</span>
+<span class="fc" id="L62">            LockSupport.parkNanos(nanos);</span>
+<span class="fc" id="L63">            long elapsed = System.nanoTime() - start;</span>
+
+<span class="fc bfc" id="L65" title="All 2 branches covered.">            if (elapsed &lt; nanos) {</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">                if (getCount() == 0) {</span>
+<span class="fc" id="L67">                    return true;</span>
+                }
+            } else {
+<span class="fc" id="L70">                return false;</span>
+            }
+<span class="fc" id="L72">        }</span>
+    }
+
+    @Override
+    public void countDown() {
+        do {
+<span class="fc" id="L78">            int current = getCount();</span>
+
+<span class="fc bfc" id="L80" title="All 2 branches covered.">            if (current &lt; 1) {</span>
+<span class="fc" id="L81">                break;</span>
+            }
+
+<span class="fc" id="L84">            int next = current - 1;</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">            if (Unsafe.cas(this, VALUE_OFFSET, current, next)) {</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">                if (next == 0) {</span>
+<span class="fc" id="L87">                    unparkWaiter();</span>
+                }
+                break;
+            }
+<span class="fc" id="L91">        } while (true);</span>
+<span class="fc" id="L92">    }</span>
+
+    public int getCount() {
+<span class="fc" id="L95">        return count;</span>
+    }
+
+    public void setCount(int count) {
+<span class="fc" id="L99">        this.count = count;</span>
+<span class="fc" id="L100">    }</span>
+
+    private void unparkWaiter() {
+<span class="fc" id="L103">        Thread waiter = this.waiter;</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (waiter != null) {</span>
+<span class="fc" id="L105">            LockSupport.unpark(waiter);</span>
+        }
+<span class="fc" id="L107">    }</span>
+
+    static {
+<span class="fc" id="L110">        VALUE_OFFSET = Unsafe.getFieldOffset(SOCountDownLatch.class, &quot;count&quot;);</span>
+<span class="fc" id="L111">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

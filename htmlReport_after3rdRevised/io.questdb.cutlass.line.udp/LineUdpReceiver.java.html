@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineUdpReceiver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.udp</a> &gt; <span class="el_source">LineUdpReceiver.java</span></div><h1>LineUdpReceiver.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.udp;
+
+import io.questdb.cairo.CairoEngine;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+
+public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
+    private final int bufLen;
+    private long buf;
+
+    public LineUdpReceiver(
+            LineUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool workerPool
+    ) {
+<span class="fc" id="L41">        super(configuration, engine, workerPool);</span>
+<span class="fc" id="L42">        this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);</span>
+<span class="fc" id="L43">        start();</span>
+<span class="fc" id="L44">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L48">        super.close();</span>
+<span class="fc bfc" id="L49" title="All 2 branches covered.">        if (buf != 0) {</span>
+<span class="fc" id="L50">            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);</span>
+<span class="fc" id="L51">            buf = 0;</span>
+        }
+<span class="fc" id="L53">    }</span>
+
+    @Override
+    protected boolean runSerially() {
+<span class="fc" id="L57">        boolean ran = false;</span>
+        int count;
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        while ((count = nf.recv(fd, buf, bufLen)) &gt; 0) {</span>
+<span class="fc" id="L60">            lexer.parse(buf, buf + count);</span>
+<span class="fc" id="L61">            lexer.parseLast();</span>
+
+<span class="fc" id="L63">            totalCount++;</span>
+
+<span class="fc bfc" id="L65" title="All 2 branches covered.">            if (totalCount &gt; commitRate) {</span>
+<span class="fc" id="L66">                totalCount = 0;</span>
+<span class="fc" id="L67">                parser.commitAll(commitMode);</span>
+            }
+
+<span class="fc bfc" id="L70" title="All 2 branches covered.">            if (ran) {</span>
+<span class="fc" id="L71">                continue;</span>
+            }
+
+<span class="fc" id="L74">            ran = true;</span>
+        }
+<span class="fc" id="L76">        parser.commitAll(commitMode);</span>
+<span class="fc" id="L77">        return ran;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

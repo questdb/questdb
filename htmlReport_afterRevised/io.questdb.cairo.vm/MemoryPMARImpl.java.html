@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MemoryPMARImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.vm</a> &gt; <span class="el_source">MemoryPMARImpl.java</span></div><h1>MemoryPMARImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.vm;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+
+// paged mapped appendable readable 
+public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
+<span class="fc" id="L38">    private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);</span>
+<span class="fc" id="L39">    private int fd = -1;</span>
+    private FilesFacade ff;
+<span class="fc" id="L41">    private int madviseOpts = -1;</span>
+    private int mappedPage;
+<span class="fc" id="L43">    private long pageAddress = 0;</span>
+
+<span class="fc" id="L45">    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {</span>
+<span class="fc" id="L46">        of(ff, name, pageSize, 0, memoryTag, opts, -1);</span>
+<span class="fc" id="L47">    }</span>
+
+<span class="fc" id="L49">    public MemoryPMARImpl() {</span>
+<span class="fc" id="L50">    }</span>
+
+    public final void close(boolean truncate, byte truncateMode) {
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        long sz = truncate ? getAppendOffset() : -1L;</span>
+<span class="fc" id="L54">        releaseCurrentPage();</span>
+<span class="fc" id="L55">        super.close();</span>
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (fd != -1) {</span>
+            try {
+<span class="fc" id="L58">                Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);</span>
+            } finally {
+<span class="fc" id="L60">                fd = -1;</span>
+            }
+        }
+<span class="fc" id="L63">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L67">        close(true);</span>
+<span class="fc" id="L68">    }</span>
+
+    public int getFd() {
+<span class="fc" id="L71">        return fd;</span>
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+<span class="fc" id="L76">        return ff;</span>
+    }
+
+    @Override
+    public long getPageAddress(int page) {
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">        if (page == mappedPage) {</span>
+<span class="fc" id="L82">            return pageAddress;</span>
+        }
+<span class="nc" id="L84">        return 0L;</span>
+    }
+
+    public long mapPage(int page) {
+        // set page to &quot;not mapped&quot; in case mapping fails
+<span class="fc" id="L89">        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);</span>
+<span class="fc" id="L90">        mappedPage = page;</span>
+<span class="fc" id="L91">        ff.madvise(address, getExtendSegmentSize(), madviseOpts);</span>
+<span class="fc" id="L92">        return address;</span>
+    }
+
+    @Override
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+<span class="fc" id="L97">        of(ff, name, extendSegmentSize, 0, memoryTag, opts, -1);</span>
+<span class="fc" id="L98">    }</span>
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+<span class="nc" id="L102">        of(ff, name, extendSegmentSize, memoryTag, opts);</span>
+<span class="nc" id="L103">    }</span>
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+<span class="fc" id="L107">        close();</span>
+<span class="fc" id="L108">        this.memoryTag = memoryTag;</span>
+<span class="fc" id="L109">        this.madviseOpts = madviseOpts;</span>
+<span class="fc" id="L110">        this.ff = ff;</span>
+<span class="fc" id="L111">        mappedPage = -1;</span>
+<span class="fc" id="L112">        setExtendSegmentSize(extendSegmentSize);</span>
+<span class="fc" id="L113">        fd = TableUtils.openFileRWOrFail(ff, name, opts);</span>
+<span class="fc" id="L114">        LOG.debug().$(&quot;open &quot;).$(name).$(&quot; [fd=&quot;).$(fd).$(&quot;, extendSegmentSize=&quot;).$(extendSegmentSize).$(']').$();</span>
+<span class="fc" id="L115">    }</span>
+
+    @Override
+    public void switchTo(int fd, long offset, byte truncateMode) {
+<span class="fc" id="L119">        close(true, truncateMode);</span>
+<span class="fc" id="L120">        this.fd = fd;</span>
+<span class="fc" id="L121">        jumpTo(offset);</span>
+<span class="fc" id="L122">    }</span>
+
+    public void sync(boolean async) {
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">        if (pageAddress != 0) {</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">            if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {</span>
+<span class="fc" id="L127">                return;</span>
+            }
+<span class="nc" id="L129">            LOG.error().$(&quot;could not msync [fd=&quot;).$(fd).$(&quot;, errno=&quot;).$(ff.errno()).$(']').$();</span>
+        }
+<span class="nc" id="L131">    }</span>
+
+    public void truncate() {
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">        if (fd == -1) {</span>
+            // are we closed ?
+<span class="nc" id="L136">            return;</span>
+        }
+<span class="fc" id="L138">        releaseCurrentPage();</span>
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">        if (!ff.truncate(Math.abs(fd), getExtendSegmentSize())) {</span>
+<span class="nc" id="L140">            throw CairoException.critical(ff.errno()).put(&quot;Cannot truncate fd=&quot;).put(fd).put(&quot; to &quot;).put(getExtendSegmentSize()).put(&quot; bytes&quot;);</span>
+        }
+<span class="fc" id="L142">        updateLimits(0, pageAddress = mapPage(0));</span>
+<span class="fc" id="L143">        LOG.debug().$(&quot;truncated [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L144">    }</span>
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+<span class="fc" id="L148">        of(ff, name, ff.getMapPageSize(), 0, memoryTag, CairoConfiguration.O_NONE, -1);</span>
+<span class="fc" id="L149">    }</span>
+
+    @Override
+    protected long mapWritePage(int page, long offset) {
+<span class="fc" id="L153">        releaseCurrentPage();</span>
+<span class="fc" id="L154">        return pageAddress = mapPage(page);</span>
+    }
+
+    @Override
+    protected void release(long address) {
+<span class="fc" id="L159">        ff.munmap(address, getPageSize(), memoryTag);</span>
+<span class="fc" id="L160">    }</span>
+
+    void releaseCurrentPage() {
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        if (pageAddress != 0) {</span>
+<span class="fc" id="L164">            release(pageAddress);</span>
+<span class="fc" id="L165">            pageAddress = 0;</span>
+        }
+<span class="fc" id="L167">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

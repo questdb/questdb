@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CachedAnalyticRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.analytic</a> &gt; <span class="el_source">CachedAnalyticRecordCursorFactory.java</span></div><h1>CachedAnalyticRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.analytic;
+
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.orderby.LongTreeChain;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+<span class="fc" id="L43">public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFactory {</span>
+    private final ObjList&lt;AnalyticFunction&gt; allFunctions;
+    private final RecordCursorFactory base;
+    private final ObjList&lt;RecordComparator&gt; comparators;
+    private final CachedAnalyticRecordCursor cursor;
+    private final ObjList&lt;ObjList&lt;AnalyticFunction&gt;&gt; orderedFunctions;
+    private final int orderedGroupCount;
+    @Nullable
+    private final ObjList&lt;AnalyticFunction&gt; unorderedFunctions;
+<span class="fc" id="L52">    private boolean closed = false;</span>
+
+    public CachedAnalyticRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordCursorFactory base,
+            RecordSink recordSink,
+            GenericRecordMetadata metadata,
+            @Transient ColumnTypes chainMetadata,
+            ObjList&lt;RecordComparator&gt; comparators,
+            ObjList&lt;ObjList&lt;AnalyticFunction&gt;&gt; orderedFunctions,
+            @Nullable ObjList&lt;AnalyticFunction&gt; unorderedFunctions,
+            @NotNull IntList columnIndexes
+    ) {
+<span class="fc" id="L65">        super(metadata);</span>
+<span class="fc" id="L66">        this.base = base;</span>
+<span class="fc" id="L67">        this.orderedGroupCount = comparators.size();</span>
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">        assert orderedGroupCount == orderedFunctions.size();</span>
+<span class="fc" id="L69">        this.orderedFunctions = orderedFunctions;</span>
+<span class="fc" id="L70">        this.comparators = comparators;</span>
+<span class="fc" id="L71">        RecordChain recordChain = new RecordChain(</span>
+                chainMetadata,
+                recordSink,
+<span class="fc" id="L74">                configuration.getSqlAnalyticStorePageSize(),</span>
+<span class="fc" id="L75">                configuration.getSqlAnalyticStoreMaxPages()</span>
+        );
+
+<span class="fc" id="L78">        ObjList&lt;LongTreeChain&gt; orderedSources = new ObjList&lt;&gt;(orderedGroupCount);</span>
+        // red&amp;black trees, one for each comparator where comparator is not null
+<span class="fc bfc" id="L80" title="All 2 branches covered.">        for (int i = 0; i &lt; orderedGroupCount; i++) {</span>
+<span class="fc" id="L81">            orderedSources.add(</span>
+                    new LongTreeChain(
+<span class="fc" id="L83">                            configuration.getSqlAnalyticTreeKeyPageSize(),</span>
+<span class="fc" id="L84">                            configuration.getSqlAnalyticTreeKeyMaxPages(),</span>
+<span class="fc" id="L85">                            configuration.getSqlAnalyticRowIdPageSize(),</span>
+<span class="fc" id="L86">                            configuration.getSqlAnalyticRowIdMaxPages()</span>
+                    )
+            );
+        }
+
+<span class="fc" id="L91">        this.cursor = new CachedAnalyticRecordCursor(columnIndexes, recordChain, orderedSources);</span>
+
+<span class="fc" id="L93">        this.allFunctions = new ObjList&lt;&gt;();</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        for (int i = 0, n = orderedFunctions.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L95">            allFunctions.addAll(orderedFunctions.getQuick(i));</span>
+        }
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (unorderedFunctions != null) {</span>
+<span class="fc" id="L98">            allFunctions.addAll(unorderedFunctions);</span>
+        }
+
+<span class="fc" id="L101">        this.unorderedFunctions = unorderedFunctions;</span>
+<span class="fc" id="L102">    }</span>
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+<span class="nc" id="L106">        return base;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L111">        final RecordCursor baseCursor = base.getCursor(executionContext);</span>
+<span class="fc" id="L112">        cursor.of(baseCursor, executionContext);</span>
+<span class="fc" id="L113">        return cursor;</span>
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L118">        return base.recordCursorSupportsRandomAccess();</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L123">        sink.type(&quot;CachedAnalytic&quot;);</span>
+<span class="fc" id="L124">        sink.optAttr(&quot;functions&quot;, allFunctions);</span>
+<span class="fc" id="L125">        sink.child(base);</span>
+<span class="fc" id="L126">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="fc" id="L130">        return base.usesCompiledFilter();</span>
+    }
+
+    private void resetFunctions() {
+<span class="fc bfc" id="L134" title="All 2 branches covered.">        for (int i = 0, n = allFunctions.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L135">            allFunctions.getQuick(i).reset();</span>
+        }
+<span class="fc" id="L137">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">        if (closed) {</span>
+<span class="nc" id="L142">            return;</span>
+        }
+<span class="fc" id="L144">        Misc.free(base);</span>
+<span class="fc" id="L145">        Misc.free(cursor);</span>
+<span class="fc" id="L146">        Misc.freeObjList(allFunctions);</span>
+<span class="fc" id="L147">        closed = true;</span>
+<span class="fc" id="L148">    }</span>
+
+    class CachedAnalyticRecordCursor implements RecordCursor {
+
+        private final IntList columnIndexes; // Used for symbol table lookups.
+        private final ObjList&lt;LongTreeChain&gt; orderedSources;
+        private final RecordChain recordChain;
+        private RecordCursor base;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isOpen;
+        private boolean isRecordChainBuilt;
+        private long recordChainOffset;
+
+<span class="fc" id="L161">        public CachedAnalyticRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList&lt;LongTreeChain&gt; orderedSources) {</span>
+<span class="fc" id="L162">            this.columnIndexes = columnIndexes;</span>
+<span class="fc" id="L163">            this.recordChain = recordChain;</span>
+<span class="fc" id="L164">            this.recordChain.setSymbolTableResolver(this);</span>
+<span class="fc" id="L165">            this.isOpen = true;</span>
+<span class="fc" id="L166">            this.orderedSources = orderedSources;</span>
+<span class="fc" id="L167">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc bfc" id="L171" title="All 2 branches covered.">            if (isOpen) {</span>
+<span class="fc" id="L172">                Misc.free(base);</span>
+<span class="fc" id="L173">                Misc.free(recordChain);</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">                for (int i = 0, n = orderedSources.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L175">                    Misc.free(orderedSources.getQuick(i));</span>
+                }
+<span class="fc" id="L177">                resetFunctions(); // calls close on map within RowNumber</span>
+<span class="fc" id="L178">                isOpen = false;</span>
+            }
+<span class="fc" id="L180">        }</span>
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L184">            return recordChain.getRecord();</span>
+        }
+
+        @Override
+        public Record getRecordB() {
+<span class="fc" id="L189">            return recordChain.getRecordB();</span>
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+<span class="fc" id="L194">            return base.getSymbolTable(columnIndexes.getQuick(columnIndex));</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L199" title="All 2 branches covered.">            if (!isRecordChainBuilt) {</span>
+<span class="fc" id="L200">                buildRecordChain();</span>
+            }
+<span class="fc" id="L202">            isRecordChainBuilt = true;</span>
+<span class="fc" id="L203">            return recordChain.hasNext();</span>
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+<span class="fc" id="L208">            return base.newSymbolTable(columnIndexes.getQuick(columnIndex));</span>
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+<span class="fc" id="L213">            recordChain.recordAt(record, atRowId);</span>
+<span class="fc" id="L214">        }</span>
+
+        @Override
+        public long size() {
+<span class="fc" id="L218">            return recordChain.size();</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L223">            recordChain.toTop();</span>
+<span class="fc" id="L224">        }</span>
+
+        private void buildRecordChain() {
+            // step #1: store source cursor in record list
+            // - add record list's row ids to all trees, which will put these row ids in necessary order
+            // for this we will be using out comparator, which helps tree compare long values
+            // based on record these values are addressing
+<span class="fc" id="L231">            final Record record = base.getRecord();</span>
+<span class="fc" id="L232">            final Record chainRecord = recordChain.getRecord();</span>
+<span class="fc" id="L233">            final Record chainRightRecord = recordChain.getRecordB();</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">            if (orderedGroupCount &gt; 0) {</span>
+<span class="fc bfc" id="L235" title="All 2 branches covered.">                while (base.hasNext()) {</span>
+<span class="fc" id="L236">                    recordChainOffset = recordChain.put(record, recordChainOffset);</span>
+<span class="fc" id="L237">                    recordChain.recordAt(chainRecord, recordChainOffset);</span>
+<span class="fc bfc" id="L238" title="All 2 branches covered.">                    for (int i = 0; i &lt; orderedGroupCount; i++) {</span>
+<span class="fc" id="L239">                        circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L240">                        orderedSources.getQuick(i).put(chainRecord, recordChain, chainRightRecord, comparators.getQuick(i));</span>
+                    }
+                }
+            } else {
+<span class="fc bfc" id="L244" title="All 2 branches covered.">                while (base.hasNext()) {</span>
+<span class="fc" id="L245">                    circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L246">                    recordChainOffset = recordChain.put(record, recordChainOffset);</span>
+                }
+            }
+
+            // step #2: populate all analytic functions with records in order of respective tree
+            // run pass1 for all ordered functions
+            long offset;
+<span class="fc bfc" id="L253" title="All 2 branches covered.">            if (orderedGroupCount &gt; 0) {</span>
+<span class="fc bfc" id="L254" title="All 2 branches covered.">                for (int i = 0; i &lt; orderedGroupCount; i++) {</span>
+<span class="fc" id="L255">                    final LongTreeChain tree = orderedSources.getQuick(i);</span>
+<span class="fc" id="L256">                    final ObjList&lt;AnalyticFunction&gt; functions = orderedFunctions.getQuick(i);</span>
+<span class="fc" id="L257">                    final LongTreeChain.TreeCursor cursor = tree.getCursor();</span>
+<span class="fc" id="L258">                    final int functionCount = functions.size();</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">                    while (cursor.hasNext()) {</span>
+<span class="fc" id="L260">                        circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L261">                        offset = cursor.next();</span>
+<span class="fc" id="L262">                        recordChain.recordAt(chainRecord, offset);</span>
+<span class="fc bfc" id="L263" title="All 2 branches covered.">                        for (int j = 0; j &lt; functionCount; j++) {</span>
+<span class="fc" id="L264">                            functions.getQuick(j).pass1(chainRecord, offset, recordChain);</span>
+                        }
+                    }
+                }
+            }
+
+            // run pass1 for all unordered functions
+<span class="fc bfc" id="L271" title="All 2 branches covered.">            if (unorderedFunctions != null) {</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">                for (int j = 0, n = unorderedFunctions.size(); j &lt; n; j++) {</span>
+<span class="fc" id="L273">                    final AnalyticFunction f = unorderedFunctions.getQuick(j);</span>
+<span class="fc" id="L274">                    recordChain.toTop();</span>
+<span class="fc bfc" id="L275" title="All 2 branches covered.">                    while (recordChain.hasNext()) {</span>
+<span class="fc" id="L276">                        circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L277">                        f.pass1(chainRecord, chainRecord.getRowId(), recordChain);</span>
+                    }
+                }
+            }
+
+<span class="fc" id="L282">            recordChain.toTop();</span>
+<span class="fc" id="L283">        }</span>
+
+        private void of(RecordCursor base, SqlExecutionContext context) {
+<span class="fc" id="L286">            this.base = base;</span>
+<span class="fc" id="L287">            isRecordChainBuilt = false;</span>
+<span class="fc" id="L288">            recordChainOffset = -1;</span>
+<span class="fc" id="L289">            circuitBreaker = context.getCircuitBreaker();</span>
+<span class="fc bfc" id="L290" title="All 2 branches covered.">            if (!isOpen) {</span>
+<span class="fc" id="L291">                recordChain.reopen();</span>
+<span class="fc" id="L292">                recordChain.setSymbolTableResolver(this);</span>
+<span class="fc" id="L293">                reopenTrees();</span>
+<span class="fc" id="L294">                reopen(allFunctions);</span>
+<span class="fc" id="L295">                isOpen = true;</span>
+            }
+<span class="fc" id="L297">        }</span>
+
+        private void reopen(ObjList&lt;?&gt; list) {
+<span class="fc bfc" id="L300" title="All 2 branches covered.">            for (int i = 0, n = list.size(); i &lt; n; i++) {</span>
+<span class="pc bpc" id="L301" title="1 of 2 branches missed.">                if (list.getQuick(i) instanceof Reopenable) {</span>
+<span class="fc" id="L302">                    ((Reopenable) list.getQuick(i)).reopen();</span>
+                }
+            }
+<span class="fc" id="L305">        }</span>
+
+        private void reopenTrees() {
+<span class="fc bfc" id="L308" title="All 2 branches covered.">            for (int i = 0; i &lt; orderedGroupCount; i++) {</span>
+<span class="fc" id="L309">                orderedSources.getQuick(i).reopen();</span>
+            }
+<span class="fc" id="L311">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

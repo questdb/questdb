@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InputFormatConfiguration.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.text.types</a> &gt; <span class="el_source">InputFormatConfiguration.java</span></div><h1>InputFormatConfiguration.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.text.types;
+
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.json.JsonLexer;
+import io.questdb.cutlass.json.JsonParser;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+
+public class InputFormatConfiguration {
+<span class="fc" id="L45">    private final static Log LOG = LogFactory.getLog(InputFormatConfiguration.class);</span>
+    private static final int STATE_EXPECT_DATE_FORMAT_ARRAY = 2;
+    private static final int STATE_EXPECT_DATE_FORMAT_ENTRY = 8;
+    private static final int STATE_EXPECT_DATE_FORMAT_VALUE = 4;
+    private static final int STATE_EXPECT_DATE_LOCALE_VALUE = 5;
+    private static final int STATE_EXPECT_DATE_UTF8_VALUE = 10;
+    private static final int STATE_EXPECT_FIRST_LEVEL_NAME = 1;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY = 3;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY = 9;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_VALUE = 6;
+    private static final int STATE_EXPECT_TIMESTAMP_LOCALE_VALUE = 7;
+    private static final int STATE_EXPECT_TIMESTAMP_UTF8_VALUE = 11;
+    private static final int STATE_EXPECT_TOP = 0;
+    private final DateFormatFactory dateFormatFactory;
+<span class="fc" id="L59">    private final ObjList&lt;DateFormat&gt; dateFormats = new ObjList&lt;&gt;();</span>
+    private final DateLocale dateLocale;
+    private final DateLocaleFactory dateLocaleFactory;
+<span class="fc" id="L62">    private final ObjList&lt;DateLocale&gt; dateLocales = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L63">    private final IntList dateUtf8Flags = new IntList();</span>
+    private final TimestampFormatFactory timestampFormatFactory;
+<span class="fc" id="L65">    private final ObjList&lt;DateFormat&gt; timestampFormats = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L66">    private final ObjList&lt;DateLocale&gt; timestampLocales = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L67">    private final IntList timestampUtf8Flags = new IntList();</span>
+    private DateFormat jsonDateFormat;
+    private DateLocale jsonDateLocale;
+    private boolean jsonDateUtf8;
+<span class="fc" id="L71">    private int jsonState = STATE_EXPECT_TOP; // expect start of object</span>
+    private DateFormat jsonTimestampFormat;
+    private DateLocale jsonTimestampLocale;
+    private boolean jsonTimestampUtf8;
+
+    public InputFormatConfiguration(
+            DateFormatFactory dateFormatFactory,
+            DateLocaleFactory dateLocaleFactory,
+            TimestampFormatFactory timestampFormatFactory,
+            DateLocale dateLocale
+<span class="fc" id="L81">    ) {</span>
+<span class="fc" id="L82">        this.dateFormatFactory = dateFormatFactory;</span>
+<span class="fc" id="L83">        this.dateLocaleFactory = dateLocaleFactory;</span>
+<span class="fc" id="L84">        this.timestampFormatFactory = timestampFormatFactory;</span>
+<span class="fc" id="L85">        this.dateLocale = dateLocale;</span>
+<span class="fc" id="L86">    }</span>
+
+    public void clear() {
+<span class="fc" id="L89">        dateFormats.clear();</span>
+<span class="fc" id="L90">        dateLocales.clear();</span>
+<span class="fc" id="L91">        dateUtf8Flags.clear();</span>
+<span class="fc" id="L92">        timestampFormats.clear();</span>
+<span class="fc" id="L93">        timestampLocales.clear();</span>
+<span class="fc" id="L94">        timestampUtf8Flags.clear();</span>
+<span class="fc" id="L95">        jsonState = STATE_EXPECT_TOP;</span>
+<span class="fc" id="L96">        jsonDateFormat = null;</span>
+<span class="fc" id="L97">        jsonDateLocale = null;</span>
+<span class="fc" id="L98">        jsonDateUtf8 = false;</span>
+<span class="fc" id="L99">        jsonTimestampFormat = null;</span>
+<span class="fc" id="L100">        jsonTimestampLocale = null;</span>
+<span class="fc" id="L101">        jsonTimestampUtf8 = false;</span>
+<span class="fc" id="L102">    }</span>
+
+    public DateFormatFactory getDateFormatFactory() {
+<span class="fc" id="L105">        return dateFormatFactory;</span>
+    }
+
+    public ObjList&lt;DateFormat&gt; getDateFormats() {
+<span class="fc" id="L109">        return dateFormats;</span>
+    }
+
+    public DateLocaleFactory getDateLocaleFactory() {
+<span class="fc" id="L113">        return dateLocaleFactory;</span>
+    }
+
+    public ObjList&lt;DateLocale&gt; getDateLocales() {
+<span class="fc" id="L117">        return dateLocales;</span>
+    }
+
+    public IntList getDateUtf8Flags() {
+<span class="fc" id="L121">        return dateUtf8Flags;</span>
+    }
+
+    public TimestampFormatFactory getTimestampFormatFactory() {
+<span class="fc" id="L125">        return timestampFormatFactory;</span>
+    }
+
+    public ObjList&lt;DateFormat&gt; getTimestampFormats() {
+<span class="fc" id="L129">        return timestampFormats;</span>
+    }
+
+    public ObjList&lt;DateLocale&gt; getTimestampLocales() {
+<span class="fc" id="L133">        return timestampLocales;</span>
+    }
+
+    public IntList getTimestampUtf8Flags() {
+<span class="fc" id="L137">        return timestampUtf8Flags;</span>
+    }
+
+    public void parseConfiguration(JsonLexer jsonLexer, String confRoot, String configFileName) throws JsonException {
+<span class="fc" id="L141">        clear();</span>
+<span class="fc" id="L142">        jsonLexer.clear();</span>
+
+<span class="fc" id="L144">        final JsonParser parser = this::onJsonEvent;</span>
+
+<span class="fc" id="L146">        try (InputStream stream = openStream(confRoot, configFileName)) {</span>
+            // here is where using direct memory is very disadvantageous
+            // we will copy buffer twice to parse json, but luckily contents should be small,
+            // and we should be parsing this only once on startup
+<span class="fc" id="L150">            byte[] heapBuffer = new byte[4096];</span>
+<span class="fc" id="L151">            long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+            try {
+                int len;
+<span class="fc bfc" id="L154" title="All 2 branches covered.">                while ((len = stream.read(heapBuffer)) &gt; 0) {</span>
+                    // copy to mem buffer
+<span class="fc bfc" id="L156" title="All 2 branches covered.">                    for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L157">                        Unsafe.getUnsafe().putByte(memBuffer + i, heapBuffer[i]);</span>
+                    }
+<span class="fc" id="L159">                    jsonLexer.parse(memBuffer, memBuffer + len, parser);</span>
+                }
+<span class="fc" id="L161">                jsonLexer.clear();</span>
+            } finally {
+<span class="fc" id="L163">                Unsafe.free(memBuffer, heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+            }
+<span class="nc" id="L165">        } catch (IOException e) {</span>
+<span class="nc" id="L166">            throw JsonException.$(0, &quot;could not read input format config [confRoot=&quot;).put(confRoot)</span>
+<span class="nc" id="L167">                    .put(&quot;, configFileName=&quot;).put(configFileName)</span>
+<span class="nc" id="L168">                    .put(']');</span>
+<span class="fc" id="L169">        }</span>
+<span class="fc" id="L170">    }</span>
+
+    private void onJsonEvent(int code, CharSequence tag, int position) throws JsonException {
+<span class="pc bpc" id="L173" title="1 of 7 branches missed.">        switch (code) {</span>
+            case JsonLexer.EVT_OBJ_START:
+<span class="fc bfc" id="L175" title="All 6 branches covered.">                switch (jsonState) {</span>
+                    case STATE_EXPECT_TOP:
+                        // this is top level object
+                        // lets dive in
+<span class="fc" id="L179">                        jsonState = STATE_EXPECT_FIRST_LEVEL_NAME;</span>
+<span class="fc" id="L180">                        break;</span>
+                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE:
+<span class="fc" id="L183">                        throw JsonException.$(position, &quot;format value expected (obj)&quot;);</span>
+                    case STATE_EXPECT_DATE_LOCALE_VALUE:
+                    case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
+<span class="fc" id="L186">                        throw JsonException.$(position, &quot;locale value expected (obj)&quot;);</span>
+                    case STATE_EXPECT_DATE_FORMAT_ENTRY:
+<span class="fc" id="L188">                        jsonDateFormat = null;</span>
+<span class="fc" id="L189">                        jsonDateLocale = null;</span>
+<span class="fc" id="L190">                        break;</span>
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
+<span class="fc" id="L192">                        jsonTimestampFormat = null;</span>
+<span class="fc" id="L193">                        jsonTimestampLocale = null;</span>
+<span class="fc" id="L194">                        break;</span>
+                    default:
+<span class="fc" id="L196">                        throw JsonException.$(position, &quot;array expected (obj)&quot;);</span>
+                }
+                break;
+            case JsonLexer.EVT_OBJ_END:
+<span class="fc bfc" id="L200" title="All 3 branches covered.">                switch (jsonState) {</span>
+                    case STATE_EXPECT_DATE_FORMAT_ENTRY: // we just closed a date object
+<span class="fc bfc" id="L202" title="All 2 branches covered.">                        if (jsonDateFormat == null) {</span>
+<span class="fc" id="L203">                            throw JsonException.$(position, &quot;date format is missing&quot;);</span>
+                        }
+<span class="fc" id="L205">                        dateFormats.add(jsonDateFormat);</span>
+<span class="fc bfc" id="L206" title="All 2 branches covered.">                        dateLocales.add(jsonDateLocale == null ? dateLocale : jsonDateLocale);</span>
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">                        dateUtf8Flags.add(jsonDateUtf8 ? 1 : 0);</span>
+<span class="fc" id="L208">                        break;</span>
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
+<span class="fc bfc" id="L210" title="All 2 branches covered.">                        if (jsonTimestampFormat == null) {</span>
+<span class="fc" id="L211">                            throw JsonException.$(position, &quot;timestamp format is missing&quot;);</span>
+                        }
+
+<span class="fc" id="L214">                        timestampFormats.add(jsonTimestampFormat);</span>
+<span class="fc bfc" id="L215" title="All 2 branches covered.">                        timestampLocales.add(jsonTimestampLocale == null ? dateLocale : jsonTimestampLocale);</span>
+<span class="pc bpc" id="L216" title="1 of 2 branches missed.">                        timestampUtf8Flags.add(jsonTimestampUtf8 ? 1 : 0);</span>
+<span class="fc" id="L217">                        break;</span>
+                    default:
+                        // the only time we get here would be when
+                        // main object is closed.
+                        // other end_of_object cannot get there unless we
+                        // allow to enter these objects in the first place
+<span class="fc" id="L223">                        break;</span>
+                }
+                break;
+            case JsonLexer.EVT_ARRAY_END:
+<span class="fc" id="L227">                jsonState = STATE_EXPECT_FIRST_LEVEL_NAME;</span>
+<span class="fc" id="L228">                break;</span>
+            case JsonLexer.EVT_NAME:
+<span class="fc bfc" id="L230" title="All 3 branches covered.">                switch (jsonState) {</span>
+                    case STATE_EXPECT_FIRST_LEVEL_NAME:
+<span class="fc bfc" id="L232" title="All 2 branches covered.">                        if (Chars.equals(tag, &quot;date&quot;)) {</span>
+<span class="fc" id="L233">                            jsonState = STATE_EXPECT_DATE_FORMAT_ARRAY; // expect array with date formats</span>
+<span class="fc bfc" id="L234" title="All 2 branches covered.">                        } else if (Chars.equals(tag, &quot;timestamp&quot;)) {</span>
+<span class="fc" id="L235">                            jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY; // expect array with timestamp formats</span>
+                        } else {
+                            // unknown tag name?
+<span class="fc" id="L238">                            throw JsonException.$(position, &quot;'date' and/or 'timestamp' expected&quot;);</span>
+                        }
+                        break;
+                    case STATE_EXPECT_DATE_FORMAT_ENTRY:
+<span class="fc" id="L242">                        processEntry(tag, position, STATE_EXPECT_DATE_FORMAT_VALUE, STATE_EXPECT_DATE_LOCALE_VALUE, STATE_EXPECT_DATE_UTF8_VALUE);</span>
+<span class="fc" id="L243">                        break;</span>
+                    default:
+<span class="fc" id="L245">                        processEntry(tag, position, STATE_EXPECT_TIMESTAMP_FORMAT_VALUE, STATE_EXPECT_TIMESTAMP_LOCALE_VALUE, STATE_EXPECT_TIMESTAMP_UTF8_VALUE);</span>
+<span class="fc" id="L246">                        break;</span>
+                }
+                break;
+            case JsonLexer.EVT_VALUE:
+<span class="fc bfc" id="L250" title="All 7 branches covered.">                switch (jsonState) {</span>
+                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+                        // date format
+<span class="pc bpc" id="L253" title="1 of 2 branches missed.">                        assert jsonDateFormat == null;</span>
+<span class="fc bfc" id="L254" title="All 2 branches covered.">                        if (Chars.equals(&quot;null&quot;, tag)) {</span>
+<span class="fc" id="L255">                            throw JsonException.$(position, &quot;null format&quot;);</span>
+                        }
+<span class="fc" id="L257">                        jsonDateFormat = dateFormatFactory.get(tag);</span>
+<span class="fc" id="L258">                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</span>
+<span class="fc" id="L259">                        break;</span>
+                    case STATE_EXPECT_DATE_LOCALE_VALUE: // date locale
+<span class="pc bpc" id="L261" title="1 of 2 branches missed.">                        assert jsonDateLocale == null;</span>
+<span class="fc" id="L262">                        jsonDateLocale = dateLocaleFactory.getLocale(tag);</span>
+<span class="fc bfc" id="L263" title="All 2 branches covered.">                        if (jsonDateLocale == null) {</span>
+<span class="fc" id="L264">                            throw JsonException.$(position, &quot;invalid [locale=&quot;).put(tag).put(']');</span>
+                        }
+<span class="fc" id="L266">                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</span>
+<span class="fc" id="L267">                        break;</span>
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE: // timestamp format
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">                        assert jsonTimestampFormat == null;</span>
+<span class="fc bfc" id="L270" title="All 2 branches covered.">                        if (Chars.equals(&quot;null&quot;, tag)) {</span>
+<span class="fc" id="L271">                            throw JsonException.$(position, &quot;null format&quot;);</span>
+                        }
+<span class="fc" id="L273">                        jsonTimestampFormat = timestampFormatFactory.get(tag);</span>
+<span class="fc" id="L274">                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</span>
+<span class="fc" id="L275">                        break;</span>
+                    case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
+<span class="pc bpc" id="L277" title="1 of 2 branches missed.">                        assert jsonTimestampLocale == null;</span>
+<span class="fc" id="L278">                        jsonTimestampLocale = dateLocaleFactory.getLocale(tag);</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">                        if (jsonTimestampLocale == null) {</span>
+<span class="fc" id="L280">                            throw JsonException.$(position, &quot;invalid [locale=&quot;).put(tag).put(']');</span>
+                        }
+<span class="fc" id="L282">                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</span>
+<span class="fc" id="L283">                        break;</span>
+                    case STATE_EXPECT_TIMESTAMP_UTF8_VALUE:
+<span class="fc" id="L285">                        jsonTimestampUtf8 = Chars.equalsLowerCaseAscii(tag, &quot;true&quot;);</span>
+<span class="fc" id="L286">                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</span>
+<span class="fc" id="L287">                        break;</span>
+                    case STATE_EXPECT_DATE_UTF8_VALUE:
+<span class="fc" id="L289">                        jsonDateUtf8 = Chars.equalsLowerCaseAscii(tag, &quot;true&quot;);</span>
+<span class="fc" id="L290">                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</span>
+<span class="fc" id="L291">                        break;</span>
+                    default:
+                        // we are picking up values from attributes we don't expect
+<span class="fc" id="L294">                        throw JsonException.$(position, &quot;array expected (value)&quot;);</span>
+                }
+                break;
+            case JsonLexer.EVT_ARRAY_START:
+<span class="fc bfc" id="L298" title="All 4 branches covered.">                switch (jsonState) {</span>
+                    case STATE_EXPECT_DATE_FORMAT_ARRAY: // we are working on dates
+<span class="fc" id="L300">                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;</span>
+<span class="fc" id="L301">                        break;</span>
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY: // we are working on timestamps
+<span class="fc" id="L303">                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;</span>
+<span class="fc" id="L304">                        break;</span>
+                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE:
+<span class="fc" id="L307">                        throw JsonException.$(position, &quot;format value expected (array)&quot;);</span>
+                    default:
+<span class="fc" id="L309">                        throw JsonException.$(position, &quot;locale value expected (array)&quot;);</span>
+                }
+                break;
+            default:
+                break;
+        }
+<span class="fc" id="L315">    }</span>
+
+    private InputStream openStream(String confRoot, String configFileName) throws IOException, JsonException {
+        // First, check the user-provided file.
+<span class="fc bfc" id="L319" title="All 2 branches covered.">        if (confRoot != null) {</span>
+<span class="fc" id="L320">            final File configFile = new File(confRoot, configFileName);</span>
+<span class="fc bfc" id="L321" title="All 2 branches covered.">            if (configFile.exists()) {</span>
+<span class="fc" id="L322">                LOG.info().$(&quot;loading input format config [file=&quot;).$(configFile.getAbsolutePath()).$(']').$();</span>
+<span class="fc" id="L323">                return new FileInputStream(configFile);</span>
+            }
+        }
+        // Second, fall back to the default config.
+<span class="fc" id="L327">        final InputStream stream = this.getClass().getResourceAsStream(configFileName);</span>
+<span class="fc bfc" id="L328" title="All 2 branches covered.">        if (stream != null) {</span>
+<span class="fc" id="L329">            LOG.info().$(&quot;loading input format config [resource=&quot;).$(configFileName).$(']').$();</span>
+<span class="fc" id="L330">            return stream;</span>
+        }
+<span class="fc" id="L332">        throw JsonException.$(0, &quot;could not find input format config [confRoot=&quot;).put(confRoot)</span>
+<span class="fc" id="L333">                .put(&quot;, configFileName=&quot;).put(configFileName)</span>
+<span class="fc" id="L334">                .put(']');</span>
+    }
+
+    private void processEntry(CharSequence tag, int position, int stateExpectFormatValue, int stateExpectLocaleValue, int stateExpectUtf8Value) throws JsonException {
+<span class="fc bfc" id="L338" title="All 2 branches covered.">        if (Chars.equals(tag, &quot;format&quot;)) {</span>
+<span class="fc" id="L339">            jsonState = stateExpectFormatValue; // expect date format</span>
+<span class="fc bfc" id="L340" title="All 2 branches covered.">        } else if (Chars.equals(tag, &quot;locale&quot;)) {</span>
+<span class="fc" id="L341">            jsonState = stateExpectLocaleValue;</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">        } else if (Chars.equals(tag, &quot;utf8&quot;)) {</span>
+<span class="fc" id="L343">            jsonState = stateExpectUtf8Value;</span>
+        } else {
+            // unknown tag name?
+<span class="fc" id="L346">            throw JsonException.$(position, &quot;unknown [tag=&quot;).put(tag).put(']');</span>
+        }
+<span class="fc" id="L348">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

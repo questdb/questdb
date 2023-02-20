@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LatestBySubQueryRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">LatestBySubQueryRecordCursorFactory.java</span></div><h1>LatestBySubQueryRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+
+    private final int columnIndex;
+    private final Function filter;
+    private final Record.CharSequenceFunction func;
+    private final RecordCursorFactory recordCursorFactory;
+    private final IntHashSet symbolKeys;
+
+    public LatestBySubQueryRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            int columnIndex,
+            @NotNull RecordCursorFactory recordCursorFactory,
+            @Nullable Function filter,
+            boolean indexed,
+            @NotNull Record.CharSequenceFunction func,
+            @NotNull IntList columnIndexes
+    ) {
+<span class="fc" id="L60">        super(metadata, dataFrameCursorFactory, configuration);</span>
+        // this instance is shared between factory and cursor
+        // factory will be resolving symbols for cursor and if successful
+        // symbol keys will be added to this hash set
+<span class="fc" id="L64">        symbolKeys = new IntHashSet();</span>
+        DataFrameRecordCursor cursor;
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (indexed) {</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">            if (filter != null) {</span>
+<span class="fc" id="L68">                cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);</span>
+            } else {
+<span class="fc" id="L70">                cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);</span>
+            }
+        } else {
+<span class="fc bfc" id="L73" title="All 2 branches covered.">            if (filter != null) {</span>
+<span class="fc" id="L74">                cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);</span>
+            } else {
+<span class="fc" id="L76">                cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);</span>
+            }
+        }
+<span class="fc" id="L79">        this.cursor = new DataFrameRecordCursorWrapper(cursor);</span>
+<span class="fc" id="L80">        this.recordCursorFactory = recordCursorFactory;</span>
+<span class="fc" id="L81">        this.filter = filter;</span>
+<span class="fc" id="L82">        this.columnIndex = columnIndex;</span>
+<span class="fc" id="L83">        this.func = func;</span>
+<span class="fc" id="L84">    }</span>
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L88">        return true;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L93">        sink.type(&quot;LatestBySubQuery&quot;);</span>
+<span class="fc" id="L94">        sink.child(&quot;Subquery&quot;, recordCursorFactory);</span>
+<span class="fc" id="L95">        sink.child((Plannable) cursor);</span>
+<span class="fc" id="L96">        sink.child(dataFrameCursorFactory);</span>
+<span class="fc" id="L97">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L101">        super._close();</span>
+<span class="fc" id="L102">        recordCursorFactory.close();</span>
+<span class="fc" id="L103">        Misc.free(filter);</span>
+<span class="fc" id="L104">    }</span>
+
+    private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
+
+        private final DataFrameRecordCursor delegate;
+        private RecordCursor baseCursor;
+
+<span class="fc" id="L111">        private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {</span>
+<span class="fc" id="L112">            this.delegate = delegate;</span>
+<span class="fc" id="L113">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L117">            baseCursor = Misc.free(baseCursor);</span>
+<span class="fc" id="L118">            delegate.close();</span>
+<span class="fc" id="L119">        }</span>
+
+        @Override
+        public IntList getColumnIndexes() {
+<span class="nc" id="L123">            return delegate.getColumnIndexes();</span>
+        }
+
+        @Override
+        public DataFrameCursor getDataFrameCursor() {
+<span class="fc" id="L128">            return delegate.getDataFrameCursor();</span>
+        }
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L133">            return delegate.getRecord();</span>
+        }
+
+        @Override
+        public Record getRecordB() {
+<span class="fc" id="L138">            return delegate.getRecordB();</span>
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+<span class="fc" id="L143">            return delegate.getSymbolTable(columnIndex);</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L148" title="All 2 branches covered.">            if (baseCursor != null) {</span>
+<span class="fc" id="L149">                buildSymbolKeys();</span>
+<span class="fc" id="L150">                baseCursor = Misc.free(baseCursor);</span>
+            }
+<span class="fc" id="L152">            return delegate.hasNext();</span>
+        }
+
+        @Override
+        public boolean isUsingIndex() {
+<span class="nc" id="L157">            return delegate.isUsingIndex();</span>
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+<span class="fc" id="L162">            return delegate.newSymbolTable(columnIndex);</span>
+        }
+
+        @Override
+        public void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException {
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">            if (baseCursor != null) {</span>
+<span class="nc" id="L168">                baseCursor = Misc.free(baseCursor);</span>
+            }
+<span class="fc" id="L170">            baseCursor = recordCursorFactory.getCursor(executionContext);</span>
+<span class="fc" id="L171">            symbolKeys.clear();</span>
+<span class="fc" id="L172">            delegate.of(cursor, executionContext);</span>
+<span class="fc" id="L173">        }</span>
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+<span class="fc" id="L177">            delegate.recordAt(record, atRowId);</span>
+<span class="fc" id="L178">        }</span>
+
+        @Override
+        public long size() {
+<span class="fc" id="L182">            return delegate.size();</span>
+        }
+
+        @Override
+        public boolean skipTo(long rowCount) {
+<span class="nc" id="L187">            return delegate.skipTo(rowCount);</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L192">            delegate.toPlan(sink);</span>
+<span class="fc" id="L193">        }</span>
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L197">            delegate.toTop();</span>
+<span class="fc" id="L198">        }</span>
+
+        private void buildSymbolKeys() {
+<span class="fc" id="L201">            StaticSymbolTable symbolTable = getDataFrameCursor().getSymbolTable(columnIndex);</span>
+<span class="fc" id="L202">            final Record record = baseCursor.getRecord();</span>
+<span class="fc bfc" id="L203" title="All 2 branches covered.">            while (baseCursor.hasNext()) {</span>
+<span class="fc" id="L204">                int symbolKey = symbolTable.keyOf(func.get(record, 0));</span>
+<span class="fc bfc" id="L205" title="All 2 branches covered.">                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {</span>
+<span class="fc" id="L206">                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));</span>
+                }
+<span class="fc" id="L208">            }</span>
+<span class="fc" id="L209">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

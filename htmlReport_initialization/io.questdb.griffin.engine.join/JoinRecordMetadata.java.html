@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JoinRecordMetadata.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.join</a> &gt; <span class="el_source">JoinRecordMetadata.java</span></div><h1>JoinRecordMetadata.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.join;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.map.FastMap;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.str.CharSink;
+
+import java.io.Closeable;
+
+public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
+
+    private final static ColumnTypes keyTypes;
+    private final static ColumnTypes valueTypes;
+    private final Map map;
+    private int refCount;
+
+<span class="fc" id="L47">    public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {</span>
+<span class="fc" id="L48">        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);</span>
+<span class="fc" id="L49">        this.timestampIndex = -1;</span>
+<span class="fc" id="L50">        this.columnCount = 0;</span>
+<span class="fc" id="L51">        this.refCount = 1;</span>
+<span class="fc" id="L52">    }</span>
+
+    public void add(
+            CharSequence tableAlias,
+            CharSequence columnName,
+            int columnType,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            RecordMetadata metadata
+    ) {
+<span class="fc" id="L63">        int dot = addAlias(tableAlias, columnName);</span>
+<span class="fc" id="L64">        final CharSink b = Misc.getThreadLocalBuilder();</span>
+        TableColumnMetadata cm;
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (dot == -1) {</span>
+<span class="fc" id="L67">            cm = new TableColumnMetadata(</span>
+<span class="fc" id="L68">                    b.put(tableAlias).put('.').put(columnName).toString(),</span>
+                    columnType,
+                    indexFlag,
+                    indexValueBlockCapacity,
+                    symbolTableStatic,
+                    metadata
+            );
+        } else {
+<span class="fc" id="L76">            cm = new TableColumnMetadata(</span>
+<span class="fc" id="L77">                    Chars.toString(columnName),</span>
+                    columnType,
+                    indexFlag,
+                    indexValueBlockCapacity,
+                    symbolTableStatic,
+                    metadata
+            );
+        }
+<span class="fc" id="L85">        addToMap(columnName, dot, cm);</span>
+<span class="fc" id="L86">    }</span>
+
+    public void add(CharSequence tableAlias, TableColumnMetadata m) {
+<span class="fc" id="L89">        final CharSequence columnName = m.getName();</span>
+<span class="fc" id="L90">        final int dot = addAlias(tableAlias, columnName);</span>
+<span class="fc" id="L91">        final CharSink b = Misc.getThreadLocalBuilder();</span>
+        TableColumnMetadata cm;
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (dot == -1) {</span>
+<span class="fc" id="L94">            cm = new TableColumnMetadata(</span>
+<span class="fc" id="L95">                    b.put(tableAlias).put('.').put(columnName).toString(),</span>
+<span class="fc" id="L96">                    m.getType(),</span>
+<span class="fc" id="L97">                    m.isIndexed(),</span>
+<span class="fc" id="L98">                    m.getIndexValueBlockCapacity(),</span>
+<span class="fc" id="L99">                    m.isSymbolTableStatic(),</span>
+<span class="fc" id="L100">                    m.getMetadata()</span>
+            );
+        } else {
+<span class="fc" id="L103">            cm = m;</span>
+        }
+<span class="fc" id="L105">        addToMap(columnName, dot, cm);</span>
+<span class="fc" id="L106">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L110" title="All 2 branches covered.">        if (--refCount &lt; 1) {</span>
+<span class="fc" id="L111">            map.close();</span>
+        }
+<span class="fc" id="L113">    }</span>
+
+    public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
+<span class="pc bpc" id="L116" title="1 of 2 branches missed.">        if (fromMetadata instanceof AbstractRecordMetadata) {</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">            for (int i = 0, n = fromMetadata.getColumnCount(); i &lt; n; i++) {</span>
+<span class="fc" id="L118">                add(alias, ((AbstractRecordMetadata) fromMetadata).getColumnMetadata(i));</span>
+            }
+        } else {
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            for (int i = 0, n = fromMetadata.getColumnCount(); i &lt; n; i++) {</span>
+<span class="nc" id="L122">                add(</span>
+                        alias,
+<span class="nc" id="L124">                        fromMetadata.getColumnName(i),</span>
+<span class="nc" id="L125">                        fromMetadata.getColumnType(i),</span>
+<span class="nc" id="L126">                        fromMetadata.isColumnIndexed(i),</span>
+<span class="nc" id="L127">                        fromMetadata.getIndexValueBlockCapacity(i),</span>
+<span class="nc" id="L128">                        fromMetadata.isSymbolTableStatic(i),</span>
+<span class="nc" id="L129">                        GenericRecordMetadata.copyOf(fromMetadata.getMetadata(i))</span>
+                );
+            }
+        }
+<span class="fc" id="L133">    }</span>
+
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+<span class="fc" id="L137">        final MapKey key = map.withKey();</span>
+<span class="fc" id="L138">        final int dot = Chars.indexOf(columnName, lo, '.');</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (dot == -1) {</span>
+<span class="fc" id="L140">            key.putStr(null);</span>
+<span class="fc" id="L141">            key.putStrLowerCase(columnName, lo, hi);</span>
+        } else {
+<span class="fc" id="L143">            key.putStrLowerCase(columnName, 0, dot);</span>
+<span class="fc" id="L144">            key.putStrLowerCase(columnName, dot + 1, columnName.length());</span>
+        }
+<span class="fc" id="L146">        MapValue value = key.findValue();</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">        if (value != null) {</span>
+<span class="fc" id="L148">            return value.getInt(0);</span>
+        }
+<span class="fc" id="L150">        return -1;</span>
+    }
+
+    public void incrementRefCount() {
+<span class="fc" id="L154">        refCount++;</span>
+<span class="fc" id="L155">    }</span>
+
+    public void setTimestampIndex(int index) {
+<span class="fc" id="L158">        this.timestampIndex = index;</span>
+<span class="fc" id="L159">    }</span>
+
+    private int addAlias(CharSequence tableAlias, CharSequence columnName) {
+<span class="fc" id="L162">        int dot = Chars.indexOf(columnName, '.');</span>
+<span class="pc bpc" id="L163" title="1 of 4 branches missed.">        assert dot != -1 || tableAlias != null;</span>
+
+        // add column with its own alias
+<span class="fc" id="L166">        MapKey key = map.withKey();</span>
+
+<span class="fc bfc" id="L168" title="All 2 branches covered.">        if (dot == -1) {</span>
+<span class="fc" id="L169">            key.putStrLowerCase(tableAlias);</span>
+        } else {
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">            assert tableAlias == null;</span>
+<span class="fc" id="L172">            key.putStrLowerCase(columnName, 0, dot);</span>
+        }
+<span class="fc" id="L174">        key.putStrLowerCase(columnName, dot + 1, columnName.length());</span>
+
+<span class="fc" id="L176">        MapValue value = key.createValue();</span>
+<span class="fc bfc" id="L177" title="All 2 branches covered.">        if (!value.isNew()) {</span>
+<span class="fc" id="L178">            throw CairoException.duplicateColumn(columnName, tableAlias);</span>
+        }
+
+<span class="fc" id="L181">        value.putInt(0, columnCount++);</span>
+<span class="fc" id="L182">        return dot;</span>
+    }
+
+    private void addToMap(CharSequence columnName, int dot, TableColumnMetadata cm) {
+<span class="fc" id="L186">        columnMetadata.add(cm);</span>
+
+<span class="fc" id="L188">        final MapKey key = map.withKey();</span>
+<span class="fc" id="L189">        key.putStr(null);</span>
+<span class="fc" id="L190">        key.putStrLowerCase(columnName, dot + 1, columnName.length());</span>
+
+<span class="fc" id="L192">        final MapValue value = key.createValue();</span>
+<span class="fc bfc" id="L193" title="All 2 branches covered.">        if (value.isNew()) {</span>
+<span class="fc" id="L194">            value.putInt(0, columnCount - 1);</span>
+        } else {
+            // this is a duplicate columns, if somebody looks it up without alias
+            // we would treat this lookup as if column hadn't been found.
+<span class="fc" id="L198">            value.putInt(0, -1);</span>
+        }
+<span class="fc" id="L200">    }</span>
+
+    static {
+<span class="fc" id="L203">        final ArrayColumnTypes kt = new ArrayColumnTypes();</span>
+<span class="fc" id="L204">        kt.add(ColumnType.STRING);</span>
+<span class="fc" id="L205">        kt.add(ColumnType.STRING);</span>
+<span class="fc" id="L206">        keyTypes = kt;</span>
+<span class="fc" id="L207">        valueTypes = new SingleColumnType(ColumnType.INT);</span>
+<span class="fc" id="L208">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

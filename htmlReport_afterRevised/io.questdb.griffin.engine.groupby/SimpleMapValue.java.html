@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SimpleMapValue.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby</a> &gt; <span class="el_source">SimpleMapValue.java</span></div><h1>SimpleMapValue.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby;
+
+import io.questdb.cairo.map.MapValue;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
+
+<span class="fc" id="L32">public class SimpleMapValue implements MapValue {</span>
+<span class="fc" id="L33">    private final Long256Impl long256 = new Long256Impl();</span>
+    private final long[] values;
+
+<span class="fc" id="L36">    public SimpleMapValue(int columnCount) {</span>
+<span class="fc" id="L37">        this.values = new long[4 * columnCount];</span>
+<span class="fc" id="L38">    }</span>
+
+    @Override
+    public void addByte(int index, byte value) {
+<span class="nc" id="L42">        values[4 * index] += value;</span>
+<span class="nc" id="L43">    }</span>
+
+    @Override
+    public void addDouble(int index, double value) {
+<span class="fc" id="L47">        final double d = Double.longBitsToDouble(values[4 * index]);</span>
+<span class="fc" id="L48">        values[4 * index] = Double.doubleToLongBits(value + d);</span>
+<span class="fc" id="L49">    }</span>
+
+    @Override
+    public void addFloat(int index, float value) {
+<span class="nc" id="L53">        final float d = Float.intBitsToFloat((int) values[4 * index]);</span>
+<span class="nc" id="L54">        values[4 * index] = Float.floatToIntBits(value + d);</span>
+<span class="nc" id="L55">    }</span>
+
+    @Override
+    public void addInt(int index, int value) {
+<span class="nc" id="L59">        values[4 * index] += value;</span>
+<span class="nc" id="L60">    }</span>
+
+    @Override
+    public void addLong(int index, long value) {
+<span class="fc" id="L64">        values[4 * index] += value;</span>
+<span class="fc" id="L65">    }</span>
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+<span class="fc" id="L69">        Long256 acc = getLong256A(index);</span>
+<span class="fc" id="L70">        Long256Util.add(acc, value);</span>
+<span class="fc" id="L71">        final int idx = 4 * index;</span>
+<span class="fc" id="L72">        values[idx] = acc.getLong0();</span>
+<span class="fc" id="L73">        values[idx + 1] = acc.getLong1();</span>
+<span class="fc" id="L74">        values[idx + 2] = acc.getLong2();</span>
+<span class="fc" id="L75">        values[idx + 3] = acc.getLong3();</span>
+<span class="fc" id="L76">    }</span>
+
+    @Override
+    public void addShort(int index, short value) {
+<span class="nc" id="L80">        values[4 * index] += value;</span>
+<span class="nc" id="L81">    }</span>
+
+    public void copy(SimpleMapValue other) {
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        assert values.length &gt;= other.values.length;</span>
+<span class="fc" id="L85">        System.arraycopy(other.values, 0, values, 0, other.values.length);</span>
+<span class="fc" id="L86">    }</span>
+
+    @Override
+    public long getAddress() {
+<span class="nc" id="L90">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public boolean getBool(int index) {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        return values[4 * index] == 0;</span>
+    }
+
+    @Override
+    public byte getByte(int index) {
+<span class="fc" id="L100">        return (byte) values[4 * index];</span>
+    }
+
+    @Override
+    public char getChar(int index) {
+<span class="fc" id="L105">        return (char) values[4 * index];</span>
+    }
+
+    @Override
+    public long getDate(int index) {
+<span class="fc" id="L110">        return values[4 * index];</span>
+    }
+
+    @Override
+    public double getDouble(int index) {
+<span class="fc" id="L115">        return Double.longBitsToDouble(values[4 * index]);</span>
+    }
+
+    @Override
+    public float getFloat(int index) {
+<span class="fc" id="L120">        return Float.intBitsToFloat((int) values[4 * index]);</span>
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+<span class="fc" id="L125">        return (byte) values[4 * col];</span>
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+<span class="fc" id="L130">        return (int) values[4 * col];</span>
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+<span class="fc" id="L135">        return values[4 * col];</span>
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+<span class="fc" id="L140">        return (short) values[4 * col];</span>
+    }
+
+    @Override
+    public int getInt(int index) {
+<span class="fc" id="L145">        return (int) values[4 * index];</span>
+    }
+
+    @Override
+    public long getLong(int index) {
+<span class="fc" id="L150">        return values[4 * index];</span>
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+<span class="fc" id="L155">        return values[4 * col + 1];</span>
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+<span class="fc" id="L160">        return values[4 * col];</span>
+    }
+
+    @Override
+    public Long256 getLong256A(int index) {
+<span class="fc" id="L165">        final int idx = 4 * index;</span>
+<span class="fc" id="L166">        long256.setAll(values[idx], values[idx + 1], values[idx + 2], values[idx + 3]);</span>
+<span class="fc" id="L167">        return long256;</span>
+    }
+
+    @Override
+    public short getShort(int index) {
+<span class="fc" id="L172">        return (short) values[4 * index];</span>
+    }
+
+    @Override
+    public long getTimestamp(int index) {
+<span class="fc" id="L177">        return values[4 * index];</span>
+    }
+
+    @Override
+    public boolean isNew() {
+<span class="nc" id="L182">        return false;</span>
+    }
+
+    @Override
+    public void putBool(int index, boolean value) {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        values[4 * index] = value ? 0 : 1;</span>
+<span class="nc" id="L188">    }</span>
+
+    @Override
+    public void putByte(int index, byte value) {
+<span class="fc" id="L192">        values[4 * index] = value;</span>
+<span class="fc" id="L193">    }</span>
+
+    @Override
+    public void putChar(int index, char value) {
+<span class="fc" id="L197">        values[4 * index] = value;</span>
+<span class="fc" id="L198">    }</span>
+
+    @Override
+    public void putDate(int index, long value) {
+<span class="fc" id="L202">        values[4 * index] = value;</span>
+<span class="fc" id="L203">    }</span>
+
+    @Override
+    public void putDouble(int index, double value) {
+<span class="fc" id="L207">        values[4 * index] = Double.doubleToLongBits(value);</span>
+<span class="fc" id="L208">    }</span>
+
+    @Override
+    public void putFloat(int index, float value) {
+<span class="fc" id="L212">        values[4 * index] = Float.floatToIntBits(value);</span>
+<span class="fc" id="L213">    }</span>
+
+    @Override
+    public void putInt(int index, int value) {
+<span class="fc" id="L217">        values[4 * index] = value;</span>
+<span class="fc" id="L218">    }</span>
+
+    @Override
+    public void putLong(int index, long value) {
+<span class="fc" id="L222">        values[4 * index] = value;</span>
+<span class="fc" id="L223">    }</span>
+
+    @Override
+    public void putLong128(int index, long lo, long hi) {
+<span class="fc" id="L227">        final int idx = 4 * index;</span>
+<span class="fc" id="L228">        values[idx] = lo;</span>
+<span class="fc" id="L229">        values[idx + 1] = hi;</span>
+<span class="fc" id="L230">    }</span>
+
+    @Override
+    public void putLong256(int index, Long256 value) {
+<span class="fc" id="L234">        final int idx = 4 * index;</span>
+<span class="fc" id="L235">        values[idx] = value.getLong0();</span>
+<span class="fc" id="L236">        values[idx + 1] = value.getLong1();</span>
+<span class="fc" id="L237">        values[idx + 2] = value.getLong2();</span>
+<span class="fc" id="L238">        values[idx + 3] = value.getLong3();</span>
+<span class="fc" id="L239">    }</span>
+
+    @Override
+    public void putShort(int index, short value) {
+<span class="fc" id="L243">        values[4 * index] = value;</span>
+<span class="fc" id="L244">    }</span>
+
+    @Override
+    public void putTimestamp(int index, long value) {
+<span class="fc" id="L248">        values[4 * index] = value;</span>
+<span class="fc" id="L249">    }</span>
+
+    @Override
+    public void setMapRecordHere() {
+<span class="nc" id="L253">        throw new UnsupportedOperationException();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

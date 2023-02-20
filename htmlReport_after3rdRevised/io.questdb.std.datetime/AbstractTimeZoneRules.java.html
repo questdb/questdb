@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractTimeZoneRules.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std.datetime</a> &gt; <span class="el_source">AbstractTimeZoneRules.java</span></div><h1>AbstractTimeZoneRules.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std.datetime;
+
+import io.questdb.cairo.BinarySearch;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+
+import java.time.ZoneOffset;
+import java.time.zone.ZoneOffsetTransitionRule;
+import java.time.zone.ZoneRules;
+
+public abstract class AbstractTimeZoneRules implements TimeZoneRules {
+<span class="fc" id="L37">    public static final long LAST_RULES = Unsafe.getFieldOffset(ZoneRules.class, &quot;lastRules&quot;);</span>
+<span class="fc" id="L38">    public static final long SAVING_INSTANT_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, &quot;savingsInstantTransitions&quot;);</span>
+<span class="fc" id="L39">    public static final long STANDARD_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, &quot;standardOffsets&quot;);</span>
+<span class="fc" id="L40">    public static final long WALL_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, &quot;wallOffsets&quot;);</span>
+    private final long cutoffTransition;
+    private final long firstWall;
+<span class="fc" id="L43">    private final LongList historicTransitions = new LongList();</span>
+    private final long lastWall;
+    private final long multiplier;
+    private final int ruleCount;
+    private final ObjList&lt;TransitionRule&gt; rules;
+    private final long standardOffset;
+    private final int[] wallOffsets;
+
+<span class="fc" id="L51">    public AbstractTimeZoneRules(ZoneRules rules, long multiplier) {</span>
+<span class="fc" id="L52">        this.multiplier = multiplier;</span>
+<span class="fc" id="L53">        final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);</span>
+
+<span class="fc bfc" id="L55" title="All 2 branches covered.">        if (savingsInstantTransition.length == 0) {</span>
+<span class="fc" id="L56">            ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS);</span>
+<span class="fc" id="L57">            standardOffset = standardOffsets[0].getTotalSeconds() * multiplier;</span>
+<span class="fc" id="L58">        } else {</span>
+<span class="fc" id="L59">            standardOffset = Long.MIN_VALUE;</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">            for (int i = 0, n = savingsInstantTransition.length; i &lt; n; i++) {</span>
+<span class="fc" id="L61">                historicTransitions.add(savingsInstantTransition[i] * multiplier);</span>
+            }
+        }
+
+<span class="fc" id="L65">        cutoffTransition = historicTransitions.getLast();</span>
+
+<span class="fc" id="L67">        ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);</span>
+<span class="fc" id="L68">        this.rules = new ObjList&lt;&gt;(lastRules.length);</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">        for (int i = 0, n = lastRules.length; i &lt; n; i++) {</span>
+<span class="fc" id="L70">            ZoneOffsetTransitionRule zr = lastRules[i];</span>
+<span class="fc" id="L71">            TransitionRule tr = new TransitionRule();</span>
+<span class="fc" id="L72">            tr.offsetBefore = zr.getOffsetBefore().getTotalSeconds();</span>
+<span class="fc" id="L73">            tr.offsetAfter = zr.getOffsetAfter().getTotalSeconds();</span>
+<span class="fc" id="L74">            tr.standardOffset = zr.getStandardOffset().getTotalSeconds();</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">            tr.dow = zr.getDayOfWeek() == null ? -1 : zr.getDayOfWeek().getValue();</span>
+<span class="fc" id="L76">            tr.dom = zr.getDayOfMonthIndicator();</span>
+<span class="fc" id="L77">            tr.month = zr.getMonth().getValue();</span>
+<span class="fc" id="L78">            tr.midnightEOD = zr.isMidnightEndOfDay();</span>
+<span class="fc" id="L79">            tr.hour = zr.getLocalTime().getHour();</span>
+<span class="fc" id="L80">            tr.minute = zr.getLocalTime().getMinute();</span>
+<span class="fc" id="L81">            tr.second = zr.getLocalTime().getSecond();</span>
+<span class="fc bfc" id="L82" title="All 3 branches covered.">            switch (zr.getTimeDefinition()) {</span>
+                case UTC:
+<span class="fc" id="L84">                    tr.timeDef = TransitionRule.UTC;</span>
+<span class="fc" id="L85">                    break;</span>
+                case STANDARD:
+<span class="fc" id="L87">                    tr.timeDef = TransitionRule.STANDARD;</span>
+<span class="fc" id="L88">                    break;</span>
+                default:
+<span class="fc" id="L90">                    tr.timeDef = TransitionRule.WALL;</span>
+                    break;
+            }
+<span class="fc" id="L93">            this.rules.add(tr);</span>
+        }
+
+<span class="fc" id="L96">        this.ruleCount = lastRules.length;</span>
+
+<span class="fc" id="L98">        ZoneOffset[] wallOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, WALL_OFFSETS);</span>
+<span class="fc" id="L99">        this.wallOffsets = new int[wallOffsets.length];</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        for (int i = 0, n = wallOffsets.length; i &lt; n; i++) {</span>
+<span class="fc" id="L101">            this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();</span>
+        }
+<span class="fc" id="L103">        this.firstWall = this.wallOffsets[0] * multiplier;</span>
+<span class="fc" id="L104">        this.lastWall = this.wallOffsets[wallOffsets.length - 1] * multiplier;</span>
+<span class="fc" id="L105">    }</span>
+
+    @Override
+    public long getNextDST(long utcEpoch, int year, boolean leap) {
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        if (standardOffset != Long.MIN_VALUE) {</span>
+            // when we have standard offset the next DST does not exist
+            // since we are trying to avoid unnecessary offset lookup the max long
+            // should ensure all timestamps stay below next DST
+<span class="fc" id="L113">            return Long.MAX_VALUE;</span>
+        }
+
+<span class="fc bfc" id="L116" title="All 4 branches covered.">        if (ruleCount &gt; 0 &amp;&amp; utcEpoch &gt;= cutoffTransition) {</span>
+<span class="fc" id="L117">            return dstFromRules(utcEpoch, year, leap);</span>
+        }
+
+<span class="fc bfc" id="L120" title="All 2 branches covered.">        if (utcEpoch &lt; cutoffTransition) {</span>
+<span class="fc" id="L121">            return dstFromHistory(utcEpoch);</span>
+        }
+
+<span class="fc" id="L124">        return Long.MAX_VALUE;</span>
+    }
+
+    @Override
+    public long getNextDST(long utcEpoch) {
+<span class="fc" id="L129">        final int y = getYear(utcEpoch);</span>
+<span class="fc" id="L130">        return getNextDST(utcEpoch, y, isLeapYear(y));</span>
+    }
+
+    @Override
+    public long getOffset(long utcEpoch, int year, boolean leap) {
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        if (standardOffset != Long.MIN_VALUE) {</span>
+<span class="fc" id="L136">            return standardOffset;</span>
+        }
+
+<span class="fc bfc" id="L139" title="All 4 branches covered.">        if (ruleCount &gt; 0 &amp;&amp; utcEpoch &gt; cutoffTransition) {</span>
+<span class="fc" id="L140">            return offsetFromRules(utcEpoch, year, leap);</span>
+        }
+
+<span class="fc bfc" id="L143" title="All 2 branches covered.">        if (utcEpoch &gt; cutoffTransition) {</span>
+<span class="fc" id="L144">            return lastWall;</span>
+        }
+<span class="fc" id="L146">        return offsetFromHistory(utcEpoch);</span>
+    }
+
+    @Override
+    public long getOffset(long utcEpoch) {
+<span class="fc" id="L151">        final int y = getYear(utcEpoch);</span>
+<span class="fc" id="L152">        return getOffset(utcEpoch, y, isLeapYear(y));</span>
+    }
+
+    private long dstFromHistory(long epoch) {
+<span class="fc" id="L156">        int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);</span>
+<span class="pc bpc" id="L157" title="1 of 2 branches missed.">        if (index == -1) {</span>
+<span class="nc" id="L158">            return Long.MAX_VALUE;</span>
+        }
+
+<span class="pc bpc" id="L161" title="1 of 2 branches missed.">        if (index &lt; 0) {</span>
+<span class="fc" id="L162">            index = -index - 2;</span>
+        }
+<span class="fc" id="L164">        return historicTransitions.getQuick(index + 1);</span>
+    }
+
+    private long dstFromRules(long epoch, int year, boolean leap) {
+
+<span class="fc bfc" id="L169" title="All 2 branches covered.">        for (int i = 0; i &lt; ruleCount; i++) {</span>
+<span class="fc" id="L170">            long date = getDSTFromRule(year, leap, i);</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">            if (epoch &lt; date) {</span>
+<span class="fc" id="L172">                return date;</span>
+            }
+        }
+
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">        if (ruleCount &gt; 0) {</span>
+<span class="fc" id="L177">            return getDSTFromRule(year + 1, isLeapYear(year + 1), 0);</span>
+        }
+
+<span class="nc" id="L180">        return Long.MAX_VALUE;</span>
+    }
+
+    private long getDSTFromRule(int year, boolean leap, int i) {
+        int offsetBefore;
+<span class="fc" id="L185">        TransitionRule zr = rules.getQuick(i);</span>
+<span class="fc" id="L186">        offsetBefore = zr.offsetBefore;</span>
+
+<span class="fc" id="L188">        int dom = zr.dom;</span>
+<span class="fc" id="L189">        int month = zr.month;</span>
+
+<span class="fc" id="L191">        int dow = zr.dow;</span>
+        long date;
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">        if (dom &lt; 0) {</span>
+<span class="nc" id="L194">            date = toEpoch(</span>
+                    year,
+                    leap,
+                    month,
+<span class="nc" id="L198">                    getDaysPerMonth(month, leap) + 1 + dom,</span>
+                    zr.hour,
+                    zr.minute
+            ) + zr.second * multiplier;
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (dow &gt; -1) {</span>
+<span class="nc" id="L203">                date = previousOrSameDayOfWeek(date, dow);</span>
+            }
+        } else {
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">            assert month &gt; 0;</span>
+<span class="fc" id="L207">            date = toEpoch(year, leap, month, dom, zr.hour, zr.minute) + zr.second * multiplier;</span>
+<span class="pc bpc" id="L208" title="1 of 2 branches missed.">            if (dow &gt; -1) {</span>
+<span class="fc" id="L209">                date = nextOrSameDayOfWeek(date, dow);</span>
+            }
+        }
+
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">        if (zr.midnightEOD) {</span>
+<span class="nc" id="L214">            date = addDays(date, 1);</span>
+        }
+
+<span class="pc bpc" id="L217" title="1 of 3 branches missed.">        switch (zr.timeDef) {</span>
+            case TransitionRule.UTC:
+<span class="fc" id="L219">                date += (offsetBefore - ZoneOffset.UTC.getTotalSeconds()) * multiplier;</span>
+<span class="fc" id="L220">                break;</span>
+            case TransitionRule.STANDARD:
+<span class="nc" id="L222">                date += (offsetBefore - zr.standardOffset) * multiplier;</span>
+<span class="nc" id="L223">                break;</span>
+            default:  // WALL
+                break;
+        }
+
+        // go back to epoch epoch
+<span class="fc" id="L229">        date -= offsetBefore * multiplier;</span>
+<span class="fc" id="L230">        return date;</span>
+    }
+
+    private long offsetFromHistory(long epoch) {
+<span class="fc" id="L234">        int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);</span>
+<span class="fc bfc" id="L235" title="All 2 branches covered.">        if (index == -1) {</span>
+<span class="fc" id="L236">            return firstWall;</span>
+        }
+
+<span class="fc bfc" id="L239" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L240">            index = -index - 2;</span>
+        }
+<span class="fc" id="L242">        return wallOffsets[index + 1] * multiplier;</span>
+    }
+
+    private long offsetFromRules(long epoch, int year, boolean leap) {
+
+        int offsetBefore;
+<span class="fc" id="L248">        int offsetAfter = 0;</span>
+
+<span class="fc bfc" id="L250" title="All 2 branches covered.">        for (int i = 0; i &lt; ruleCount; i++) {</span>
+<span class="fc" id="L251">            TransitionRule zr = rules.getQuick(i);</span>
+<span class="fc" id="L252">            offsetBefore = zr.offsetBefore;</span>
+<span class="fc" id="L253">            offsetAfter = zr.offsetAfter;</span>
+
+<span class="fc" id="L255">            int dom = zr.dom;</span>
+<span class="fc" id="L256">            int month = zr.month;</span>
+
+<span class="fc" id="L258">            int dow = zr.dow;</span>
+            long date;
+<span class="fc bfc" id="L260" title="All 2 branches covered.">            if (dom &lt; 0) {</span>
+<span class="fc" id="L261">                date = toEpoch(</span>
+                        year,
+                        leap,
+                        month,
+<span class="fc" id="L265">                        getDaysPerMonth(month, leap) + 1 + dom,</span>
+                        zr.hour,
+                        zr.minute
+                ) + zr.second * multiplier;
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">                if (dow &gt; -1) {</span>
+<span class="fc" id="L270">                    date = previousOrSameDayOfWeek(date, dow);</span>
+                }
+            } else {
+<span class="pc bpc" id="L273" title="1 of 2 branches missed.">                assert month &gt; 0;</span>
+<span class="fc" id="L274">                date = toEpoch(year, leap, month, dom, zr.hour, zr.minute) + zr.second * multiplier;</span>
+<span class="fc bfc" id="L275" title="All 2 branches covered.">                if (dow &gt; -1) {</span>
+<span class="fc" id="L276">                    date = nextOrSameDayOfWeek(date, dow);</span>
+                }
+            }
+
+<span class="fc bfc" id="L280" title="All 2 branches covered.">            if (zr.midnightEOD) {</span>
+<span class="fc" id="L281">                date = addDays(date, 1);</span>
+            }
+
+<span class="fc bfc" id="L284" title="All 3 branches covered.">            switch (zr.timeDef) {</span>
+                case TransitionRule.UTC:
+<span class="fc" id="L286">                    date += (offsetBefore - ZoneOffset.UTC.getTotalSeconds()) * multiplier;</span>
+<span class="fc" id="L287">                    break;</span>
+                case TransitionRule.STANDARD:
+<span class="fc" id="L289">                    date += (offsetBefore - zr.standardOffset) * multiplier;</span>
+<span class="fc" id="L290">                    break;</span>
+                default:  // WALL
+                    break;
+            }
+
+            // go back to epoch epoch
+<span class="fc" id="L296">            date -= offsetBefore * multiplier;</span>
+
+<span class="fc bfc" id="L298" title="All 2 branches covered.">            if (epoch &lt; date) {</span>
+<span class="fc" id="L299">                return offsetBefore * multiplier;</span>
+            }
+        }
+
+<span class="fc" id="L303">        return offsetAfter * multiplier;</span>
+    }
+
+    abstract protected long addDays(long epoch, int days);
+
+    abstract protected int getDaysPerMonth(int month, boolean leapYear);
+
+    abstract protected int getYear(long epoch);
+
+    abstract protected boolean isLeapYear(int year);
+
+    abstract protected long nextOrSameDayOfWeek(long epoch, int dow);
+
+    abstract protected long previousOrSameDayOfWeek(long epoch, int dow);
+
+    abstract protected long toEpoch(int year, boolean leapYear, int month, int day, int hour, int min);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

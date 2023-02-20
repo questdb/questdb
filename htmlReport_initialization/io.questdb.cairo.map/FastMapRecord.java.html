@@ -1,0 +1,455 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FastMapRecord.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.map</a> &gt; <span class="el_source">FastMapRecord.java</span></div><h1>FastMapRecord.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.map;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectCharSequence;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+/**
+ * Provides Record access interface for FastMap key-value pairs.
+ * &lt;p&gt;
+ * Uses an offsets array to speed up value column look-ups.
+ * Key column offsets are calculated dynamically since keys may be var-size.
+ * The last accessed key column offset is cached to speed up sequential access.
+ */
+final class FastMapRecord implements MapRecord {
+    private final DirectBinarySequence[] bs;
+    private final DirectCharSequence[] csA;
+    private final DirectCharSequence[] csB;
+    private final Long256Impl[] keyLong256A;
+    private final Long256Impl[] keyLong256B;
+    private final int keyOffset;
+    private final ColumnTypes keyTypes;
+    private final int split;
+    private final FastMapValue value;
+    private final int[] valueOffsets;
+    private long keyAddress;
+<span class="fc" id="L57">    private int lastKeyIndex = -1;</span>
+<span class="fc" id="L58">    private int lastKeyOffset = -1;</span>
+    private long limit;
+    private IntList symbolTableIndex;
+    private RecordCursor symbolTableResolver;
+    private long valueAddress;
+
+    FastMapRecord(
+            @Nullable int[] valueOffsets,
+            int keyOffset,
+            FastMapValue value,
+            @NotNull @Transient ColumnTypes keyTypes,
+            @Nullable @Transient ColumnTypes valueTypes
+<span class="fc" id="L70">    ) {</span>
+<span class="fc" id="L71">        this.valueOffsets = valueOffsets;</span>
+<span class="fc" id="L72">        this.keyOffset = keyOffset;</span>
+<span class="fc" id="L73">        this.value = value;</span>
+<span class="fc" id="L74">        this.value.linkRecord(this); // provides feature to position this record at location of map value</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        this.split = valueOffsets != null ? valueOffsets.length : 0;</span>
+
+        int nColumns;
+        int keyIndexOffset;
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        if (valueTypes != null) {</span>
+<span class="fc" id="L80">            keyIndexOffset = valueTypes.getColumnCount();</span>
+<span class="fc" id="L81">            nColumns = keyTypes.getColumnCount() + valueTypes.getColumnCount();</span>
+        } else {
+<span class="fc" id="L83">            keyIndexOffset = 0;</span>
+<span class="fc" id="L84">            nColumns = keyTypes.getColumnCount();</span>
+        }
+
+<span class="fc" id="L87">        DirectCharSequence[] csA = null;</span>
+<span class="fc" id="L88">        DirectCharSequence[] csB = null;</span>
+<span class="fc" id="L89">        DirectBinarySequence[] bs = null;</span>
+<span class="fc" id="L90">        Long256Impl[] long256A = null;</span>
+<span class="fc" id="L91">        Long256Impl[] long256B = null;</span>
+
+<span class="fc" id="L93">        final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        for (int i = 0, n = keyTypes.getColumnCount(); i &lt; n; i++) {</span>
+<span class="fc" id="L95">            final int columnType = keyTypes.getColumnType(i);</span>
+<span class="fc" id="L96">            keyTypesCopy.add(columnType);</span>
+<span class="fc bfc" id="L97" title="All 4 branches covered.">            switch (ColumnType.tagOf(columnType)) {</span>
+                case ColumnType.STRING:
+<span class="fc bfc" id="L99" title="All 2 branches covered.">                    if (csA == null) {</span>
+<span class="fc" id="L100">                        csA = new DirectCharSequence[nColumns];</span>
+<span class="fc" id="L101">                        csB = new DirectCharSequence[nColumns];</span>
+                    }
+<span class="fc" id="L103">                    csA[i + keyIndexOffset] = new DirectCharSequence();</span>
+<span class="fc" id="L104">                    csB[i + keyIndexOffset] = new DirectCharSequence();</span>
+<span class="fc" id="L105">                    break;</span>
+                case ColumnType.BINARY:
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">                    if (bs == null) {</span>
+<span class="fc" id="L108">                        bs = new DirectBinarySequence[nColumns];</span>
+                    }
+<span class="fc" id="L110">                    bs[i + keyIndexOffset] = new DirectBinarySequence();</span>
+<span class="fc" id="L111">                    break;</span>
+                case ColumnType.LONG256:
+<span class="fc bfc" id="L113" title="All 2 branches covered.">                    if (long256A == null) {</span>
+<span class="fc" id="L114">                        long256A = new Long256Impl[nColumns];</span>
+<span class="fc" id="L115">                        long256B = new Long256Impl[nColumns];</span>
+                    }
+<span class="fc" id="L117">                    long256A[i + keyIndexOffset] = new Long256Impl();</span>
+<span class="fc" id="L118">                    long256B[i + keyIndexOffset] = new Long256Impl();</span>
+<span class="fc" id="L119">                    break;</span>
+                default:
+                    break;
+            }
+        }
+<span class="fc" id="L124">        this.keyTypes = keyTypesCopy;</span>
+
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (valueTypes != null) {</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">            for (int i = 0, n = valueTypes.getColumnCount(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">                if (ColumnType.tagOf(valueTypes.getColumnType(i)) == ColumnType.LONG256) {</span>
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">                    if (long256A == null) {</span>
+<span class="nc" id="L130">                        long256A = new Long256Impl[nColumns];</span>
+<span class="nc" id="L131">                        long256B = new Long256Impl[nColumns];</span>
+                    }
+<span class="fc" id="L133">                    long256A[i] = new Long256Impl();</span>
+<span class="fc" id="L134">                    long256B[i] = new Long256Impl();</span>
+                }
+            }
+        }
+
+<span class="fc" id="L139">        this.csA = csA;</span>
+<span class="fc" id="L140">        this.csB = csB;</span>
+<span class="fc" id="L141">        this.bs = bs;</span>
+<span class="fc" id="L142">        this.keyLong256A = long256A;</span>
+<span class="fc" id="L143">        this.keyLong256B = long256B;</span>
+<span class="fc" id="L144">    }</span>
+
+    private FastMapRecord(
+            int[] valueOffsets,
+            ColumnTypes keyTypes,
+            int split,
+            int keyOffset,
+            DirectCharSequence[] csA,
+            DirectCharSequence[] csB,
+            DirectBinarySequence[] bs,
+            Long256Impl[] keyLong256A,
+            Long256Impl[] keyLong256B
+<span class="fc" id="L156">    ) {</span>
+<span class="fc" id="L157">        this.valueOffsets = valueOffsets;</span>
+<span class="fc" id="L158">        this.keyTypes = keyTypes;</span>
+<span class="fc" id="L159">        this.split = split;</span>
+<span class="fc" id="L160">        this.keyOffset = keyOffset;</span>
+<span class="fc" id="L161">        this.value = new FastMapValue(valueOffsets);</span>
+<span class="fc" id="L162">        this.csA = csA;</span>
+<span class="fc" id="L163">        this.csB = csB;</span>
+<span class="fc" id="L164">        this.bs = bs;</span>
+<span class="fc" id="L165">        this.keyLong256A = keyLong256A;</span>
+<span class="fc" id="L166">        this.keyLong256B = keyLong256B;</span>
+<span class="fc" id="L167">    }</span>
+
+    @Override
+    public BinarySequence getBin(int columnIndex) {
+<span class="fc" id="L171">        long address = addressOfColumn(columnIndex);</span>
+<span class="fc" id="L172">        int len = Unsafe.getUnsafe().getInt(address);</span>
+<span class="fc bfc" id="L173" title="All 2 branches covered.">        if (len == TableUtils.NULL_LEN) {</span>
+<span class="fc" id="L174">            return null;</span>
+        }
+<span class="fc" id="L176">        DirectBinarySequence bs = this.bs[columnIndex];</span>
+<span class="fc" id="L177">        bs.of(address + 4, len);</span>
+<span class="fc" id="L178">        return bs;</span>
+    }
+
+    @Override
+    public long getBinLen(int columnIndex) {
+<span class="fc" id="L183">        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public boolean getBool(int columnIndex) {
+<span class="fc" id="L188">        return Unsafe.getBool(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public byte getByte(int columnIndex) {
+<span class="fc" id="L193">        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public char getChar(int columnIndex) {
+<span class="fc" id="L198">        return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public double getDouble(int columnIndex) {
+<span class="fc" id="L203">        return Unsafe.getUnsafe().getDouble(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public float getFloat(int columnIndex) {
+<span class="fc" id="L208">        return Unsafe.getUnsafe().getFloat(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+<span class="fc" id="L213">        return getByte(col);</span>
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+<span class="fc" id="L218">        return getInt(col);</span>
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+<span class="fc" id="L223">        return getLong(col);</span>
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+<span class="fc" id="L228">        return getShort(col);</span>
+    }
+
+    @Override
+    public int getInt(int columnIndex) {
+<span class="fc" id="L233">        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public long getLong(int columnIndex) {
+<span class="fc" id="L238">        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public long getLong128Hi(int columnIndex) {
+<span class="fc" id="L243">        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);</span>
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+<span class="fc" id="L248">        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public void getLong256(int columnIndex, CharSink sink) {
+<span class="fc" id="L253">        long address = addressOfColumn(columnIndex);</span>
+<span class="fc" id="L254">        final long a = Unsafe.getUnsafe().getLong(address);</span>
+<span class="fc" id="L255">        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);</span>
+<span class="fc" id="L256">        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);</span>
+<span class="fc" id="L257">        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);</span>
+<span class="fc" id="L258">        Numbers.appendLong256(a, b, c, d, sink);</span>
+<span class="fc" id="L259">    }</span>
+
+    @Override
+    public Long256 getLong256A(int columnIndex) {
+<span class="fc" id="L263">        return getLong256Generic(keyLong256A, columnIndex);</span>
+    }
+
+    @Override
+    public Long256 getLong256B(int columnIndex) {
+<span class="fc" id="L268">        return getLong256Generic(keyLong256B, columnIndex);</span>
+    }
+
+    @Override
+    public long getRowId() {
+<span class="fc" id="L273">        return valueAddress;</span>
+    }
+
+    @Override
+    public short getShort(int columnIndex) {
+<span class="fc" id="L278">        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public CharSequence getStr(int columnIndex) {
+<span class="fc" id="L283">        return getStr0(columnIndex, csA[columnIndex]);</span>
+    }
+
+    @Override
+    public void getStr(int columnIndex, CharSink sink) {
+<span class="fc" id="L288">        long address = addressOfColumn(columnIndex);</span>
+<span class="fc" id="L289">        int len = Unsafe.getUnsafe().getInt(address);</span>
+<span class="fc" id="L290">        address += 4;</span>
+<span class="fc bfc" id="L291" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L292">            sink.put(Unsafe.getUnsafe().getChar(address));</span>
+<span class="fc" id="L293">            address += 2;</span>
+        }
+<span class="fc" id="L295">    }</span>
+
+    @Override
+    public CharSequence getStrB(int columnIndex) {
+<span class="fc" id="L299">        return getStr0(columnIndex, csB[columnIndex]);</span>
+    }
+
+    @Override
+    public int getStrLen(int columnIndex) {
+<span class="fc" id="L304">        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));</span>
+    }
+
+    @Override
+    public CharSequence getSym(int col) {
+<span class="nc" id="L309">        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueOf(getInt(col));</span>
+    }
+
+    @Override
+    public CharSequence getSymB(int col) {
+<span class="nc" id="L314">        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));</span>
+    }
+
+    @Override
+    public MapValue getValue() {
+<span class="fc" id="L319">        return value.of(valueAddress, limit, false);</span>
+    }
+
+    @Override
+    public void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex) {
+<span class="fc" id="L324">        this.symbolTableResolver = resolver;</span>
+<span class="fc" id="L325">        this.symbolTableIndex = symbolTableIndex;</span>
+<span class="fc" id="L326">    }</span>
+
+    private long addressOfColumn(int index) {
+<span class="fc bfc" id="L329" title="All 2 branches covered.">        if (index &lt; split) {</span>
+<span class="fc" id="L330">            return valueAddress + valueOffsets[index];</span>
+        }
+
+<span class="fc bfc" id="L333" title="All 2 branches covered.">        if (index == split) {</span>
+<span class="fc" id="L334">            return keyAddress;</span>
+        }
+
+<span class="fc" id="L337">        return addressOfKeyColumn(index - split);</span>
+    }
+
+    private long addressOfKeyColumn(int index) {
+<span class="fc" id="L341">        long addr = keyAddress;</span>
+<span class="fc" id="L342">        int i = 0;</span>
+<span class="fc bfc" id="L343" title="All 4 branches covered.">        if (lastKeyIndex &gt; -1 &amp;&amp; index &gt;= lastKeyIndex) {</span>
+<span class="fc" id="L344">            addr += lastKeyOffset;</span>
+<span class="fc" id="L345">            i = lastKeyIndex;</span>
+        }
+<span class="fc bfc" id="L347" title="All 2 branches covered.">        while (i &lt; index) {</span>
+<span class="fc" id="L348">            final int columnType = keyTypes.getColumnType(i);</span>
+<span class="fc" id="L349">            final int size = ColumnType.sizeOf(columnType);</span>
+<span class="fc bfc" id="L350" title="All 2 branches covered.">            if (size &gt; 0) {</span>
+                // Fixed-size type.
+<span class="fc" id="L352">                addr += size;</span>
+            } else {
+                // Var-size type: string or binary.
+<span class="fc" id="L355">                final int len = Unsafe.getUnsafe().getInt(addr);</span>
+<span class="fc" id="L356">                addr += Integer.BYTES;</span>
+<span class="fc bfc" id="L357" title="All 2 branches covered.">                if (len != TableUtils.NULL_LEN) {</span>
+<span class="fc bfc" id="L358" title="All 2 branches covered.">                    if (ColumnType.isString(columnType)) {</span>
+<span class="fc" id="L359">                        addr += (long) len &lt;&lt; 1;</span>
+                    } else {
+<span class="fc" id="L361">                        addr += len;</span>
+                    }
+                }
+            }
+<span class="fc" id="L365">            i++;</span>
+<span class="fc" id="L366">        }</span>
+<span class="fc" id="L367">        lastKeyOffset = (int) (addr - keyAddress);</span>
+<span class="fc" id="L368">        lastKeyIndex = i;</span>
+<span class="fc" id="L369">        return addr;</span>
+    }
+
+    @NotNull
+    private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
+<span class="fc" id="L374">        long address = addressOfColumn(columnIndex);</span>
+<span class="fc" id="L375">        Long256Impl long256 = keyLong256[columnIndex];</span>
+<span class="fc" id="L376">        long256.setAll(</span>
+<span class="fc" id="L377">                Unsafe.getUnsafe().getLong(address),</span>
+<span class="fc" id="L378">                Unsafe.getUnsafe().getLong(address + Long.BYTES),</span>
+<span class="fc" id="L379">                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),</span>
+<span class="fc" id="L380">                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)</span>
+        );
+<span class="pc bpc" id="L382" title="1 of 2 branches missed.">        return long256;</span>
+    }
+
+    private CharSequence getStr0(int index, DirectCharSequence cs) {
+<span class="fc" id="L386">        long address = addressOfColumn(index);</span>
+<span class="fc" id="L387">        int len = Unsafe.getUnsafe().getInt(address);</span>
+<span class="fc bfc" id="L388" title="All 2 branches covered.">        return len == TableUtils.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2L);</span>
+    }
+
+    @SuppressWarnings(&quot;MethodDoesntCallSuperMethod&quot;)
+    @Override
+    protected MapRecord clone() {
+        final DirectCharSequence[] csA;
+        final DirectCharSequence[] csB;
+        final DirectBinarySequence[] bs;
+        final Long256Impl[] long256A;
+        final Long256Impl[] long256B;
+
+        // csA and csB are pegged, checking one for null should be enough
+<span class="fc bfc" id="L401" title="All 2 branches covered.">        if (this.csA != null) {</span>
+<span class="fc" id="L402">            int n = this.csA.length;</span>
+<span class="fc" id="L403">            csA = new DirectCharSequence[n];</span>
+<span class="fc" id="L404">            csB = new DirectCharSequence[n];</span>
+
+<span class="fc bfc" id="L406" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L407" title="All 2 branches covered.">                if (this.csA[i] != null) {</span>
+<span class="fc" id="L408">                    csA[i] = new DirectCharSequence();</span>
+<span class="fc" id="L409">                    csB[i] = new DirectCharSequence();</span>
+                }
+            }
+<span class="fc" id="L412">        } else {</span>
+<span class="fc" id="L413">            csA = null;</span>
+<span class="fc" id="L414">            csB = null;</span>
+        }
+
+<span class="fc bfc" id="L417" title="All 2 branches covered.">        if (this.bs != null) {</span>
+<span class="fc" id="L418">            int n = this.bs.length;</span>
+<span class="fc" id="L419">            bs = new DirectBinarySequence[n];</span>
+<span class="fc bfc" id="L420" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L421" title="All 2 branches covered.">                if (this.bs[i] != null) {</span>
+<span class="fc" id="L422">                    bs[i] = new DirectBinarySequence();</span>
+                }
+            }
+<span class="fc" id="L425">        } else {</span>
+<span class="fc" id="L426">            bs = null;</span>
+        }
+
+<span class="fc bfc" id="L429" title="All 2 branches covered.">        if (this.keyLong256A != null) {</span>
+<span class="fc" id="L430">            int n = this.keyLong256A.length;</span>
+<span class="fc" id="L431">            long256A = new Long256Impl[n];</span>
+<span class="fc" id="L432">            long256B = new Long256Impl[n];</span>
+
+<span class="fc bfc" id="L434" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L435" title="All 2 branches covered.">                if (this.keyLong256A[i] != null) {</span>
+<span class="fc" id="L436">                    long256A[i] = new Long256Impl();</span>
+<span class="fc" id="L437">                    long256B[i] = new Long256Impl();</span>
+                }
+            }
+<span class="fc" id="L440">        } else {</span>
+<span class="fc" id="L441">            long256A = null;</span>
+<span class="fc" id="L442">            long256B = null;</span>
+        }
+<span class="fc" id="L444">        return new FastMapRecord(valueOffsets, keyTypes, split, keyOffset, csA, csB, bs, long256A, long256B);</span>
+    }
+
+    void of(long address, long limit) {
+<span class="fc" id="L448">        this.valueAddress = address;</span>
+<span class="fc" id="L449">        this.keyAddress = address + keyOffset;</span>
+<span class="fc" id="L450">        this.limit = limit;</span>
+<span class="fc" id="L451">        this.lastKeyIndex = -1;</span>
+<span class="fc" id="L452">        this.lastKeyOffset = -1;</span>
+<span class="fc" id="L453">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractIndexReader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">AbstractIndexReader.java</span></div><h1>AbstractIndexReader.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
+
+<span class="fc" id="L38">public abstract class AbstractIndexReader implements BitmapIndexReader {</span>
+    public static final String INDEX_CORRUPT = &quot;cursor could not consistently read index header [corrupt?]&quot;;
+<span class="fc" id="L40">    protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);</span>
+<span class="fc" id="L41">    protected final MemoryMR keyMem = Vm.getMRInstance();</span>
+<span class="fc" id="L42">    protected final MemoryMR valueMem = Vm.getMRInstance();</span>
+    protected int blockCapacity;
+    protected int blockValueCountMod;
+    protected MillisecondClock clock;
+    protected int keyCount;
+    protected long spinLockTimeoutUs;
+    protected long unIndexedNullCount;
+    private int keyCountIncludingNulls;
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        if (isOpen()) {</span>
+<span class="fc" id="L54">            Misc.free(keyMem);</span>
+<span class="fc" id="L55">            Misc.free(valueMem);</span>
+        }
+<span class="fc" id="L57">    }</span>
+
+    public long getKeyBaseAddress() {
+<span class="fc" id="L60">        return keyMem.addressOf(0);</span>
+    }
+
+    @Override
+    public int getKeyCount() {
+<span class="fc" id="L65">        return keyCountIncludingNulls;</span>
+    }
+
+    public long getKeyMemorySize() {
+<span class="fc" id="L69">        return keyMem.size();</span>
+    }
+
+    public long getUnIndexedNullCount() {
+<span class="fc" id="L73">        return unIndexedNullCount;</span>
+    }
+
+    public long getValueBaseAddress() {
+<span class="fc" id="L77">        return valueMem.addressOf(0);</span>
+    }
+
+    public int getValueBlockCapacity() {
+<span class="fc" id="L81">        return blockValueCountMod;</span>
+    }
+
+    public long getValueMemorySize() {
+<span class="fc" id="L85">        return valueMem.size();</span>
+    }
+
+    @Override
+    public boolean isOpen() {
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        return keyMem.getFd() != -1;</span>
+    }
+
+    @Override
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
+<span class="fc" id="L95">        this.unIndexedNullCount = unIndexedNullCount;</span>
+<span class="fc" id="L96">        TableUtils.txnPartitionConditionally(path, partitionTxn);</span>
+<span class="fc" id="L97">        final int plen = path.length();</span>
+<span class="fc" id="L98">        this.spinLockTimeoutUs = configuration.getSpinLockTimeout();</span>
+
+        try {
+<span class="fc" id="L101">            this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name, columnNameTxn), MemoryTag.MMAP_INDEX_READER);</span>
+<span class="fc" id="L102">            this.clock = configuration.getMillisecondClock();</span>
+
+            // key file should already be created at least with header
+<span class="fc" id="L105">            long keyMemSize = this.keyMem.size();</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">            if (keyMemSize &lt; BitmapIndexUtils.KEY_FILE_RESERVED) {</span>
+<span class="fc" id="L107">                LOG.error().$(&quot;file too short [corrupt] &quot;).$(path).$();</span>
+<span class="fc" id="L108">                throw CairoException.critical(0).put(&quot;Index file too short: &quot;).put(path);</span>
+            }
+
+            // verify header signature
+<span class="fc bfc" id="L112" title="All 2 branches covered.">            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {</span>
+<span class="fc" id="L113">                LOG.error().$(&quot;unknown format [corrupt] &quot;).$(path).$();</span>
+<span class="fc" id="L114">                throw CairoException.critical(0).put(&quot;Unknown format: &quot;).put(path);</span>
+            }
+
+            // Triple check atomic read. We read first and last sequences. If they match - there is a chance at stable
+            // read. Confirm start sequence hasn't changed after values read. If it has changed - retry the whole thing.
+            int blockValueCountMod;
+            int keyCount;
+            long valueMemSize;
+<span class="fc" id="L122">            final long deadline = clock.getTicks() + spinLockTimeoutUs;</span>
+            while (true) {
+<span class="fc" id="L124">                long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);</span>
+
+<span class="fc" id="L126">                Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">                if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {</span>
+
+<span class="fc" id="L129">                    blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;</span>
+<span class="fc" id="L130">                    keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);</span>
+<span class="fc" id="L131">                    valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);</span>
+
+<span class="fc" id="L133">                    Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">                    if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {</span>
+<span class="fc" id="L135">                        break;</span>
+                    }
+                }
+
+<span class="fc bfc" id="L139" title="All 2 branches covered.">                if (clock.getTicks() &gt; deadline) {</span>
+<span class="fc" id="L140">                    LOG.error().$(INDEX_CORRUPT).$(&quot; [timeout=&quot;).$(spinLockTimeoutUs).utf8(&quot;ms]&quot;).$();</span>
+<span class="fc" id="L141">                    throw CairoException.critical(0).put(INDEX_CORRUPT);</span>
+                }
+
+<span class="fc" id="L144">                Os.pause();</span>
+<span class="fc" id="L145">            }</span>
+
+            // Resize key memory eagerly to avoid doing that when searching keys.
+<span class="fc" id="L148">            keyMem.extend(BitmapIndexUtils.getKeyEntryOffset(keyCount));</span>
+
+<span class="fc" id="L150">            this.blockValueCountMod = blockValueCountMod;</span>
+<span class="fc" id="L151">            this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;</span>
+<span class="fc" id="L152">            this.keyCount = keyCount;</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">            this.keyCountIncludingNulls = unIndexedNullCount &gt; 0 ? keyCount + 1 : keyCount;</span>
+<span class="fc" id="L154">            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn), valueMemSize, valueMemSize, MemoryTag.MMAP_INDEX_READER);</span>
+<span class="fc" id="L155">        } catch (Throwable e) {</span>
+<span class="fc" id="L156">            close();</span>
+<span class="fc" id="L157">            throw e;</span>
+        } finally {
+<span class="fc" id="L159">            path.trimTo(plen);</span>
+        }
+<span class="fc" id="L161">    }</span>
+
+    protected void updateKeyCount() {
+        int keyCount;
+<span class="fc" id="L165">        final long deadline = clock.getTicks() + spinLockTimeoutUs;</span>
+        while (true) {
+<span class="fc" id="L167">            long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);</span>
+
+<span class="fc" id="L169">            Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {</span>
+<span class="fc" id="L171">                keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);</span>
+
+<span class="fc" id="L173">                Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">                if (seq == this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {</span>
+<span class="fc" id="L175">                    break;</span>
+                }
+            }
+
+<span class="fc bfc" id="L179" title="All 2 branches covered.">            if (clock.getTicks() &gt; deadline) {</span>
+<span class="fc" id="L180">                this.keyCount = 0;</span>
+<span class="fc" id="L181">                LOG.error().$(INDEX_CORRUPT).$(&quot; [timeout=&quot;).$(spinLockTimeoutUs).utf8(&quot;ms]&quot;).$();</span>
+<span class="fc" id="L182">                throw CairoException.critical(0).put(INDEX_CORRUPT);</span>
+            }
+<span class="fc" id="L184">            Os.pause();</span>
+<span class="fc" id="L185">        }</span>
+
+<span class="fc bfc" id="L187" title="All 2 branches covered.">        if (keyCount &gt; this.keyCount) {</span>
+<span class="fc" id="L188">            this.keyCount = keyCount;</span>
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">            this.keyCountIncludingNulls = unIndexedNullCount &gt; 0 ? keyCount + 1 : keyCount;</span>
+        }
+<span class="fc" id="L191">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

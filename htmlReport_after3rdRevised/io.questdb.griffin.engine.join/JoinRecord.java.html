@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JoinRecord.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.join</a> &gt; <span class="el_source">JoinRecord.java</span></div><h1>JoinRecord.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.join;
+
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.str.CharSink;
+
+public class JoinRecord implements Record {
+    private final int split;
+    protected Record slave;
+    private Record master;
+
+<span class="fc" id="L37">    public JoinRecord(int split) {</span>
+<span class="fc" id="L38">        this.split = split;</span>
+<span class="fc" id="L39">    }</span>
+
+    @Override
+    public BinarySequence getBin(int col) {
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L44">            return master.getBin(col);</span>
+        }
+<span class="fc" id="L46">        return slave.getBin(col - split);</span>
+    }
+
+    @Override
+    public long getBinLen(int col) {
+<span class="fc bfc" id="L51" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L52">            return master.getBinLen(col);</span>
+        }
+<span class="fc" id="L54">        return slave.getBinLen(col - split);</span>
+    }
+
+    @Override
+    public boolean getBool(int col) {
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L60">            return master.getBool(col);</span>
+        }
+<span class="fc" id="L62">        return slave.getBool(col - split);</span>
+    }
+
+    @Override
+    public byte getByte(int col) {
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L68">            return master.getByte(col);</span>
+        }
+<span class="fc" id="L70">        return slave.getByte(col - split);</span>
+    }
+
+    @Override
+    public char getChar(int col) {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L76">            return master.getChar(col);</span>
+        }
+<span class="fc" id="L78">        return slave.getChar(col - split);</span>
+    }
+
+    @Override
+    public long getDate(int col) {
+<span class="fc bfc" id="L83" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L84">            return master.getDate(col);</span>
+        }
+<span class="fc" id="L86">        return slave.getDate(col - split);</span>
+    }
+
+    @Override
+    public double getDouble(int col) {
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L92">            return master.getDouble(col);</span>
+        }
+<span class="fc" id="L94">        return slave.getDouble(col - split);</span>
+    }
+
+    @Override
+    public float getFloat(int col) {
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L100">            return master.getFloat(col);</span>
+        }
+<span class="fc" id="L102">        return slave.getFloat(col - split);</span>
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L108">            return master.getGeoByte(col);</span>
+        }
+<span class="fc" id="L110">        return slave.getGeoByte(col - split);</span>
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+<span class="fc bfc" id="L115" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L116">            return master.getGeoInt(col);</span>
+        }
+<span class="fc" id="L118">        return slave.getGeoInt(col - split);</span>
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L124">            return master.getGeoLong(col);</span>
+        }
+<span class="fc" id="L126">        return slave.getGeoLong(col - split);</span>
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+<span class="fc bfc" id="L131" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L132">            return master.getGeoShort(col);</span>
+        }
+<span class="fc" id="L134">        return slave.getGeoShort(col - split);</span>
+    }
+
+    @Override
+    public int getInt(int col) {
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L140">            return master.getInt(col);</span>
+        }
+<span class="fc" id="L142">        return slave.getInt(col - split);</span>
+    }
+
+    @Override
+    public long getLong(int col) {
+<span class="fc bfc" id="L147" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L148">            return master.getLong(col);</span>
+        }
+<span class="fc" id="L150">        return slave.getLong(col - split);</span>
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L156">            return master.getLong128Hi(col);</span>
+        }
+<span class="fc" id="L158">        return slave.getLong128Hi(col - split);</span>
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L164">            return master.getLong128Lo(col);</span>
+        }
+<span class="fc" id="L166">        return slave.getLong128Lo(col - split);</span>
+    }
+
+    @Override
+    public void getLong256(int col, CharSink sink) {
+<span class="fc bfc" id="L171" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L172">            master.getLong256(col, sink);</span>
+        } else {
+<span class="fc" id="L174">            slave.getLong256(col - split, sink);</span>
+        }
+<span class="fc" id="L176">    }</span>
+
+    @Override
+    public Long256 getLong256A(int col) {
+<span class="fc bfc" id="L180" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L181">            return master.getLong256A(col);</span>
+        }
+<span class="fc" id="L183">        return slave.getLong256A(col - split);</span>
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L189">            return master.getLong256B(col);</span>
+        }
+<span class="fc" id="L191">        return slave.getLong256B(col - split);</span>
+    }
+
+    @Override
+    public Record getRecord(int col) {
+<span class="pc bpc" id="L196" title="1 of 2 branches missed.">        if (col &lt; split) {</span>
+<span class="nc" id="L197">            return master.getRecord(col);</span>
+        }
+<span class="fc" id="L199">        return slave.getRecord(col - split);</span>
+    }
+
+    @Override
+    public long getRowId() {
+<span class="nc" id="L204">        return master.getRowId();</span>
+    }
+
+    @Override
+    public short getShort(int col) {
+<span class="fc bfc" id="L209" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L210">            return master.getShort(col);</span>
+        }
+<span class="fc" id="L212">        return slave.getShort(col - split);</span>
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+<span class="fc bfc" id="L217" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L218">            return master.getStr(col);</span>
+        }
+<span class="fc" id="L220">        return slave.getStr(col - split);</span>
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+<span class="fc bfc" id="L225" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L226">            master.getStr(col, sink);</span>
+        } else {
+<span class="fc" id="L228">            slave.getStr(col - split, sink);</span>
+        }
+<span class="fc" id="L230">    }</span>
+
+    @Override
+    public CharSequence getStrB(int col) {
+<span class="fc bfc" id="L234" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L235">            return master.getStrB(col);</span>
+        }
+<span class="fc" id="L237">        return slave.getStrB(col - split);</span>
+    }
+
+    @Override
+    public int getStrLen(int col) {
+<span class="fc bfc" id="L242" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L243">            return master.getStrLen(col);</span>
+        }
+<span class="fc" id="L245">        return slave.getStrLen(col - split);</span>
+    }
+
+    @Override
+    public CharSequence getSym(int col) {
+<span class="fc bfc" id="L250" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L251">            return master.getSym(col);</span>
+        }
+<span class="fc" id="L253">        return slave.getSym(col - split);</span>
+    }
+
+    @Override
+    public CharSequence getSymB(int col) {
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (col &lt; split) {</span>
+<span class="nc" id="L259">            return master.getSymB(col);</span>
+        }
+<span class="nc" id="L261">        return slave.getSymB(col - split);</span>
+    }
+
+    @Override
+    public long getTimestamp(int col) {
+<span class="fc bfc" id="L266" title="All 2 branches covered.">        if (col &lt; split) {</span>
+<span class="fc" id="L267">            return master.getTimestamp(col);</span>
+        }
+<span class="fc" id="L269">        return slave.getTimestamp(col - split);</span>
+    }
+
+    @Override
+    public long getUpdateRowId() {
+<span class="fc" id="L274">        return master.getUpdateRowId();</span>
+    }
+
+    void of(Record master, Record slave) {
+<span class="fc" id="L278">        this.master = master;</span>
+<span class="fc" id="L279">        this.slave = slave;</span>
+<span class="fc" id="L280">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

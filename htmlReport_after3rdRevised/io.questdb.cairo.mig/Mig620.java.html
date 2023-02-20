@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Mig620.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.mig</a> &gt; <span class="el_source">Mig620.java</span></div><h1>Mig620.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.mig;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+
+<span class="nc" id="L39">public class Mig620 {</span>
+    private static final int COLUMN_VERSION_FILE_HEADER_SIZE_MIG = 40;
+    private static final String COLUMN_VERSION_FILE_NAME_MIG = &quot;_cv&quot;;
+    private static final long CV_COL_TOP_DEFAULT_PARTITION_MIG = Long.MIN_VALUE;
+    private static final int CV_OFFSET_VERSION_64 = 0;
+    private static final int CV_OFFSET_OFFSET_A_64 = CV_OFFSET_VERSION_64 + 8;
+    private static final int CV_OFFSET_SIZE_A_64 = CV_OFFSET_OFFSET_A_64 + 8;
+    private static final int CV_OFFSET_OFFSET_B_64 = CV_OFFSET_SIZE_A_64 + 8;
+    private static final int CV_OFFSET_SIZE_B_64 = CV_OFFSET_OFFSET_B_64 + 8;
+    private static final int CV_HEADER_SIZE = CV_OFFSET_SIZE_B_64 + 8;
+<span class="fc" id="L49">    private static final Log LOG = LogFactory.getLog(EngineMigration.class);</span>
+    private static final long META_COLUMN_DATA_SIZE_MIG = 32;
+    private static final String META_FILE_NAME_MIG = &quot;_meta&quot;;
+    private static final long META_OFFSET_COLUMN_TYPES_MIG = 128;
+    private static final long META_OFFSET_COUNT_MIG = 0;
+    private static final long META_OFFSET_PARTITION_BY_MIG = 4;
+    private static final long PARTITION_NAME_TX_OFFSET_MIG = 2;
+    private static final String TXN_FILE_NAME_MIG = &quot;_txn&quot;;
+    private static final long TXN_OFFSET_MIG = 0;
+    private static final int TX_BASE_HEADER_SECTION_PADDING_MIG = 12; // Add some free space into header for future use
+    private static final long TX_BASE_OFFSET_VERSION_MIG = 0;
+    private static final long TX_BASE_OFFSET_A_MIG = TX_BASE_OFFSET_VERSION_MIG + 8;
+    private static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_MIG = TX_BASE_OFFSET_A_MIG + 4;
+    private static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_MIG = TX_BASE_OFFSET_SYMBOLS_SIZE_A_MIG + 4;
+    private static final long TX_BASE_OFFSET_B_MIG = TX_BASE_OFFSET_PARTITIONS_SIZE_A_MIG + 4 + TX_BASE_HEADER_SECTION_PADDING_MIG;
+    private static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_MIG = TX_BASE_OFFSET_B_MIG + 4;
+    private static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_MIG = TX_BASE_OFFSET_SYMBOLS_SIZE_B_MIG + 4;
+<span class="fc" id="L66">    private static final int TX_BASE_HEADER_SIZE_MIG = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_MIG + 4 + TX_BASE_HEADER_SECTION_PADDING_MIG, 64);</span>
+    private static final long TX_DEFAULT_PARTITION_TIMESTAMP_MIG = 0L;
+    private static final long TX_OFFSET_COLUMN_VERSION_MIG = 64;
+    private static final long TX_OFFSET_MAP_WRITER_COUNT_MIG = 128;
+    private static final long TX_OFFSET_TRUNCATE_VERSION_MIG = 72;
+
+    private static void createColumnVersionFile(MemoryMARW txMemory, long partitionSizeOffset, int partitionTableSize, MigrationContext migrationContext, Path path, int pathLen) {
+<span class="fc" id="L73">        final FilesFacade ff = migrationContext.getFf();</span>
+
+<span class="fc" id="L75">        try (MemoryMARW cvMemory = Vm.getCMARWInstance(</span>
+                ff,
+<span class="fc" id="L77">                path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),</span>
+                Files.PAGE_SIZE,
+                COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
+                MemoryTag.NATIVE_MIG_MMAP,
+                CairoConfiguration.O_NONE
+        )) {
+<span class="fc" id="L83">            cvMemory.extend(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);</span>
+<span class="fc" id="L84">            cvMemory.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);</span>
+<span class="fc" id="L85">            cvMemory.zero();</span>
+
+<span class="fc" id="L87">            try (MemoryMARW metaMem = openFileSafe(</span>
+                    ff,
+<span class="fc" id="L89">                    path.trimTo(pathLen).concat(META_FILE_NAME_MIG).$(),</span>
+                    META_OFFSET_COLUMN_TYPES_MIG
+            )) {
+<span class="fc" id="L92">                int partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY_MIG);</span>
+<span class="fc" id="L93">                ObjList&lt;String&gt; columnNames = readColumNames(metaMem);</span>
+<span class="fc" id="L94">                int columnCount = columnNames.size();</span>
+<span class="fc" id="L95">                LongList columnTops = readColumnTops(columnCount, partitionBy, partitionSizeOffset, partitionTableSize, txMemory, ff, path, pathLen, columnNames);</span>
+<span class="fc" id="L96">                path.trimTo(pathLen);</span>
+<span class="fc" id="L97">                long sizeBytes = writeColumnVersion(path, columnTops, columnCount, columnNames, cvMemory);</span>
+<span class="fc" id="L98">                cvMemory.putLong(CV_OFFSET_OFFSET_A_64, CV_HEADER_SIZE);</span>
+<span class="fc" id="L99">                cvMemory.putLong(CV_OFFSET_SIZE_A_64, sizeBytes);</span>
+<span class="fc" id="L100">                cvMemory.jumpTo(CV_HEADER_SIZE + sizeBytes);</span>
+            }
+        }
+<span class="fc" id="L103">    }</span>
+
+    private static void dFile(Path path, CharSequence columnName) {
+<span class="fc" id="L106">        path.concat(columnName).put('.').put('d').$();</span>
+<span class="fc" id="L107">    }</span>
+
+    private static long getColumnNameOffset(int columnCount) {
+<span class="fc" id="L110">        return META_OFFSET_COLUMN_TYPES_MIG + columnCount * META_COLUMN_DATA_SIZE_MIG;</span>
+    }
+
+    private static void migrateTxn(MemoryMARW txMemory, int symbolCount, int partitionTableSize, long existingTotalSize, long txn) {
+<span class="fc" id="L114">        txMemory.putInt(TX_OFFSET_COLUMN_VERSION_MIG, 0);</span>
+<span class="fc" id="L115">        txMemory.putInt(TX_OFFSET_TRUNCATE_VERSION_MIG, 0);</span>
+
+<span class="fc" id="L117">        long pageAddress = txMemory.getPageAddress(0);</span>
+<span class="fc" id="L118">        Vect.memmove(pageAddress + TX_BASE_HEADER_SIZE_MIG, pageAddress, existingTotalSize);</span>
+<span class="fc" id="L119">        Vect.memset(pageAddress, TX_BASE_HEADER_SIZE_MIG, 0);</span>
+
+<span class="fc" id="L121">        txMemory.putLong(TX_BASE_OFFSET_VERSION_MIG, txn);</span>
+
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        boolean currentIsA = txn % 2 == 0;</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        long offsetOffset = currentIsA ? TX_BASE_OFFSET_A_MIG : TX_BASE_OFFSET_B_MIG;</span>
+<span class="fc bfc" id="L125" title="All 2 branches covered.">        long symbolSizeOffset = currentIsA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_MIG : TX_BASE_OFFSET_SYMBOLS_SIZE_B_MIG;</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        long partitionsSizeOffset = currentIsA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_MIG : TX_BASE_OFFSET_PARTITIONS_SIZE_B_MIG;</span>
+
+<span class="fc" id="L128">        txMemory.putInt(offsetOffset, TX_BASE_HEADER_SIZE_MIG);</span>
+<span class="fc" id="L129">        txMemory.putInt(symbolSizeOffset, symbolCount * 8);</span>
+<span class="fc" id="L130">        txMemory.putInt(partitionsSizeOffset, partitionTableSize);</span>
+
+<span class="fc" id="L132">        txMemory.jumpTo(TX_BASE_HEADER_SIZE_MIG + existingTotalSize);</span>
+<span class="fc" id="L133">    }</span>
+
+    private static MemoryCMARW openFileSafe(FilesFacade ff, Path path, long readOffset) {
+<span class="fc" id="L136">        long fileLen = ff.length(path);</span>
+
+<span class="pc bpc" id="L138" title="1 of 2 branches missed.">        if (fileLen &lt; 0) {</span>
+<span class="nc" id="L139">            throw CairoException.critical(ff.errno()).put(&quot;cannot read file length: &quot;).put(path);</span>
+        }
+
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">        if (fileLen &lt; readOffset + Long.BYTES) {</span>
+<span class="nc" id="L143">            throw CairoException.critical(0).put(&quot;File length &quot;).put(fileLen).put(&quot; is too small at &quot;).put(path);</span>
+        }
+
+<span class="fc" id="L146">        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);</span>
+    }
+
+    private static int openRO(FilesFacade ff, LPSZ path) {
+<span class="fc" id="L150">        final int fd = ff.openRO(path);</span>
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">        if (fd &gt; -1) {</span>
+<span class="fc" id="L152">            Mig620.LOG.debug().$(&quot;open [file=&quot;).$(path).$(&quot;, fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L153">            return fd;</span>
+        }
+<span class="nc" id="L155">        throw CairoException.critical(ff.errno()).put(&quot;could not open read-only [file=&quot;).put(path).put(']');</span>
+    }
+
+    private static ObjList&lt;String&gt; readColumNames(MemoryMARW metaMem) {
+<span class="fc" id="L159">        ObjList&lt;String&gt; columnNames = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L160">        final int columnCount = metaMem.getInt(META_OFFSET_COUNT_MIG);</span>
+<span class="fc" id="L161">        long offset = getColumnNameOffset(columnCount);</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">        for (int metaIndex = 0; metaIndex &lt; columnCount; metaIndex++) {</span>
+<span class="fc" id="L163">            String name = Chars.toString(metaMem.getStr(offset));</span>
+<span class="fc" id="L164">            columnNames.add(name);</span>
+<span class="fc" id="L165">            offset += Vm.getStorageLength(name);</span>
+        }
+<span class="fc" id="L167">        return columnNames;</span>
+    }
+
+    /**
+     * Reads 8 bytes from &quot;top&quot; file.
+     *
+     * @param ff   files facade, - intermediary to intercept OS file system calls.
+     * @param path path has to be set to location of &quot;top&quot; file, excluding file name. Zero terminated string.
+     * @param name name of top file
+     * @param plen path length to truncate &quot;path&quot; back to, path is reusable.
+     * @return number of rows column doesn't have when column was added to table that already had data.
+     */
+    private static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen) {
+        try {
+<span class="fc bfc" id="L181" title="All 2 branches covered.">            if (ff.exists(topFile(path, name))) {</span>
+<span class="fc" id="L182">                final int fd = openRO(ff, path);</span>
+                try {
+                    long n;
+<span class="pc bpc" id="L185" title="1 of 2 branches missed.">                    if ((n = ff.readNonNegativeLong(fd, 0)) &lt; 0) {</span>
+<span class="nc" id="L186">                        return 0L;</span>
+                    }
+<span class="fc" id="L188">                    return n;</span>
+                } finally {
+<span class="fc" id="L190">                    ff.close(fd);</span>
+                }
+            }
+<span class="fc" id="L193">            return 0L;</span>
+        } finally {
+<span class="fc" id="L195">            path.trimTo(plen);</span>
+        }
+    }
+
+    private static LongList readColumnTops(int columnCount, int partitionBy, long partitionSizeOffset, int partitionTableSize, MemoryMARW txMemory, FilesFacade ff, Path path, int pathLen, ObjList&lt;String&gt; columnNames) {
+<span class="fc bfc" id="L200" title="All 2 branches covered.">        if (!PartitionBy.isPartitioned(partitionBy)) {</span>
+<span class="fc" id="L201">            LongList result = new LongList();</span>
+<span class="fc" id="L202">            readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, TX_DEFAULT_PARTITION_TIMESTAMP_MIG, -1L, ff, path, pathLen);</span>
+<span class="fc" id="L203">            return result;</span>
+        }
+<span class="fc" id="L205">        return readColumnTopsAllPartitions(columnCount, partitionBy, partitionSizeOffset, partitionTableSize, txMemory, ff, path, pathLen, columnNames);</span>
+    }
+
+    private static LongList readColumnTopsAllPartitions(int columnCount, int partitionBy, long partitionSizeOffset, int partitionTableSize, MemoryMARW txMemory, FilesFacade ff, Path path, int pathLen, ObjList&lt;String&gt; columnNames) {
+<span class="fc" id="L209">        LongList result = new LongList();</span>
+<span class="fc" id="L210">        int partitionCount = partitionTableSize / 8 / 4;</span>
+<span class="fc" id="L211">        long offset = partitionSizeOffset + 4;</span>
+<span class="fc" id="L212">        long prevPartition = Long.MIN_VALUE;</span>
+<span class="fc" id="L213">        long txSize = txMemory.size() - 4 * 8;</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">        for (int partitionIndex = 0; partitionIndex &lt; partitionCount; partitionIndex++) {</span>
+<span class="pc bpc" id="L215" title="1 of 2 branches missed.">            if (offset &gt; txSize) {</span>
+<span class="nc" id="L216">                throw CairoException.critical(0).put(&quot;corrupt _txn file &quot;).put(path.trimTo(pathLen).$()).put(&quot;, file is too small to read offset &quot;).put(offset);</span>
+            }
+<span class="fc" id="L218">            long partitionTs = txMemory.getLong(offset);</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">            if (partitionTs &lt;= prevPartition) {</span>
+<span class="nc" id="L220">                throw CairoException.critical(0).put(&quot;corrupt _txn file, partitions are not ordered at &quot;).put(path.trimTo(pathLen).$());</span>
+            }
+<span class="fc" id="L222">            long partitionNameTxn = txMemory.getLong(offset + PARTITION_NAME_TX_OFFSET_MIG * 8);</span>
+<span class="fc" id="L223">            readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, partitionTs, partitionNameTxn, ff, path, pathLen);</span>
+<span class="fc" id="L224">            offset += 4 * 8;</span>
+<span class="fc" id="L225">            prevPartition = partitionTs;</span>
+        }
+<span class="fc" id="L227">        return result;</span>
+    }
+
+    private static void readColumnTopsForPartition(LongList tops, ObjList&lt;String&gt; columnNames, int columnCount, int partitionBy, long partitionTimestamp, long partitionNameTxn, FilesFacade ff, Path path, int pathLen) {
+<span class="fc" id="L231">        tops.add(partitionTimestamp);</span>
+
+<span class="fc" id="L233">        path.trimTo(pathLen);</span>
+<span class="fc" id="L234">        setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);</span>
+<span class="fc" id="L235">        int partitionPathLen = path.length();</span>
+
+<span class="fc bfc" id="L237" title="All 2 branches covered.">        if (ff.exists(path.put(Files.SEPARATOR).$())) {</span>
+<span class="fc bfc" id="L238" title="All 2 branches covered.">            for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L239">                path.trimTo(partitionPathLen);</span>
+<span class="fc" id="L240">                String columnName = columnNames.get(i);</span>
+<span class="fc" id="L241">                dFile(path, columnName);</span>
+<span class="fc" id="L242">                long columnTop = -1;</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">                if (ff.exists(path)) {</span>
+<span class="fc" id="L244">                    columnTop = readColumnTop(ff, path.trimTo(partitionPathLen), columnName, partitionPathLen);</span>
+                }
+<span class="fc" id="L246">                tops.add(columnTop);</span>
+            }
+        } else {
+            // Sometimes _txn file does not match the table directories, e.g. snapshot is inconsistent.
+            // Consider that file presence is same as previous partition.
+            // Except if previous partition column existed but column top was not 0, make it 0
+<span class="fc bfc" id="L252" title="All 2 branches covered.">            if (tops.size() &gt; columnCount) {</span>
+<span class="fc" id="L253">                tops.add(tops, tops.size() - columnCount - 1, tops.size() - 1);</span>
+<span class="fc bfc" id="L254" title="All 2 branches covered.">                for (int i = tops.size() - columnCount, n = tops.size(); i &lt; n; i++) {</span>
+<span class="pc bpc" id="L255" title="1 of 2 branches missed.">                    if (tops.getQuick(i) &gt; 0) {</span>
+<span class="nc" id="L256">                        tops.setQuick(i, 0);</span>
+                    }
+                }
+            } else {
+<span class="fc bfc" id="L260" title="All 2 branches covered.">                for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L261">                    tops.add(-1L);</span>
+                }
+            }
+        }
+<span class="fc" id="L265">    }</span>
+
+    private static void setPathForPartition(Path path, int partitionBy, long timestamp, long partitionNameTxn) {
+<span class="fc" id="L268">        PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, false);</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">        if (partitionNameTxn &gt; -1L) {</span>
+<span class="fc" id="L270">            path.put('.').put(partitionNameTxn);</span>
+        }
+<span class="fc" id="L272">    }</span>
+
+    private static LPSZ topFile(Path path, CharSequence columnName) {
+<span class="fc" id="L275">        return path.concat(columnName).put(&quot;.top&quot;).$();</span>
+    }
+
+    private static long writeColumnVersion(Path tablePath, LongList columnTops, int columnCount, ObjList&lt;String&gt; columnNames, MemoryMARW cvMemory) {
+<span class="fc" id="L279">        int topStep = columnCount + 1;</span>
+<span class="fc" id="L280">        LongList columnVersions = new LongList();</span>
+<span class="fc" id="L281">        LongList maxPartitionIndexWithNoColumnList = new LongList();</span>
+
+<span class="fc bfc" id="L283" title="All 2 branches covered.">        for (int columnIndex = 0; columnIndex &lt; columnCount; columnIndex++) {</span>
+            // Column Tops list has long values as follows:
+            // Partition Timestamp
+            // Column top value per every column as follows:
+            // -1: column does not exist for the partition
+            //  0: column present with no column top
+            // &gt;0: column preset and there is a column top
+
+<span class="fc" id="L291">            int maxPartitionIndexWithNoColumn = -1;</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">            for (int partitionIndex = 0; partitionIndex &lt; columnTops.size(); partitionIndex += topStep) {</span>
+<span class="fc" id="L293">                long columnTop = columnTops.getQuick(partitionIndex + columnIndex + 1);</span>
+<span class="fc bfc" id="L294" title="All 2 branches covered.">                if (columnTop &lt; 0) {</span>
+<span class="fc" id="L295">                    maxPartitionIndexWithNoColumn = partitionIndex;</span>
+                }
+            }
+
+<span class="fc bfc" id="L299" title="All 2 branches covered.">            if (maxPartitionIndexWithNoColumn != -1) {</span>
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">                if (maxPartitionIndexWithNoColumn + topStep &gt;= columnTops.size()) {</span>
+<span class="nc" id="L301">                    throw CairoException.critical(0).put(&quot;Table &quot;).put(tablePath).put(&quot; column '&quot;).put(columnNames.getQuick(columnIndex)).put(&quot;' is not present in the last partition.&quot;);</span>
+                }
+<span class="fc" id="L303">                long columnAddedPartitionTs = columnTops.getQuick(maxPartitionIndexWithNoColumn + topStep);</span>
+<span class="fc" id="L304">                columnVersions.add(CV_COL_TOP_DEFAULT_PARTITION_MIG, columnIndex, -1L, columnAddedPartitionTs);</span>
+            }
+<span class="fc" id="L306">            maxPartitionIndexWithNoColumnList.add(maxPartitionIndexWithNoColumn);</span>
+        }
+
+        // Column Version file must be sorted by Partition Timestamp first and then by Column Index
+        // Go partition by partition to keep adding records sorted
+<span class="fc bfc" id="L311" title="All 2 branches covered.">        for (int partitionIndex = 0; partitionIndex &lt; columnTops.size(); partitionIndex += topStep) {</span>
+<span class="fc bfc" id="L312" title="All 2 branches covered.">            for (int columnIndex = 0; columnIndex &lt; columnCount; columnIndex++) {</span>
+<span class="fc" id="L313">                long maxPartitionIndexWithNoColumn = maxPartitionIndexWithNoColumnList.getQuick(columnIndex);</span>
+<span class="fc" id="L314">                long partitionTs = columnTops.getQuick(partitionIndex);</span>
+<span class="fc" id="L315">                long columnTop = columnTops.getQuick(partitionIndex + columnIndex + 1);</span>
+
+<span class="fc bfc" id="L317" title="All 6 branches covered.">                if (columnTop &gt; 0 || (columnTop == 0 &amp;&amp; partitionIndex &lt; maxPartitionIndexWithNoColumn)) {</span>
+<span class="fc" id="L318">                    columnVersions.add(partitionTs, columnIndex, -1, columnTop);</span>
+                }
+            }
+        }
+        // Flush column tops to the file.
+<span class="fc bfc" id="L323" title="All 2 branches covered.">        for (int i = 0; i &lt; columnVersions.size(); i++) {</span>
+<span class="fc" id="L324">            cvMemory.putLong(Mig620.CV_HEADER_SIZE + i * 8L, columnVersions.getQuick(i));</span>
+        }
+<span class="fc" id="L326">        int sizeByes = columnVersions.size() * 8;</span>
+<span class="fc" id="L327">        cvMemory.jumpTo(sizeByes + Mig620.CV_HEADER_SIZE);</span>
+<span class="fc" id="L328">        return sizeByes;</span>
+    }
+
+    static void migrate(MigrationContext migrationContext) {
+<span class="fc" id="L332">        final FilesFacade ff = migrationContext.getFf();</span>
+<span class="fc" id="L333">        final Path path = migrationContext.getTablePath();</span>
+<span class="fc" id="L334">        int pathLen = path.length();</span>
+
+<span class="fc" id="L336">        path.concat(TXN_FILE_NAME_MIG).$();</span>
+<span class="fc" id="L337">        try (MemoryMARW txMemory = openFileSafe(ff, path, TX_OFFSET_MAP_WRITER_COUNT_MIG + 8)) {</span>
+<span class="fc" id="L338">            int symbolCount = txMemory.getInt(TX_OFFSET_MAP_WRITER_COUNT_MIG);</span>
+<span class="fc" id="L339">            long partitionSizeOffset = TX_OFFSET_MAP_WRITER_COUNT_MIG + 4 + symbolCount * 8L;</span>
+<span class="pc bpc" id="L340" title="1 of 2 branches missed.">            int partitionTableSize = txMemory.size() &gt; partitionSizeOffset ? txMemory.getInt(partitionSizeOffset) : 0;</span>
+<span class="fc" id="L341">            long existingTotalSize = partitionSizeOffset + 4 + partitionTableSize;</span>
+<span class="fc" id="L342">            long txn = txMemory.getLong(TXN_OFFSET_MIG);</span>
+
+<span class="fc" id="L344">            createColumnVersionFile(txMemory, partitionSizeOffset, partitionTableSize, migrationContext, path, pathLen);</span>
+<span class="fc" id="L345">            migrateTxn(txMemory, symbolCount, partitionTableSize, existingTotalSize, txn);</span>
+        }
+<span class="fc" id="L347">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

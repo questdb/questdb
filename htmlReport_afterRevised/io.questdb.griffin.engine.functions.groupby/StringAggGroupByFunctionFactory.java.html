@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StringAggGroupByFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.groupby</a> &gt; <span class="el_source">StringAggGroupByFunctionFactory.java</span></div><h1>StringAggGroupByFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.groupby;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectCharSink;
+
+<span class="fc" id="L42">public class StringAggGroupByFunctionFactory implements FunctionFactory {</span>
+
+    @Override
+    public String getSignature() {
+<span class="fc" id="L46">        return &quot;string_agg(Sa)&quot;;</span>
+    }
+
+    @Override
+    public boolean isGroupBy() {
+<span class="fc" id="L51">        return true;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+<span class="fc" id="L56">        return new StringAggGroupByFunction(args.getQuick(0), args.getQuick(1).getChar(null));</span>
+    }
+
+    private static class StringAggGroupByFunction extends StrFunction implements GroupByFunction {
+        private static final int INITIAL_SINK_CAPACITY = 8 * 1024;
+        private final Function arg;
+        private final char delimiter;
+<span class="fc" id="L63">        private final DirectCharSink sink = new DirectCharSink(INITIAL_SINK_CAPACITY);</span>
+<span class="fc" id="L64">        private boolean nullValue = true;</span>
+
+<span class="fc" id="L66">        public StringAggGroupByFunction(Function arg, char delimiter) {</span>
+<span class="fc" id="L67">            this.arg = arg;</span>
+<span class="fc" id="L68">            this.delimiter = delimiter;</span>
+<span class="fc" id="L69">        }</span>
+
+        @Override
+        public void clear() {
+<span class="fc" id="L73">            sink.resetCapacity();</span>
+<span class="fc" id="L74">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L78">            sink.close();</span>
+<span class="fc" id="L79">        }</span>
+
+        @Override
+        public void computeFirst(MapValue mapValue, Record record) {
+<span class="fc" id="L83">            setNull();</span>
+<span class="fc" id="L84">            CharSequence str = arg.getStr(record);</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">            if (str != null) {</span>
+<span class="fc" id="L86">                append(str);</span>
+            }
+<span class="fc" id="L88">        }</span>
+
+        @Override
+        public void computeNext(MapValue mapValue, Record record) {
+<span class="fc" id="L92">            CharSequence str = arg.getStr(record);</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">            if (str != null) {</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">                if (!nullValue) {</span>
+<span class="fc" id="L95">                    appendDelimiter();</span>
+                }
+<span class="fc" id="L97">                append(str);</span>
+            }
+<span class="fc" id="L99">        }</span>
+
+        @Override
+        public CharSequence getStr(Record rec) {
+<span class="fc bfc" id="L103" title="All 2 branches covered.">            if (nullValue) {</span>
+<span class="fc" id="L104">                return null;</span>
+            }
+<span class="fc" id="L106">            return sink;</span>
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+<span class="fc" id="L111">            return getStr(rec);</span>
+        }
+
+        @Override
+        public boolean isConstant() {
+<span class="fc" id="L116">            return false;</span>
+        }
+
+        @Override
+        public void pushValueTypes(ArrayColumnTypes columnTypes) {
+<span class="fc" id="L121">            columnTypes.add(ColumnType.STRING);</span>
+<span class="fc" id="L122">        }</span>
+
+        @Override
+        public void setNull(MapValue mapValue) {
+<span class="nc" id="L126">            setNull();</span>
+<span class="nc" id="L127">        }</span>
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L131">            sink.val(&quot;string_agg(&quot;).val(arg).val(',').val(delimiter).val(')');</span>
+<span class="fc" id="L132">        }</span>
+
+        private void append(CharSequence str) {
+<span class="fc" id="L135">            sink.put(str);</span>
+<span class="fc" id="L136">            nullValue = false;</span>
+<span class="fc" id="L137">        }</span>
+
+        private void appendDelimiter() {
+<span class="fc" id="L140">            sink.put(delimiter);</span>
+<span class="fc" id="L141">        }</span>
+
+        private void setNull() {
+<span class="fc" id="L144">            sink.clear();</span>
+<span class="fc" id="L145">            nullValue = true;</span>
+<span class="fc" id="L146">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

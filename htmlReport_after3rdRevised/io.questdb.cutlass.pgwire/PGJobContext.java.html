@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PGJobContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.pgwire</a> &gt; <span class="el_source">PGJobContext.java</span></div><h1>PGJobContext.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.pgwire;
+
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.Misc;
+import io.questdb.std.WeakSelfReturningObjectPool;
+
+import java.io.Closeable;
+
+public class PGJobContext implements Closeable {
+
+    private final SqlCompiler compiler;
+    private final AssociativeCache&lt;TypesAndSelect&gt; typesAndSelectCache;
+    private final WeakSelfReturningObjectPool&lt;TypesAndSelect&gt; typesAndSelectPool;
+    private final AssociativeCache&lt;TypesAndUpdate&gt; typesAndUpdateCache;
+    private final WeakSelfReturningObjectPool&lt;TypesAndUpdate&gt; typesAndUpdatePool;
+
+    public PGJobContext(
+            PGWireConfiguration configuration,
+            CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+<span class="fc" id="L55">    ) {</span>
+<span class="fc" id="L56">        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);</span>
+
+<span class="fc" id="L58">        final Metrics metrics = engine.getMetrics();</span>
+
+<span class="fc" id="L60">        final boolean enableSelectCache = configuration.isSelectCacheEnabled();</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">        final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;</span>
+<span class="fc" id="L63">        typesAndSelectCache = new AssociativeCache&lt;&gt;(blockCount, rowCount, metrics.pgWire().cachedSelectsGauge());</span>
+<span class="fc" id="L64">        typesAndSelectPool = new WeakSelfReturningObjectPool&lt;&gt;(TypesAndSelect::new, blockCount * rowCount);</span>
+
+<span class="fc" id="L66">        final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8</span>
+<span class="fc" id="L69">        typesAndUpdateCache = new AssociativeCache&lt;&gt;(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());</span>
+<span class="fc" id="L70">        typesAndUpdatePool = new WeakSelfReturningObjectPool&lt;&gt;(parent -&gt; new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);</span>
+<span class="fc" id="L71">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L75">        Misc.free(compiler);</span>
+<span class="fc" id="L76">        Misc.free(typesAndSelectCache);</span>
+<span class="fc" id="L77">        Misc.free(typesAndUpdateCache);</span>
+<span class="fc" id="L78">    }</span>
+
+    public void flushQueryCache() {
+<span class="fc" id="L81">        typesAndSelectCache.clear();</span>
+<span class="fc" id="L82">        typesAndUpdateCache.clear();</span>
+<span class="fc" id="L83">    }</span>
+
+    public void handleClientOperation(
+            PGConnectionContext context,
+            int operation
+    ) throws PeerIsSlowToWriteException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+<span class="fc" id="L89">        context.handleClientOperation(</span>
+                compiler,
+                typesAndSelectCache,
+                typesAndSelectPool,
+                typesAndUpdateCache,
+                typesAndUpdatePool,
+                operation
+        );
+<span class="fc" id="L97">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

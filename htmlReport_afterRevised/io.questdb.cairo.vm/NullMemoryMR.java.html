@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NullMemoryMR.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.vm</a> &gt; <span class="el_source">NullMemoryMR.java</span></div><h1>NullMemoryMR.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.vm;
+
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
+
+<span class="fc" id="L33">public class NullMemoryMR implements MemoryMR {</span>
+
+<span class="fc" id="L35">    public static final NullMemoryMR INSTANCE = new NullMemoryMR();</span>
+
+    @Override
+    public long addressOf(long offset) {
+<span class="nc" id="L39">        return 0;</span>
+    }
+
+    @Override
+    public void close() {
+<span class="fc" id="L44">    }</span>
+
+    @Override
+    public void extend(long size) {
+<span class="fc" id="L48">    }</span>
+
+    @Override
+    public BinarySequence getBin(long offset) {
+<span class="fc" id="L52">        return null;</span>
+    }
+
+    @Override
+    public long getBinLen(long offset) {
+<span class="fc" id="L57">        return TableUtils.NULL_LEN;</span>
+    }
+
+    @Override
+    public boolean getBool(long offset) {
+<span class="fc" id="L62">        return false;</span>
+    }
+
+    @Override
+    public byte getByte(long offset) {
+<span class="fc" id="L67">        return 0;</span>
+    }
+
+    @Override
+    public char getChar(long offset) {
+<span class="fc" id="L72">        return 0;</span>
+    }
+
+    @Override
+    public double getDouble(long offset) {
+<span class="fc" id="L77">        return Double.NaN;</span>
+    }
+
+    @Override
+    public int getFd() {
+<span class="fc" id="L82">        return -1;</span>
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+<span class="nc" id="L87">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public float getFloat(long offset) {
+<span class="fc" id="L92">        return Float.NaN;</span>
+    }
+
+    @Override
+    public int getInt(long offset) {
+<span class="fc" id="L97">        return Numbers.INT_NaN;</span>
+    }
+
+    @Override
+    public long getLong(long offset) {
+<span class="fc" id="L102">        return Numbers.LONG_NaN;</span>
+    }
+
+    public long getLong128Hi(long offset) {
+<span class="nc" id="L106">        return Numbers.LONG_NaN;</span>
+    }
+
+    public long getLong128Lo(long offset) {
+<span class="nc" id="L110">        return Numbers.LONG_NaN;</span>
+    }
+
+    @Override
+    public void getLong256(long offset, CharSink sink) {
+<span class="nc" id="L115">    }</span>
+
+    @Override
+    public Long256 getLong256A(long offset) {
+<span class="fc" id="L119">        return Long256Impl.NULL_LONG256;</span>
+    }
+
+    @Override
+    public Long256 getLong256B(long offset) {
+<span class="fc" id="L124">        return Long256Impl.NULL_LONG256;</span>
+    }
+
+    @Override
+    public long getPageAddress(int pageIndex) {
+<span class="nc" id="L129">        return 0;</span>
+    }
+
+    @Override
+    public int getPageCount() {
+<span class="nc" id="L134">        return 0;</span>
+    }
+
+    @Override
+    public long getPageSize() {
+<span class="nc" id="L139">        return 0;</span>
+    }
+
+    @Override
+    public short getShort(long offset) {
+<span class="fc" id="L144">        return 0;</span>
+    }
+
+    @Override
+    public CharSequence getStr(long offset) {
+<span class="fc" id="L149">        return null;</span>
+    }
+
+    @Override
+    public CharSequence getStr2(long offset) {
+<span class="fc" id="L154">        return null;</span>
+    }
+
+    @Override
+    public int getStrLen(long offset) {
+<span class="fc" id="L159">        return TableUtils.NULL_LEN;</span>
+    }
+
+    @Override
+    public boolean isDeleted() {
+<span class="fc" id="L164">        return true;</span>
+    }
+
+    @Override
+    public boolean isMapped(long offset, long len) {
+<span class="nc" id="L169">        return false;</span>
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+<span class="nc" id="L174">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long offsetInPage(long offset) {
+<span class="nc" id="L179">        return offset;</span>
+    }
+
+    @Override
+    public int pageIndex(long offset) {
+<span class="nc" id="L184">        return 0;</span>
+    }
+
+    @Override
+    public long size() {
+<span class="fc" id="L189">        return 0;</span>
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+<span class="nc" id="L194">        throw new UnsupportedOperationException();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableReaderSelectedColumnRecord.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">TableReaderSelectedColumnRecord.java</span></div><h1>TableReaderSelectedColumnRecord.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
+
+<span class="fc" id="L34">public class TableReaderSelectedColumnRecord implements Record {</span>
+
+    private final IntList columnIndexes;
+    private int columnBase;
+    private TableReader reader;
+<span class="fc" id="L39">    private long recordIndex = 0;</span>
+
+<span class="fc" id="L41">    public TableReaderSelectedColumnRecord(@NotNull IntList columnIndexes) {</span>
+<span class="fc" id="L42">        this.columnIndexes = columnIndexes;</span>
+<span class="fc" id="L43">    }</span>
+
+    public long getAdjustedRecordIndex() {
+<span class="nc" id="L46">        return recordIndex;</span>
+    }
+
+    @Override
+    public BinarySequence getBin(int columnIndex) {
+<span class="fc" id="L51">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L52">        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;</span>
+<span class="fc" id="L53">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(</span>
+                recordIndex,
+<span class="fc" id="L55">                TableReader.getPrimaryColumnIndex(columnBase, col)</span>
+        );
+<span class="fc" id="L57">        return reader.getColumn(absoluteColumnIndex).getBin(</span>
+<span class="fc" id="L58">                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)</span>
+        );
+    }
+
+    @Override
+    public long getBinLen(int columnIndex) {
+<span class="fc" id="L64">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L65">        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;</span>
+<span class="fc" id="L66">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(</span>
+                recordIndex,
+<span class="fc" id="L68">                TableReader.getPrimaryColumnIndex(columnBase, col)</span>
+        );
+<span class="fc" id="L70">        return reader.getColumn(absoluteColumnIndex).getBinLen(</span>
+<span class="fc" id="L71">                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)</span>
+        );
+    }
+
+    @Override
+    public boolean getBool(int columnIndex) {
+<span class="fc" id="L77">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L78">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L79">        final long offset = getAdjustedRecordIndex(col);</span>
+<span class="fc" id="L80">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L81">        return reader.getColumn(absoluteColumnIndex).getBool(offset);</span>
+    }
+
+    @Override
+    public byte getByte(int columnIndex) {
+<span class="fc" id="L86">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L87">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L88">        final long offset = getAdjustedRecordIndex(col);</span>
+<span class="fc" id="L89">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L90">        return reader.getColumn(absoluteColumnIndex).getByte(offset);</span>
+    }
+
+    @Override
+    public char getChar(int columnIndex) {
+<span class="fc" id="L95">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L96">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L97">        final long offset = getAdjustedRecordIndex(col) * Character.BYTES;</span>
+<span class="fc" id="L98">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L99">        return reader.getColumn(absoluteColumnIndex).getChar(offset);</span>
+    }
+
+    @Override
+    public double getDouble(int columnIndex) {
+<span class="fc" id="L104">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L105">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L106">        final long offset = getAdjustedRecordIndex(col) * Double.BYTES;</span>
+<span class="fc" id="L107">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L108">        return reader.getColumn(absoluteColumnIndex).getDouble(offset);</span>
+    }
+
+    @Override
+    public float getFloat(int columnIndex) {
+<span class="fc" id="L113">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L114">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L115">        final long offset = getAdjustedRecordIndex(col) * Float.BYTES;</span>
+<span class="fc" id="L116">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L117">        return reader.getColumn(absoluteColumnIndex).getFloat(offset);</span>
+    }
+
+    @Override
+    public byte getGeoByte(int columnIndex) {
+<span class="fc" id="L122">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L123">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L124">        final long offset = getAdjustedRecordIndex(col);</span>
+<span class="fc bfc" id="L125" title="All 2 branches covered.">        return offset &lt; 0 ? GeoHashes.BYTE_NULL : reader.getColumn(index).getByte(offset);</span>
+    }
+
+    @Override
+    public int getGeoInt(int columnIndex) {
+<span class="fc" id="L130">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L131">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L132">        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;</span>
+<span class="fc bfc" id="L133" title="All 2 branches covered.">        return offset &lt; 0 ? GeoHashes.INT_NULL : reader.getColumn(index).getInt(offset);</span>
+    }
+
+    @Override
+    public long getGeoLong(int columnIndex) {
+<span class="fc" id="L138">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L139">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L140">        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">        return offset &lt; 0 ? GeoHashes.NULL : reader.getColumn(index).getLong(offset);</span>
+    }
+
+    @Override
+    public short getGeoShort(int columnIndex) {
+<span class="fc" id="L146">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L147">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L148">        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        return offset &lt; 0 ? GeoHashes.SHORT_NULL : reader.getColumn(index).getShort(offset);</span>
+    }
+
+    @Override
+    public int getInt(int columnIndex) {
+<span class="fc" id="L154">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L155">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L156">        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;</span>
+<span class="fc" id="L157">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L158">        return reader.getColumn(absoluteColumnIndex).getInt(offset);</span>
+    }
+
+    @Override
+    public long getLong(int columnIndex) {
+<span class="fc" id="L163">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L164">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L165">        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;</span>
+<span class="fc" id="L166">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L167">        return reader.getColumn(absoluteColumnIndex).getLong(offset);</span>
+    }
+
+    @Override
+    public long getLong128Hi(int columnIndex) {
+<span class="fc" id="L172">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L173">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L174">        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;</span>
+<span class="fc" id="L175">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L176">        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);</span>
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+<span class="fc" id="L181">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L182">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L183">        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;</span>
+<span class="fc" id="L184">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L185">        return reader.getColumn(absoluteColumnIndex).getLong(offset);</span>
+    }
+
+    @Override
+    public void getLong256(int columnIndex, CharSink sink) {
+<span class="fc" id="L190">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L191">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L192">        final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;</span>
+<span class="fc" id="L193">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L194">        reader.getColumn(absoluteColumnIndex).getLong256(offset, sink);</span>
+<span class="fc" id="L195">    }</span>
+
+    @Override
+    public Long256 getLong256A(int columnIndex) {
+<span class="fc" id="L199">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L200">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L201">        final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;</span>
+<span class="fc" id="L202">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L203">        return reader.getColumn(absoluteColumnIndex).getLong256A(offset);</span>
+    }
+
+    @Override
+    public Long256 getLong256B(int columnIndex) {
+<span class="fc" id="L208">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L209">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L210">        final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;</span>
+<span class="fc" id="L211">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L212">        return reader.getColumn(absoluteColumnIndex).getLong256B(offset);</span>
+    }
+
+    @Override
+    public long getRowId() {
+<span class="fc" id="L217">        return Rows.toRowID(reader.getPartitionIndex(columnBase), recordIndex);</span>
+    }
+
+    @Override
+    public short getShort(int columnIndex) {
+<span class="fc" id="L222">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L223">        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);</span>
+<span class="fc" id="L224">        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;</span>
+<span class="fc" id="L225">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);</span>
+<span class="fc" id="L226">        return reader.getColumn(absoluteColumnIndex).getShort(offset);</span>
+    }
+
+    @Override
+    public CharSequence getStr(int columnIndex) {
+<span class="fc" id="L231">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L232">        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;</span>
+<span class="fc" id="L233">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(</span>
+                recordIndex,
+<span class="fc" id="L235">                TableReader.getPrimaryColumnIndex(columnBase, col)</span>
+        );
+<span class="fc" id="L237">        long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);</span>
+<span class="pc bpc" id="L238" title="3 of 6 branches missed.">        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);</span>
+<span class="fc" id="L239">        return reader.getColumn(absoluteColumnIndex).getStr(offset);</span>
+    }
+
+    @Override
+    public CharSequence getStrB(int columnIndex) {
+<span class="fc" id="L244">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L245">        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;</span>
+<span class="fc" id="L246">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(</span>
+                recordIndex,
+<span class="fc" id="L248">                TableReader.getPrimaryColumnIndex(columnBase, col)</span>
+        );
+<span class="fc" id="L250">        return reader.getColumn(absoluteColumnIndex).getStr2(</span>
+<span class="fc" id="L251">                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)</span>
+        );
+    }
+
+    @Override
+    public int getStrLen(int columnIndex) {
+<span class="fc" id="L257">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L258">        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;</span>
+<span class="fc" id="L259">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(</span>
+                recordIndex,
+<span class="fc" id="L261">                TableReader.getPrimaryColumnIndex(columnBase, col)</span>
+        );
+<span class="fc" id="L263">        return reader.getColumn(absoluteColumnIndex).getStrLen(</span>
+<span class="fc" id="L264">                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)</span>
+        );
+    }
+
+    @Override
+    public CharSequence getSym(int columnIndex) {
+<span class="fc" id="L270">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L271">        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;</span>
+<span class="fc" id="L272">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(</span>
+                offset,
+<span class="fc" id="L274">                TableReader.getPrimaryColumnIndex(columnBase, col)</span>
+        );
+<span class="fc" id="L276">        return reader.getSymbolMapReader(col).valueOf(reader.getColumn(absoluteColumnIndex).getInt(offset));</span>
+    }
+
+    @Override
+    public CharSequence getSymB(int columnIndex) {
+<span class="fc" id="L281">        final int col = deferenceColumn(columnIndex);</span>
+<span class="fc" id="L282">        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;</span>
+<span class="fc" id="L283">        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(</span>
+                offset,
+<span class="fc" id="L285">                TableReader.getPrimaryColumnIndex(columnBase, col)</span>
+        );
+<span class="fc" id="L287">        return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));</span>
+    }
+
+    @Override
+    public long getUpdateRowId() {
+<span class="fc" id="L292">        return getRowId();</span>
+    }
+
+    public void incrementRecordIndex() {
+<span class="nc" id="L296">        recordIndex++;</span>
+<span class="nc" id="L297">    }</span>
+
+    public void jumpTo(int partitionIndex, long recordIndex) {
+<span class="fc" id="L300">        this.columnBase = reader.getColumnBase(partitionIndex);</span>
+<span class="fc" id="L301">        this.recordIndex = recordIndex;</span>
+<span class="fc" id="L302">    }</span>
+
+    public void of(TableReader reader) {
+<span class="fc" id="L305">        this.reader = reader;</span>
+<span class="fc" id="L306">    }</span>
+
+    public void setRecordIndex(long recordIndex) {
+<span class="fc" id="L309">        this.recordIndex = recordIndex;</span>
+<span class="fc" id="L310">    }</span>
+
+    private int deferenceColumn(int columnIndex) {
+<span class="fc" id="L313">        return columnIndexes.getQuick(columnIndex);</span>
+    }
+
+    private long getAdjustedRecordIndex(int col) {
+<span class="pc bpc" id="L317" title="2 of 4 branches missed.">        assert col &gt; -1 &amp;&amp; col &lt; reader.getColumnCount() : &quot;Column index out of bounds: &quot; + col + &quot; &gt;= &quot; + reader.getColumnCount();</span>
+<span class="fc" id="L318">        return recordIndex - reader.getColumnTop(columnBase, col);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TextImportRequestTask.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.text</a> &gt; <span class="el_source">TextImportRequestTask.java</span></div><h1>TextImportRequestTask.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.text;
+
+import io.questdb.std.Mutable;
+
+<span class="fc" id="L29">public class TextImportRequestTask implements Mutable {</span>
+    private int atomicity;
+    private byte delimiter;
+    private String fileName;
+    private boolean headerFlag;
+    private long importId;
+    private int partitionBy;
+    private String tableName;
+    private String timestampColumnName;
+    private String timestampFormat;
+
+    @Override
+    public void clear() {
+<span class="fc" id="L42">        this.importId = -1;</span>
+<span class="fc" id="L43">        this.tableName = null;</span>
+<span class="fc" id="L44">        this.fileName = null;</span>
+<span class="fc" id="L45">        this.headerFlag = false;</span>
+<span class="fc" id="L46">        this.timestampColumnName = null;</span>
+<span class="fc" id="L47">        this.delimiter = 0;</span>
+<span class="fc" id="L48">        this.timestampFormat = null;</span>
+<span class="fc" id="L49">        this.partitionBy = -1;</span>
+<span class="fc" id="L50">        this.atomicity = -1;</span>
+<span class="fc" id="L51">    }</span>
+
+    public int getAtomicity() {
+<span class="fc" id="L54">        return atomicity;</span>
+    }
+
+    public byte getDelimiter() {
+<span class="fc" id="L58">        return delimiter;</span>
+    }
+
+    public String getFileName() {
+<span class="fc" id="L62">        return fileName;</span>
+    }
+
+    public long getImportId() {
+<span class="fc" id="L66">        return importId;</span>
+    }
+
+    public int getPartitionBy() {
+<span class="fc" id="L70">        return partitionBy;</span>
+    }
+
+    public String getTableName() {
+<span class="fc" id="L74">        return tableName;</span>
+    }
+
+    public String getTimestampColumnName() {
+<span class="fc" id="L78">        return timestampColumnName;</span>
+    }
+
+    public String getTimestampFormat() {
+<span class="fc" id="L82">        return timestampFormat;</span>
+    }
+
+    public boolean isHeaderFlag() {
+<span class="fc" id="L86">        return headerFlag;</span>
+    }
+
+    public void of(
+            long importId,
+            String tableName,
+            String fileName,
+            boolean headerFlag,
+            String timestampColumnName,
+            byte delimiter,
+            String timestampFormat,
+            int partitionBy,
+            int atomicity
+    ) {
+<span class="fc" id="L100">        this.clear();</span>
+<span class="fc" id="L101">        this.importId = importId;</span>
+<span class="fc" id="L102">        this.tableName = tableName;</span>
+<span class="fc" id="L103">        this.fileName = fileName;</span>
+<span class="fc" id="L104">        this.headerFlag = headerFlag;</span>
+<span class="fc" id="L105">        this.timestampColumnName = timestampColumnName;</span>
+<span class="fc" id="L106">        this.delimiter = delimiter;</span>
+<span class="fc" id="L107">        this.timestampFormat = timestampFormat;</span>
+<span class="fc" id="L108">        this.partitionBy = partitionBy;</span>
+<span class="fc" id="L109">        this.atomicity = atomicity;</span>
+<span class="fc" id="L110">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

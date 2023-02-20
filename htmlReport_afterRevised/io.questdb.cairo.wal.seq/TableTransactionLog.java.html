@@ -1,0 +1,448 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableTransactionLog.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal.seq</a> &gt; <span class="el_source">TableTransactionLog.java</span></div><h1>TableTransactionLog.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal.seq;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MemorySerializer;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+import java.lang.ThreadLocal;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.*;
+
+public class TableTransactionLog implements Closeable {
+    public final static int HEADER_RESERVED = 8 * Long.BYTES;
+    public static final long MAX_TXN_OFFSET = Integer.BYTES;
+    public static final long HEADER_SIZE = MAX_TXN_OFFSET + Long.BYTES + HEADER_RESERVED;
+    public static final int STRUCTURAL_CHANGE_WAL_ID = -1;
+<span class="fc" id="L54">    private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);</span>
+    private static final long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
+    private static final long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
+    private static final long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
+    private static final long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
+    private static final long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
+    public static final long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
+<span class="fc" id="L61">    private static final ThreadLocal&lt;AlterOperation&gt; tlAlterOperation = new ThreadLocal&lt;&gt;();</span>
+<span class="fc" id="L62">    private static final ThreadLocal&lt;TableMetadataChangeLogImpl&gt; tlStructChangeCursor = new ThreadLocal&lt;&gt;();</span>
+<span class="fc" id="L63">    private static final ThreadLocal&lt;TransactionLogCursorImpl&gt; tlTransactionLogCursor = new ThreadLocal&lt;&gt;();</span>
+    private final FilesFacade ff;
+<span class="fc" id="L65">    private final AtomicLong maxTxn = new AtomicLong();</span>
+<span class="fc" id="L66">    private final StringSink rootPath = new StringSink();</span>
+<span class="fc" id="L67">    private final MemoryCMARW txnMem = Vm.getCMARWInstance();</span>
+<span class="fc" id="L68">    private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();</span>
+<span class="fc" id="L69">    private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();</span>
+
+<span class="fc" id="L71">    TableTransactionLog(FilesFacade ff) {</span>
+<span class="fc" id="L72">        this.ff = ff;</span>
+<span class="fc" id="L73">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        if (txnMem.isOpen()) {</span>
+<span class="fc" id="L78">            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);</span>
+<span class="pc bpc" id="L79" title="1 of 2 branches missed.">            assert maxTxnInFile == maxTxn.get() : &quot;Max txn in the file &quot; + maxTxnInFile + &quot; but in memory is &quot; + maxTxn.get();</span>
+<span class="fc" id="L80">            txnMem.close(false);</span>
+<span class="fc" id="L81">            txnMetaMem.close(false);</span>
+<span class="fc" id="L82">            txnMetaMemIndex.close(false);</span>
+        }
+<span class="fc" id="L84">    }</span>
+
+    private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+<span class="fc" id="L87">        final int rootLen = path.length();</span>
+<span class="fc" id="L88">        path.concat(fileName).$();</span>
+        try {
+<span class="fc" id="L90">            return TableUtils.openRO(ff, path, LOG);</span>
+        } finally {
+<span class="fc" id="L92">            path.trimTo(rootLen);</span>
+        }
+    }
+
+    private void syncDiskWrites() {
+<span class="fc" id="L97">        txnMetaMemIndex.sync(false);</span>
+<span class="fc" id="L98">        txnMetaMem.sync(false);</span>
+<span class="fc" id="L99">        txnMem.sync(false);</span>
+<span class="fc" id="L100">    }</span>
+
+    @NotNull
+    static TableMetadataChangeLog getTableMetadataChangeLog() {
+<span class="fc" id="L104">        TableMetadataChangeLogImpl instance = tlStructChangeCursor.get();</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        if (instance == null) {</span>
+<span class="fc" id="L106">            tlStructChangeCursor.set(instance = new TableMetadataChangeLogImpl());</span>
+        }
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">        return instance;</span>
+    }
+
+    long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp) {
+<span class="fc" id="L112">        txnMem.putLong(structureVersion);</span>
+<span class="fc" id="L113">        txnMem.putInt(walId);</span>
+<span class="fc" id="L114">        txnMem.putInt(segmentId);</span>
+<span class="fc" id="L115">        txnMem.putInt(segmentTxn);</span>
+<span class="fc" id="L116">        txnMem.putLong(timestamp);</span>
+
+<span class="fc" id="L118">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L119">        long maxTxn = this.maxTxn.incrementAndGet();</span>
+<span class="fc" id="L120">        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);</span>
+        // Transactions are 1 based here
+<span class="fc" id="L122">        return maxTxn;</span>
+    }
+
+    void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        assert newStructureVersion == txnMetaMemIndex.getAppendOffset() / Long.BYTES;</span>
+
+<span class="fc" id="L128">        txnMem.putLong(newStructureVersion);</span>
+<span class="fc" id="L129">        txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);</span>
+<span class="fc" id="L130">        txnMem.putInt(-1);</span>
+<span class="fc" id="L131">        txnMem.putInt(-1);</span>
+<span class="fc" id="L132">        txnMem.putLong(timestamp);</span>
+
+<span class="fc" id="L134">        txnMetaMem.putInt(0);</span>
+<span class="fc" id="L135">        long varMemBegin = txnMetaMem.getAppendOffset();</span>
+<span class="fc" id="L136">        serializer.toSink(instance, txnMetaMem);</span>
+<span class="fc" id="L137">        int len = (int) (txnMetaMem.getAppendOffset() - varMemBegin);</span>
+<span class="fc" id="L138">        txnMetaMem.putInt(varMemBegin - Integer.BYTES, len);</span>
+<span class="fc" id="L139">        txnMetaMemIndex.putLong(varMemBegin + len);</span>
+<span class="fc" id="L140">    }</span>
+
+    long endMetadataChangeEntry() {
+<span class="fc" id="L143">        syncDiskWrites();</span>
+
+<span class="fc" id="L145">        Unsafe.getUnsafe().storeFence();</span>
+
+        // Transactions are 1 based here
+<span class="fc" id="L148">        long nextTxn = maxTxn.incrementAndGet();</span>
+<span class="fc" id="L149">        txnMem.putLong(MAX_TXN_OFFSET, nextTxn);</span>
+
+<span class="fc" id="L151">        return nextTxn;</span>
+    }
+
+    TransactionLogCursor getCursor(long txnLo) {
+<span class="fc" id="L155">        final Path path = Path.PATH.get().of(rootPath);</span>
+<span class="fc" id="L156">        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();</span>
+<span class="fc bfc" id="L157" title="All 2 branches covered.">        if (cursor == null) {</span>
+<span class="fc" id="L158">            cursor = new TransactionLogCursorImpl(ff, txnLo, path);</span>
+<span class="fc" id="L159">            tlTransactionLogCursor.set(cursor);</span>
+<span class="fc" id="L160">            return cursor;</span>
+        }
+<span class="fc" id="L162">        return cursor.of(ff, txnLo, path);</span>
+    }
+
+    @NotNull
+    TableMetadataChangeLog getTableMetadataChangeLog(TableToken tableToken, long structureVersionLo, MemorySerializer serializer) {
+<span class="fc" id="L167">        final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();</span>
+<span class="fc" id="L168">        cursor.of(ff, tableToken, structureVersionLo, serializer, Path.getThreadLocal(rootPath));</span>
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">        return cursor;</span>
+    }
+
+    long lastTxn() {
+<span class="fc" id="L173">        return maxTxn.get();</span>
+    }
+
+    void open(Path path) {
+<span class="fc" id="L177">        this.rootPath.clear();</span>
+<span class="fc" id="L178">        path.toSink(this.rootPath);</span>
+
+<span class="fc" id="L180">        final int pathLength = path.length();</span>
+<span class="fc" id="L181">        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);</span>
+<span class="fc" id="L182">        openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);</span>
+<span class="fc" id="L183">        openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);</span>
+
+<span class="fc" id="L185">        long lastTxn = txnMem.getLong(MAX_TXN_OFFSET);</span>
+<span class="fc" id="L186">        maxTxn.set(lastTxn);</span>
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        if (lastTxn == 0) {</span>
+<span class="fc" id="L189">            txnMem.jumpTo(0L);</span>
+<span class="fc" id="L190">            txnMem.putInt(WAL_FORMAT_VERSION);</span>
+<span class="fc" id="L191">            txnMem.putLong(0L);</span>
+<span class="fc" id="L192">            txnMem.putLong(0L);</span>
+<span class="fc" id="L193">            txnMem.jumpTo(HEADER_SIZE);</span>
+
+<span class="fc" id="L195">            txnMetaMemIndex.jumpTo(0L);</span>
+<span class="fc" id="L196">            txnMetaMemIndex.putLong(0L); // N + 1, first entry is 0.</span>
+<span class="fc" id="L197">            txnMetaMem.jumpTo(0L);</span>
+        } else {
+<span class="fc" id="L199">            long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);</span>
+<span class="fc" id="L200">            txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);</span>
+<span class="fc" id="L201">            long structureAppendOffset = maxStructureVersion * Long.BYTES;</span>
+<span class="fc" id="L202">            long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);</span>
+<span class="fc" id="L203">            txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);</span>
+<span class="fc" id="L204">            txnMetaMem.jumpTo(txnMetaMemSize);</span>
+        }
+<span class="fc" id="L206">    }</span>
+
+    AlterOperation readTableMetadataChangeLog(long structureVersion, MemorySerializer serializer) {
+<span class="fc" id="L209">        long txnMetaOffset = txnMetaMemIndex.getLong(structureVersion * Long.BYTES);</span>
+<span class="fc" id="L210">        int recordSize = txnMetaMem.getInt(txnMetaOffset);</span>
+<span class="pc bpc" id="L211" title="2 of 4 branches missed.">        if (recordSize &lt; 0 || recordSize &gt; Files.PAGE_SIZE) {</span>
+<span class="nc" id="L212">            throw CairoException.critical(0).put(&quot;invalid sequencer txn metadata [offset=&quot;).put(txnMetaOffset).put(&quot;, recordSize=&quot;).put(recordSize).put(']');</span>
+        }
+<span class="fc" id="L214">        txnMetaOffset += Integer.BYTES;</span>
+<span class="fc" id="L215">        AlterOperation alterToDeserializeTo = tlAlterOperation.get();</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">        if (alterToDeserializeTo == null) {</span>
+<span class="fc" id="L217">            tlAlterOperation.set(alterToDeserializeTo = new AlterOperation());</span>
+        }
+<span class="fc" id="L219">        serializer.fromSink(alterToDeserializeTo, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);</span>
+<span class="fc" id="L220">        txnMetaMem.jumpTo(txnMetaOffset + recordSize);</span>
+<span class="fc" id="L221">        return alterToDeserializeTo;</span>
+    }
+
+<span class="fc" id="L224">    private static class TableMetadataChangeLogImpl implements TableMetadataChangeLog {</span>
+<span class="fc" id="L225">        private final AlterOperation alterOp = new AlterOperation();</span>
+<span class="fc" id="L226">        private final MemoryFCRImpl txnMetaMem = new MemoryFCRImpl();</span>
+        private FilesFacade ff;
+        private MemorySerializer serializer;
+        private TableToken tableToken;
+        private long txnMetaAddress;
+        private long txnMetaOffset;
+        private long txnMetaOffsetHi;
+
+        @Override
+        public void close() {
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            if (txnMetaAddress &gt; 0) {</span>
+<span class="fc" id="L237">                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MemoryTag.MMAP_TX_LOG_CURSOR);</span>
+<span class="fc" id="L238">                txnMetaAddress = 0;</span>
+            }
+<span class="fc" id="L240">            txnMetaOffset = 0;</span>
+<span class="fc" id="L241">            txnMetaOffsetHi = 0;</span>
+<span class="fc" id="L242">        }</span>
+
+        @Override
+        public TableToken getTableToken() {
+<span class="nc" id="L246">            return tableToken;</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L251" title="All 2 branches covered.">            return txnMetaOffset &lt; txnMetaOffsetHi;</span>
+        }
+
+        @Override
+        public TableMetadataChange next() {
+<span class="fc" id="L256">            int recordSize = txnMetaMem.getInt(txnMetaOffset);</span>
+<span class="pc bpc" id="L257" title="2 of 4 branches missed.">            if (recordSize &lt; 0 || recordSize &gt; Files.PAGE_SIZE) {</span>
+<span class="nc" id="L258">                throw CairoException.critical(0).put(&quot;invalid sequencer txn metadata [offset=&quot;).put(txnMetaOffset).put(&quot;, recordSize=&quot;).put(recordSize).put(']');</span>
+            }
+<span class="fc" id="L260">            txnMetaOffset += Integer.BYTES;</span>
+<span class="fc" id="L261">            serializer.fromSink(alterOp, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);</span>
+<span class="fc" id="L262">            txnMetaOffset += recordSize;</span>
+<span class="fc" id="L263">            return alterOp;</span>
+        }
+
+        public void of(
+                FilesFacade ff,
+                TableToken tableToken,
+                long structureVersionLo,
+                MemorySerializer serializer,
+                @Transient final Path path
+        ) {
+<span class="fc" id="L273">            this.tableToken = tableToken;</span>
+
+            // deallocates current state
+<span class="fc" id="L276">            close();</span>
+
+<span class="fc" id="L278">            this.ff = ff;</span>
+<span class="fc" id="L279">            this.serializer = serializer;</span>
+
+<span class="fc" id="L281">            int txnFd = -1;</span>
+<span class="fc" id="L282">            int txnMetaFd = -1;</span>
+<span class="fc" id="L283">            int txnMetaIndexFd = -1;</span>
+            try {
+<span class="fc" id="L285">                txnFd = openFileRO(ff, path, TXNLOG_FILE_NAME);</span>
+<span class="fc" id="L286">                txnMetaFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);</span>
+<span class="fc" id="L287">                txnMetaIndexFd = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);</span>
+<span class="fc" id="L288">                long txnCount = ff.readNonNegativeLong(txnFd, MAX_TXN_OFFSET);</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">                if (txnCount &gt; -1L) {</span>
+
+<span class="fc" id="L291">                    long maxStructureVersion = ff.readNonNegativeLong(txnFd, HEADER_SIZE + (txnCount - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);</span>
+<span class="pc bpc" id="L292" title="1 of 2 branches missed.">                    if (maxStructureVersion &gt; structureVersionLo) {</span>
+<span class="fc" id="L293">                        txnMetaOffset = ff.readNonNegativeLong(txnMetaIndexFd, structureVersionLo * Long.BYTES);</span>
+<span class="pc bpc" id="L294" title="1 of 2 branches missed.">                        if (txnMetaOffset &gt; -1L) {</span>
+<span class="fc" id="L295">                            txnMetaOffsetHi = ff.readNonNegativeLong(txnMetaIndexFd, maxStructureVersion * Long.BYTES);</span>
+
+<span class="pc bpc" id="L297" title="1 of 2 branches missed.">                            if (txnMetaOffsetHi &gt; txnMetaOffset) {</span>
+<span class="fc" id="L298">                                txnMetaAddress = ff.mmap(</span>
+                                        txnMetaFd,
+                                        txnMetaOffsetHi,
+                                        0L,
+                                        Files.MAP_RO,
+                                        MemoryTag.MMAP_TX_LOG_CURSOR
+                                );
+<span class="pc bpc" id="L305" title="1 of 2 branches missed.">                                if (txnMetaAddress &lt; 0) {</span>
+<span class="nc" id="L306">                                    txnMetaAddress = 0;</span>
+<span class="nc" id="L307">                                    close();</span>
+                                } else {
+<span class="fc" id="L309">                                    txnMetaMem.of(txnMetaAddress, txnMetaOffsetHi);</span>
+<span class="fc" id="L310">                                    return;</span>
+                                }
+                            }
+                        }
+                    } else {
+                        // Set empty. This is not an error, it just means that there are no changes.
+<span class="nc" id="L316">                        txnMetaOffset = txnMetaOffsetHi = 0;</span>
+                    }
+                }
+
+<span class="fc" id="L320">                throw CairoException.critical(0).put(&quot;expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=&quot;).put(structureVersionLo).put(']');</span>
+            } finally {
+<span class="fc" id="L322">                ff.close(txnFd);</span>
+<span class="fc" id="L323">                ff.close(txnMetaFd);</span>
+<span class="fc" id="L324">                ff.close(txnMetaIndexFd);</span>
+            }
+        }
+    }
+
+    private static class TransactionLogCursorImpl implements TransactionLogCursor {
+        private long address;
+        private int fd;
+        private FilesFacade ff;
+        private long txn;
+        private long txnCount;
+        private long txnLo;
+        private long txnOffset;
+
+<span class="fc" id="L338">        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {</span>
+<span class="fc" id="L339">            of(ff, txnLo, path);</span>
+<span class="fc" id="L340">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L344">            ff.close(fd);</span>
+<span class="fc" id="L345">            ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);</span>
+<span class="fc" id="L346">        }</span>
+
+        @Override
+        public long getCommitTimestamp() {
+<span class="fc" id="L350">            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);</span>
+        }
+
+        @Override
+        public int getSegmentId() {
+<span class="fc" id="L355">            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);</span>
+        }
+
+        @Override
+        public int getSegmentTxn() {
+<span class="fc" id="L360">            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);</span>
+        }
+
+        @Override
+        public long getStructureVersion() {
+<span class="fc" id="L365">            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);</span>
+        }
+
+        @Override
+        public long getTxn() {
+<span class="fc" id="L370">            return txn;</span>
+        }
+
+        @Override
+        public int getWalId() {
+<span class="fc" id="L375">            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L380" title="All 2 branches covered.">            if (hasNext(getMappedLen())) {</span>
+<span class="fc" id="L381">                return true;</span>
+            }
+
+<span class="fc" id="L384">            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);</span>
+<span class="fc bfc" id="L385" title="All 2 branches covered.">            if (newTxnCount &gt; txnCount) {</span>
+<span class="fc" id="L386">                final long oldSize = getMappedLen();</span>
+<span class="fc" id="L387">                txnCount = newTxnCount;</span>
+<span class="fc" id="L388">                final long newSize = getMappedLen();</span>
+<span class="fc" id="L389">                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);</span>
+
+<span class="fc" id="L391">                return hasNext(newSize);</span>
+            }
+<span class="fc" id="L393">            return false;</span>
+        }
+
+        @Override
+        public boolean reset() {
+<span class="fc" id="L398">            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);</span>
+<span class="fc bfc" id="L399" title="All 2 branches covered.">            if (newTxnCount &gt; txnCount) {</span>
+<span class="fc" id="L400">                final long oldSize = getMappedLen();</span>
+<span class="fc" id="L401">                txnCount = newTxnCount;</span>
+<span class="fc" id="L402">                final long newSize = getMappedLen();</span>
+<span class="fc" id="L403">                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);</span>
+
+<span class="fc" id="L405">                this.txnLo = txn - 1;</span>
+<span class="fc" id="L406">                this.txnOffset -= RECORD_SIZE;</span>
+<span class="fc" id="L407">                return true;</span>
+            }
+<span class="fc" id="L409">            return false;</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="pc bpc" id="L414" title="1 of 2 branches missed.">            if (txnCount &gt; -1L) {</span>
+<span class="fc" id="L415">                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;</span>
+<span class="fc" id="L416">                this.txn = txnLo;</span>
+            }
+<span class="fc" id="L418">        }</span>
+
+        private long getMappedLen() {
+<span class="fc" id="L421">            return txnCount * RECORD_SIZE + HEADER_SIZE;</span>
+        }
+
+        private boolean hasNext(long mappedLen) {
+<span class="fc bfc" id="L425" title="All 2 branches covered.">            if (txnOffset + 2 * RECORD_SIZE &lt;= mappedLen) {</span>
+<span class="fc" id="L426">                txnOffset += RECORD_SIZE;</span>
+<span class="fc" id="L427">                txn++;</span>
+<span class="fc" id="L428">                return true;</span>
+            }
+<span class="fc" id="L430">            return false;</span>
+        }
+
+        @NotNull
+        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
+<span class="fc" id="L435">            this.ff = ff;</span>
+<span class="fc" id="L436">            this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);</span>
+<span class="fc" id="L437">            this.txnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);</span>
+<span class="pc bpc" id="L438" title="1 of 2 branches missed.">            if (txnCount &gt; -1L) {</span>
+<span class="fc" id="L439">                this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);</span>
+<span class="fc" id="L440">                this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;</span>
+            }
+<span class="fc" id="L442">            this.txnLo = txnLo;</span>
+<span class="fc" id="L443">            txn = txnLo;</span>
+<span class="pc bpc" id="L444" title="1 of 2 branches missed.">            return this;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

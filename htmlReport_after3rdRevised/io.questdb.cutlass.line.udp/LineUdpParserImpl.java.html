@@ -1,0 +1,643 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineUdpParserImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.udp</a> &gt; <span class="el_source">LineUdpParserImpl.java</span></div><h1>LineUdpParserImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.udp;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
+
+import java.io.Closeable;
+
+import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+
+public class LineUdpParserImpl implements LineUdpParser, Closeable {
+<span class="fc" id="L44">    private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);</span>
+<span class="fc" id="L45">    private static final FieldNameParser NOOP_FIELD_NAME = name -&gt; {</span>
+<span class="fc" id="L46">    };</span>
+<span class="fc" id="L47">    private static final FieldValueParser NOOP_FIELD_VALUE = (value, cache) -&gt; {</span>
+<span class="fc" id="L48">    };</span>
+<span class="fc" id="L49">    private static final LineEndParser NOOP_LINE_END = cache -&gt; {</span>
+<span class="fc" id="L50">    };</span>
+    private static final String WRITER_LOCK_REASON = &quot;ilpUdp&quot;;
+    private final boolean autoCreateNewColumns;
+    private final boolean autoCreateNewTables;
+    private final CairoSecurityContext cairoSecurityContext;
+    private final MicrosecondClock clock;
+<span class="fc" id="L56">    private final LongList columnIndexAndType = new LongList();</span>
+<span class="fc" id="L57">    private final LongList columnNameType = new LongList();</span>
+<span class="fc" id="L58">    private final LongList columnValues = new LongList();</span>
+<span class="fc" id="L59">    private final CharSequenceObjHashMap&lt;TableWriter&gt; commitList = new CharSequenceObjHashMap&lt;&gt;();</span>
+    private final CairoConfiguration configuration;
+<span class="fc" id="L61">    private final MemoryMARW ddlMem = Vm.getMARWInstance();</span>
+    private final short defaultFloatColumnType;
+    private final short defaultIntegerColumnType;
+    private final CairoEngine engine;
+<span class="fc" id="L65">    private final IntList geoHashBitsSizeByColIdx = new IntList(); // 0 if not a GeoHash, else bits precision</span>
+<span class="fc" id="L66">    private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;</span>
+<span class="fc" id="L67">    private final Path path = new Path();</span>
+<span class="fc" id="L68">    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();</span>
+    private final LineProtoTimestampAdapter timestampAdapter;
+    private final LineUdpReceiverConfiguration udpConfiguration;
+<span class="fc" id="L71">    private final CharSequenceObjHashMap&lt;CacheEntry&gt; writerCache = new CharSequenceObjHashMap&lt;&gt;();</span>
+    // state
+    // cache entry index is always a negative value
+<span class="fc" id="L74">    private int cacheEntryIndex = 0;</span>
+    private int columnIndex;
+    private long columnName;
+    private int columnType;
+    private RecordMetadata metadata;
+<span class="fc" id="L79">    private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;</span>
+    private FieldNameParser onFieldName;
+    private FieldValueParser onFieldValue;
+    private LineEndParser onLineEnd;
+    private FieldValueParser onTagValue;
+<span class="fc" id="L84">    private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;</span>
+<span class="fc" id="L85">    private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;</span>
+    private long tableName;
+    private TableToken tableToken;
+    private TableWriter writer;
+<span class="fc" id="L89">    private final LineEndParser MY_LINE_END = this::appendRow;</span>
+<span class="fc" id="L90">    private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;</span>
+<span class="fc" id="L91">    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;</span>
+<span class="fc" id="L92">    private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;</span>
+
+    public LineUdpParserImpl(
+            CairoEngine engine,
+            LineUdpReceiverConfiguration udpConfiguration
+<span class="fc" id="L97">    ) {</span>
+<span class="fc" id="L98">        this.configuration = engine.getConfiguration();</span>
+<span class="fc" id="L99">        this.clock = configuration.getMicrosecondClock();</span>
+<span class="fc" id="L100">        this.engine = engine;</span>
+<span class="fc" id="L101">        this.udpConfiguration = udpConfiguration;</span>
+<span class="fc" id="L102">        this.cairoSecurityContext = udpConfiguration.getCairoSecurityContext();</span>
+<span class="fc" id="L103">        this.timestampAdapter = udpConfiguration.getTimestampAdapter();</span>
+
+<span class="fc" id="L105">        defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();</span>
+<span class="fc" id="L106">        defaultIntegerColumnType = udpConfiguration.getDefaultColumnTypeForInteger();</span>
+<span class="fc" id="L107">        this.autoCreateNewTables = udpConfiguration.getAutoCreateNewTables();</span>
+<span class="fc" id="L108">        this.autoCreateNewColumns = udpConfiguration.getAutoCreateNewColumns();</span>
+<span class="fc" id="L109">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L113">        Misc.free(path);</span>
+<span class="fc" id="L114">        Misc.free(ddlMem);</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">        for (int i = 0, n = writerCache.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L116">            Misc.free(writerCache.valueQuick(i).writer);</span>
+        }
+<span class="fc" id="L118">    }</span>
+
+    public void commitAll(int commitMode) {
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        if (writer != null) {</span>
+<span class="fc" id="L122">            writer.commit(commitMode);</span>
+        }
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        for (int i = 0, n = commitList.size(); i &lt; n; i++) {</span>
+            //noinspection resource
+<span class="fc" id="L126">            commitList.valueQuick(i).commit(commitMode);</span>
+        }
+<span class="fc" id="L128">        commitList.clear();</span>
+<span class="fc" id="L129">    }</span>
+
+    @Override
+    public void onError(int position, int state, int code) {
+<span class="fc" id="L133">        clearState();</span>
+<span class="fc" id="L134">    }</span>
+
+    @Override
+    public void onEvent(CachedCharSequence token, int eventType, CharSequenceCache cache) {
+
+<span class="pc bpc" id="L139" title="1 of 6 branches missed.">        switch (eventType) {</span>
+            case EVT_MEASUREMENT:
+<span class="fc" id="L141">                int wrtIndex = writerCache.keyIndex(token);</span>
+                // this condition relies on the fact that this.cacheEntryIndex is always negative
+                // which indicates that entry is in cache
+<span class="fc bfc" id="L144" title="All 2 branches covered.">                if (wrtIndex == this.cacheEntryIndex) {</span>
+                    // same table as from last line?
+                    // make sure we append it in case it was in &quot;create&quot; mode
+<span class="fc bfc" id="L147" title="All 2 branches covered.">                    if (writer != null) {</span>
+<span class="fc" id="L148">                        switchModeToAppend();</span>
+                    } else {
+<span class="fc" id="L150">                        initCacheEntry(token, writerCache.valueAtQuick(wrtIndex));</span>
+                    }
+                } else {
+<span class="fc" id="L153">                    switchTable(token, wrtIndex);</span>
+                }
+<span class="fc" id="L155">                break;</span>
+            case EVT_FIELD_NAME:
+            case EVT_TAG_NAME:
+<span class="fc" id="L158">                onFieldName.parse(token);</span>
+<span class="fc" id="L159">                break;</span>
+            case EVT_TAG_VALUE:
+<span class="fc" id="L161">                onTagValue.parse(token, cache);</span>
+<span class="fc" id="L162">                break;</span>
+            case EVT_FIELD_VALUE:
+<span class="fc" id="L164">                onFieldValue.parse(token, cache);</span>
+<span class="fc" id="L165">                break;</span>
+            case EVT_TIMESTAMP:
+<span class="fc" id="L167">                columnValues.add(token.getCacheAddress());</span>
+<span class="fc" id="L168">                geoHashBitsSizeByColIdx.add(0);</span>
+<span class="fc" id="L169">                break;</span>
+            default:
+                break;
+        }
+<span class="fc" id="L173">    }</span>
+
+    @Override
+    public void onLineEnd(CharSequenceCache cache) {
+        try {
+<span class="fc" id="L178">            onLineEnd.parse(cache);</span>
+<span class="fc" id="L179">        } catch (CairoException e) {</span>
+<span class="fc" id="L180">            LOG.error().$((Sinkable) e).$();</span>
+<span class="fc" id="L181">        }</span>
+<span class="fc" id="L182">        clearState();</span>
+<span class="fc" id="L183">    }</span>
+
+    private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
+<span class="fc" id="L186">        TableWriter writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);</span>
+<span class="fc" id="L187">        this.writer = writer;</span>
+<span class="fc" id="L188">        this.metadata = writer.getMetadata();</span>
+<span class="fc" id="L189">        writerCache.valueAtQuick(cacheEntryIndex).writer = writer;</span>
+
+<span class="fc" id="L191">        final int columnCount = columnNameType.size() / 2;</span>
+<span class="fc" id="L192">        final TableWriter.Row row = createNewRow(cache, columnCount);</span>
+<span class="fc bfc" id="L193" title="All 2 branches covered.">        if (row == null) {</span>
+<span class="fc" id="L194">            return;</span>
+        }
+
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L198">            LineUdpParserSupport.putValue(</span>
+                    row,
+<span class="fc" id="L200">                    (int) columnNameType.getQuick(i * 2 + 1),</span>
+<span class="fc" id="L201">                    geoHashBitsSizeByColIdx.getQuick(i),</span>
+                    i,
+<span class="fc" id="L203">                    cache.get(columnValues.getQuick(i))</span>
+            );
+        }
+<span class="fc" id="L206">        row.append();</span>
+<span class="fc" id="L207">    }</span>
+
+    private void appendRow(CharSequenceCache cache) {
+<span class="fc" id="L210">        final int columnCount = columnIndexAndType.size();</span>
+<span class="fc" id="L211">        final TableWriter.Row row = createNewRow(cache, columnCount);</span>
+<span class="fc bfc" id="L212" title="All 2 branches covered.">        if (row == null) {</span>
+<span class="fc" id="L213">            return;</span>
+        }
+
+<span class="fc bfc" id="L216" title="All 2 branches covered.">        for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L217">            final long value = columnIndexAndType.getQuick(i);</span>
+<span class="fc" id="L218">            LineUdpParserSupport.putValue(</span>
+                    row,
+<span class="fc" id="L220">                    Numbers.decodeHighInt(value),</span>
+<span class="fc" id="L221">                    geoHashBitsSizeByColIdx.getQuick(i),</span>
+<span class="fc" id="L222">                    Numbers.decodeLowInt(value),</span>
+<span class="fc" id="L223">                    cache.get(columnValues.getQuick(i))</span>
+            );
+        }
+<span class="fc" id="L226">        row.append();</span>
+<span class="fc" id="L227">    }</span>
+
+    private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
+        try {
+<span class="fc" id="L231">            entry.writer = engine.getWriter(cairoSecurityContext, tableToken, WRITER_LOCK_REASON);</span>
+<span class="fc" id="L232">            this.tableToken = tableToken;</span>
+<span class="fc" id="L233">            this.tableName = tableName.getCacheAddress();</span>
+<span class="fc" id="L234">            createState(entry);</span>
+<span class="fc" id="L235">            LOG.info().$(&quot;cached writer [name=&quot;).$(tableName).$(']').$();</span>
+<span class="fc" id="L236">        } catch (CairoException ex) {</span>
+<span class="fc" id="L237">            LOG.error().$((Sinkable) ex).$();</span>
+<span class="fc" id="L238">            switchModeToSkipLine();</span>
+<span class="fc" id="L239">        }</span>
+<span class="fc" id="L240">    }</span>
+
+    private void clearState() {
+<span class="fc" id="L243">        columnNameType.clear();</span>
+<span class="fc" id="L244">        columnIndexAndType.clear();</span>
+<span class="fc" id="L245">        geoHashBitsSizeByColIdx.clear();</span>
+<span class="fc" id="L246">        columnValues.clear();</span>
+<span class="fc" id="L247">    }</span>
+
+    private TableWriter.Row createNewRow(CharSequenceCache cache, int columnCount) {
+<span class="fc" id="L250">        final int valueCount = columnValues.size();</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">        if (columnCount == valueCount) {</span>
+<span class="fc" id="L252">            return writer.newRow(clock.getTicks());</span>
+        } else {
+            try {
+<span class="fc" id="L255">                return writer.newRow(timestampAdapter.getMicros(cache.get(columnValues.getQuick(valueCount - 1))));</span>
+<span class="fc" id="L256">            } catch (NumericException e) {</span>
+<span class="fc" id="L257">                LOG.error().$(&quot;invalid timestamp: &quot;).$(cache.get(columnValues.getQuick(valueCount - 1))).$();</span>
+<span class="fc" id="L258">                return null;</span>
+            }
+        }
+    }
+
+    private void createState(CacheEntry entry) {
+<span class="fc" id="L264">        writer = entry.writer;</span>
+<span class="fc" id="L265">        metadata = writer.getMetadata();</span>
+<span class="fc" id="L266">        switchModeToAppend();</span>
+<span class="fc" id="L267">    }</span>
+
+    private void createTableAndAppendRow(CharSequenceCache cache) {
+<span class="fc" id="L270">        tableToken = engine.createTable(</span>
+                cairoSecurityContext,
+                ddlMem,
+                path,
+                true,
+<span class="fc" id="L275">                tableStructureAdapter.of(cache),</span>
+                false
+        );
+<span class="fc" id="L278">        appendFirstRowAndCacheWriter(cache);</span>
+<span class="fc" id="L279">    }</span>
+
+    private void initCacheEntry(CachedCharSequence token, CacheEntry entry) {
+<span class="fc" id="L282">        TableToken tableToken = engine.getTableTokenIfExists(token);</span>
+<span class="pc bpc" id="L283" title="1 of 3 branches missed.">        switch (entry.state) {</span>
+            case 0:
+<span class="fc" id="L285">                int exists = engine.getStatus(cairoSecurityContext, path, tableToken);</span>
+<span class="pc bpc" id="L286" title="1 of 3 branches missed.">                switch (exists) {</span>
+                    case TABLE_EXISTS:
+<span class="fc" id="L288">                        entry.state = 1;</span>
+<span class="fc" id="L289">                        cacheWriter(entry, token, tableToken);</span>
+<span class="fc" id="L290">                        break;</span>
+                    case TABLE_DOES_NOT_EXIST:
+<span class="fc bfc" id="L292" title="All 2 branches covered.">                        if (!autoCreateNewTables) {</span>
+<span class="fc" id="L293">                            throw CairoException.nonCritical()</span>
+<span class="fc" id="L294">                                    .put(&quot;table does not exist, creating new tables is disabled [table=&quot;).put(token)</span>
+<span class="fc" id="L295">                                    .put(']');</span>
+                        }
+<span class="fc bfc" id="L297" title="All 2 branches covered.">                        if (!autoCreateNewColumns) {</span>
+<span class="fc" id="L298">                            throw CairoException.nonCritical()</span>
+<span class="fc" id="L299">                                    .put(&quot;table does not exist, cannot create table, creating new columns is disabled [table=&quot;).put(token)</span>
+<span class="fc" id="L300">                                    .put(']');</span>
+                        }
+<span class="fc" id="L302">                        tableName = token.getCacheAddress();</span>
+<span class="fc bfc" id="L303" title="All 2 branches covered.">                        if (onLineEnd != MY_NEW_LINE_END) {</span>
+<span class="fc" id="L304">                            onLineEnd = MY_NEW_LINE_END;</span>
+<span class="fc" id="L305">                            onFieldName = MY_NEW_FIELD_NAME;</span>
+<span class="fc" id="L306">                            onFieldValue = MY_NEW_FIELD_VALUE;</span>
+<span class="fc" id="L307">                            onTagValue = MY_NEW_TAG_VALUE;</span>
+                        }
+                        break;
+                    default:
+<span class="nc" id="L311">                        entry.state = 3;</span>
+<span class="nc" id="L312">                        switchModeToSkipLine();</span>
+<span class="nc" id="L313">                        break;</span>
+                }
+                break;
+            case 1:
+<span class="fc" id="L317">                cacheWriter(entry, token, tableToken);</span>
+<span class="fc" id="L318">                break;</span>
+            default:
+<span class="nc" id="L320">                switchModeToSkipLine();</span>
+                break;
+        }
+<span class="fc" id="L323">    }</span>
+
+    private void parseFieldName(CachedCharSequence token) {
+<span class="fc" id="L326">        columnIndex = metadata.getColumnIndexQuiet(token);</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">        if (columnIndex &gt; -1) {</span>
+<span class="fc" id="L328">            columnType = metadata.getColumnType(columnIndex);</span>
+        }
+
+<span class="fc bfc" id="L331" title="All 4 branches covered.">        if (columnIndex &lt; 0 || columnType &lt; 0) {</span>
+<span class="fc" id="L332">            prepareNewColumn(token);</span>
+        }
+<span class="fc" id="L334">    }</span>
+
+    private void parseFieldNameNewTable(CachedCharSequence token) {
+<span class="fc bfc" id="L337" title="All 2 branches covered.">        if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {</span>
+<span class="fc" id="L338">            LOG.error().$(&quot;invalid column name [columnName=&quot;).$(token).I$();</span>
+<span class="fc" id="L339">            switchModeToSkipLine();</span>
+<span class="fc" id="L340">            return;</span>
+        }
+<span class="fc" id="L342">        columnNameType.add(token.getCacheAddress());</span>
+<span class="fc" id="L343">    }</span>
+
+    private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
+<span class="fc" id="L346">        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);</span>
+<span class="fc bfc" id="L347" title="All 2 branches covered.">        if (valueType == ColumnType.UNDEFINED) {</span>
+<span class="fc" id="L348">            switchModeToSkipLine();</span>
+        } else {
+<span class="fc" id="L350">            parseValue(value, valueType, cache, true);</span>
+        }
+<span class="fc" id="L352">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
+<span class="fc" id="L356">        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);</span>
+<span class="pc bpc" id="L357" title="1 of 4 branches missed.">        if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null</span>
+<span class="fc" id="L358">            switchModeToSkipLine();</span>
+        } else {
+<span class="fc" id="L360">            parseValueNewTable(value, valueType);</span>
+        }
+<span class="fc" id="L362">    }</span>
+
+    private void parseTagValue(CachedCharSequence value, CharSequenceCache cache) {
+<span class="fc" id="L365">        parseValue(value, ColumnType.SYMBOL, cache, false);</span>
+<span class="fc" id="L366">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    private void parseTagValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
+<span class="fc" id="L370">        parseValueNewTable(value, ColumnType.SYMBOL);</span>
+<span class="fc" id="L371">    }</span>
+
+    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache, boolean isForField) {
+<span class="pc bpc" id="L374" title="1 of 2 branches missed.">        assert valueType &gt; ColumnType.UNDEFINED;</span>
+<span class="fc bfc" id="L375" title="All 2 branches covered.">        if (columnType &gt; ColumnType.UNDEFINED) {</span>
+            boolean valid;
+<span class="fc" id="L377">            int geoHashBits = 0;</span>
+<span class="fc bfc" id="L378" title="All 2 branches covered.">            if (valueType != ColumnType.NULL) {</span>
+<span class="fc" id="L379">                final int valueTypeTag = ColumnType.tagOf(valueType);</span>
+<span class="fc" id="L380">                final int columnTypeTag = ColumnType.tagOf(columnType);</span>
+<span class="pc bpc" id="L381" title="1 of 12 branches missed.">                switch (valueTypeTag) {</span>
+                    case ColumnType.LONG:
+<span class="fc bfc" id="L383" title="All 12 branches covered.">                        valid = columnTypeTag == ColumnType.LONG</span>
+                                || columnTypeTag == ColumnType.INT
+                                || columnTypeTag == ColumnType.SHORT
+                                || columnTypeTag == ColumnType.BYTE
+                                || columnTypeTag == ColumnType.TIMESTAMP
+                                || columnTypeTag == ColumnType.DATE;
+<span class="fc" id="L389">                        break;</span>
+                    case ColumnType.INT:
+<span class="pc bpc" id="L391" title="5 of 6 branches missed.">                        valid = columnTypeTag == ColumnType.INT</span>
+                                || columnTypeTag == ColumnType.SHORT
+                                || columnTypeTag == ColumnType.BYTE;
+<span class="fc" id="L394">                        break;</span>
+                    case ColumnType.SHORT:
+<span class="pc bpc" id="L396" title="3 of 4 branches missed.">                        valid = columnTypeTag == ColumnType.SHORT</span>
+                                || columnTypeTag == ColumnType.BYTE;
+<span class="fc" id="L398">                        break;</span>
+                    case ColumnType.BYTE:
+<span class="pc bpc" id="L400" title="1 of 2 branches missed.">                        valid = columnTypeTag == ColumnType.BYTE;</span>
+<span class="fc" id="L401">                        break;</span>
+                    case ColumnType.BOOLEAN:
+<span class="fc bfc" id="L403" title="All 2 branches covered.">                        valid = columnTypeTag == ColumnType.BOOLEAN;</span>
+<span class="fc" id="L404">                        break;</span>
+                    case ColumnType.STRING:
+<span class="pc bpc" id="L406" title="1 of 6 branches missed.">                        valid = columnTypeTag == ColumnType.STRING ||</span>
+                                columnTypeTag == ColumnType.CHAR ||
+                                isForField &amp;&amp;
+<span class="fc bfc" id="L409" title="All 2 branches covered.">                                        (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;</span>
+<span class="fc" id="L410">                        break;</span>
+                    case ColumnType.DOUBLE:
+<span class="fc bfc" id="L412" title="All 4 branches covered.">                        valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;</span>
+<span class="fc" id="L413">                        break;</span>
+                    case ColumnType.FLOAT:
+<span class="pc bpc" id="L415" title="1 of 2 branches missed.">                        valid = columnTypeTag == ColumnType.FLOAT;</span>
+<span class="fc" id="L416">                        break;</span>
+                    case ColumnType.SYMBOL:
+<span class="fc bfc" id="L418" title="All 2 branches covered.">                        valid = columnTypeTag == ColumnType.SYMBOL;</span>
+<span class="fc" id="L419">                        break;</span>
+                    case ColumnType.LONG256:
+<span class="fc bfc" id="L421" title="All 2 branches covered.">                        valid = columnTypeTag == ColumnType.LONG256;</span>
+<span class="fc" id="L422">                        break;</span>
+                    case ColumnType.TIMESTAMP:
+<span class="fc bfc" id="L424" title="All 2 branches covered.">                        valid = columnTypeTag == ColumnType.TIMESTAMP;</span>
+<span class="fc" id="L425">                        break;</span>
+                    default:
+<span class="nc" id="L427">                        valid = false;</span>
+                }
+<span class="fc" id="L429">            } else {</span>
+<span class="fc" id="L430">                valid = true; // null is valid, the storage value is assigned later</span>
+            }
+<span class="fc bfc" id="L432" title="All 2 branches covered.">            if (valid) {</span>
+<span class="fc" id="L433">                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));</span>
+<span class="fc" id="L434">                columnValues.add(value.getCacheAddress());</span>
+<span class="fc" id="L435">                geoHashBitsSizeByColIdx.add(geoHashBits);</span>
+            } else {
+<span class="fc" id="L437">                LOG.error().$(&quot;mismatched column and value types [table=&quot;).utf8(writer.getTableToken().getTableName())</span>
+<span class="fc" id="L438">                        .$(&quot;, column=&quot;).$(metadata.getColumnName(columnIndex))</span>
+<span class="fc" id="L439">                        .$(&quot;, columnType=&quot;).$(ColumnType.nameOf(columnType))</span>
+<span class="fc" id="L440">                        .$(&quot;, valueType=&quot;).$(ColumnType.nameOf(valueType))</span>
+<span class="fc" id="L441">                        .$(']').$();</span>
+<span class="fc" id="L442">                switchModeToSkipLine();</span>
+            }
+<span class="fc" id="L444">        } else {</span>
+<span class="fc" id="L445">            CharSequence colNameAsChars = cache.get(columnName);</span>
+<span class="pc bpc" id="L446" title="1 of 4 branches missed.">            if (autoCreateNewColumns &amp;&amp; TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {</span>
+<span class="fc" id="L447">                writer.addColumn(colNameAsChars, valueType);</span>
+                // Writer index can be different from column count, it keeps deleted columns in metadata
+<span class="fc" id="L449">                int columnIndex = writer.getColumnIndex(colNameAsChars);</span>
+<span class="fc" id="L450">                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));</span>
+<span class="fc" id="L451">                columnValues.add(value.getCacheAddress());</span>
+<span class="fc" id="L452">                geoHashBitsSizeByColIdx.add(0);</span>
+<span class="pc bpc" id="L453" title="1 of 2 branches missed.">            } else if (!autoCreateNewColumns) {</span>
+<span class="fc" id="L454">                throw CairoException.nonCritical()</span>
+<span class="fc" id="L455">                        .put(&quot;column does not exist, creating new columns is disabled [table=&quot;).put(writer.getTableToken().getTableName())</span>
+<span class="fc" id="L456">                        .put(&quot;, columnName=&quot;).put(colNameAsChars)</span>
+<span class="fc" id="L457">                        .put(']');</span>
+            } else {
+<span class="nc" id="L459">                LOG.error().$(&quot;invalid column name [table=&quot;).utf8(writer.getTableToken().getTableName())</span>
+<span class="nc" id="L460">                        .$(&quot;, columnName=&quot;).$(colNameAsChars)</span>
+<span class="nc" id="L461">                        .$(']').$();</span>
+<span class="nc" id="L462">                switchModeToSkipLine();</span>
+            }
+        }
+<span class="fc" id="L465">    }</span>
+
+    private void parseValueNewTable(CachedCharSequence value, int valueType) {
+<span class="fc" id="L468">        columnNameType.add(valueType);</span>
+<span class="fc" id="L469">        columnValues.add(value.getCacheAddress());</span>
+<span class="fc" id="L470">        geoHashBitsSizeByColIdx.add(0); // not a GeoHash, no constant literal</span>
+        // that can be recognised yet
+<span class="fc" id="L472">    }</span>
+
+    private void prepareNewColumn(CachedCharSequence token) {
+<span class="fc" id="L475">        columnName = token.getCacheAddress();</span>
+<span class="fc" id="L476">        columnType = ColumnType.UNDEFINED;</span>
+<span class="fc" id="L477">    }</span>
+
+    private void switchModeToAppend() {
+<span class="fc bfc" id="L480" title="All 2 branches covered.">        if (onLineEnd != MY_LINE_END) {</span>
+<span class="fc" id="L481">            onLineEnd = MY_LINE_END;</span>
+<span class="fc" id="L482">            onFieldName = MY_FIELD_NAME;</span>
+<span class="fc" id="L483">            onFieldValue = MY_FIELD_VALUE;</span>
+<span class="fc" id="L484">            onTagValue = MY_TAG_VALUE;</span>
+        }
+<span class="fc" id="L486">    }</span>
+
+    private void switchModeToSkipLine() {
+<span class="fc bfc" id="L489" title="All 2 branches covered.">        if (onFieldValue != NOOP_FIELD_VALUE) {</span>
+<span class="fc" id="L490">            onFieldValue = NOOP_FIELD_VALUE;</span>
+<span class="fc" id="L491">            onFieldName = NOOP_FIELD_NAME;</span>
+<span class="fc" id="L492">            onTagValue = NOOP_FIELD_VALUE;</span>
+<span class="fc" id="L493">            onLineEnd = NOOP_LINE_END;</span>
+        }
+<span class="fc" id="L495">    }</span>
+
+    private void switchTable(CachedCharSequence tableName, int entryIndex) {
+<span class="fc bfc" id="L498" title="All 2 branches covered.">        if (this.cacheEntryIndex != 0) {</span>
+            // add previous writer to commit list
+<span class="fc" id="L500">            CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);</span>
+<span class="fc bfc" id="L501" title="All 2 branches covered.">            if (e.writer != null) {</span>
+<span class="pc bpc" id="L502" title="1 of 2 branches missed.">                if (Chars.equals(tableName, e.writer.getTableToken().getTableName())) {</span>
+<span class="nc" id="L503">                    commitList.put(e.writer.getTableToken().getTableName(), e.writer);</span>
+                } else {
+                    // Cannot happen except with WAL table rename and out of date TableWriter.tableToken.
+<span class="fc" id="L506">                    commitList.put(Chars.toString(tableName), e.writer);</span>
+                }
+            }
+        }
+
+        CacheEntry entry;
+<span class="fc bfc" id="L512" title="All 2 branches covered.">        if (entryIndex &lt; 0) {</span>
+<span class="fc" id="L513">            entry = writerCache.valueAtQuick(entryIndex);</span>
+        } else {
+<span class="fc" id="L515">            entry = new CacheEntry();</span>
+<span class="fc" id="L516">            writerCache.putAt(entryIndex, Chars.toString(tableName), entry);</span>
+            // adjust writer map index to negative, which indicates that entry exists
+<span class="fc" id="L518">            entryIndex = -entryIndex - 1;</span>
+        }
+
+<span class="fc" id="L521">        this.cacheEntryIndex = entryIndex;</span>
+
+<span class="fc bfc" id="L523" title="All 2 branches covered.">        if (entry.writer == null) {</span>
+<span class="fc" id="L524">            initCacheEntry(tableName, entry);</span>
+        } else {
+<span class="fc" id="L526">            createState(entry);</span>
+        }
+<span class="fc" id="L528">    }</span>
+
+    @FunctionalInterface
+    private interface FieldNameParser {
+        void parse(CachedCharSequence name);
+    }
+
+    @FunctionalInterface
+    private interface FieldValueParser {
+        void parse(CachedCharSequence value, CharSequenceCache cache);
+    }
+
+    @FunctionalInterface
+    private interface LineEndParser {
+        void parse(CharSequenceCache cache);
+    }
+
+<span class="fc" id="L545">    private static class CacheEntry {</span>
+<span class="fc" id="L546">        private int state = 0;</span>
+        private TableWriter writer;
+    }
+
+<span class="fc" id="L550">    private class TableStructureAdapter implements TableStructure {</span>
+        private CharSequenceCache cache;
+        private int columnCount;
+        private int timestampIndex;
+
+        @Override
+        public int getColumnCount() {
+<span class="fc" id="L557">            return columnCount;</span>
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+<span class="fc bfc" id="L562" title="All 2 branches covered.">            if (columnIndex == getTimestampIndex()) {</span>
+<span class="fc" id="L563">                return &quot;timestamp&quot;;</span>
+            }
+<span class="fc" id="L565">            CharSequence colName = cache.get(columnNameType.getQuick(columnIndex * 2));</span>
+<span class="pc bpc" id="L566" title="1 of 2 branches missed.">            if (TableUtils.isValidColumnName(colName, configuration.getMaxFileNameLength())) {</span>
+<span class="fc" id="L567">                return colName;</span>
+            }
+<span class="nc" id="L569">            throw CairoException.nonCritical().put(&quot;column name contains invalid characters [colName=&quot;).put(colName).put(']');</span>
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+<span class="fc bfc" id="L574" title="All 2 branches covered.">            if (columnIndex == getTimestampIndex()) {</span>
+<span class="fc" id="L575">                return ColumnType.TIMESTAMP;</span>
+            }
+<span class="fc" id="L577">            return (int) columnNameType.getQuick(columnIndex * 2 + 1);</span>
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+<span class="fc" id="L582">            return 0;</span>
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+<span class="fc" id="L587">            return configuration.getMaxUncommittedRows();</span>
+        }
+
+        @Override
+        public long getO3MaxLag() {
+<span class="fc" id="L592">            return configuration.getO3MaxLag();</span>
+        }
+
+        @Override
+        public int getPartitionBy() {
+<span class="fc" id="L597">            return udpConfiguration.getDefaultPartitionBy();</span>
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+<span class="fc" id="L602">            return configuration.getDefaultSymbolCacheFlag();</span>
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+<span class="fc" id="L607">            return configuration.getDefaultSymbolCapacity();</span>
+        }
+
+        @Override
+        public CharSequence getTableName() {
+<span class="fc" id="L612">            return cache.get(tableName);</span>
+        }
+
+        @Override
+        public int getTimestampIndex() {
+<span class="fc" id="L617">            return timestampIndex;</span>
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+<span class="fc" id="L622">            return false;</span>
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+<span class="fc" id="L627">            return false;</span>
+        }
+
+        @Override
+        public boolean isWalEnabled() {
+<span class="pc bpc" id="L632" title="3 of 4 branches missed.">            return configuration.getWalEnabledDefault() &amp;&amp; PartitionBy.isPartitioned(getPartitionBy());</span>
+        }
+
+        TableStructureAdapter of(CharSequenceCache cache) {
+<span class="fc" id="L636">            this.cache = cache;</span>
+<span class="fc" id="L637">            this.timestampIndex = columnNameType.size() / 2;</span>
+<span class="fc" id="L638">            this.columnCount = timestampIndex + 1;</span>
+<span class="fc" id="L639">            return this;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

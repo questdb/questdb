@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WalWriterPool.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.pool</a> &gt; <span class="el_source">WalWriterPool.java</span></div><h1>WalWriterPool.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.pool;
+
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+
+public class WalWriterPool extends AbstractMultiTenantPool&lt;WalWriterPool.WalWriterTenant&gt; {
+
+    private final CairoEngine engine;
+
+    public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
+<span class="fc" id="L39">        super(configuration);</span>
+<span class="fc" id="L40">        this.engine = engine;</span>
+<span class="fc" id="L41">    }</span>
+
+    @Override
+    protected byte getListenerSrc() {
+<span class="fc" id="L45">        return PoolListener.SRC_WRITER;</span>
+    }
+
+    @Override
+    protected WalWriterTenant newTenant(TableToken tableToken, Entry&lt;WalWriterTenant&gt; entry, int index) {
+<span class="fc" id="L50">        return new WalWriterTenant(this, entry, index, tableToken, engine.getTableSequencerAPI(), engine.getMetrics());</span>
+    }
+
+    public static class WalWriterTenant extends WalWriter implements PoolTenant {
+        private final int index;
+        private Entry&lt;WalWriterTenant&gt; entry;
+        private AbstractMultiTenantPool&lt;WalWriterTenant&gt; pool;
+
+        public WalWriterTenant(
+                AbstractMultiTenantPool&lt;WalWriterTenant&gt; pool,
+                Entry&lt;WalWriterTenant&gt; entry,
+                int index,
+                TableToken tableToken,
+                TableSequencerAPI tableSequencerAPI,
+                Metrics metrics
+        ) {
+<span class="fc" id="L66">            super(pool.getConfiguration(), tableToken, tableSequencerAPI, metrics);</span>
+<span class="fc" id="L67">            this.pool = pool;</span>
+<span class="fc" id="L68">            this.entry = entry;</span>
+<span class="fc" id="L69">            this.index = index;</span>
+<span class="fc" id="L70">        }</span>
+
+        @Override
+        public void close() {
+<span class="pc bpc" id="L74" title="1 of 2 branches missed.">            if (isOpen()) {</span>
+<span class="fc" id="L75">                final AbstractMultiTenantPool&lt;WalWriterTenant&gt; pool = this.pool;</span>
+<span class="pc bpc" id="L76" title="1 of 4 branches missed.">                if (pool != null &amp;&amp; entry != null) {</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">                    if (!isDistressed()) {</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">                        if (pool.returnToPool(this)) {</span>
+<span class="fc" id="L79">                            return;</span>
+                        }
+                    } else {
+                        try {
+<span class="fc" id="L83">                            super.close();</span>
+                        } finally {
+<span class="fc" id="L85">                            pool.expelFromPool(this);</span>
+                        }
+<span class="fc" id="L87">                        return;</span>
+                    }
+                }
+<span class="fc" id="L90">                super.close();</span>
+            }
+<span class="fc" id="L92">        }</span>
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+        @Override
+        public Entry&lt;WalWriterTenant&gt; getEntry() {
+<span class="fc" id="L97">            return entry;</span>
+        }
+
+        @Override
+        public int getIndex() {
+<span class="fc" id="L102">            return index;</span>
+        }
+
+        public void goodbye() {
+<span class="fc" id="L106">            entry = null;</span>
+<span class="fc" id="L107">            pool = null;</span>
+<span class="fc" id="L108">        }</span>
+
+        @Override
+        public void refresh() {
+            try {
+<span class="fc" id="L113">                goActive();</span>
+<span class="nc" id="L114">            } catch (Throwable ex) {</span>
+<span class="nc" id="L115">                close();</span>
+<span class="nc" id="L116">                throw ex;</span>
+<span class="fc" id="L117">            }</span>
+<span class="fc" id="L118">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

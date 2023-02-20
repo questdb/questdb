@@ -1,0 +1,1235 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Chars.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">Chars.java</span></div><h1>Chars.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.str.TrimType;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.Numbers.hexDigits;
+
+public final class Chars {
+<span class="fc" id="L37">    static final char[] base64 = &quot;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/&quot;.toCharArray();</span>
+
+    private Chars() {
+    }
+
+    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L44">            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);</span>
+        }
+<span class="fc" id="L46">    }</span>
+
+    public static long asciiStrCpy(final CharSequence value, final long address) {
+<span class="fc" id="L49">        asciiStrCpy(value, value.length(), address);</span>
+<span class="fc" id="L50">        return address;</span>
+    }
+
+    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L55">            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));</span>
+        }
+<span class="fc" id="L57">    }</span>
+
+    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L61">            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));</span>
+        }
+<span class="fc" id="L63">    }</span>
+
+    public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (sequence == null) {</span>
+<span class="fc" id="L67">            return;</span>
+        }
+<span class="fc" id="L69">        final long len = Math.min(maxLength, sequence.length());</span>
+<span class="fc" id="L70">        int pad = 0;</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i += 3) {</span>
+
+<span class="fc" id="L73">            int b = ((sequence.byteAt(i) &amp; 0xFF) &lt;&lt; 16) &amp; 0xFFFFFF;</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">            if (i + 1 &lt; len) {</span>
+<span class="fc" id="L75">                b |= (sequence.byteAt(i + 1) &amp; 0xFF) &lt;&lt; 8;</span>
+            } else {
+<span class="fc" id="L77">                pad++;</span>
+            }
+<span class="fc bfc" id="L79" title="All 2 branches covered.">            if (i + 2 &lt; len) {</span>
+<span class="fc" id="L80">                b |= (sequence.byteAt(i + 2) &amp; 0xFF);</span>
+            } else {
+<span class="fc" id="L82">                pad++;</span>
+            }
+
+<span class="fc bfc" id="L85" title="All 2 branches covered.">            for (int j = 0; j &lt; 4 - pad; j++) {</span>
+<span class="fc" id="L86">                int c = (b &amp; 0xFC0000) &gt;&gt; 18;</span>
+<span class="fc" id="L87">                buffer.put(base64[c]);</span>
+<span class="fc" id="L88">                b &lt;&lt;= 6;</span>
+            }
+        }
+
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        for (int j = 0; j &lt; pad; j++) {</span>
+<span class="fc" id="L93">            buffer.put(&quot;=&quot;);</span>
+        }
+<span class="fc" id="L95">    }</span>
+
+    public static int compare(CharSequence l, CharSequence r) {
+<span class="fc bfc" id="L98" title="All 2 branches covered.">        if (l == r) {</span>
+<span class="fc" id="L99">            return 0;</span>
+        }
+
+<span class="fc bfc" id="L102" title="All 2 branches covered.">        if (l == null) {</span>
+<span class="fc" id="L103">            return -1;</span>
+        }
+
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        if (r == null) {</span>
+<span class="fc" id="L107">            return 1;</span>
+        }
+
+<span class="fc" id="L110">        final int ll = l.length();</span>
+<span class="fc" id="L111">        final int rl = r.length();</span>
+<span class="fc" id="L112">        final int min = Math.min(ll, rl);</span>
+
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        for (int i = 0; i &lt; min; i++) {</span>
+<span class="fc" id="L115">            final int k = l.charAt(i) - r.charAt(i);</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">            if (k != 0) {</span>
+<span class="fc" id="L117">                return k;</span>
+            }
+        }
+<span class="fc" id="L120">        return Integer.compare(ll, rl);</span>
+    }
+
+    public static int compareDescending(CharSequence l, CharSequence r) {
+<span class="fc" id="L124">        return compare(r, l);</span>
+    }
+
+    public static boolean contains(CharSequence sequence, CharSequence term) {
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        return indexOf(sequence, 0, sequence.length(), term) != -1;</span>
+    }
+
+    public static void copyStrChars(CharSequence value, int pos, int len, long address) {
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L133">            char c = value.charAt(i + pos);</span>
+<span class="fc" id="L134">            Unsafe.getUnsafe().putChar(address + 2L * i, c);</span>
+        }
+<span class="fc" id="L136">    }</span>
+
+    public static boolean empty(@Nullable CharSequence value) {
+<span class="pc bpc" id="L139" title="1 of 4 branches missed.">        return value == null || value.length() &lt; 1;</span>
+    }
+
+    public static boolean endsWith(CharSequence cs, CharSequence ends) {
+<span class="fc bfc" id="L143" title="All 4 branches covered.">        if (ends == null || cs == null) {</span>
+<span class="fc" id="L144">            return false;</span>
+        }
+
+<span class="fc" id="L147">        int l = ends.length();</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        if (l == 0) {</span>
+<span class="fc" id="L149">            return false;</span>
+        }
+
+<span class="fc" id="L152">        int csl = cs.length();</span>
+<span class="fc bfc" id="L153" title="All 6 branches covered.">        return !(csl == 0 || csl &lt; l) &amp;&amp; equals(ends, cs, csl - l, csl);</span>
+
+    }
+
+    public static boolean endsWith(CharSequence cs, char c) {
+<span class="fc bfc" id="L158" title="All 2 branches covered.">        if (cs == null) {</span>
+<span class="fc" id="L159">            return false;</span>
+        }
+<span class="fc" id="L161">        final int csl = cs.length();</span>
+<span class="pc bpc" id="L162" title="1 of 4 branches missed.">        return csl != 0 &amp;&amp; c == cs.charAt(csl - 1);</span>
+    }
+
+    public static boolean equals(@NotNull CharSequence l, @NotNull CharSequence r) {
+<span class="fc bfc" id="L166" title="All 2 branches covered.">        if (l == r) {</span>
+<span class="fc" id="L167">            return true;</span>
+        }
+
+        int ll;
+<span class="fc bfc" id="L171" title="All 2 branches covered.">        if ((ll = l.length()) != r.length()) {</span>
+<span class="fc" id="L172">            return false;</span>
+        }
+
+<span class="fc" id="L175">        return equalsChars(l, r, ll);</span>
+    }
+
+    public static boolean equals(@NotNull ByteCharSequence l, @NotNull ByteCharSequence r) {
+<span class="fc bfc" id="L179" title="All 2 branches covered.">        if (l == r) {</span>
+<span class="fc" id="L180">            return true;</span>
+        }
+
+        int ll;
+<span class="fc bfc" id="L184" title="All 2 branches covered.">        if ((ll = l.length()) != r.length()) {</span>
+<span class="fc" id="L185">            return false;</span>
+        }
+
+<span class="fc" id="L188">        return equalsChars(l, r, ll);</span>
+    }
+
+    public static boolean equals(@NotNull String l, @NotNull String r) {
+<span class="fc" id="L192">        return l.equals(r);</span>
+    }
+
+    public static boolean equals(@NotNull DirectByteCharSequence l, @NotNull String r) {
+        int ll;
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        if ((ll = l.length()) != r.length()) {</span>
+<span class="fc" id="L198">            return false;</span>
+        }
+
+<span class="fc" id="L201">        return equalsChars(l, r, ll);</span>
+    }
+
+    public static boolean equals(@NotNull DirectByteCharSequence l, @NotNull ByteCharSequence r) {
+        int ll;
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        if ((ll = l.length()) != r.length()) {</span>
+<span class="fc" id="L207">            return false;</span>
+        }
+
+<span class="fc" id="L210">        return equalsChars(l, r, ll);</span>
+    }
+
+    public static boolean equals(@NotNull CharSequence l, @NotNull CharSequence r, int rLo, int rHi) {
+<span class="fc bfc" id="L214" title="All 2 branches covered.">        if (l == r) {</span>
+<span class="fc" id="L215">            return true;</span>
+        }
+
+        int ll;
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">        if ((ll = l.length()) != rHi - rLo) {</span>
+<span class="nc" id="L220">            return false;</span>
+        }
+
+<span class="fc bfc" id="L223" title="All 2 branches covered.">        for (int i = 0; i &lt; ll; i++) {</span>
+<span class="fc bfc" id="L224" title="All 2 branches covered.">            if (l.charAt(i) != r.charAt(i + rLo)) {</span>
+<span class="fc" id="L225">                return false;</span>
+            }
+        }
+<span class="fc" id="L228">        return true;</span>
+    }
+
+    public static boolean equals(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">        if (l == r) {</span>
+<span class="nc" id="L233">            return true;</span>
+        }
+
+<span class="fc" id="L236">        int ll = lHi - lLo;</span>
+<span class="fc bfc" id="L237" title="All 2 branches covered.">        if (ll != rHi - rLo) {</span>
+<span class="fc" id="L238">            return false;</span>
+        }
+
+<span class="fc bfc" id="L241" title="All 2 branches covered.">        for (int i = 0; i &lt; ll; i++) {</span>
+<span class="fc bfc" id="L242" title="All 2 branches covered.">            if (l.charAt(i + lLo) != r.charAt(i + rLo)) {</span>
+<span class="fc" id="L243">                return false;</span>
+            }
+        }
+<span class="fc" id="L246">        return true;</span>
+    }
+
+    public static boolean equals(@NotNull CharSequence l, char r) {
+<span class="fc bfc" id="L250" title="All 4 branches covered.">        return l.length() == 1 &amp;&amp; l.charAt(0) == r;</span>
+    }
+
+    /**
+     * Compares two char sequences on assumption and right value is always lower case.
+     * Method converts every char of right sequence before comparing to left sequence.
+     *
+     * @param l left sequence
+     * @param r right sequence
+     * @return true if sequences match exactly (ignoring char case)
+     */
+    public static boolean equalsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r) {
+<span class="fc bfc" id="L262" title="All 2 branches covered.">        if (l == r) {</span>
+<span class="fc" id="L263">            return true;</span>
+        }
+
+        int ll;
+<span class="fc bfc" id="L267" title="All 2 branches covered.">        if ((ll = l.length()) != r.length()) {</span>
+<span class="fc" id="L268">            return false;</span>
+        }
+
+<span class="fc bfc" id="L271" title="All 2 branches covered.">        for (int i = 0; i &lt; ll; i++) {</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {</span>
+<span class="fc" id="L273">                return false;</span>
+            }
+        }
+
+<span class="fc" id="L277">        return true;</span>
+    }
+
+    public static boolean equalsIgnoreCaseNc(@NotNull CharSequence l, @Nullable CharSequence r) {
+<span class="fc bfc" id="L281" title="All 4 branches covered.">        return r != null &amp;&amp; equalsIgnoreCase(l, r);</span>
+    }
+
+    public static boolean equalsLowerCase(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
+<span class="fc bfc" id="L285" title="All 2 branches covered.">        if (l == r) {</span>
+<span class="fc" id="L286">            return true;</span>
+        }
+
+<span class="fc" id="L289">        int ll = lHi - lLo;</span>
+<span class="fc bfc" id="L290" title="All 2 branches covered.">        if (ll != rHi - rLo) {</span>
+<span class="fc" id="L291">            return false;</span>
+        }
+
+<span class="fc bfc" id="L294" title="All 2 branches covered.">        for (int i = 0; i &lt; ll; i++) {</span>
+<span class="fc bfc" id="L295" title="All 2 branches covered.">            if (Character.toLowerCase(l.charAt(i + lLo)) != Character.toLowerCase(r.charAt(i + rLo))) {</span>
+<span class="fc" id="L296">                return false;</span>
+            }
+        }
+<span class="fc" id="L299">        return true;</span>
+    }
+
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
+<span class="pc bpc" id="L303" title="1 of 2 branches missed.">        if (l == r) {</span>
+<span class="nc" id="L304">            return true;</span>
+        }
+
+<span class="fc" id="L307">        int ll = lHi - lLo;</span>
+<span class="pc bpc" id="L308" title="1 of 2 branches missed.">        if (ll != rHi - rLo) {</span>
+<span class="nc" id="L309">            return false;</span>
+        }
+
+<span class="fc bfc" id="L312" title="All 2 branches covered.">        for (int i = 0; i &lt; ll; i++) {</span>
+<span class="fc bfc" id="L313" title="All 2 branches covered.">            if (toLowerCaseAscii(l.charAt(i + lLo)) != toLowerCaseAscii(r.charAt(i + rLo))) {</span>
+<span class="fc" id="L314">                return false;</span>
+            }
+        }
+<span class="fc" id="L317">        return true;</span>
+    }
+
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, @NotNull CharSequence r) {
+        int ll;
+<span class="fc bfc" id="L322" title="All 2 branches covered.">        if ((ll = l.length()) != r.length()) {</span>
+<span class="fc" id="L323">            return false;</span>
+        }
+
+<span class="fc bfc" id="L326" title="All 2 branches covered.">        for (int i = 0; i &lt; ll; i++) {</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">            if (toLowerCaseAscii(l.charAt(i)) != toLowerCaseAscii(r.charAt(i))) {</span>
+<span class="fc" id="L328">                return false;</span>
+            }
+        }
+
+<span class="fc" id="L332">        return true;</span>
+    }
+
+    public static boolean equalsLowerCaseAsciiNc(@NotNull CharSequence l, @Nullable CharSequence r) {
+<span class="fc bfc" id="L336" title="All 4 branches covered.">        return r != null &amp;&amp; equalsLowerCaseAscii(l, r);</span>
+    }
+
+    public static boolean equalsNc(@Nullable CharSequence l, char r) {
+<span class="fc bfc" id="L340" title="All 8 branches covered.">        return (l == null &amp;&amp; r == CharConstant.ZERO.getChar(null)) || (l != null &amp;&amp; equals(l, r));</span>
+    }
+
+    public static boolean equalsNc(@NotNull CharSequence l, @Nullable CharSequence r) {
+<span class="fc bfc" id="L344" title="All 4 branches covered.">        return r != null &amp;&amp; equals(l, r);</span>
+    }
+
+    public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
+<span class="pc bpc" id="L348" title="1 of 2 branches missed.">        if (hi == lo) {</span>
+<span class="nc" id="L349">            return 0;</span>
+        }
+
+<span class="fc" id="L352">        int h = 0;</span>
+<span class="fc bfc" id="L353" title="All 2 branches covered.">        for (int p = lo; p &lt; hi; p++) {</span>
+<span class="fc" id="L354">            h = 31 * h + value.charAt(p);</span>
+        }
+<span class="fc" id="L356">        return h;</span>
+    }
+
+    public static int hashCode(@NotNull CharSequence value) {
+<span class="fc bfc" id="L360" title="All 2 branches covered.">        if (value instanceof String) {</span>
+<span class="fc" id="L361">            return value.hashCode();</span>
+        }
+
+<span class="fc" id="L364">        int len = value.length();</span>
+<span class="fc bfc" id="L365" title="All 2 branches covered.">        if (len == 0) {</span>
+<span class="fc" id="L366">            return 0;</span>
+        }
+
+<span class="fc" id="L369">        int h = 0;</span>
+<span class="fc bfc" id="L370" title="All 2 branches covered.">        for (int p = 0; p &lt; len; p++) {</span>
+<span class="fc" id="L371">            h = 31 * h + value.charAt(p);</span>
+        }
+<span class="fc" id="L373">        return h;</span>
+    }
+
+    public static int hashCode(@NotNull String value) {
+<span class="nc" id="L377">        return value.hashCode();</span>
+    }
+
+    public static int hashCode(@NotNull DirectByteCharSequence value) {
+<span class="nc" id="L381">        int len = value.length();</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">        if (len == 0) {</span>
+<span class="nc" id="L383">            return 0;</span>
+        }
+
+<span class="nc" id="L386">        int h = 0;</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        for (int p = 0; p &lt; len; p++) {</span>
+<span class="nc" id="L388">            h = 31 * h + value.charAt(p);</span>
+        }
+<span class="nc" id="L390">        return h;</span>
+    }
+
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+<span class="fc" id="L394">        return indexOf(sequence, sequenceLo, sequenceHi, term, 1);</span>
+    }
+
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term, int occurrence) {
+<span class="fc" id="L398">        int m = term.length();</span>
+<span class="fc bfc" id="L399" title="All 2 branches covered.">        if (m == 0) {</span>
+<span class="fc" id="L400">            return -1;</span>
+        }
+
+<span class="pc bpc" id="L403" title="1 of 2 branches missed.">        if (occurrence == 0) {</span>
+<span class="nc" id="L404">            return -1;</span>
+        }
+
+<span class="fc" id="L407">        int foundIndex = -1;</span>
+<span class="fc" id="L408">        int count = 0;</span>
+<span class="fc bfc" id="L409" title="All 2 branches covered.">        if (occurrence &gt; 0) {</span>
+<span class="fc bfc" id="L410" title="All 2 branches covered.">            for (int i = sequenceLo; i &lt; sequenceHi; i++) {</span>
+<span class="fc bfc" id="L411" title="All 2 branches covered.">                if (foundIndex == -1) {</span>
+<span class="fc bfc" id="L412" title="All 2 branches covered.">                    if (sequenceHi - i &lt; m) {</span>
+<span class="fc" id="L413">                        return -1;</span>
+                    }
+<span class="fc bfc" id="L415" title="All 2 branches covered.">                    if (sequence.charAt(i) == term.charAt(0)) {</span>
+<span class="fc" id="L416">                        foundIndex = i;</span>
+                    }
+                } else {    // first character matched, try to match the rest of the term
+<span class="fc bfc" id="L419" title="All 2 branches covered.">                    if (sequence.charAt(i) != term.charAt(i - foundIndex)) {</span>
+                        // start again from after where the first character was found
+<span class="fc" id="L421">                        i = foundIndex;</span>
+<span class="fc" id="L422">                        foundIndex = -1;</span>
+                    }
+                }
+
+<span class="fc bfc" id="L426" title="All 4 branches covered.">                if (foundIndex != -1 &amp;&amp; i - foundIndex == m - 1) {</span>
+<span class="fc" id="L427">                    count++;</span>
+<span class="pc bpc" id="L428" title="1 of 2 branches missed.">                    if (count == occurrence) {</span>
+<span class="fc" id="L429">                        return foundIndex;</span>
+                    } else {
+<span class="nc" id="L431">                        foundIndex = -1;</span>
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+<span class="pc bpc" id="L436" title="1 of 2 branches missed.">            for (int i = sequenceHi - 1; i &gt;= sequenceLo; i--) {</span>
+<span class="fc bfc" id="L437" title="All 2 branches covered.">                if (foundIndex == -1) {</span>
+<span class="pc bpc" id="L438" title="1 of 2 branches missed.">                    if (i - sequenceLo + 1 &lt; m) {</span>
+<span class="nc" id="L439">                        return -1;</span>
+                    }
+<span class="fc bfc" id="L441" title="All 2 branches covered.">                    if (sequence.charAt(i) == term.charAt(m - 1)) {</span>
+<span class="fc" id="L442">                        foundIndex = i;</span>
+                    }
+                } else {    // last character matched, try to match the rest of the term
+<span class="pc bpc" id="L445" title="1 of 2 branches missed.">                    if (sequence.charAt(i) != term.charAt(m - 1 + i - foundIndex)) {</span>
+                        // start again from after where the first character was found
+<span class="nc" id="L447">                        i = foundIndex;</span>
+<span class="nc" id="L448">                        foundIndex = -1;</span>
+                    }
+                }
+
+<span class="fc bfc" id="L452" title="All 4 branches covered.">                if (foundIndex != -1 &amp;&amp; foundIndex - i == m - 1) {</span>
+<span class="fc" id="L453">                    count--;</span>
+<span class="pc bpc" id="L454" title="1 of 2 branches missed.">                    if (count == occurrence) {</span>
+<span class="fc" id="L455">                        return foundIndex + 1 - m;</span>
+                    } else {
+<span class="nc" id="L457">                        foundIndex = -1;</span>
+                    }
+                }
+            }
+        }
+
+<span class="fc" id="L463">        return -1;</span>
+    }
+
+    public static int indexOf(CharSequence s, char c) {
+<span class="fc" id="L467">        return indexOf(s, 0, c);</span>
+    }
+
+    public static int indexOf(CharSequence s, final int lo, char c) {
+<span class="fc" id="L471">        return indexOf(s, lo, s.length(), c);</span>
+    }
+
+    public static int indexOf(CharSequence s, final int lo, int hi, char c) {
+<span class="fc" id="L475">        return indexOf(s, lo, hi, c, 1);</span>
+    }
+
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, char ch, int occurrence) {
+<span class="pc bpc" id="L479" title="1 of 2 branches missed.">        if (occurrence == 0) {</span>
+<span class="nc" id="L480">            return -1;</span>
+        }
+
+<span class="fc" id="L483">        int count = 0;</span>
+<span class="fc bfc" id="L484" title="All 2 branches covered.">        if (occurrence &gt; 0) {</span>
+<span class="fc bfc" id="L485" title="All 2 branches covered.">            for (int i = sequenceLo; i &lt; sequenceHi; i++) {</span>
+<span class="fc bfc" id="L486" title="All 2 branches covered.">                if (sequence.charAt(i) == ch) {</span>
+<span class="fc" id="L487">                    count++;</span>
+<span class="pc bpc" id="L488" title="1 of 2 branches missed.">                    if (count == occurrence) {</span>
+<span class="fc" id="L489">                        return i;</span>
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+<span class="pc bpc" id="L494" title="1 of 2 branches missed.">            for (int i = sequenceHi - 1; i &gt;= sequenceLo; i--) {</span>
+<span class="fc bfc" id="L495" title="All 2 branches covered.">                if (sequence.charAt(i) == ch) {</span>
+<span class="fc" id="L496">                    count--;</span>
+<span class="pc bpc" id="L497" title="1 of 2 branches missed.">                    if (count == occurrence) {</span>
+<span class="fc" id="L498">                        return i;</span>
+                    }
+                }
+            }
+        }
+
+<span class="fc" id="L504">        return -1;</span>
+    }
+
+    public static boolean isBlank(CharSequence s) {
+<span class="fc bfc" id="L508" title="All 2 branches covered.">        if (s == null) {</span>
+<span class="fc" id="L509">            return true;</span>
+        }
+
+<span class="fc" id="L512">        int len = s.length();</span>
+<span class="fc bfc" id="L513" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L514">            int c = s.charAt(i);</span>
+<span class="fc bfc" id="L515" title="All 2 branches covered.">            if (!Character.isWhitespace(c)) {</span>
+<span class="fc" id="L516">                return false;</span>
+            }
+        }
+<span class="fc" id="L519">        return true;</span>
+    }
+
+    public static boolean isMalformed3(int b1, int b2, int b3) {
+<span class="fc bfc" id="L523" title="All 8 branches covered.">        return b1 == -32 &amp;&amp; (b2 &amp; 224) == 128 || (b2 &amp; 192) != 128 || (b3 &amp; 192) != 128;</span>
+    }
+
+    public static boolean isMalformed4(int b2, int b3, int b4) {
+<span class="nc bnc" id="L527" title="All 6 branches missed.">        return (b2 &amp; 192) != 128 || (b3 &amp; 192) != 128 || (b4 &amp; 192) != 128;</span>
+    }
+
+    public static boolean isNotContinuation(int b) {
+<span class="fc bfc" id="L531" title="All 2 branches covered.">        return (b &amp; 192) != 128;</span>
+    }
+
+    public static boolean isOnlyDecimals(CharSequence s) {
+<span class="fc" id="L535">        int len = s.length();</span>
+<span class="fc bfc" id="L536" title="All 2 branches covered.">        for (int i = len - 1; i &gt; -1; i--) {</span>
+<span class="fc" id="L537">            int digit = s.charAt(i);</span>
+<span class="fc bfc" id="L538" title="All 4 branches covered.">            if (digit &lt; '0' || digit &gt; '9') {</span>
+<span class="fc" id="L539">                return false;</span>
+            }
+        }
+<span class="fc bfc" id="L542" title="All 2 branches covered.">        return len &gt; 0;</span>
+    }
+
+    public static boolean isQuote(char c) {
+<span class="fc bfc" id="L546" title="All 2 branches covered.">        switch (c) {</span>
+            case '\'':
+            case '&quot;':
+            case '`':
+<span class="fc" id="L550">                return true;</span>
+            default:
+<span class="fc" id="L552">                return false;</span>
+        }
+    }
+
+    public static boolean isQuoted(CharSequence s) {
+<span class="fc bfc" id="L557" title="All 4 branches covered.">        if (s == null || s.length() &lt; 2) {</span>
+<span class="fc" id="L558">            return false;</span>
+        }
+
+<span class="fc" id="L561">        char open = s.charAt(0);</span>
+<span class="fc bfc" id="L562" title="All 4 branches covered.">        return isQuote(open) &amp;&amp; open == s.charAt(s.length() - 1);</span>
+    }
+
+    public static int lastIndexOf(CharSequence s, char c) {
+<span class="fc bfc" id="L566" title="All 2 branches covered.">        for (int i = s.length() - 1; i &gt; -1; i--) {</span>
+<span class="fc bfc" id="L567" title="All 2 branches covered.">            if (s.charAt(i) == c) {</span>
+<span class="fc" id="L568">                return i;</span>
+            }
+        }
+<span class="fc" id="L571">        return -1;</span>
+    }
+
+    public static int lowerCaseAsciiHashCode(CharSequence value, int lo, int hi) {
+<span class="pc bpc" id="L575" title="1 of 2 branches missed.">        if (hi == lo) {</span>
+<span class="nc" id="L576">            return 0;</span>
+        }
+
+<span class="fc" id="L579">        int h = 0;</span>
+<span class="fc bfc" id="L580" title="All 2 branches covered.">        for (int p = lo; p &lt; hi; p++) {</span>
+<span class="fc" id="L581">            h = 31 * h + toLowerCaseAscii(value.charAt(p));</span>
+        }
+<span class="fc" id="L583">        return h;</span>
+    }
+
+    public static int lowerCaseAsciiHashCode(CharSequence value) {
+<span class="fc" id="L587">        int len = value.length();</span>
+<span class="fc bfc" id="L588" title="All 2 branches covered.">        if (len == 0) {</span>
+<span class="fc" id="L589">            return 0;</span>
+        }
+
+<span class="fc" id="L592">        int h = 0;</span>
+<span class="fc bfc" id="L593" title="All 2 branches covered.">        for (int p = 0; p &lt; len; p++) {</span>
+<span class="fc" id="L594">            h = 31 * h + toLowerCaseAscii(value.charAt(p));</span>
+        }
+<span class="fc" id="L596">        return h;</span>
+    }
+
+    public static int lowerCaseHashCode(CharSequence value, int lo, int hi) {
+<span class="pc bpc" id="L600" title="1 of 2 branches missed.">        if (hi == lo) {</span>
+<span class="nc" id="L601">            return 0;</span>
+        }
+
+<span class="fc" id="L604">        int h = 0;</span>
+<span class="fc bfc" id="L605" title="All 2 branches covered.">        for (int p = lo; p &lt; hi; p++) {</span>
+<span class="fc" id="L606">            h = 31 * h + Character.toLowerCase(value.charAt(p));</span>
+        }
+<span class="fc" id="L608">        return h;</span>
+    }
+
+    public static int lowerCaseHashCode(CharSequence value) {
+<span class="fc" id="L612">        int len = value.length();</span>
+<span class="fc bfc" id="L613" title="All 2 branches covered.">        if (len == 0) {</span>
+<span class="fc" id="L614">            return 0;</span>
+        }
+
+<span class="fc" id="L617">        int h = 0;</span>
+<span class="fc bfc" id="L618" title="All 2 branches covered.">        for (int p = 0; p &lt; len; p++) {</span>
+<span class="fc" id="L619">            h = 31 * h + Character.toLowerCase(value.charAt(p));</span>
+        }
+<span class="fc" id="L621">        return h;</span>
+    }
+
+    public static boolean noMatch(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
+<span class="fc" id="L625">        int lp = llo;</span>
+<span class="fc" id="L626">        int rp = rlo;</span>
+<span class="pc bpc" id="L627" title="1 of 4 branches missed.">        while (lp &lt; lhi &amp;&amp; rp &lt; rhi) {</span>
+<span class="fc bfc" id="L628" title="All 2 branches covered.">            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {</span>
+<span class="fc" id="L629">                return true;</span>
+            }
+
+        }
+<span class="pc bpc" id="L633" title="2 of 4 branches missed.">        return lp != lhi || rp != rhi;</span>
+    }
+
+    public static CharSequence repeat(String s, int times) {
+<span class="fc" id="L637">        return new CharSequence() {</span>
+            @Override
+            public char charAt(int index) {
+<span class="fc" id="L640">                return s.charAt(index % s.length());</span>
+            }
+
+            @Override
+            public int length() {
+<span class="fc" id="L645">                return s.length() * times;</span>
+            }
+
+            @Override
+            public CharSequence subSequence(int start, int end) {
+<span class="nc" id="L650">                throw new UnsupportedOperationException();</span>
+            }
+        };
+    }
+
+    /**
+     * Split character sequence into a list of lpsz strings. This function
+     * uses space as a delimiter and it honours spaces in double quotes. Main
+     * use for this code is to produce list of C-compatible argument values from
+     * command line.
+     *
+     * @param args command line
+     * @return list of 0-terminated strings
+     */
+    public static ObjList&lt;Path&gt; splitLpsz(CharSequence args) {
+<span class="fc" id="L665">        final ObjList&lt;Path&gt; paths = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L666">        int n = args.length();</span>
+<span class="fc" id="L667">        int lastLen = 0;</span>
+<span class="fc" id="L668">        int lastIndex = 0;</span>
+<span class="fc" id="L669">        boolean inQuote = false;</span>
+<span class="fc bfc" id="L670" title="All 2 branches covered.">        for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L671">            char b = args.charAt(i);</span>
+
+<span class="fc bfc" id="L673" title="All 3 branches covered.">            switch (b) {</span>
+                case ' ':
+                    // ab c
+<span class="fc bfc" id="L676" title="All 2 branches covered.">                    if (lastLen &gt; 0) {</span>
+<span class="fc bfc" id="L677" title="All 2 branches covered.">                        if (inQuote) {</span>
+<span class="fc" id="L678">                            lastLen++;</span>
+                        } else {
+<span class="fc" id="L680">                            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());</span>
+<span class="fc" id="L681">                            lastLen = 0;</span>
+                        }
+                    }
+                    break;
+                case '&quot;':
+<span class="fc bfc" id="L686" title="All 2 branches covered.">                    inQuote = !inQuote;</span>
+<span class="fc" id="L687">                    break;</span>
+                default:
+<span class="fc bfc" id="L689" title="All 2 branches covered.">                    if (lastLen == 0) {</span>
+<span class="fc" id="L690">                        lastIndex = i;</span>
+                    }
+<span class="fc" id="L692">                    lastLen++;</span>
+                    break;
+
+            }
+        }
+
+<span class="fc bfc" id="L698" title="All 2 branches covered.">        if (lastLen &gt; 0) {</span>
+<span class="fc" id="L699">            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());</span>
+        }
+<span class="fc" id="L701">        return paths;</span>
+    }
+
+    public static boolean startsWith(CharSequence _this, CharSequence that) {
+<span class="fc" id="L705">        final int len = that.length();</span>
+<span class="fc bfc" id="L706" title="All 4 branches covered.">        return _this.length() &gt;= len &amp;&amp; equalsChars(_this, that, len);</span>
+    }
+
+    public static boolean startsWith(CharSequence _this, int thisLo, int thisHi, CharSequence that) {
+<span class="fc" id="L710">        int len = that.length();</span>
+<span class="fc" id="L711">        int thisLen = thisHi - thisLo;</span>
+<span class="pc bpc" id="L712" title="1 of 2 branches missed.">        if (thisLen &lt; len) {</span>
+<span class="nc" id="L713">            return false;</span>
+        }
+
+<span class="fc bfc" id="L716" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc bfc" id="L717" title="All 2 branches covered.">            if (_this.charAt(thisLo + i) != that.charAt(i)) {</span>
+<span class="fc" id="L718">                return false;</span>
+            }
+        }
+<span class="fc" id="L721">        return true;</span>
+    }
+
+    public static boolean startsWith(CharSequence _this, char c) {
+<span class="fc bfc" id="L725" title="All 4 branches covered.">        return _this.length() &gt; 0 &amp;&amp; _this.charAt(0) == c;</span>
+    }
+
+    public static String stringFromUtf8Bytes(long lo, long hi) {
+<span class="fc bfc" id="L729" title="All 2 branches covered.">        if (hi == lo) {</span>
+<span class="fc" id="L730">            return &quot;&quot;;</span>
+        }
+
+<span class="fc" id="L733">        CharSink b = Misc.getThreadLocalBuilder();</span>
+<span class="fc" id="L734">        utf8Decode(lo, hi, b);</span>
+<span class="fc" id="L735">        return b.toString();</span>
+    }
+
+    public static String stringFromUtf8Bytes(ByteSequence seq) {
+<span class="nc bnc" id="L739" title="All 2 branches missed.">        if (seq.length() == 0) {</span>
+<span class="nc" id="L740">            return &quot;&quot;;</span>
+        }
+
+<span class="nc" id="L743">        CharSink b = Misc.getThreadLocalBuilder();</span>
+<span class="nc" id="L744">        utf8Decode(seq, b);</span>
+<span class="nc" id="L745">        return b.toString();</span>
+    }
+
+    public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
+<span class="pc bpc" id="L749" title="1 of 2 branches missed.">        if (str != null) {</span>
+<span class="fc" id="L750">            final int len = str.length();</span>
+<span class="fc bfc" id="L751" title="All 2 branches covered.">            for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L752">                sink.put(Character.toLowerCase(str.charAt(i)));</span>
+            }
+        }
+<span class="fc" id="L755">    }</span>
+
+    public static String toLowerCaseAscii(@Nullable CharSequence value) {
+<span class="pc bpc" id="L758" title="1 of 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L759">            return null;</span>
+        }
+<span class="fc" id="L761">        final int len = value.length();</span>
+<span class="pc bpc" id="L762" title="1 of 2 branches missed.">        if (len == 0) {</span>
+<span class="nc" id="L763">            return &quot;&quot;;</span>
+        }
+
+<span class="fc" id="L766">        final CharSink b = Misc.getThreadLocalBuilder();</span>
+<span class="fc bfc" id="L767" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L768">            b.put(toLowerCaseAscii(value.charAt(i)));</span>
+        }
+<span class="fc" id="L770">        return b.toString();</span>
+    }
+
+    public static char toLowerCaseAscii(char character) {
+<span class="fc bfc" id="L774" title="All 4 branches covered.">        return character &gt; 64 &amp;&amp; character &lt; 91 ? (char) (character + 32) : character;</span>
+    }
+
+    public static void toSink(BinarySequence sequence, CharSink sink) {
+<span class="fc bfc" id="L778" title="All 2 branches covered.">        if (sequence == null) {</span>
+<span class="fc" id="L779">            return;</span>
+        }
+
+        // limit what we print
+<span class="fc" id="L783">        int len = (int) sequence.length();</span>
+<span class="fc bfc" id="L784" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc bfc" id="L785" title="All 2 branches covered.">            if (i &gt; 0) {</span>
+<span class="fc bfc" id="L786" title="All 2 branches covered.">                if ((i % 16) == 0) {</span>
+<span class="fc" id="L787">                    sink.put('\n');</span>
+<span class="fc" id="L788">                    Numbers.appendHexPadded(sink, i);</span>
+                }
+            } else {
+<span class="fc" id="L791">                Numbers.appendHexPadded(sink, i);</span>
+            }
+<span class="fc" id="L793">            sink.put(' ');</span>
+
+<span class="fc" id="L795">            final byte b = sequence.byteAt(i);</span>
+            final int v;
+<span class="fc bfc" id="L797" title="All 2 branches covered.">            if (b &lt; 0) {</span>
+<span class="fc" id="L798">                v = 256 + b;</span>
+            } else {
+<span class="fc" id="L800">                v = b;</span>
+            }
+
+<span class="fc bfc" id="L803" title="All 2 branches covered.">            if (v &lt; 0x10) {</span>
+<span class="fc" id="L804">                sink.put('0');</span>
+<span class="fc" id="L805">                sink.put(hexDigits[b]);</span>
+            } else {
+<span class="fc" id="L807">                sink.put(hexDigits[v / 0x10]);</span>
+<span class="fc" id="L808">                sink.put(hexDigits[v % 0x10]);</span>
+            }
+        }
+<span class="fc" id="L811">    }</span>
+
+    public static String toString(CharSequence s) {
+<span class="fc bfc" id="L814" title="All 2 branches covered.">        return s == null ? null : s.toString();</span>
+    }
+
+    public static String toString(CharSequence cs, int start, int end) {
+<span class="fc" id="L818">        final CharSink b = Misc.getThreadLocalBuilder();</span>
+<span class="fc" id="L819">        b.put(cs, start, end);</span>
+<span class="fc" id="L820">        return b.toString();</span>
+    }
+
+    public static String toString(CharSequence cs, int start, int end, char unescape) {
+<span class="fc" id="L824">        final CharSink b = Misc.getThreadLocalBuilder();</span>
+<span class="fc" id="L825">        final int lastChar = end - 1;</span>
+<span class="fc bfc" id="L826" title="All 2 branches covered.">        for (int i = start; i &lt; end; i++) {</span>
+<span class="fc" id="L827">            char c = cs.charAt(i);</span>
+<span class="fc" id="L828">            b.put(c);</span>
+<span class="pc bpc" id="L829" title="2 of 6 branches missed.">            if (c == unescape &amp;&amp; i &lt; lastChar &amp;&amp; cs.charAt(i + 1) == unescape) {</span>
+<span class="fc" id="L830">                i++;</span>
+            }
+        }
+<span class="fc" id="L833">        return b.toString();</span>
+    }
+
+    public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
+<span class="pc bpc" id="L837" title="1 of 2 branches missed.">        if (str != null) {</span>
+<span class="fc" id="L838">            final int len = str.length();</span>
+<span class="fc bfc" id="L839" title="All 2 branches covered.">            for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L840">                sink.put(Character.toUpperCase(str.charAt(i)));</span>
+            }
+        }
+<span class="fc" id="L843">    }</span>
+
+    public static void trim(TrimType type, CharSequence str, StringSink sink) {
+<span class="pc bpc" id="L846" title="1 of 2 branches missed.">        if (str == null) {</span>
+<span class="nc" id="L847">            return;</span>
+        }
+<span class="fc" id="L849">        int startIdx = 0;</span>
+<span class="fc" id="L850">        int endIdx = str.length() - 1;</span>
+<span class="fc bfc" id="L851" title="All 4 branches covered.">        if (type == TrimType.LTRIM || type == TrimType.TRIM) {</span>
+<span class="fc bfc" id="L852" title="All 4 branches covered.">            while (startIdx &lt; endIdx &amp;&amp; str.charAt(startIdx) == ' ') {</span>
+<span class="fc" id="L853">                startIdx++;</span>
+            }
+        }
+<span class="fc bfc" id="L856" title="All 4 branches covered.">        if (type == TrimType.RTRIM || type == TrimType.TRIM) {</span>
+<span class="fc bfc" id="L857" title="All 4 branches covered.">            while (startIdx &lt; endIdx &amp;&amp; str.charAt(endIdx) == ' ') {</span>
+<span class="fc" id="L858">                endIdx--;</span>
+            }
+        }
+<span class="fc" id="L861">        sink.clear();</span>
+<span class="fc bfc" id="L862" title="All 2 branches covered.">        if (startIdx != endIdx) {</span>
+<span class="fc" id="L863">            sink.put(str, startIdx, endIdx + 1);</span>
+        }
+<span class="fc" id="L865">    }</span>
+
+    /**
+     * Decodes bytes between lo,hi addresses into sink.
+     * Note: operation might fail in the middle and leave sink in inconsistent state.
+     *
+     * @return true if input is proper utf8 and false otherwise.
+     */
+    public static boolean utf8Decode(long lo, long hi, CharSinkBase sink) {
+<span class="fc" id="L874">        long p = lo;</span>
+<span class="fc bfc" id="L875" title="All 2 branches covered.">        while (p &lt; hi) {</span>
+<span class="fc" id="L876">            byte b = Unsafe.getUnsafe().getByte(p);</span>
+<span class="fc bfc" id="L877" title="All 2 branches covered.">            if (b &lt; 0) {</span>
+<span class="fc" id="L878">                int n = utf8DecodeMultiByte(p, hi, b, sink);</span>
+<span class="fc bfc" id="L879" title="All 2 branches covered.">                if (n == -1) {</span>
+                    // UTF8 error
+<span class="fc" id="L881">                    return false;</span>
+                }
+<span class="fc" id="L883">                p += n;</span>
+<span class="fc" id="L884">            } else {</span>
+<span class="fc" id="L885">                sink.put((char) b);</span>
+<span class="fc" id="L886">                ++p;</span>
+            }
+<span class="fc" id="L888">        }</span>
+<span class="fc" id="L889">        return true;</span>
+    }
+
+    /**
+     * Decodes bytes between lo,hi addresses into sink.
+     * Note: operation might fail in the middle and leave sink in inconsistent state.
+     *
+     * @return true if input is proper utf8 and false otherwise.
+     */
+    public static boolean utf8Decode(ByteSequence seq, CharSinkBase sink) {
+<span class="nc" id="L899">        int i = 0;</span>
+<span class="nc" id="L900">        int len = seq.length();</span>
+<span class="nc bnc" id="L901" title="All 2 branches missed.">        while (i &lt; len) {</span>
+<span class="nc" id="L902">            byte b = seq.byteAt(i);</span>
+<span class="nc bnc" id="L903" title="All 2 branches missed.">            if (b &lt; 0) {</span>
+<span class="nc" id="L904">                int n = utf8DecodeMultiByte(seq, i, b, sink);</span>
+<span class="nc bnc" id="L905" title="All 2 branches missed.">                if (n == -1) {</span>
+                    // UTF8 error
+<span class="nc" id="L907">                    return false;</span>
+                }
+<span class="nc" id="L909">                i += n;</span>
+<span class="nc" id="L910">            } else {</span>
+<span class="nc" id="L911">                sink.put((char) b);</span>
+<span class="nc" id="L912">                ++i;</span>
+            }
+<span class="nc" id="L914">        }</span>
+<span class="nc" id="L915">        return true;</span>
+    }
+
+    public static int utf8DecodeMultiByte(long lo, long hi, int b, CharSinkBase sink) {
+<span class="pc bpc" id="L919" title="1 of 4 branches missed.">        if (b &gt;&gt; 5 == -2 &amp;&amp; (b &amp; 30) != 0) {</span>
+<span class="fc" id="L920">            return utf8Decode2Bytes(lo, hi, b, sink);</span>
+        }
+
+<span class="fc bfc" id="L923" title="All 2 branches covered.">        if (b &gt;&gt; 4 == -2) {</span>
+<span class="fc" id="L924">            return utf8Decode3Bytes(lo, hi, b, sink);</span>
+        }
+
+<span class="fc" id="L927">        return utf8Decode4Bytes(lo, hi, b, sink);</span>
+    }
+
+    public static int utf8DecodeMultiByte(ByteSequence seq, int index, int b, CharSinkBase sink) {
+<span class="nc bnc" id="L931" title="All 4 branches missed.">        if (b &gt;&gt; 5 == -2 &amp;&amp; (b &amp; 30) != 0) {</span>
+<span class="nc" id="L932">            return utf8Decode2Bytes(seq, index, b, sink);</span>
+        }
+
+<span class="nc bnc" id="L935" title="All 2 branches missed.">        if (b &gt;&gt; 4 == -2) {</span>
+<span class="nc" id="L936">            return utf8Decode3Bytes(seq, index, b, sink);</span>
+        }
+
+<span class="nc" id="L939">        return utf8Decode4Bytes(seq, index, b, sink);</span>
+    }
+
+    public static int utf8DecodeMultiByteZ(long lo, int b, CharSink sink) {
+<span class="pc bpc" id="L943" title="1 of 4 branches missed.">        if (b &gt;&gt; 5 == -2 &amp;&amp; (b &amp; 30) != 0) {</span>
+<span class="fc" id="L944">            return utf8Decode2BytesZ(lo, b, sink);</span>
+        }
+
+<span class="pc bpc" id="L947" title="1 of 2 branches missed.">        if (b &gt;&gt; 4 == -2) {</span>
+<span class="fc" id="L948">            return utf8Decode3BytesZ(lo, b, sink);</span>
+        }
+
+<span class="nc" id="L951">        return utf8Decode4BytesZ(lo, b, sink);</span>
+    }
+
+    public static boolean utf8DecodeZ(long lo, CharSink sink) {
+<span class="fc" id="L955">        long p = lo;</span>
+
+        while (true) {
+<span class="fc" id="L958">            byte b = Unsafe.getUnsafe().getByte(p);</span>
+
+<span class="fc bfc" id="L960" title="All 2 branches covered.">            if (b == 0) {</span>
+<span class="fc" id="L961">                break;</span>
+            }
+
+<span class="fc bfc" id="L964" title="All 2 branches covered.">            if (b &lt; 0) {</span>
+<span class="fc" id="L965">                int n = utf8DecodeMultiByteZ(p, b, sink);</span>
+<span class="pc bpc" id="L966" title="1 of 2 branches missed.">                if (n == -1) {</span>
+                    // UTF8 error
+<span class="nc" id="L968">                    return false;</span>
+                }
+<span class="fc" id="L970">                p += n;</span>
+<span class="fc" id="L971">            } else {</span>
+<span class="fc" id="L972">                sink.put((char) b);</span>
+<span class="fc" id="L973">                ++p;</span>
+            }
+<span class="fc" id="L975">        }</span>
+<span class="fc" id="L976">        return true;</span>
+    }
+
+    public static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink, boolean hasNonAsciiChars) {
+<span class="fc bfc" id="L980" title="All 2 branches covered.">        if (hasNonAsciiChars) {</span>
+<span class="fc" id="L981">            utf8ToUtf16Unchecked(utf8CharSeq, tempSink);</span>
+<span class="fc" id="L982">            return tempSink;</span>
+        }
+<span class="fc" id="L984">        return utf8CharSeq;</span>
+    }
+
+    public static void utf8ToUtf16Unchecked(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
+<span class="fc" id="L988">        tempSink.clear();</span>
+<span class="fc bfc" id="L989" title="All 2 branches covered.">        if (!utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {</span>
+<span class="fc" id="L990">            throw CairoException.nonCritical().put(&quot;invalid UTF8 in value for &quot;).put(utf8CharSeq);</span>
+        }
+<span class="fc" id="L992">    }</span>
+
+    private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
+<span class="fc bfc" id="L995" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc bfc" id="L996" title="All 2 branches covered.">            if (l.charAt(i) != r.charAt(i)) {</span>
+<span class="fc" id="L997">                return false;</span>
+            }
+        }
+<span class="fc" id="L1000">        return true;</span>
+    }
+
+    private static boolean equalsChars(DirectByteCharSequence l, String r, int len) {
+<span class="fc bfc" id="L1004" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="pc bpc" id="L1005" title="1 of 2 branches missed.">            if (l.charAt(i) != r.charAt(i)) {</span>
+<span class="nc" id="L1006">                return false;</span>
+            }
+        }
+<span class="fc" id="L1009">        return true;</span>
+    }
+
+    private static boolean equalsChars(DirectByteCharSequence l, ByteCharSequence r, int len) {
+<span class="fc" id="L1013">        final long lo = l.getLo();</span>
+<span class="fc" id="L1014">        int i = 0;</span>
+<span class="fc bfc" id="L1015" title="All 2 branches covered.">        for (; i + 3 &lt; len; i += 4) {</span>
+<span class="pc bpc" id="L1016" title="1 of 2 branches missed.">            if (Unsafe.getUnsafe().getInt(lo + i) != r.intAt(i)) {</span>
+<span class="nc" id="L1017">                return false;</span>
+            }
+        }
+<span class="fc bfc" id="L1020" title="All 2 branches covered.">        for (; i &lt; len; i++) {</span>
+<span class="pc bpc" id="L1021" title="1 of 2 branches missed.">            if (Unsafe.getUnsafe().getByte(lo + i) != r.byteAt(i)) {</span>
+<span class="nc" id="L1022">                return false;</span>
+            }
+        }
+<span class="fc" id="L1025">        return true;</span>
+    }
+
+    private static boolean equalsChars(ByteCharSequence l, ByteCharSequence r, int len) {
+<span class="fc" id="L1029">        int i = 0;</span>
+<span class="fc bfc" id="L1030" title="All 2 branches covered.">        for (; i + 3 &lt; len; i += 4) {</span>
+<span class="pc bpc" id="L1031" title="1 of 2 branches missed.">            if (l.intAt(i) != r.intAt(i)) {</span>
+<span class="nc" id="L1032">                return false;</span>
+            }
+        }
+<span class="fc bfc" id="L1035" title="All 2 branches covered.">        for (; i &lt; len; i++) {</span>
+<span class="pc bpc" id="L1036" title="1 of 2 branches missed.">            if (l.byteAt(i) != r.byteAt(i)) {</span>
+<span class="nc" id="L1037">                return false;</span>
+            }
+        }
+<span class="fc" id="L1040">        return true;</span>
+    }
+
+    private static int utf8Decode2Bytes(ByteSequence seq, int index, int b1, CharSinkBase sink) {
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">        if (seq.length() - index &lt; 2) {</span>
+<span class="nc" id="L1045">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1048">        byte b2 = Unsafe.getUnsafe().getByte(index + 1);</span>
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">        if (isNotContinuation(b2)) {</span>
+<span class="nc" id="L1050">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1053">        sink.put((char) (b1 &lt;&lt; 6 ^ b2 ^ 3968));</span>
+<span class="nc" id="L1054">        return 2;</span>
+    }
+
+    private static int utf8Decode2Bytes(long lo, long hi, int b1, CharSinkBase sink) {
+<span class="fc bfc" id="L1058" title="All 2 branches covered.">        if (hi - lo &lt; 2) {</span>
+<span class="fc" id="L1059">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1062">        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="pc bpc" id="L1063" title="1 of 2 branches missed.">        if (isNotContinuation(b2)) {</span>
+<span class="nc" id="L1064">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1067">        sink.put((char) (b1 &lt;&lt; 6 ^ b2 ^ 3968));</span>
+<span class="fc" id="L1068">        return 2;</span>
+    }
+
+    // a very specialised function to decode a single utf8 character
+    // used when it doesn't make sense to allocate a temporary sink
+    // returns an integer-encoded tuple (decoded number of bytes, character in utf16 encoding, stored as short type)
+    public static int utf8CharDecode(long lo, long hi) {
+<span class="fc bfc" id="L1075" title="All 2 branches covered.">        if (lo &lt; hi) {</span>
+<span class="fc" id="L1076">            byte b1 = Unsafe.getUnsafe().getByte(lo);</span>
+<span class="fc bfc" id="L1077" title="All 2 branches covered.">            if (b1 &lt; 0) {</span>
+<span class="pc bpc" id="L1078" title="1 of 6 branches missed.">                if (b1 &gt;&gt; 5 == -2 &amp;&amp; (b1 &amp; 30) != 0 &amp;&amp; hi - lo &gt; 1) {</span>
+<span class="fc" id="L1079">                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="fc bfc" id="L1080" title="All 2 branches covered.">                    if (isNotContinuation(b2)) {</span>
+<span class="fc" id="L1081">                        return 0;</span>
+                    }
+<span class="fc" id="L1083">                    return Numbers.encodeLowHighShorts((short) 2, (short) (b1 &lt;&lt; 6 ^ b2 ^ 3968));</span>
+                }
+
+<span class="pc bpc" id="L1086" title="1 of 4 branches missed.">                if (b1 &gt;&gt; 4 == -2 &amp;&amp; hi - lo &gt; 2) {</span>
+<span class="fc" id="L1087">                    byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="fc" id="L1088">                    byte b3 = Unsafe.getUnsafe().getByte(lo + 2);</span>
+<span class="fc bfc" id="L1089" title="All 2 branches covered.">                    if (isMalformed3(b1, b2, b3)) {</span>
+<span class="fc" id="L1090">                        return 0;</span>
+                    }
+
+<span class="fc" id="L1093">                    char c = (char) (b1 &lt;&lt; 12 ^ b2 &lt;&lt; 6 ^ b3 ^ -123008);</span>
+<span class="fc bfc" id="L1094" title="All 2 branches covered.">                    if (Character.isSurrogate(c)) {</span>
+<span class="fc" id="L1095">                        return 0;</span>
+                    }
+<span class="fc" id="L1097">                    return Numbers.encodeLowHighShorts((short) 3, (short) c);</span>
+                }
+<span class="fc" id="L1099">                return 0;</span>
+            } else {
+<span class="fc" id="L1101">                return Numbers.encodeLowHighShorts((short) 1, b1);</span>
+            }
+        }
+<span class="fc" id="L1104">        return 0;</span>
+    }
+
+    private static int utf8Decode2BytesZ(long lo, int b1, CharSink sink) {
+<span class="fc" id="L1108">        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="pc bpc" id="L1109" title="1 of 2 branches missed.">        if (b2 == 0) {</span>
+<span class="nc" id="L1110">            return utf8error();</span>
+        }
+<span class="pc bpc" id="L1112" title="1 of 2 branches missed.">        if (isNotContinuation(b2)) {</span>
+<span class="nc" id="L1113">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1116">        sink.put((char) (b1 &lt;&lt; 6 ^ b2 ^ 3968));</span>
+<span class="fc" id="L1117">        return 2;</span>
+    }
+
+    private static int utf8Decode3Byte0(int b1, CharSinkBase sink, byte b2, byte b3) {
+<span class="fc bfc" id="L1121" title="All 2 branches covered.">        if (isMalformed3(b1, b2, b3)) {</span>
+<span class="fc" id="L1122">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1125">        char c = (char) (b1 &lt;&lt; 12 ^ b2 &lt;&lt; 6 ^ b3 ^ -123008);</span>
+<span class="pc bpc" id="L1126" title="1 of 2 branches missed.">        if (Character.isSurrogate(c)) {</span>
+<span class="nc" id="L1127">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1130">        sink.put(c);</span>
+<span class="fc" id="L1131">        return 3;</span>
+    }
+
+    private static int utf8Decode3Bytes(long lo, long hi, int b1, CharSinkBase sink) {
+<span class="fc bfc" id="L1135" title="All 2 branches covered.">        if (hi - lo &lt; 3) {</span>
+<span class="fc" id="L1136">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1139">        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="fc" id="L1140">        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);</span>
+
+<span class="fc" id="L1142">        return utf8Decode3Byte0(b1, sink, b2, b3);</span>
+    }
+
+    private static int utf8Decode3Bytes(ByteSequence seq, int index, int b1, CharSinkBase sink) {
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">        if (seq.length() - index &lt; 3) {</span>
+<span class="nc" id="L1147">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1150">        byte b2 = Unsafe.getUnsafe().getByte(index + 1);</span>
+<span class="nc" id="L1151">        byte b3 = Unsafe.getUnsafe().getByte(index + 2);</span>
+
+<span class="nc" id="L1153">        return utf8Decode3Byte0(b1, sink, b2, b3);</span>
+    }
+
+    private static int utf8Decode3BytesZ(long lo, int b1, CharSink sink) {
+<span class="fc" id="L1157">        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="pc bpc" id="L1158" title="1 of 2 branches missed.">        if (b2 == 0) {</span>
+<span class="nc" id="L1159">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1162">        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);</span>
+<span class="pc bpc" id="L1163" title="1 of 2 branches missed.">        if (b3 == 0) {</span>
+<span class="nc" id="L1164">            return utf8error();</span>
+        }
+
+<span class="fc" id="L1167">        return utf8Decode3Byte0(b1, sink, b2, b3);</span>
+    }
+
+    private static int utf8Decode4Bytes(long lo, long hi, int b, CharSinkBase sink) {
+<span class="pc bpc" id="L1171" title="3 of 4 branches missed.">        if (b &gt;&gt; 3 != -2 || hi - lo &lt; 4) {</span>
+<span class="fc" id="L1172">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1175">        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="nc" id="L1176">        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);</span>
+<span class="nc" id="L1177">        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);</span>
+
+<span class="nc" id="L1179">        return utf8Decode4Bytes0(b, sink, b2, b3, b4);</span>
+    }
+
+    private static int utf8Decode4Bytes(ByteSequence seq, int index, int b, CharSinkBase sink) {
+<span class="nc bnc" id="L1183" title="All 4 branches missed.">        if (b &gt;&gt; 3 != -2 || seq.length() - index &lt; 4) {</span>
+<span class="nc" id="L1184">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1187">        byte b2 = Unsafe.getUnsafe().getByte(index + 1);</span>
+<span class="nc" id="L1188">        byte b3 = Unsafe.getUnsafe().getByte(index + 2);</span>
+<span class="nc" id="L1189">        byte b4 = Unsafe.getUnsafe().getByte(index + 3);</span>
+
+<span class="nc" id="L1191">        return utf8Decode4Bytes0(b, sink, b2, b3, b4);</span>
+    }
+
+    private static int utf8Decode4Bytes0(int b, CharSinkBase sink, byte b2, byte b3, byte b4) {
+<span class="nc bnc" id="L1195" title="All 2 branches missed.">        if (isMalformed4(b2, b3, b4)) {</span>
+<span class="nc" id="L1196">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1199">        final int codePoint = b &lt;&lt; 18 ^ b2 &lt;&lt; 12 ^ b3 &lt;&lt; 6 ^ b4 ^ 3678080;</span>
+<span class="nc bnc" id="L1200" title="All 2 branches missed.">        if (Character.isSupplementaryCodePoint(codePoint)) {</span>
+<span class="nc" id="L1201">            sink.put(Character.highSurrogate(codePoint));</span>
+<span class="nc" id="L1202">            sink.put(Character.lowSurrogate(codePoint));</span>
+<span class="nc" id="L1203">            return 4;</span>
+        }
+<span class="nc" id="L1205">        return utf8error();</span>
+    }
+
+    private static int utf8Decode4BytesZ(long lo, int b, CharSink sink) {
+<span class="nc bnc" id="L1209" title="All 2 branches missed.">        if (b &gt;&gt; 3 != -2) {</span>
+<span class="nc" id="L1210">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1213">        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);</span>
+<span class="nc bnc" id="L1214" title="All 2 branches missed.">        if (b2 == 0) {</span>
+<span class="nc" id="L1215">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1218">        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);</span>
+<span class="nc bnc" id="L1219" title="All 2 branches missed.">        if (b3 == 0) {</span>
+<span class="nc" id="L1220">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1223">        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);</span>
+<span class="nc bnc" id="L1224" title="All 2 branches missed.">        if (b4 == 0) {</span>
+<span class="nc" id="L1225">            return utf8error();</span>
+        }
+
+<span class="nc" id="L1228">        return utf8Decode4Bytes0(b, sink, b2, b3, b4);</span>
+    }
+
+    private static int utf8error() {
+<span class="fc" id="L1232">        return -1;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

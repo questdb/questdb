@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MemoryCR.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.vm.api</a> &gt; <span class="el_source">MemoryCR.java</span></div><h1>MemoryCR.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.vm.api;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.std.*;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.CharSink;
+
+//contiguous readable 
+<span class="pc bpc" id="L35" title="1 of 2 branches missed.">public interface MemoryCR extends MemoryC, MemoryR {</span>
+    default BinarySequence getBin(long offset, ByteSequenceView view) {
+<span class="fc" id="L37">        final long addr = addressOf(offset);</span>
+<span class="fc" id="L38">        final long len = Unsafe.getUnsafe().getLong(addr);</span>
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (len &gt; -1) {</span>
+<span class="fc" id="L40">            return view.of(addr + Long.BYTES, len);</span>
+        }
+<span class="fc" id="L42">        return null;</span>
+    }
+
+    default long getBinLen(long offset) {
+<span class="fc" id="L46">        return getLong(offset);</span>
+    }
+
+    default boolean getBool(long offset) {
+<span class="fc bfc" id="L50" title="All 2 branches covered.">        return getByte(offset) == 1;</span>
+    }
+
+    default byte getByte(long offset) {
+<span class="pc bpc" id="L54" title="2 of 4 branches missed.">        assert addressOf(offset + Byte.BYTES) &gt; 0;</span>
+<span class="fc" id="L55">        return Unsafe.getUnsafe().getByte(addressOf(offset));</span>
+    }
+
+    default char getChar(long offset) {
+<span class="pc bpc" id="L59" title="2 of 4 branches missed.">        assert addressOf(offset + Character.BYTES) &gt; 0;</span>
+<span class="fc" id="L60">        return Unsafe.getUnsafe().getChar(addressOf(offset));</span>
+    }
+
+    default double getDouble(long offset) {
+<span class="pc bpc" id="L64" title="2 of 4 branches missed.">        assert addressOf(offset + Double.BYTES) &gt; 0;</span>
+<span class="fc" id="L65">        return Unsafe.getUnsafe().getDouble(addressOf(offset));</span>
+    }
+
+    default float getFloat(long offset) {
+<span class="pc bpc" id="L69" title="2 of 4 branches missed.">        assert addressOf(offset + Float.BYTES) &gt; 0;</span>
+<span class="fc" id="L70">        return Unsafe.getUnsafe().getFloat(addressOf(offset));</span>
+    }
+
+    default int getInt(long offset) {
+<span class="pc bpc" id="L74" title="2 of 4 branches missed.">        assert addressOf(offset + Integer.BYTES) &gt; 0;</span>
+<span class="fc" id="L75">        return Unsafe.getUnsafe().getInt(addressOf(offset));</span>
+    }
+
+    default long getLong(long offset) {
+<span class="pc bpc" id="L79" title="2 of 4 branches missed.">        assert addressOf(offset + Long.BYTES) &gt; 0;</span>
+<span class="fc" id="L80">        return Unsafe.getUnsafe().getLong(addressOf(offset));</span>
+    }
+
+    default void getLong256(long offset, CharSink sink) {
+<span class="fc" id="L84">        final long addr = addressOf(offset + Long256.BYTES);</span>
+        final long a, b, c, d;
+<span class="fc" id="L86">        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);</span>
+<span class="fc" id="L87">        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);</span>
+<span class="fc" id="L88">        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);</span>
+<span class="fc" id="L89">        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);</span>
+<span class="fc" id="L90">        Numbers.appendLong256(a, b, c, d, sink);</span>
+<span class="fc" id="L91">    }</span>
+
+    default long getPageSize() {
+<span class="nc" id="L94">        return size();</span>
+    }
+
+    default short getShort(long offset) {
+<span class="fc" id="L98">        return Unsafe.getUnsafe().getShort(addressOf(offset));</span>
+    }
+
+    default CharSequence getStr(long offset, CharSequenceView view) {
+<span class="fc" id="L102">        long addr = addressOf(offset);</span>
+<span class="pc bpc" id="L103" title="2 of 4 branches missed.">        assert addr &gt; 0;</span>
+<span class="fc" id="L104">        final int len = Unsafe.getUnsafe().getInt(addr);</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        if (len != TableUtils.NULL_LEN) {</span>
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">            if (len + 4 + offset &lt;= size()) {</span>
+<span class="fc" id="L107">                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);</span>
+            }
+<span class="nc" id="L109">            throw CairoException.critical(0)</span>
+<span class="nc" id="L110">                    .put(&quot;String is outside of file boundary [offset=&quot;)</span>
+<span class="nc" id="L111">                    .put(offset)</span>
+<span class="nc" id="L112">                    .put(&quot;, len=&quot;)</span>
+<span class="nc" id="L113">                    .put(len)</span>
+<span class="nc" id="L114">                    .put(&quot;, size=&quot;)</span>
+<span class="nc" id="L115">                    .put(size())</span>
+<span class="nc" id="L116">                    .put(']');</span>
+        }
+<span class="fc" id="L118">        return null;</span>
+    }
+
+    default int getStrLen(long offset) {
+<span class="fc" id="L122">        return getInt(offset);</span>
+    }
+
+<span class="fc" id="L125">    class ByteSequenceView implements BinarySequence, Mutable {</span>
+        private long address;
+<span class="fc" id="L127">        private long len = -1;</span>
+
+        @Override
+        public byte byteAt(long index) {
+<span class="fc" id="L131">            return Unsafe.getUnsafe().getByte(address + index);</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="fc" id="L136">            len = -1;</span>
+<span class="fc" id="L137">        }</span>
+
+        @Override
+        public void copyTo(long address, final long start, final long length) {
+<span class="fc" id="L141">            long bytesRemaining = Math.min(length, this.len - start);</span>
+<span class="fc" id="L142">            long addr = this.address + start;</span>
+<span class="fc" id="L143">            Vect.memcpy(address, addr, bytesRemaining);</span>
+<span class="fc" id="L144">        }</span>
+
+        @Override
+        public long length() {
+<span class="fc" id="L148">            return len;</span>
+        }
+
+        public ByteSequenceView of(long address, long len) {
+<span class="fc" id="L152">            this.address = address;</span>
+<span class="fc" id="L153">            this.len = len;</span>
+<span class="fc" id="L154">            return this;</span>
+        }
+    }
+
+<span class="fc" id="L158">    class CharSequenceView extends AbstractCharSequence implements Mutable {</span>
+        private long address;
+        private int len;
+
+        @Override
+        public char charAt(int index) {
+<span class="fc" id="L164">            return Unsafe.getUnsafe().getChar(address + index * 2L);</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="fc" id="L169">            len = 0;</span>
+<span class="fc" id="L170">        }</span>
+
+        @Override
+        public int length() {
+<span class="fc" id="L174">            return len;</span>
+        }
+
+        public CharSequenceView of(long address, int len) {
+<span class="fc" id="L178">            this.address = address;</span>
+<span class="fc" id="L179">            this.len = len;</span>
+<span class="fc" id="L180">            return this;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

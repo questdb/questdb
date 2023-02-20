@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CrossJoinRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.join</a> &gt; <span class="el_source">CrossJoinRecordCursorFactory.java</span></div><h1>CrossJoinRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.join;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+
+//This plan is actually filter-less Nested Loop  
+public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final CrossJoinRecordCursor cursor;
+    private final RecordCursorFactory masterFactory;
+    private final RecordCursorFactory slaveFactory;
+
+    public CrossJoinRecordCursorFactory(
+            RecordMetadata metadata,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            int columnSplit
+
+    ) {
+<span class="fc" id="L51">        super(metadata);</span>
+<span class="fc" id="L52">        this.masterFactory = masterFactory;</span>
+<span class="fc" id="L53">        this.slaveFactory = slaveFactory;</span>
+<span class="fc" id="L54">        this.cursor = new CrossJoinRecordCursor(columnSplit);</span>
+<span class="fc" id="L55">    }</span>
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L59">        RecordCursor masterCursor = masterFactory.getCursor(executionContext);</span>
+<span class="fc" id="L60">        RecordCursor slaveCursor = null;</span>
+        try {
+<span class="fc" id="L62">            slaveCursor = slaveFactory.getCursor(executionContext);</span>
+<span class="fc" id="L63">            cursor.of(masterCursor, slaveCursor);</span>
+<span class="fc" id="L64">            return cursor;</span>
+<span class="nc" id="L65">        } catch (Throwable ex) {</span>
+<span class="nc" id="L66">            Misc.free(masterCursor);</span>
+<span class="nc" id="L67">            Misc.free(slaveCursor);</span>
+<span class="nc" id="L68">            throw ex;</span>
+        }
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L74">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+<span class="fc" id="L79">        return masterFactory.supportsUpdateRowId(tableToken);</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L84">        sink.type(&quot;Cross Join&quot;);</span>
+<span class="fc" id="L85">        sink.child(masterFactory);</span>
+<span class="fc" id="L86">        sink.child(slaveFactory);</span>
+<span class="fc" id="L87">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L91">        ((JoinRecordMetadata) getMetadata()).close();</span>
+<span class="fc" id="L92">        masterFactory.close();</span>
+<span class="fc" id="L93">        slaveFactory.close();</span>
+<span class="fc" id="L94">    }</span>
+
+    private static class CrossJoinRecordCursor extends AbstractJoinCursor {
+        private final JoinRecord record;
+        private boolean isMasterHasNextPending;
+        private boolean masterHasNext;
+
+        public CrossJoinRecordCursor(int columnSplit) {
+<span class="fc" id="L102">            super(columnSplit);</span>
+<span class="fc" id="L103">            this.record = new JoinRecord(columnSplit);</span>
+<span class="fc" id="L104">        }</span>
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L108">            return record;</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+            while (true) {
+<span class="fc bfc" id="L114" title="All 2 branches covered.">                if (isMasterHasNextPending) {</span>
+<span class="fc" id="L115">                    masterHasNext = masterCursor.hasNext();</span>
+<span class="fc" id="L116">                    isMasterHasNextPending = false;</span>
+                }
+
+<span class="fc bfc" id="L119" title="All 2 branches covered.">                if (!masterHasNext) {</span>
+<span class="fc" id="L120">                    return false;</span>
+                }
+
+<span class="fc bfc" id="L123" title="All 2 branches covered.">                if (slaveCursor.hasNext()) {</span>
+<span class="fc" id="L124">                    return true;</span>
+                }
+
+<span class="fc" id="L127">                slaveCursor.toTop();</span>
+<span class="fc" id="L128">                isMasterHasNextPending = true;</span>
+            }
+        }
+
+        @Override
+        public long size() {
+<span class="fc" id="L134">            long sizeA = masterCursor.size();</span>
+<span class="fc" id="L135">            long sizeB = slaveCursor.size();</span>
+<span class="fc bfc" id="L136" title="All 4 branches covered.">            if (sizeA == -1 || sizeB == -1) {</span>
+<span class="fc" id="L137">                return -1;</span>
+            }
+<span class="fc" id="L139">            final long result = sizeA * sizeB;</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">            return result &lt; sizeA ? Long.MAX_VALUE : result;</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L145">            masterCursor.toTop();</span>
+<span class="fc" id="L146">            slaveCursor.toTop();</span>
+<span class="fc" id="L147">            isMasterHasNextPending = true;</span>
+<span class="fc" id="L148">        }</span>
+
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+<span class="fc" id="L151">            this.masterCursor = masterCursor;</span>
+<span class="fc" id="L152">            this.slaveCursor = slaveCursor;</span>
+<span class="fc" id="L153">            record.of(masterCursor.getRecord(), slaveCursor.getRecord());</span>
+<span class="fc" id="L154">            isMasterHasNextPending = true;</span>
+<span class="fc" id="L155">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

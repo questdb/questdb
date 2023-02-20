@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SimpleWaitingLock.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.mp</a> &gt; <span class="el_source">SimpleWaitingLock.java</span></div><h1>SimpleWaitingLock.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp;
+
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
+
+<span class="fc" id="L31">public class SimpleWaitingLock {</span>
+<span class="fc" id="L32">    private final AtomicBoolean lock = new AtomicBoolean(false);</span>
+<span class="fc" id="L33">    private volatile Thread waiter = null;</span>
+
+    public boolean isLocked() {
+<span class="fc" id="L36">        return lock.get();</span>
+    }
+
+    public void lock() {
+<span class="fc" id="L40">        this.waiter = Thread.currentThread();</span>
+        while (true) {
+<span class="fc bfc" id="L42" title="All 2 branches covered.">            while (lock.get()) {</span>
+<span class="fc" id="L43">                LockSupport.park();</span>
+            }
+<span class="pc bpc" id="L45" title="1 of 2 branches missed.">            if (!lock.getAndSet(true)) {</span>
+<span class="fc" id="L46">                return;</span>
+            }
+        }
+    }
+
+    public boolean tryLock(long timeout, TimeUnit unit) {
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        if (tryLock()) {</span>
+<span class="fc" id="L53">            return true;</span>
+        }
+
+<span class="pc bpc" id="L56" title="1 of 2 branches missed.">        if (timeout &lt;= 0L) {</span>
+<span class="nc" id="L57">            return false;</span>
+        }
+
+<span class="fc" id="L60">        long nanos = unit.toNanos(timeout);</span>
+<span class="fc" id="L61">        this.waiter = Thread.currentThread();</span>
+        while (true) {
+<span class="fc" id="L63">            long start = System.nanoTime();</span>
+<span class="fc" id="L64">            LockSupport.parkNanos(nanos);</span>
+<span class="fc" id="L65">            long elapsed = System.nanoTime() - start;</span>
+
+<span class="fc bfc" id="L67" title="All 2 branches covered.">            if (elapsed &lt; nanos) {</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">                if (tryLock()) {</span>
+<span class="fc" id="L69">                    return true;</span>
+                }
+            } else {
+<span class="fc" id="L72">                return false;</span>
+            }
+<span class="fc" id="L74">        }</span>
+    }
+
+    public boolean tryLock() {
+<span class="fc" id="L78">        return lock.compareAndSet(false, true);</span>
+    }
+
+    public void unlock() {
+<span class="fc bfc" id="L82" title="All 2 branches covered.">        if (lock.compareAndSet(true, false)) {</span>
+<span class="fc" id="L83">            Thread waiter = this.waiter;</span>
+<span class="fc" id="L84">            this.waiter = null;</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">            if (waiter != null) {</span>
+<span class="fc" id="L86">                LockSupport.unpark(waiter);</span>
+            }
+<span class="fc" id="L88">        } else {</span>
+<span class="fc" id="L89">            throw new IllegalStateException();</span>
+        }
+<span class="fc" id="L91">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

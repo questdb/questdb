@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultLineUdpReceiverConfiguration.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.udp</a> &gt; <span class="el_source">DefaultLineUdpReceiverConfiguration.java</span></div><h1>DefaultLineUdpReceiverConfiguration.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.udp;
+
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+
+<span class="fc" id="L38">public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {</span>
+
+    @Override
+    public boolean getAutoCreateNewColumns() {
+<span class="fc" id="L42">        return true;</span>
+    }
+
+    @Override
+    public boolean getAutoCreateNewTables() {
+<span class="fc" id="L47">        return true;</span>
+    }
+
+    @Override
+    public int getBindIPv4Address() {
+<span class="fc" id="L52">        return 0;</span>
+    }
+
+    @Override
+    public CairoSecurityContext getCairoSecurityContext() {
+<span class="fc" id="L57">        return AllowAllCairoSecurityContext.INSTANCE;</span>
+    }
+
+    @Override
+    public int getCommitMode() {
+<span class="fc" id="L62">        return CommitMode.NOSYNC;</span>
+    }
+
+    @Override
+    public int getCommitRate() {
+<span class="fc" id="L67">        return 1024 * 1024;</span>
+    }
+
+    @Override
+    public short getDefaultColumnTypeForFloat() {
+<span class="fc" id="L72">        return ColumnType.DOUBLE;</span>
+    }
+
+    @Override
+    public short getDefaultColumnTypeForInteger() {
+<span class="fc" id="L77">        return ColumnType.LONG;</span>
+    }
+
+    @Override
+    public int getDefaultPartitionBy() {
+<span class="fc" id="L82">        return PartitionBy.DAY;</span>
+    }
+
+    @Override
+    public int getGroupIPv4Address() {
+<span class="fc" id="L87">        return Net.parseIPv4(&quot;224.1.1.1&quot;);</span>
+    }
+
+    @Override
+    public int getMaxFileNameLength() {
+<span class="fc" id="L92">        return 127;</span>
+    }
+
+    @Override
+    public int getMsgBufferSize() {
+<span class="fc" id="L97">        return 2048;</span>
+    }
+
+    @Override
+    public int getMsgCount() {
+<span class="nc" id="L102">        return 10000;</span>
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+<span class="fc" id="L107">        return NetworkFacadeImpl.INSTANCE;</span>
+    }
+
+    @Override
+    public int getPort() {
+<span class="fc" id="L112">        return 4567;</span>
+    }
+
+    @Override
+    public int getReceiveBufferSize() {
+<span class="fc" id="L117">        return -1;</span>
+    }
+
+    @Override
+    public LineProtoTimestampAdapter getTimestampAdapter() {
+<span class="fc" id="L122">        return LineProtoNanoTimestampAdapter.INSTANCE;</span>
+    }
+
+    @Override
+    public boolean isEnabled() {
+<span class="nc" id="L127">        return true;</span>
+    }
+
+    @Override
+    public boolean isUnicast() {
+<span class="fc" id="L132">        return false;</span>
+    }
+
+    @Override
+    public boolean ownThread() {
+<span class="fc" id="L137">        return true;</span>
+    }
+
+    @Override
+    public int ownThreadAffinity() {
+<span class="fc" id="L142">        return -1;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

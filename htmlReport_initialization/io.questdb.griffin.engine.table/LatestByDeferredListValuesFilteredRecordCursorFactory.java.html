@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LatestByDeferredListValuesFilteredRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">LatestByDeferredListValuesFilteredRecordCursorFactory.java</span></div><h1>LatestByDeferredListValuesFilteredRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+/**
+ * Iterates table backwards and finds the latest values for a single symbol column.
+ * When the LATEST BY is applied to symbol column QuestDB knows all distinct symbol values
+ * and in many cases can stop before scanning all the data when it finds all the expected values
+ */
+public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    private final LatestByValueListRecordCursor cursor;
+    private final ObjList&lt;Function&gt; excludedSymbolFuncs;
+    private final Function filter;
+    private final int frameSymbolIndex;
+    private final ObjList&lt;Function&gt; includedSymbolFuncs;
+
+    public LatestByDeferredListValuesFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            int columnIndex,
+            @Transient @Nullable ObjList&lt;Function&gt; includedSymbolFuncs,
+            @Transient @Nullable ObjList&lt;Function&gt; excludedSymbolFuncs,
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes
+    ) {
+<span class="fc" id="L58">        super(metadata, dataFrameCursorFactory);</span>
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList&lt;&gt;(includedSymbolFuncs) : null;</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList&lt;&gt;(excludedSymbolFuncs) : null;</span>
+<span class="fc" id="L61">        this.filter = filter;</span>
+<span class="fc" id="L62">        frameSymbolIndex = columnIndexes.getQuick(columnIndex);</span>
+<span class="fc" id="L63">        cursor = new LatestByValueListRecordCursor(</span>
+                columnIndex,
+                filter,
+                columnIndexes,
+<span class="fc bfc" id="L67" title="All 2 branches covered.">                configuration.getDefaultSymbolCapacity(),</span>
+<span class="fc bfc" id="L68" title="All 4 branches covered.">                includedSymbolFuncs != null &amp;&amp; includedSymbolFuncs.size() &gt; 0,</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">                excludedSymbolFuncs != null &amp;&amp; excludedSymbolFuncs.size() &gt; 0</span>
+        );
+<span class="fc" id="L71">    }</span>
+
+    public LatestByDeferredListValuesFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            RecordMetadata metadata,
+            DataFrameCursorFactory dataFrameCursorFactory,
+            int latestByIndex,
+            Function filter,
+            IntList columnIndexes
+    ) {
+<span class="fc" id="L81">        this(configuration, metadata, dataFrameCursorFactory, latestByIndex, null, null, filter, columnIndexes);</span>
+<span class="fc" id="L82">    }</span>
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L86">        return true;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L91">        sink.type(&quot;LatestByDeferredListValuesFiltered&quot;);</span>
+<span class="fc" id="L92">        sink.optAttr(&quot;filter&quot;, filter);</span>
+<span class="fc" id="L93">        sink.optAttr(&quot;includedSymbols&quot;, includedSymbolFuncs);</span>
+<span class="fc" id="L94">        sink.optAttr(&quot;excludedSymbols&quot;, excludedSymbolFuncs);</span>
+<span class="fc" id="L95">        sink.child(dataFrameCursorFactory);</span>
+<span class="fc" id="L96">    }</span>
+
+    private void lookupDeferredSymbols(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        // If symbol values are restricted by a list in the query by syntax
+        // sym in ('val1', 'val2', 'val3')
+        // or similar we need to resolve string values into int symbol keys to search the table faster.
+        // Resolve values to int keys and save them in cursor.getSymbolKeys() set.
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        if (includedSymbolFuncs != null) {</span>
+<span class="fc" id="L104">            IntHashSet symbolKeys = cursor.getIncludedSymbolKeys();</span>
+<span class="fc" id="L105">            symbolKeys.clear();</span>
+<span class="fc" id="L106">            StaticSymbolTable symbolMapReader = dataFrameCursor.getSymbolTable(frameSymbolIndex);</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">            for (int i = 0, n = includedSymbolFuncs.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L108">                Function symbolFunc = includedSymbolFuncs.getQuick(i);</span>
+<span class="fc" id="L109">                symbolFunc.init(dataFrameCursor, executionContext);</span>
+<span class="fc" id="L110">                int key = symbolMapReader.keyOf(symbolFunc.getStr(null));</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">                if (key != SymbolTable.VALUE_NOT_FOUND) {</span>
+<span class="fc" id="L112">                    symbolKeys.add(key);</span>
+                }
+            }
+        }
+        // Do the same with not in keys.
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        if (excludedSymbolFuncs != null) {</span>
+<span class="fc" id="L118">            IntHashSet symbolKeys = cursor.getExcludedSymbolKeys();</span>
+<span class="fc" id="L119">            symbolKeys.clear();</span>
+<span class="fc" id="L120">            StaticSymbolTable symbolMapReader = dataFrameCursor.getSymbolTable(frameSymbolIndex);</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">            for (int i = 0, n = excludedSymbolFuncs.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L122">                Function symbolFunc = excludedSymbolFuncs.getQuick(i);</span>
+<span class="fc" id="L123">                symbolFunc.init(dataFrameCursor, executionContext);</span>
+<span class="fc" id="L124">                int key = symbolMapReader.keyOf(symbolFunc.getStr(null));</span>
+<span class="fc bfc" id="L125" title="All 2 branches covered.">                if (key != SymbolTable.VALUE_NOT_FOUND) {</span>
+<span class="fc" id="L126">                    symbolKeys.add(key);</span>
+                }
+            }
+        }
+<span class="fc" id="L130">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L134">        super._close();</span>
+<span class="fc" id="L135">        Misc.free(filter);</span>
+<span class="fc" id="L136">        this.cursor.destroy();</span>
+<span class="fc" id="L137">    }</span>
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+<span class="fc" id="L144">        lookupDeferredSymbols(dataFrameCursor, executionContext);</span>
+<span class="fc" id="L145">        cursor.of(dataFrameCursor, executionContext);</span>
+<span class="fc" id="L146">        return cursor;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

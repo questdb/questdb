@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Unsafe.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">Unsafe.java</span></div><h1>Unsafe.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+// @formatter:off
+import org.jetbrains.annotations.Nullable;
+
+import java.lang.invoke.MethodHandles;
+import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Array;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
+
+public final class Unsafe {
+    public static final long BYTE_OFFSET;
+    public static final long BYTE_SCALE;
+    public static final long INT_OFFSET;
+    public static final long INT_SCALE;
+    //#if jdk.version!=8
+<span class="fc" id="L44">    public static final Module JAVA_BASE_MODULE = System.class.getModule();</span>
+    //#endif
+    public static final long LONG_OFFSET;
+    public static final long LONG_SCALE;
+<span class="fc" id="L48">    static final AtomicLong MEM_USED = new AtomicLong(0);</span>
+<span class="fc" id="L49">    private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];</span>
+<span class="fc" id="L50">    private static final AtomicLong FREE_COUNT = new AtomicLong(0);</span>
+<span class="fc" id="L51">    private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);</span>
+    //#if jdk.version!=8
+    private static final long OVERRIDE;
+    //#endif
+<span class="fc" id="L55">    private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);</span>
+    private static final sun.misc.Unsafe UNSAFE;
+    private static final AnonymousClassDefiner anonymousClassDefiner;
+    //#if jdk.version!=8
+    private static final Method implAddExports;
+    //#endif
+
+    private Unsafe() {
+    }
+
+    //#if jdk.version!=8
+    public static void addExports(Module from, Module to, String packageName) {
+        try {
+<span class="fc" id="L68">            implAddExports.invoke(from, packageName, to);</span>
+<span class="nc" id="L69">        } catch (ReflectiveOperationException e) {</span>
+<span class="nc" id="L70">            e.printStackTrace();</span>
+<span class="fc" id="L71">        }</span>
+<span class="fc" id="L72">    }</span>
+    //#endif
+
+    public static long arrayGetVolatile(long[] array, int index) {
+<span class="pc bpc" id="L76" title="2 of 4 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; array.length;</span>
+<span class="fc" id="L77">        return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + ((long) index &lt;&lt; LONG_SCALE));</span>
+    }
+
+    public static int arrayGetVolatile(int[] array, int index) {
+<span class="pc bpc" id="L81" title="2 of 4 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; array.length;</span>
+<span class="fc" id="L82">        return Unsafe.getUnsafe().getIntVolatile(array, INT_OFFSET + ((long) index &lt;&lt; INT_SCALE));</span>
+    }
+
+    /**
+     * This call has Atomic*#lazySet / memory_order_release semantics.
+     *
+     * @param array array to put into
+     * @param index index
+     * @param value value to put
+     */
+    public static void arrayPutOrdered(long[] array, int index, long value) {
+<span class="pc bpc" id="L93" title="2 of 4 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; array.length;</span>
+<span class="fc" id="L94">        Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index &lt;&lt; LONG_SCALE), value);</span>
+<span class="fc" id="L95">    }</span>
+
+    /**
+     * This call has Atomic*#lazySet / memory_order_release semantics.
+     *
+     * @param array array to put into
+     * @param index index
+     * @param value value to put
+     */
+    public static void arrayPutOrdered(int[] array, int index, int value) {
+<span class="pc bpc" id="L105" title="2 of 4 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; array.length;</span>
+<span class="fc" id="L106">        Unsafe.getUnsafe().putOrderedInt(array, INT_OFFSET + ((long) index &lt;&lt; INT_SCALE), value);</span>
+<span class="fc" id="L107">    }</span>
+
+    public static int byteArrayGetInt(byte[] array, int index) {
+<span class="pc bpc" id="L110" title="2 of 4 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; array.length - 3;</span>
+<span class="fc" id="L111">        return Unsafe.getUnsafe().getInt(array, BYTE_OFFSET + index);</span>
+    }
+
+    public static long byteArrayGetLong(byte[] array, int index) {
+<span class="pc bpc" id="L115" title="2 of 4 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; array.length - 7;</span>
+<span class="fc" id="L116">        return Unsafe.getUnsafe().getLong(array, BYTE_OFFSET + index);</span>
+    }
+
+    public static long calloc(long size, int memoryTag) {
+<span class="fc" id="L120">        long ptr = malloc(size, memoryTag);</span>
+<span class="fc" id="L121">        Vect.memset(ptr, size, 0);</span>
+<span class="fc" id="L122">        return ptr;</span>
+    }
+
+    public static boolean cas(Object o, long offset, long expected, long value) {
+<span class="fc" id="L126">        return UNSAFE.compareAndSwapLong(o, offset, expected, value);</span>
+    }
+
+    public static boolean cas(Object o, long offset, int expected, int value) {
+<span class="fc" id="L130">        return UNSAFE.compareAndSwapInt(o, offset, expected, value);</span>
+    }
+
+    public static boolean cas(long[] array, int index, long expected, long value) {
+<span class="pc bpc" id="L134" title="2 of 4 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; array.length;</span>
+<span class="fc" id="L135">        return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) &lt;&lt; Unsafe.LONG_SCALE), expected, value);</span>
+    }
+
+    /**
+     * Defines a class but does not make it known to the class loader or system dictionary.
+     * &lt;p&gt;
+     * Equivalent to {@code Unsafe#defineAnonymousClass} and {@code Lookup#defineHiddenClass}, except that
+     * it does not support constant pool patches.
+     *
+     * @param hostClass context for linkage, access control, protection domain, and class loader
+     * @param data      bytes of a class file
+     * @return Java Class for the given bytecode
+     */
+    @Nullable
+    public static Class&lt;?&gt; defineAnonymousClass(Class&lt;?&gt; hostClass, byte[] data) {
+<span class="fc" id="L150">        return anonymousClassDefiner.define(hostClass, data);</span>
+    }
+
+    public static long free(long ptr, long size, int memoryTag) {
+<span class="fc bfc" id="L154" title="All 2 branches covered.">        if (ptr != 0) {</span>
+<span class="fc" id="L155">            getUnsafe().freeMemory(ptr);</span>
+<span class="fc" id="L156">            FREE_COUNT.incrementAndGet();</span>
+<span class="fc" id="L157">            recordMemAlloc(-size, memoryTag);</span>
+        }
+<span class="fc" id="L159">        return 0;</span>
+    }
+
+    public static boolean getBool(long address) {
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        return UNSAFE.getByte(address) == 1;</span>
+    }
+
+    public static long getFieldOffset(Class&lt;?&gt; clazz, String name) {
+        try {
+<span class="fc" id="L168">            return UNSAFE.objectFieldOffset(clazz.getDeclaredField(name));</span>
+<span class="nc" id="L169">        } catch (NoSuchFieldException e) {</span>
+<span class="nc" id="L170">            throw new ExceptionInInitializerError(e);</span>
+        }
+    }
+
+    public static long getFreeCount() {
+<span class="fc" id="L175">        return FREE_COUNT.get();</span>
+    }
+
+    public static long getMallocCount() {
+<span class="fc" id="L179">        return MALLOC_COUNT.get();</span>
+    }
+
+    public static long getMemUsed() {
+<span class="fc" id="L183">        return MEM_USED.get();</span>
+    }
+
+    public static long getMemUsedByTag(int memoryTag) {
+<span class="pc bpc" id="L187" title="2 of 4 branches missed.">        assert memoryTag &gt;= 0 &amp;&amp; memoryTag &lt; MemoryTag.SIZE;</span>
+<span class="fc" id="L188">        return COUNTERS[memoryTag].sum();</span>
+    }
+
+    public static long getReallocCount() {
+<span class="fc" id="L192">        return REALLOC_COUNT.get();</span>
+    }
+
+    public static sun.misc.Unsafe getUnsafe() {
+<span class="fc" id="L196">        return UNSAFE;</span>
+    }
+
+    //#if jdk.version!=8
+
+    /**
+     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
+     * it does not produce an illegal access error or warning.
+     *
+     * @param accessibleObject the instance to make accessible
+     */
+    public static void makeAccessible(AccessibleObject accessibleObject) {
+<span class="fc" id="L208">        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);</span>
+<span class="fc" id="L209">    }</span>
+    //#endif
+
+    public static long malloc(long size, int memoryTag) {
+        try {
+<span class="fc" id="L214">            long ptr = getUnsafe().allocateMemory(size);</span>
+<span class="fc" id="L215">            recordMemAlloc(size, memoryTag);</span>
+<span class="fc" id="L216">            MALLOC_COUNT.incrementAndGet();</span>
+<span class="fc" id="L217">            return ptr;</span>
+<span class="nc" id="L218">        } catch (OutOfMemoryError oom) {</span>
+<span class="nc" id="L219">            System.err.printf(</span>
+                    &quot;Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d&quot;,
+<span class="nc" id="L221">                    MEM_USED.get(), size, memoryTag);</span>
+<span class="nc" id="L222">            throw oom;</span>
+        }
+    }
+
+    public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
+        try {
+<span class="fc" id="L228">            long ptr = getUnsafe().reallocateMemory(address, newSize);</span>
+<span class="fc" id="L229">            recordMemAlloc(-oldSize + newSize, memoryTag);</span>
+<span class="fc" id="L230">            REALLOC_COUNT.incrementAndGet();</span>
+<span class="fc" id="L231">            return ptr;</span>
+<span class="nc" id="L232">        } catch (OutOfMemoryError oom) {</span>
+<span class="nc" id="L233">            System.err.printf(</span>
+                    &quot;Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=%d&quot;,
+<span class="nc" id="L235">                    MEM_USED.get(), oldSize, newSize, memoryTag);</span>
+<span class="nc" id="L236">            throw oom;</span>
+        }
+    }
+
+    public static void recordMemAlloc(long size, int memoryTag) {
+<span class="fc" id="L241">        long mem = MEM_USED.addAndGet(size);</span>
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">        assert mem &gt;= 0;</span>
+<span class="pc bpc" id="L243" title="2 of 4 branches missed.">        assert memoryTag &gt;= 0 &amp;&amp; memoryTag &lt; MemoryTag.SIZE;</span>
+<span class="fc" id="L244">        COUNTERS[memoryTag].add(size);</span>
+<span class="fc" id="L245">    }</span>
+
+    //#if jdk.version!=8
+    private static long AccessibleObject_override_fieldOffset() {
+<span class="pc bpc" id="L249" title="1 of 2 branches missed.">        if (isJava8Or11()) {</span>
+<span class="nc" id="L250">            return getFieldOffset(AccessibleObject.class, &quot;override&quot;);</span>
+        }
+        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
+<span class="fc" id="L253">        boolean is32BitJVM = is32BitJVM();</span>
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        if (is32BitJVM) {</span>
+<span class="nc" id="L255">            return 8L;</span>
+        }
+<span class="pc bpc" id="L257" title="1 of 2 branches missed.">        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {</span>
+<span class="fc" id="L258">            return 12L;</span>
+        }
+<span class="nc" id="L260">        return 16L;</span>
+    }
+    //#endif
+
+    //#if jdk.version!=8
+    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
+<span class="fc" id="L266">        class Probe {</span>
+            @SuppressWarnings(&quot;unused&quot;)
+            private int intField; // Accessed through reflection
+
+            boolean probe() {
+<span class="fc" id="L271">                long offset = getFieldOffset(Probe.class, &quot;intField&quot;);</span>
+<span class="pc bpc" id="L272" title="1 of 2 branches missed.">                if (offset == 8L) {</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">                    assert is32BitJVM;</span>
+<span class="nc" id="L274">                    return false;</span>
+                }
+<span class="pc bpc" id="L276" title="1 of 2 branches missed.">                if (offset == 12L) {</span>
+<span class="fc" id="L277">                    return true;</span>
+                }
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                if (offset == 16L) {</span>
+<span class="nc" id="L280">                    return false;</span>
+                }
+<span class="nc" id="L282">                throw new AssertionError(offset);</span>
+            }
+        }
+<span class="fc" id="L285">        return new Probe().probe();</span>
+    }
+    //#endif
+
+    //#if jdk.version!=8
+    private static boolean is32BitJVM() {
+<span class="fc" id="L291">        String sunArchDataModel = System.getProperty(&quot;sun.arch.data.model&quot;);</span>
+<span class="fc" id="L292">        return sunArchDataModel.equals(&quot;32&quot;);</span>
+    }
+    //#endif
+
+    //#if jdk.version!=8
+    private static boolean isJava8Or11() {
+<span class="fc" id="L298">        String javaVersion = System.getProperty(&quot;java.version&quot;);</span>
+<span class="pc bpc" id="L299" title="2 of 4 branches missed.">        return javaVersion.startsWith(&quot;11&quot;) || javaVersion.startsWith(&quot;1.8&quot;);</span>
+    }
+    //#endif
+
+    // most significant bit
+    private static int msb(int value) {
+<span class="fc" id="L305">        return 31 - Integer.numberOfLeadingZeros(value);</span>
+    }
+
+    interface AnonymousClassDefiner {
+        Class&lt;?&gt; define(Class&lt;?&gt; hostClass, byte[] data);
+    }
+
+    /**
+     * Based on {@code MethodHandles.Lookup#defineHiddenClass}.
+     */
+<span class="fc" id="L315">    static class MethodHandlesClassDefiner implements AnonymousClassDefiner {</span>
+
+        private static Method defineMethod;
+        private static Object hiddenClassOptions;
+        private static Object lookupBase;
+        private static long lookupOffset;
+
+        @Nullable
+        public static MethodHandlesClassDefiner newInstance() {
+<span class="pc bpc" id="L324" title="1 of 2 branches missed.">            if (defineMethod == null) {</span>
+                try {
+<span class="fc" id="L326">                    Field trustedLookupField = MethodHandles.Lookup.class.getDeclaredField(&quot;IMPL_LOOKUP&quot;);</span>
+<span class="fc" id="L327">                    lookupBase = UNSAFE.staticFieldBase(trustedLookupField);</span>
+<span class="fc" id="L328">                    lookupOffset = UNSAFE.staticFieldOffset(trustedLookupField);</span>
+<span class="fc" id="L329">                    hiddenClassOptions = hiddenClassOptions(&quot;NESTMATE&quot;);</span>
+<span class="fc" id="L330">                    defineMethod = MethodHandles.Lookup.class</span>
+<span class="fc" id="L331">                            .getMethod(&quot;defineHiddenClass&quot;, byte[].class, boolean.class, hiddenClassOptions.getClass());</span>
+<span class="nc" id="L332">                } catch (ReflectiveOperationException e) {</span>
+<span class="nc" id="L333">                    return null;</span>
+<span class="fc" id="L334">                }</span>
+            }
+<span class="fc" id="L336">            return new MethodHandlesClassDefiner();</span>
+        }
+
+        @Override
+        public Class&lt;?&gt; define(Class&lt;?&gt; hostClass, byte[] data) {
+            try {
+<span class="fc" id="L342">                MethodHandles.Lookup trustedLookup = (MethodHandles.Lookup) UNSAFE.getObject(lookupBase, lookupOffset);</span>
+<span class="fc" id="L343">                MethodHandles.Lookup definedLookup =</span>
+<span class="fc" id="L344">                        (MethodHandles.Lookup) defineMethod.invoke(trustedLookup.in(hostClass), data, false, hiddenClassOptions);</span>
+<span class="fc" id="L345">                return definedLookup.lookupClass();</span>
+<span class="nc" id="L346">            } catch (Exception e) {</span>
+<span class="nc" id="L347">                e.printStackTrace();</span>
+<span class="nc" id="L348">                return null;</span>
+            }
+        }
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+        private static Object hiddenClassOptions(String... options) throws ClassNotFoundException {
+            @SuppressWarnings(&quot;rawtypes&quot;)
+<span class="fc" id="L355">            Class optionClass = Class.forName(MethodHandles.Lookup.class.getName() + &quot;$ClassOption&quot;);</span>
+<span class="fc" id="L356">            Object classOptions = Array.newInstance(optionClass, options.length);</span>
+<span class="fc bfc" id="L357" title="All 2 branches covered.">            for (int i = 0; i &lt; options.length; i++) {</span>
+<span class="fc" id="L358">                Array.set(classOptions, i, Enum.valueOf(optionClass, options[i]));</span>
+            }
+<span class="fc" id="L360">            return classOptions;</span>
+        }
+    }
+
+    /**
+     * Based on {@code Unsafe#defineAnonymousClass}.
+     */
+<span class="nc" id="L367">    static class UnsafeClassDefiner implements AnonymousClassDefiner {</span>
+
+        private static Method defineMethod;
+
+        @Nullable
+        public static UnsafeClassDefiner newInstance() {
+<span class="pc bpc" id="L373" title="1 of 2 branches missed.">            if (defineMethod == null) {</span>
+                try {
+<span class="fc" id="L375">                    defineMethod = sun.misc.Unsafe.class</span>
+<span class="nc" id="L376">                            .getMethod(&quot;defineAnonymousClass&quot;, Class.class, byte[].class, Object[].class);</span>
+<span class="fc" id="L377">                } catch (ReflectiveOperationException e) {</span>
+<span class="fc" id="L378">                    return null;</span>
+<span class="nc" id="L379">                }</span>
+            }
+<span class="nc" id="L381">            return new UnsafeClassDefiner();</span>
+        }
+
+        @Override
+        public Class&lt;?&gt; define(Class&lt;?&gt; hostClass, byte[] data) {
+            try {
+<span class="nc" id="L387">                return (Class&lt;?&gt;) defineMethod.invoke(UNSAFE, hostClass, data, null);</span>
+<span class="nc" id="L388">            } catch (Exception e) {</span>
+<span class="nc" id="L389">                e.printStackTrace();</span>
+<span class="nc" id="L390">                return null;</span>
+            }
+        }
+    }
+
+    static {
+        try {
+<span class="fc" id="L397">            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField(&quot;theUnsafe&quot;);</span>
+<span class="fc" id="L398">            theUnsafe.setAccessible(true);</span>
+<span class="fc" id="L399">            UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);</span>
+
+<span class="fc" id="L401">            BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);</span>
+<span class="fc" id="L402">            BYTE_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(byte[].class));</span>
+
+<span class="fc" id="L404">            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);</span>
+<span class="fc" id="L405">            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));</span>
+
+<span class="fc" id="L407">            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);</span>
+<span class="fc" id="L408">            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));</span>
+
+            //#if jdk.version!=8
+<span class="fc" id="L411">            OVERRIDE = AccessibleObject_override_fieldOffset();</span>
+<span class="fc" id="L412">            implAddExports = Module.class.getDeclaredMethod(&quot;implAddExports&quot;, String.class, Module.class);</span>
+            //#endif
+
+<span class="fc" id="L415">            AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();</span>
+<span class="pc bpc" id="L416" title="1 of 2 branches missed.">            if (classDefiner == null) {</span>
+<span class="fc" id="L417">                classDefiner = MethodHandlesClassDefiner.newInstance();</span>
+            }
+<span class="pc bpc" id="L419" title="1 of 2 branches missed.">            if (classDefiner == null) {</span>
+<span class="nc" id="L420">                throw new InstantiationException(&quot;failed to initialize class definer&quot;);</span>
+            }
+<span class="fc" id="L422">            anonymousClassDefiner = classDefiner;</span>
+<span class="nc" id="L423">        } catch (ReflectiveOperationException e) {</span>
+<span class="nc" id="L424">            throw new ExceptionInInitializerError(e);</span>
+<span class="fc" id="L425">        }</span>
+        //#if jdk.version!=8
+<span class="fc" id="L427">        makeAccessible(implAddExports);</span>
+        //#endif
+
+<span class="fc bfc" id="L430" title="All 2 branches covered.">        for (int i = 0; i &lt; COUNTERS.length; i++) {</span>
+<span class="fc" id="L431">            COUNTERS[i] = new LongAdder();</span>
+        }
+<span class="fc" id="L433">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

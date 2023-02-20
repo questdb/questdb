@@ -1,0 +1,1514 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QueryModel.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.model</a> &gt; <span class="el_source">QueryModel.java</span></div><h1>QueryModel.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.model;
+
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.OrderByMnemonic;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+
+import java.util.ArrayDeque;
+import java.util.Iterator;
+import java.util.Objects;
+
+import static io.questdb.griffin.SqlKeywords.isAndKeyword;
+
+/**
+ * Important note: Make sure to update clear, equals and hashCode methods, as well as
+ * the unit tests, when you're adding a new field to this class. Instances of QueryModel
+ * are reused across query compilation, so making sure that we reset all fields correctly
+ * is important.
+ */
+public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
+<span class="fc" id="L47">    public static final QueryModelFactory FACTORY = new QueryModelFactory();</span>
+    public static final int JOIN_ASOF = 4;
+    public static final int JOIN_CROSS = 3;
+    public static final int JOIN_CROSS_LEFT = 8;
+    public static final int JOIN_INNER = 1;
+    public static final int JOIN_LT = 6;
+    public static final int JOIN_MAX = JOIN_CROSS_LEFT;
+    public static final int JOIN_ONE = 7;
+    public static final int JOIN_OUTER = 2;
+    public static final int JOIN_SPLICE = 5;
+    public static final int LATEST_BY_DEPRECATED = 1;
+    public static final int LATEST_BY_NEW = 2;
+    public static final int LATEST_BY_NONE = 0;
+    public static final String NO_ROWID_MARKER = &quot;*!*&quot;;
+    public static final int ORDER_DIRECTION_ASCENDING = 0;
+    public static final int ORDER_DIRECTION_DESCENDING = 1;
+    public static final int SELECT_MODEL_ANALYTIC = 3;
+    public static final int SELECT_MODEL_CHOOSE = 1;
+    public static final int SELECT_MODEL_CURSOR = 6;
+    public static final int SELECT_MODEL_DISTINCT = 5;
+    public static final int SELECT_MODEL_GROUP_BY = 4;
+    public static final int SELECT_MODEL_NONE = 0;
+    public static final int SELECT_MODEL_VIRTUAL = 2;
+    public static final int SET_OPERATION_EXCEPT = 2;
+    public static final int SET_OPERATION_INTERSECT = 3;
+    public static final int SET_OPERATION_UNION = 1;
+    //types of set operations between this and union model
+    public static final int SET_OPERATION_UNION_ALL = 0;
+    public static final String SUB_QUERY_ALIAS_PREFIX = &quot;_xQdbA&quot;;
+<span class="fc" id="L76">    private static final ObjList&lt;String&gt; modelTypeName = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L77">    private final LowerCaseCharSequenceObjHashMap&lt;QueryColumn&gt; aliasToColumnMap = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L78">    private final LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L79">    private final ObjList&lt;CharSequence&gt; bottomUpColumnNames = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L80">    private final ObjList&lt;QueryColumn&gt; bottomUpColumns = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L81">    private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();</span>
+<span class="fc" id="L82">    private final LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L83">    private final IntHashSet dependencies = new IntHashSet();</span>
+<span class="fc" id="L84">    private final ObjList&lt;ExpressionNode&gt; expressionModels = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L85">    private final ObjList&lt;ExpressionNode&gt; groupBy = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L86">    private final ObjList&lt;ExpressionNode&gt; joinColumns = new ObjList&lt;&gt;(4);</span>
+<span class="fc" id="L87">    private final ObjList&lt;QueryModel&gt; joinModels = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L88">    private final ObjList&lt;ExpressionNode&gt; latestBy = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L89">    private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();</span>
+<span class="fc" id="L90">    private final ObjList&lt;ExpressionNode&gt; orderBy = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L91">    private final ObjList&lt;ExpressionNode&gt; orderByAdvice = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L92">    private final IntList orderByDirection = new IntList();</span>
+<span class="fc" id="L93">    private final IntList orderByDirectionAdvice = new IntList();</span>
+<span class="fc" id="L94">    private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);</span>
+<span class="fc" id="L95">    private final IntList orderedJoinModels1 = new IntList();</span>
+<span class="fc" id="L96">    private final IntList orderedJoinModels2 = new IntList();</span>
+    // collect frequency of column names from each join model
+    // and check if any of columns with frequency &gt; 0 are selected
+    // column name frequency of 1 corresponds to map value 0
+    // column name frequency of 0 corresponds to map value -1
+    // list of &quot;and&quot; concatenated expressions
+<span class="fc" id="L102">    private final ObjList&lt;ExpressionNode&gt; parsedWhere = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L103">    private final IntHashSet parsedWhereConstants = new IntHashSet();</span>
+<span class="fc" id="L104">    private final ObjList&lt;ExpressionNode&gt; sampleByFill = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L105">    private final ArrayDeque&lt;ExpressionNode&gt; sqlNodeStack = new ArrayDeque&lt;&gt;();</span>
+<span class="fc" id="L106">    private final ObjList&lt;QueryColumn&gt; topDownColumns = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L107">    private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();</span>
+<span class="fc" id="L108">    private final ObjList&lt;ExpressionNode&gt; updateSetColumns = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L109">    private final ObjList&lt;CharSequence&gt; updateTableColumnNames = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L110">    private final IntList updateTableColumnTypes = new IntList();</span>
+<span class="fc" id="L111">    private final LowerCaseCharSequenceObjHashMap&lt;WithClauseModel&gt; withClauseModel = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</span>
+    private ExpressionNode alias;
+    private boolean artificialStar;
+    // Used to store a deep copy of the whereClause field
+    // since whereClause can be changed during optimization/generation stage.
+    private ExpressionNode backupWhereClause;
+    private ExpressionNode constWhereClause;
+    private JoinContext context;
+<span class="fc" id="L119">    private boolean distinct = false;</span>
+    //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
+    //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
+    private boolean isLimitImplemented;
+    // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
+    // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
+<span class="fc" id="L125">    private boolean isSelectTranslation = false;</span>
+    private boolean isUpdateModel;
+    private ExpressionNode joinCriteria;
+    private int joinKeywordPosition;
+<span class="fc" id="L129">    private int joinType = JOIN_INNER;</span>
+<span class="fc" id="L130">    private int latestByType = LATEST_BY_NONE;</span>
+    private ExpressionNode limitAdviceHi;
+    private ExpressionNode limitAdviceLo;
+    private ExpressionNode limitHi;
+    private ExpressionNode limitLo;
+    //position of the limit clause token
+    private int limitPosition;
+<span class="fc" id="L137">    private int modelPosition = 0;</span>
+<span class="fc" id="L138">    private int modelType = ExecutionModel.QUERY;</span>
+    private QueryModel nestedModel;
+<span class="fc" id="L140">    private boolean nestedModelIsSubQuery = false;</span>
+<span class="fc" id="L141">    private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;</span>
+    //position of the order by clause token
+    private int orderByPosition;
+<span class="fc" id="L144">    private IntList orderedJoinModels = orderedJoinModels2;</span>
+    /* Expression clause that is actually part of left/outer join but not in join model.
+     *  Inner join expressions */
+    private ExpressionNode outerJoinExpressionClause;
+    private ExpressionNode postJoinWhereClause;
+    private ExpressionNode sampleBy;
+<span class="fc" id="L150">    private ExpressionNode sampleByOffset = null;</span>
+<span class="fc" id="L151">    private ExpressionNode sampleByTimezoneName = null;</span>
+    private ExpressionNode sampleByUnit;
+<span class="fc" id="L153">    private int selectModelType = SELECT_MODEL_NONE;</span>
+    private int setOperationType;
+<span class="fc" id="L155">    private int tableId = -1;</span>
+    private ExpressionNode tableNameExpr;
+    private Function tableNameFunction;
+<span class="fc" id="L158">    private long tableVersion = -1;</span>
+    private ExpressionNode timestamp;
+    private QueryModel unionModel;
+    private QueryModel updateTableModel;
+    private TableToken updateTableToken;
+    private ExpressionNode whereClause;
+
+<span class="fc" id="L165">    private QueryModel() {</span>
+<span class="fc" id="L166">        joinModels.add(this);</span>
+<span class="fc" id="L167">    }</span>
+
+    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+    public static void backupWhereClause(final ObjectPool&lt;ExpressionNode&gt; pool, final QueryModel model) {
+<span class="fc" id="L171">        QueryModel current = model;</span>
+<span class="fc bfc" id="L172" title="All 2 branches covered.">        while (current != null) {</span>
+<span class="fc bfc" id="L173" title="All 2 branches covered.">            if (current.unionModel != null) {</span>
+<span class="fc" id="L174">                backupWhereClause(pool, current.unionModel);</span>
+            }
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">            if (current.updateTableModel != null) {</span>
+<span class="nc" id="L177">                backupWhereClause(pool, current.updateTableModel);</span>
+            }
+<span class="fc bfc" id="L179" title="All 2 branches covered.">            for (int i = 1, n = current.joinModels.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L180">                final QueryModel m = current.joinModels.get(i);</span>
+<span class="pc bpc" id="L181" title="2 of 4 branches missed.">                if (m != null &amp;&amp; current != m) {</span>
+<span class="fc" id="L182">                    backupWhereClause(pool, m);</span>
+                }
+            }
+<span class="fc" id="L185">            current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);</span>
+<span class="fc" id="L186">            current = current.nestedModel;</span>
+        }
+<span class="fc" id="L188">    }</span>
+
+    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+    public static void restoreWhereClause(final ObjectPool&lt;ExpressionNode&gt; pool, final QueryModel model) {
+<span class="fc" id="L192">        QueryModel current = model;</span>
+<span class="fc bfc" id="L193" title="All 2 branches covered.">        while (current != null) {</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">            if (current.unionModel != null) {</span>
+<span class="fc" id="L195">                restoreWhereClause(pool, current.unionModel);</span>
+            }
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">            if (current.updateTableModel != null) {</span>
+<span class="nc" id="L198">                restoreWhereClause(pool, current.updateTableModel);</span>
+            }
+<span class="fc bfc" id="L200" title="All 2 branches covered.">            for (int i = 1, n = current.joinModels.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L201">                final QueryModel m = current.joinModels.get(i);</span>
+<span class="pc bpc" id="L202" title="2 of 4 branches missed.">                if (m != null &amp;&amp; current != m) {</span>
+<span class="fc" id="L203">                    restoreWhereClause(pool, m);</span>
+                }
+            }
+<span class="fc" id="L206">            current.whereClause = ExpressionNode.deepClone(pool, current.backupWhereClause);</span>
+<span class="fc" id="L207">            current = current.nestedModel;</span>
+        }
+<span class="fc" id="L209">    }</span>
+
+    public void addBottomUpColumn(QueryColumn column) throws SqlException {
+<span class="fc" id="L212">        addBottomUpColumn(0, column, false, null);</span>
+<span class="fc" id="L213">    }</span>
+
+    public void addBottomUpColumn(QueryColumn column, boolean allowDuplicates) throws SqlException {
+<span class="fc" id="L216">        addBottomUpColumn(0, column, allowDuplicates, null);</span>
+<span class="fc" id="L217">    }</span>
+
+    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
+<span class="fc" id="L220">        addBottomUpColumn(position, column, allowDuplicates, null);</span>
+<span class="fc" id="L221">    }</span>
+
+    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates, CharSequence additionalMessage) throws SqlException {
+<span class="fc bfc" id="L224" title="All 4 branches covered.">        if (!allowDuplicates &amp;&amp; aliasToColumnMap.contains(column.getName())) {</span>
+<span class="fc" id="L225">            throw SqlException.duplicateColumn(position, column.getName(), additionalMessage);</span>
+        }
+<span class="fc" id="L227">        bottomUpColumns.add(column);</span>
+<span class="fc" id="L228">        addField(column);</span>
+<span class="fc" id="L229">    }</span>
+
+    public void addDependency(int index) {
+<span class="fc" id="L232">        dependencies.add(index);</span>
+<span class="fc" id="L233">    }</span>
+
+    public void addExpressionModel(ExpressionNode node) {
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">        assert node.queryModel != null;</span>
+<span class="fc" id="L237">        expressionModels.add(node);</span>
+<span class="fc" id="L238">    }</span>
+
+    public void addField(QueryColumn column) {
+<span class="fc" id="L241">        final CharSequence alias = column.getAlias();</span>
+<span class="fc" id="L242">        final ExpressionNode ast = column.getAst();</span>
+<span class="pc bpc" id="L243" title="1 of 2 branches missed.">        assert alias != null;</span>
+<span class="fc" id="L244">        aliasToColumnNameMap.put(alias, ast.token);</span>
+<span class="fc" id="L245">        columnNameToAliasMap.put(ast.token, alias);</span>
+<span class="fc" id="L246">        bottomUpColumnNames.add(alias);</span>
+<span class="fc" id="L247">        aliasToColumnMap.put(alias, column);</span>
+<span class="fc" id="L248">        columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);</span>
+<span class="fc" id="L249">    }</span>
+
+    public void addGroupBy(ExpressionNode node) {
+<span class="fc" id="L252">        groupBy.add(node);</span>
+<span class="fc" id="L253">    }</span>
+
+    public void addJoinColumn(ExpressionNode node) {
+<span class="fc" id="L256">        joinColumns.add(node);</span>
+<span class="fc" id="L257">    }</span>
+
+    public void addJoinModel(QueryModel model) {
+<span class="fc" id="L260">        joinModels.add(model);</span>
+<span class="fc" id="L261">    }</span>
+
+    public void addLatestBy(ExpressionNode latestBy) {
+<span class="fc" id="L264">        this.latestBy.add(latestBy);</span>
+<span class="fc" id="L265">    }</span>
+
+    public boolean addModelAliasIndex(ExpressionNode node, int index) {
+<span class="fc" id="L268">        return modelAliasIndexes.put(node.token, index);</span>
+    }
+
+    public void addOrderBy(ExpressionNode node, int direction) {
+<span class="fc" id="L272">        orderBy.add(node);</span>
+<span class="fc" id="L273">        orderByDirection.add(direction);</span>
+<span class="fc" id="L274">    }</span>
+
+    public void addParsedWhereNode(ExpressionNode node, boolean innerPredicate) {
+<span class="fc" id="L277">        node.innerPredicate = innerPredicate;</span>
+<span class="fc" id="L278">        parsedWhere.add(node);</span>
+<span class="fc" id="L279">    }</span>
+
+    public void addSampleByFill(ExpressionNode sampleByFill) {
+<span class="fc" id="L282">        this.sampleByFill.add(sampleByFill);</span>
+<span class="fc" id="L283">    }</span>
+
+    public void addTopDownColumn(QueryColumn column, CharSequence alias) {
+<span class="fc bfc" id="L286" title="All 2 branches covered.">        if (topDownNameSet.add(alias)) {</span>
+<span class="fc" id="L287">            topDownColumns.add(column);</span>
+        }
+<span class="fc" id="L289">    }</span>
+
+    public void addUpdateTableColumnMetadata(int columnType, String columnName) {
+<span class="fc" id="L292">        updateTableColumnTypes.add(columnType);</span>
+<span class="fc" id="L293">        updateTableColumnNames.add(columnName);</span>
+<span class="fc" id="L294">    }</span>
+
+    /* Determines whether this model allows pushing columns from parent model(s).
+     * If this is a UNION, EXCEPT or INTERSECT or contains a select distinct then it can't be done safely. */
+    public boolean allowsColumnsChange() {
+<span class="fc" id="L299">        QueryModel union = this;</span>
+<span class="fc bfc" id="L300" title="All 2 branches covered.">        while (union != null) {</span>
+<span class="fc bfc" id="L301" title="All 2 branches covered.">            if (union.getSetOperationType() != QueryModel.SET_OPERATION_UNION_ALL ||</span>
+<span class="fc bfc" id="L302" title="All 2 branches covered.">                    union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {</span>
+<span class="fc" id="L303">                return false;</span>
+            }
+
+<span class="fc" id="L306">            union = union.getUnionModel();</span>
+        }
+
+<span class="fc" id="L309">        return true;</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="fc" id="L314">        bottomUpColumns.clear();</span>
+<span class="fc" id="L315">        aliasToColumnNameMap.clear();</span>
+<span class="fc" id="L316">        joinModels.clear();</span>
+<span class="fc" id="L317">        joinModels.add(this);</span>
+<span class="fc" id="L318">        clearSampleBy();</span>
+<span class="fc" id="L319">        orderBy.clear();</span>
+<span class="fc" id="L320">        orderByDirection.clear();</span>
+<span class="fc" id="L321">        orderByAdvice.clear();</span>
+<span class="fc" id="L322">        orderByDirectionAdvice.clear();</span>
+<span class="fc" id="L323">        orderByPosition = 0;</span>
+<span class="fc" id="L324">        orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;</span>
+<span class="fc" id="L325">        isSelectTranslation = false;</span>
+<span class="fc" id="L326">        groupBy.clear();</span>
+<span class="fc" id="L327">        dependencies.clear();</span>
+<span class="fc" id="L328">        parsedWhere.clear();</span>
+<span class="fc" id="L329">        whereClause = null;</span>
+<span class="fc" id="L330">        constWhereClause = null;</span>
+<span class="fc" id="L331">        nestedModel = null;</span>
+<span class="fc" id="L332">        tableNameExpr = null;</span>
+<span class="fc" id="L333">        alias = null;</span>
+<span class="fc" id="L334">        latestByType = LATEST_BY_NONE;</span>
+<span class="fc" id="L335">        latestBy.clear();</span>
+<span class="fc" id="L336">        joinCriteria = null;</span>
+<span class="fc" id="L337">        joinType = JOIN_INNER;</span>
+<span class="fc" id="L338">        joinKeywordPosition = 0;</span>
+<span class="fc" id="L339">        orderedJoinModels1.clear();</span>
+<span class="fc" id="L340">        orderedJoinModels2.clear();</span>
+<span class="fc" id="L341">        parsedWhereConstants.clear();</span>
+<span class="fc" id="L342">        columnAliasIndexes.clear();</span>
+<span class="fc" id="L343">        modelAliasIndexes.clear();</span>
+<span class="fc" id="L344">        postJoinWhereClause = null;</span>
+<span class="fc" id="L345">        outerJoinExpressionClause = null;</span>
+<span class="fc" id="L346">        context = null;</span>
+<span class="fc" id="L347">        orderedJoinModels = orderedJoinModels2;</span>
+<span class="fc" id="L348">        limitHi = null;</span>
+<span class="fc" id="L349">        limitLo = null;</span>
+<span class="fc" id="L350">        limitAdviceHi = null;</span>
+<span class="fc" id="L351">        limitAdviceLo = null;</span>
+<span class="fc" id="L352">        limitPosition = 0;</span>
+<span class="fc" id="L353">        isLimitImplemented = false;</span>
+<span class="fc" id="L354">        timestamp = null;</span>
+<span class="fc" id="L355">        sqlNodeStack.clear();</span>
+<span class="fc" id="L356">        joinColumns.clear();</span>
+<span class="fc" id="L357">        withClauseModel.clear();</span>
+<span class="fc" id="L358">        selectModelType = SELECT_MODEL_NONE;</span>
+<span class="fc" id="L359">        columnNameToAliasMap.clear();</span>
+<span class="fc" id="L360">        tableNameFunction = null;</span>
+<span class="fc" id="L361">        tableId = -1;</span>
+<span class="fc" id="L362">        tableVersion = -1;</span>
+<span class="fc" id="L363">        bottomUpColumnNames.clear();</span>
+<span class="fc" id="L364">        expressionModels.clear();</span>
+<span class="fc" id="L365">        distinct = false;</span>
+<span class="fc" id="L366">        nestedModelIsSubQuery = false;</span>
+<span class="fc" id="L367">        unionModel = null;</span>
+<span class="fc" id="L368">        orderHash.clear();</span>
+<span class="fc" id="L369">        modelPosition = 0;</span>
+<span class="fc" id="L370">        topDownColumns.clear();</span>
+<span class="fc" id="L371">        topDownNameSet.clear();</span>
+<span class="fc" id="L372">        aliasToColumnMap.clear();</span>
+<span class="fc" id="L373">        isUpdateModel = false;</span>
+<span class="fc" id="L374">        modelType = ExecutionModel.QUERY;</span>
+<span class="fc" id="L375">        updateSetColumns.clear();</span>
+<span class="fc" id="L376">        updateTableColumnTypes.clear();</span>
+<span class="fc" id="L377">        updateTableColumnNames.clear();</span>
+<span class="fc" id="L378">        updateTableModel = null;</span>
+<span class="fc" id="L379">        updateTableToken = null;</span>
+<span class="fc" id="L380">        setOperationType = SET_OPERATION_UNION_ALL;</span>
+<span class="fc" id="L381">        artificialStar = false;</span>
+<span class="fc" id="L382">    }</span>
+
+    public void clearColumnMapStructs() {
+<span class="fc" id="L385">        this.aliasToColumnNameMap.clear();</span>
+<span class="fc" id="L386">        this.bottomUpColumnNames.clear();</span>
+<span class="fc" id="L387">        this.aliasToColumnMap.clear();</span>
+<span class="fc" id="L388">    }</span>
+
+    public void clearOrderBy() {
+<span class="fc" id="L391">        orderBy.clear();</span>
+<span class="fc" id="L392">        orderByDirection.clear();</span>
+<span class="fc" id="L393">    }</span>
+
+    public void clearSampleBy() {
+<span class="fc" id="L396">        sampleBy = null;</span>
+<span class="fc" id="L397">        sampleByUnit = null;</span>
+<span class="fc" id="L398">        sampleByFill.clear();</span>
+<span class="fc" id="L399">        sampleByTimezoneName = null;</span>
+<span class="fc" id="L400">        sampleByOffset = null;</span>
+<span class="fc" id="L401">    }</span>
+
+    public boolean containsJoin() {
+<span class="fc" id="L404">        QueryModel current = this;</span>
+        do {
+<span class="fc bfc" id="L406" title="All 2 branches covered.">            if (current.getJoinModels().size() &gt; 1) {</span>
+<span class="fc" id="L407">                return true;</span>
+            }
+<span class="fc bfc" id="L409" title="All 2 branches covered.">        } while ((current = current.getNestedModel()) != null);</span>
+<span class="fc" id="L410">        return false;</span>
+    }
+
+    public void copyBottomToTopColumns() {
+<span class="fc" id="L414">        topDownColumns.clear();</span>
+<span class="fc" id="L415">        topDownNameSet.clear();</span>
+<span class="fc bfc" id="L416" title="All 2 branches covered.">        for (int i = 0, n = bottomUpColumns.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L417">            QueryColumn column = bottomUpColumns.getQuick(i);</span>
+<span class="fc" id="L418">            addTopDownColumn(column, column.getAlias());</span>
+        }
+<span class="fc" id="L420">    }</span>
+
+    public void copyColumnsFrom(
+            QueryModel other,
+            ObjectPool&lt;QueryColumn&gt; queryColumnPool,
+            ObjectPool&lt;ExpressionNode&gt; expressionNodePool
+    ) {
+<span class="fc" id="L427">        clearColumnMapStructs();</span>
+
+        // copy only literal columns and convert functions to literal while copying
+<span class="fc" id="L430">        final ObjList&lt;CharSequence&gt; aliases = other.aliasToColumnMap.keys();</span>
+<span class="fc bfc" id="L431" title="All 2 branches covered.">        for (int i = 0, n = aliases.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L432">            final CharSequence alias = aliases.getQuick(i);</span>
+<span class="fc" id="L433">            QueryColumn qc = other.aliasToColumnMap.get(alias);</span>
+<span class="fc bfc" id="L434" title="All 2 branches covered.">            if (qc.getAst().type != ExpressionNode.LITERAL) {</span>
+<span class="fc" id="L435">                qc = queryColumnPool.next().of(</span>
+                        alias,
+<span class="fc" id="L437">                        expressionNodePool.next().of(</span>
+                                ExpressionNode.LITERAL,
+                                alias,
+                                0,
+<span class="fc" id="L441">                                qc.getAst().position</span>
+                        ),
+<span class="fc" id="L443">                        qc.isIncludeIntoWildcard()</span>
+                );
+            }
+<span class="fc" id="L446">            this.aliasToColumnMap.put(alias, qc);</span>
+        }
+<span class="fc" id="L448">        ObjList&lt;CharSequence&gt; columnNames = other.bottomUpColumnNames;</span>
+<span class="fc" id="L449">        this.bottomUpColumnNames.addAll(columnNames);</span>
+<span class="fc bfc" id="L450" title="All 2 branches covered.">        for (int i = 0, n = columnNames.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L451">            final CharSequence name = columnNames.getQuick(i);</span>
+<span class="fc" id="L452">            this.aliasToColumnNameMap.put(name, name);</span>
+        }
+<span class="fc" id="L454">    }</span>
+
+    public void copyOrderByAdvice(ObjList&lt;ExpressionNode&gt; orderByAdvice) {
+<span class="fc" id="L457">        this.orderByAdvice.clear();</span>
+<span class="fc" id="L458">        this.orderByAdvice.addAll(orderByAdvice);</span>
+<span class="fc" id="L459">    }</span>
+
+    public void copyOrderByDirectionAdvice(IntList orderByDirection) {
+<span class="fc" id="L462">        this.orderByDirectionAdvice.clear();</span>
+<span class="fc" id="L463">        this.orderByDirectionAdvice.addAll(orderByDirection);</span>
+<span class="fc" id="L464">    }</span>
+
+    public void copyUpdateTableMetadata(QueryModel updateTableModel) {
+<span class="fc" id="L467">        this.updateTableModel = updateTableModel;</span>
+<span class="fc" id="L468">        this.tableId = updateTableModel.tableId;</span>
+<span class="fc" id="L469">        this.tableVersion = updateTableModel.tableVersion;</span>
+<span class="fc" id="L470">    }</span>
+
+    @Override
+    public boolean equals(Object o) {
+<span class="fc bfc" id="L474" title="All 2 branches covered.">        if (this == o) return true;</span>
+<span class="pc bpc" id="L475" title="2 of 4 branches missed.">        if (o == null || getClass() != o.getClass()) return false;</span>
+<span class="fc" id="L476">        QueryModel that = (QueryModel) o;</span>
+        // joinModels always contain this as the first element, so we need to compare them manually.
+<span class="fc bfc" id="L478" title="All 2 branches covered.">        if (joinModels.size() != that.joinModels.size()) {</span>
+<span class="fc" id="L479">            return false;</span>
+        }
+<span class="pc bpc" id="L481" title="1 of 2 branches missed.">        for (int i = 1, n = joinModels.size(); i &lt; n; i++) {</span>
+<span class="nc bnc" id="L482" title="All 2 branches missed.">            if (!joinModels.getQuick(i).equals(that.joinModels.getQuick(i))) {</span>
+<span class="nc" id="L483">                return false;</span>
+            }
+        }
+        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
+<span class="pc bpc" id="L487" title="1 of 2 branches missed.">        if (sqlNodeStack.size() != that.sqlNodeStack.size()) {</span>
+<span class="nc" id="L488">            return false;</span>
+        }
+<span class="fc" id="L490">        Iterator&lt;ExpressionNode&gt; i1 = sqlNodeStack.iterator();</span>
+<span class="fc" id="L491">        Iterator&lt;ExpressionNode&gt; i2 = that.sqlNodeStack.iterator();</span>
+<span class="pc bpc" id="L492" title="3 of 4 branches missed.">        while (i1.hasNext() &amp;&amp; i2.hasNext()) {</span>
+<span class="nc" id="L493">            ExpressionNode n1 = i1.next();</span>
+<span class="nc" id="L494">            ExpressionNode n2 = i2.next();</span>
+<span class="nc bnc" id="L495" title="All 2 branches missed.">            if (!Objects.equals(n1, n2)) {</span>
+<span class="nc" id="L496">                return false;</span>
+            }
+<span class="nc" id="L498">        }</span>
+<span class="pc bpc" id="L499" title="15 of 36 branches missed.">        return orderByPosition == that.orderByPosition</span>
+                &amp;&amp; latestByType == that.latestByType
+                &amp;&amp; tableVersion == that.tableVersion
+                &amp;&amp; joinType == that.joinType
+                &amp;&amp; joinKeywordPosition == that.joinKeywordPosition
+                &amp;&amp; limitPosition == that.limitPosition
+                &amp;&amp; isLimitImplemented == that.isLimitImplemented
+                &amp;&amp; isSelectTranslation == that.isSelectTranslation
+                &amp;&amp; selectModelType == that.selectModelType
+                &amp;&amp; nestedModelIsSubQuery == that.nestedModelIsSubQuery
+                &amp;&amp; distinct == that.distinct
+                &amp;&amp; setOperationType == that.setOperationType
+                &amp;&amp; modelPosition == that.modelPosition
+                &amp;&amp; orderByAdviceMnemonic == that.orderByAdviceMnemonic
+                &amp;&amp; tableId == that.tableId
+                &amp;&amp; isUpdateModel == that.isUpdateModel
+                &amp;&amp; modelType == that.modelType
+                &amp;&amp; artificialStar == that.artificialStar
+<span class="pc bpc" id="L517" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(bottomUpColumns, that.bottomUpColumns)</span>
+<span class="pc bpc" id="L518" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(topDownNameSet, that.topDownNameSet)</span>
+<span class="pc bpc" id="L519" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(topDownColumns, that.topDownColumns)</span>
+<span class="pc bpc" id="L520" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)</span>
+<span class="pc bpc" id="L521" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)</span>
+<span class="pc bpc" id="L522" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(aliasToColumnMap, that.aliasToColumnMap)</span>
+<span class="pc bpc" id="L523" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(bottomUpColumnNames, that.bottomUpColumnNames)</span>
+<span class="pc bpc" id="L524" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderBy, that.orderBy)</span>
+<span class="pc bpc" id="L525" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(groupBy, that.groupBy)</span>
+<span class="pc bpc" id="L526" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderByDirection, that.orderByDirection)</span>
+<span class="pc bpc" id="L527" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(dependencies, that.dependencies)</span>
+<span class="pc bpc" id="L528" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderedJoinModels1, that.orderedJoinModels1)</span>
+<span class="pc bpc" id="L529" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderedJoinModels2, that.orderedJoinModels2)</span>
+<span class="pc bpc" id="L530" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(columnAliasIndexes, that.columnAliasIndexes)</span>
+<span class="pc bpc" id="L531" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(modelAliasIndexes, that.modelAliasIndexes)</span>
+<span class="pc bpc" id="L532" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(expressionModels, that.expressionModels)</span>
+<span class="pc bpc" id="L533" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(parsedWhere, that.parsedWhere)</span>
+<span class="pc bpc" id="L534" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(parsedWhereConstants, that.parsedWhereConstants)</span>
+<span class="pc bpc" id="L535" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderHash, that.orderHash)</span>
+<span class="pc bpc" id="L536" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(joinColumns, that.joinColumns)</span>
+<span class="pc bpc" id="L537" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(sampleByFill, that.sampleByFill)</span>
+<span class="pc bpc" id="L538" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(latestBy, that.latestBy)</span>
+<span class="pc bpc" id="L539" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderByAdvice, that.orderByAdvice)</span>
+<span class="pc bpc" id="L540" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderByDirectionAdvice, that.orderByDirectionAdvice)</span>
+<span class="pc bpc" id="L541" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(withClauseModel, that.withClauseModel)</span>
+<span class="pc bpc" id="L542" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(updateSetColumns, that.updateSetColumns)</span>
+<span class="pc bpc" id="L543" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(updateTableColumnTypes, that.updateTableColumnTypes)</span>
+<span class="pc bpc" id="L544" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(updateTableColumnNames, that.updateTableColumnNames)</span>
+<span class="pc bpc" id="L545" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(sampleByTimezoneName, that.sampleByTimezoneName)</span>
+<span class="pc bpc" id="L546" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(sampleByOffset, that.sampleByOffset)</span>
+<span class="pc bpc" id="L547" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(whereClause, that.whereClause)</span>
+<span class="pc bpc" id="L548" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(backupWhereClause, that.backupWhereClause)</span>
+<span class="pc bpc" id="L549" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(postJoinWhereClause, that.postJoinWhereClause)</span>
+<span class="pc bpc" id="L550" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(outerJoinExpressionClause, that.outerJoinExpressionClause)</span>
+<span class="pc bpc" id="L551" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(constWhereClause, that.constWhereClause)</span>
+<span class="pc bpc" id="L552" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(nestedModel, that.nestedModel)</span>
+<span class="pc bpc" id="L553" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(tableNameExpr, that.tableNameExpr)</span>
+<span class="pc bpc" id="L554" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(tableNameFunction, that.tableNameFunction)</span>
+<span class="pc bpc" id="L555" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(alias, that.alias)</span>
+<span class="pc bpc" id="L556" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(timestamp, that.timestamp)</span>
+<span class="pc bpc" id="L557" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(sampleBy, that.sampleBy)</span>
+<span class="pc bpc" id="L558" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(sampleByUnit, that.sampleByUnit)</span>
+<span class="pc bpc" id="L559" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(context, that.context)</span>
+<span class="pc bpc" id="L560" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(joinCriteria, that.joinCriteria)</span>
+<span class="pc bpc" id="L561" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(orderedJoinModels, that.orderedJoinModels)</span>
+<span class="pc bpc" id="L562" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(limitLo, that.limitLo)</span>
+<span class="pc bpc" id="L563" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(limitHi, that.limitHi)</span>
+<span class="pc bpc" id="L564" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(limitAdviceLo, that.limitAdviceLo)</span>
+<span class="pc bpc" id="L565" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(limitAdviceHi, that.limitAdviceHi)</span>
+<span class="pc bpc" id="L566" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(unionModel, that.unionModel)</span>
+<span class="pc bpc" id="L567" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(updateTableModel, that.updateTableModel)</span>
+<span class="pc bpc" id="L568" title="1 of 2 branches missed.">                &amp;&amp; Objects.equals(updateTableToken, that.updateTableToken);</span>
+    }
+
+    public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
+<span class="fc bfc" id="L572" title="All 2 branches covered.">        for (int i = 0, n = bottomUpColumns.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L573">            QueryColumn qc = bottomUpColumns.getQuick(i);</span>
+<span class="fc bfc" id="L574" title="All 2 branches covered.">            if (ExpressionNode.compareNodesExact(node, qc.getAst())) {</span>
+<span class="fc" id="L575">                return qc;</span>
+            }
+        }
+<span class="fc" id="L578">        return null;</span>
+    }
+
+    public ExpressionNode getAlias() {
+<span class="fc" id="L582">        return alias;</span>
+    }
+
+    public LowerCaseCharSequenceObjHashMap&lt;QueryColumn&gt; getAliasToColumnMap() {
+<span class="fc" id="L586">        return aliasToColumnMap;</span>
+    }
+
+    public LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; getAliasToColumnNameMap() {
+<span class="fc" id="L590">        return aliasToColumnNameMap;</span>
+    }
+
+    public ObjList&lt;CharSequence&gt; getBottomUpColumnNames() {
+<span class="fc" id="L594">        return bottomUpColumnNames;</span>
+    }
+
+    public ObjList&lt;QueryColumn&gt; getBottomUpColumns() {
+<span class="fc" id="L598">        return bottomUpColumns;</span>
+    }
+
+    public int getColumnAliasIndex(CharSequence alias) {
+<span class="fc" id="L602">        return columnAliasIndexes.get(alias);</span>
+    }
+
+    public LowerCaseCharSequenceObjHashMap&lt;CharSequence&gt; getColumnNameToAliasMap() {
+<span class="fc" id="L606">        return columnNameToAliasMap;</span>
+    }
+
+    public ObjList&lt;QueryColumn&gt; getColumns() {
+<span class="fc bfc" id="L610" title="All 2 branches covered.">        return topDownColumns.size() &gt; 0 ? topDownColumns : bottomUpColumns;</span>
+    }
+
+    public ExpressionNode getConstWhereClause() {
+<span class="fc" id="L614">        return constWhereClause;</span>
+    }
+
+    public JoinContext getContext() {
+<span class="fc" id="L618">        return context;</span>
+    }
+
+    public IntHashSet getDependencies() {
+<span class="fc" id="L622">        return dependencies;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getExpressionModels() {
+<span class="fc" id="L626">        return expressionModels;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getGroupBy() {
+<span class="fc" id="L630">        return groupBy;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getJoinColumns() {
+<span class="fc" id="L634">        return joinColumns;</span>
+    }
+
+    public ExpressionNode getJoinCriteria() {
+<span class="fc" id="L638">        return joinCriteria;</span>
+    }
+
+    public int getJoinKeywordPosition() {
+<span class="fc" id="L642">        return joinKeywordPosition;</span>
+    }
+
+    public ObjList&lt;QueryModel&gt; getJoinModels() {
+<span class="fc" id="L646">        return joinModels;</span>
+    }
+
+    public int getJoinType() {
+<span class="fc" id="L650">        return joinType;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getLatestBy() {
+<span class="fc" id="L654">        return latestBy;</span>
+    }
+
+    public int getLatestByType() {
+<span class="fc" id="L658">        return latestByType;</span>
+    }
+
+    public ExpressionNode getLimitAdviceHi() {
+<span class="fc" id="L662">        return limitAdviceHi;</span>
+    }
+
+    public ExpressionNode getLimitAdviceLo() {
+<span class="fc" id="L666">        return limitAdviceLo;</span>
+    }
+
+    public ExpressionNode getLimitHi() {
+<span class="fc" id="L670">        return limitHi;</span>
+    }
+
+    public ExpressionNode getLimitLo() {
+<span class="fc" id="L674">        return limitLo;</span>
+    }
+
+    public int getLimitPosition() {
+<span class="fc" id="L678">        return limitPosition;</span>
+    }
+
+    public int getModelAliasIndex(CharSequence column, int start, int end) {
+<span class="fc" id="L682">        int index = modelAliasIndexes.keyIndex(column, start, end);</span>
+<span class="fc bfc" id="L683" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L684">            return modelAliasIndexes.valueAt(index);</span>
+        }
+<span class="fc" id="L686">        return -1;</span>
+    }
+
+    public LowerCaseCharSequenceIntHashMap getModelAliasIndexes() {
+<span class="fc" id="L690">        return modelAliasIndexes;</span>
+    }
+
+    public int getModelPosition() {
+<span class="fc" id="L694">        return modelPosition;</span>
+    }
+
+    @Override
+    public int getModelType() {
+<span class="fc" id="L699">        return modelType;</span>
+    }
+
+    public CharSequence getName() {
+<span class="fc bfc" id="L703" title="All 2 branches covered.">        if (alias != null) {</span>
+<span class="fc" id="L704">            return alias.token;</span>
+        }
+
+<span class="fc bfc" id="L707" title="All 2 branches covered.">        if (tableNameExpr != null) {</span>
+<span class="fc" id="L708">            return tableNameExpr.token;</span>
+        }
+
+<span class="fc" id="L711">        return null;</span>
+    }
+
+    public QueryModel getNestedModel() {
+<span class="fc" id="L715">        return nestedModel;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getOrderBy() {
+<span class="fc" id="L719">        return orderBy;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getOrderByAdvice() {
+<span class="fc" id="L723">        return orderByAdvice;</span>
+    }
+
+    public int getOrderByAdviceMnemonic() {
+<span class="fc" id="L727">        return orderByAdviceMnemonic;</span>
+    }
+
+    public IntList getOrderByDirection() {
+<span class="fc" id="L731">        return orderByDirection;</span>
+    }
+
+    public IntList getOrderByDirectionAdvice() {
+<span class="fc" id="L735">        return orderByDirectionAdvice;</span>
+    }
+
+    public int getOrderByPosition() {
+<span class="fc" id="L739">        return orderByPosition;</span>
+    }
+
+    public LowerCaseCharSequenceIntHashMap getOrderHash() {
+<span class="fc" id="L743">        return orderHash;</span>
+    }
+
+    public IntList getOrderedJoinModels() {
+<span class="fc" id="L747">        return orderedJoinModels;</span>
+    }
+
+    public ExpressionNode getOuterJoinExpressionClause() {
+<span class="fc" id="L751">        return outerJoinExpressionClause;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getParsedWhere() {
+<span class="fc" id="L755">        return parsedWhere;</span>
+    }
+
+    public ExpressionNode getPostJoinWhereClause() {
+<span class="fc" id="L759">        return postJoinWhereClause;</span>
+    }
+
+    @Override
+    public QueryModel getQueryModel() {
+<span class="fc" id="L764">        return this;</span>
+    }
+
+    public ExpressionNode getSampleBy() {
+<span class="fc" id="L768">        return sampleBy;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getSampleByFill() {
+<span class="fc" id="L772">        return sampleByFill;</span>
+    }
+
+    public ExpressionNode getSampleByOffset() {
+<span class="fc" id="L776">        return sampleByOffset;</span>
+    }
+
+    public ExpressionNode getSampleByTimezoneName() {
+<span class="fc" id="L780">        return sampleByTimezoneName;</span>
+    }
+
+    public ExpressionNode getSampleByUnit() {
+<span class="fc" id="L784">        return sampleByUnit;</span>
+    }
+
+    public int getSelectModelType() {
+<span class="fc" id="L788">        return selectModelType;</span>
+    }
+
+    public int getSetOperationType() {
+<span class="fc" id="L792">        return setOperationType;</span>
+    }
+
+    public int getTableId() {
+<span class="fc" id="L796">        return tableId;</span>
+    }
+
+    public CharSequence getTableName() {
+<span class="fc bfc" id="L800" title="All 2 branches covered.">        return tableNameExpr != null ? tableNameExpr.token : null;</span>
+    }
+
+    @Override
+    public ExpressionNode getTableNameExpr() {
+<span class="fc" id="L805">        return tableNameExpr;</span>
+    }
+
+    public Function getTableNameFunction() {
+<span class="fc" id="L809">        return tableNameFunction;</span>
+    }
+
+    public long getTableVersion() {
+<span class="fc" id="L813">        return tableVersion;</span>
+    }
+
+    public ExpressionNode getTimestamp() {
+<span class="fc" id="L817">        return timestamp;</span>
+    }
+
+    public ObjList&lt;QueryColumn&gt; getTopDownColumns() {
+<span class="fc" id="L821">        return topDownColumns;</span>
+    }
+
+    public QueryModel getUnionModel() {
+<span class="fc" id="L825">        return unionModel;</span>
+    }
+
+    public ObjList&lt;ExpressionNode&gt; getUpdateExpressions() {
+<span class="fc" id="L829">        return updateSetColumns;</span>
+    }
+
+    public ObjList&lt;CharSequence&gt; getUpdateTableColumnNames() {
+<span class="fc bfc" id="L833" title="All 2 branches covered.">        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;</span>
+    }
+
+    public IntList getUpdateTableColumnTypes() {
+<span class="fc bfc" id="L837" title="All 2 branches covered.">        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;</span>
+    }
+
+    public TableToken getUpdateTableToken() {
+<span class="fc" id="L841">        return updateTableToken;</span>
+    }
+
+    public ExpressionNode getWhereClause() {
+<span class="fc" id="L845">        return whereClause;</span>
+    }
+
+    public LowerCaseCharSequenceObjHashMap&lt;WithClauseModel&gt; getWithClauses() {
+<span class="fc" id="L849">        return withClauseModel;</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L854">        int hash = super.hashCode();</span>
+        // joinModels always contain this as the first element, so we need to hash them manually.
+<span class="nc bnc" id="L856" title="All 2 branches missed.">        for (int i = 1, n = joinModels.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L857">            hash = 31 * hash + Objects.hash(joinModels.getQuick(i));</span>
+        }
+        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
+<span class="nc bnc" id="L860" title="All 2 branches missed.">        for (ExpressionNode node : sqlNodeStack) {</span>
+<span class="nc" id="L861">            hash = 31 * hash + Objects.hash(node);</span>
+<span class="nc" id="L862">        }</span>
+<span class="nc" id="L863">        return 31 * hash + Objects.hash(</span>
+                bottomUpColumns, topDownNameSet, topDownColumns,
+                aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
+                bottomUpColumnNames, orderBy,
+<span class="nc" id="L867">                orderByPosition, groupBy, orderByDirection,</span>
+                dependencies, orderedJoinModels1, orderedJoinModels2,
+                columnAliasIndexes, modelAliasIndexes, expressionModels,
+                parsedWhere, parsedWhereConstants,
+                orderHash, joinColumns, sampleByFill,
+                latestBy, orderByAdvice, orderByDirectionAdvice,
+                withClauseModel, updateSetColumns, updateTableColumnTypes,
+                updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
+<span class="nc" id="L875">                latestByType, whereClause, backupWhereClause,</span>
+                postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
+<span class="nc" id="L877">                tableNameExpr, tableVersion, tableNameFunction,</span>
+                alias, timestamp, sampleBy,
+                sampleByUnit, context, joinCriteria,
+<span class="nc" id="L880">                joinType, joinKeywordPosition, orderedJoinModels,</span>
+<span class="nc" id="L881">                limitLo, limitHi, limitPosition,</span>
+<span class="nc" id="L882">                limitAdviceLo, limitAdviceHi, isLimitImplemented,</span>
+<span class="nc" id="L883">                isSelectTranslation, selectModelType, nestedModelIsSubQuery,</span>
+<span class="nc" id="L884">                distinct, unionModel, setOperationType,</span>
+<span class="nc" id="L885">                modelPosition, orderByAdviceMnemonic, tableId,</span>
+<span class="nc" id="L886">                isUpdateModel, modelType, updateTableModel,</span>
+<span class="nc" id="L887">                updateTableToken, artificialStar</span>
+        );
+    }
+
+    public boolean isArtificialStar() {
+<span class="fc" id="L892">        return artificialStar;</span>
+    }
+
+    public boolean isDistinct() {
+<span class="fc" id="L896">        return distinct;</span>
+    }
+
+    public boolean isLimitImplemented() {
+<span class="fc" id="L900">        return isLimitImplemented;</span>
+    }
+
+    public boolean isNestedModelIsSubQuery() {
+<span class="fc" id="L904">        return nestedModelIsSubQuery;</span>
+    }
+
+    public boolean isSelectTranslation() {
+<span class="fc" id="L908">        return isSelectTranslation;</span>
+    }
+
+    public boolean isTopDownNameMissing(CharSequence columnName) {
+<span class="fc" id="L912">        return topDownNameSet.excludes(columnName);</span>
+    }
+
+    public boolean isUpdate() {
+<span class="fc" id="L916">        return isUpdateModel;</span>
+    }
+
+    public void moveGroupByFrom(QueryModel model) {
+<span class="fc" id="L920">        this.groupBy.addAll(model.groupBy);</span>
+        // clear the source
+<span class="fc" id="L922">        model.groupBy.clear();</span>
+<span class="fc" id="L923">    }</span>
+
+    public void moveJoinAliasFrom(QueryModel that) {
+<span class="fc" id="L926">        final ExpressionNode alias = that.alias;</span>
+<span class="fc bfc" id="L927" title="All 4 branches covered.">        if (alias != null &amp;&amp; !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {</span>
+<span class="fc" id="L928">            setAlias(alias);</span>
+<span class="fc" id="L929">            addModelAliasIndex(alias, 0);</span>
+        }
+<span class="fc" id="L931">    }</span>
+
+    public void moveLimitFrom(QueryModel baseModel) {
+<span class="fc" id="L934">        this.limitLo = baseModel.getLimitLo();</span>
+<span class="fc" id="L935">        this.limitHi = baseModel.getLimitHi();</span>
+<span class="fc" id="L936">        baseModel.setLimit(null, null);</span>
+<span class="fc" id="L937">    }</span>
+
+    public void moveSampleByFrom(QueryModel model) {
+<span class="fc" id="L940">        this.sampleBy = model.sampleBy;</span>
+<span class="fc" id="L941">        this.sampleByUnit = model.sampleByUnit;</span>
+<span class="fc" id="L942">        this.sampleByFill.clear();</span>
+<span class="fc" id="L943">        this.sampleByFill.addAll(model.sampleByFill);</span>
+<span class="fc" id="L944">        this.sampleByTimezoneName = model.sampleByTimezoneName;</span>
+<span class="fc" id="L945">        this.sampleByOffset = model.sampleByOffset;</span>
+
+        // clear the source
+<span class="fc" id="L948">        model.clearSampleBy();</span>
+<span class="fc" id="L949">    }</span>
+
+    /**
+     * Optimiser may be attempting to order join clauses several times.
+     * Every time ordering takes place optimiser will keep at most two lists:
+     * one is last known order the other is new order. If new order cost is better
+     * optimiser will replace last known order with new one.
+     * &lt;p&gt;
+     * To facilitate this behaviour the function will always return non-current list.
+     *
+     * @return non current order list.
+     */
+    public IntList nextOrderedJoinModels() {
+<span class="fc bfc" id="L962" title="All 2 branches covered.">        IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;</span>
+<span class="fc" id="L963">        ordered.clear();</span>
+<span class="fc" id="L964">        return ordered;</span>
+    }
+
+    /*
+     * Splits &quot;where&quot; clauses into &quot;and&quot; chunks
+     */
+    public ObjList&lt;ExpressionNode&gt; parseWhereClause() {
+<span class="fc" id="L971">        ExpressionNode n = getWhereClause();</span>
+        // pre-order traversal
+<span class="fc" id="L973">        sqlNodeStack.clear();</span>
+<span class="fc bfc" id="L974" title="All 4 branches covered.">        while (!sqlNodeStack.isEmpty() || n != null) {</span>
+<span class="fc bfc" id="L975" title="All 4 branches covered.">            if (n != null &amp;&amp; n.token != null) {</span>
+<span class="fc bfc" id="L976" title="All 2 branches covered.">                if (isAndKeyword(n.token)) {</span>
+<span class="pc bpc" id="L977" title="1 of 2 branches missed.">                    if (n.rhs != null) {</span>
+<span class="fc" id="L978">                        sqlNodeStack.push(n.rhs);</span>
+                    }
+<span class="fc" id="L980">                    n = n.lhs;</span>
+                } else {
+<span class="fc" id="L982">                    addParsedWhereNode(n, false);</span>
+<span class="fc" id="L983">                    n = null;</span>
+
+                }
+            } else {
+<span class="fc" id="L987">                n = sqlNodeStack.poll();</span>
+            }
+        }
+<span class="fc" id="L990">        return getParsedWhere();</span>
+    }
+
+    public void removeDependency(int index) {
+<span class="fc" id="L994">        dependencies.remove(index);</span>
+<span class="fc" id="L995">    }</span>
+
+    public void replaceJoinModel(int pos, QueryModel model) {
+<span class="fc" id="L998">        joinModels.setQuick(pos, model);</span>
+<span class="fc" id="L999">    }</span>
+
+    public void setAlias(ExpressionNode alias) {
+<span class="fc" id="L1002">        this.alias = alias;</span>
+<span class="fc" id="L1003">    }</span>
+
+    public void setArtificialStar(boolean artificialStar) {
+<span class="fc" id="L1006">        this.artificialStar = artificialStar;</span>
+<span class="fc" id="L1007">    }</span>
+
+    public void setConstWhereClause(ExpressionNode constWhereClause) {
+<span class="fc" id="L1010">        this.constWhereClause = constWhereClause;</span>
+<span class="fc" id="L1011">    }</span>
+
+    public void setContext(JoinContext context) {
+<span class="fc" id="L1014">        this.context = context;</span>
+<span class="fc" id="L1015">    }</span>
+
+    public void setDistinct(boolean distinct) {
+<span class="fc" id="L1018">        this.distinct = distinct;</span>
+<span class="fc" id="L1019">    }</span>
+
+    public void setIsUpdate(boolean isUpdate) {
+<span class="fc" id="L1022">        this.isUpdateModel = isUpdate;</span>
+<span class="fc" id="L1023">    }</span>
+
+    public void setJoinCriteria(ExpressionNode joinCriteria) {
+<span class="fc" id="L1026">        this.joinCriteria = joinCriteria;</span>
+<span class="fc" id="L1027">    }</span>
+
+    public void setJoinKeywordPosition(int position) {
+<span class="fc" id="L1030">        this.joinKeywordPosition = position;</span>
+<span class="fc" id="L1031">    }</span>
+
+    public void setJoinType(int joinType) {
+<span class="fc" id="L1034">        this.joinType = joinType;</span>
+<span class="fc" id="L1035">    }</span>
+
+    public void setLatestByType(int latestByType) {
+<span class="fc" id="L1038">        this.latestByType = latestByType;</span>
+<span class="fc" id="L1039">    }</span>
+
+    public void setLimit(ExpressionNode lo, ExpressionNode hi) {
+<span class="fc" id="L1042">        this.limitLo = lo;</span>
+<span class="fc" id="L1043">        this.limitHi = hi;</span>
+<span class="fc" id="L1044">    }</span>
+
+    public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
+<span class="fc" id="L1047">        this.limitAdviceLo = lo;</span>
+<span class="fc" id="L1048">        this.limitAdviceHi = hi;</span>
+<span class="fc" id="L1049">    }</span>
+
+    public void setLimitImplemented(boolean limitImplemented) {
+<span class="fc" id="L1052">        isLimitImplemented = limitImplemented;</span>
+<span class="fc" id="L1053">    }</span>
+
+    public void setLimitPosition(int limitPosition) {
+<span class="fc" id="L1056">        this.limitPosition = limitPosition;</span>
+<span class="fc" id="L1057">    }</span>
+
+    public void setModelPosition(int modelPosition) {
+<span class="fc" id="L1060">        this.modelPosition = modelPosition;</span>
+<span class="fc" id="L1061">    }</span>
+
+    public void setModelType(int modelType) {
+<span class="fc" id="L1064">        this.modelType = modelType;</span>
+<span class="fc" id="L1065">    }</span>
+
+    public void setNestedModel(QueryModel nestedModel) {
+<span class="fc" id="L1068">        this.nestedModel = nestedModel;</span>
+<span class="fc" id="L1069">    }</span>
+
+    public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
+<span class="fc" id="L1072">        this.nestedModelIsSubQuery = nestedModelIsSubQuery;</span>
+<span class="fc" id="L1073">    }</span>
+
+    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
+<span class="fc" id="L1076">        this.orderByAdviceMnemonic = orderByAdviceMnemonic;</span>
+<span class="fc" id="L1077">    }</span>
+
+    public void setOrderByPosition(int orderByPosition) {
+<span class="fc" id="L1080">        this.orderByPosition = orderByPosition;</span>
+<span class="fc" id="L1081">    }</span>
+
+    public void setOrderedJoinModels(IntList that) {
+<span class="pc bpc" id="L1084" title="3 of 4 branches missed.">        assert that == orderedJoinModels1 || that == orderedJoinModels2;</span>
+<span class="fc" id="L1085">        this.orderedJoinModels = that;</span>
+<span class="fc" id="L1086">    }</span>
+
+    public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+<span class="fc" id="L1089">        this.outerJoinExpressionClause = outerJoinExpressionClause;</span>
+<span class="fc" id="L1090">    }</span>
+
+    public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
+<span class="fc" id="L1093">        this.postJoinWhereClause = postJoinWhereClause;</span>
+<span class="fc" id="L1094">    }</span>
+
+    public void setSampleBy(ExpressionNode sampleBy) {
+<span class="fc" id="L1097">        this.sampleBy = sampleBy;</span>
+<span class="fc" id="L1098">    }</span>
+
+    public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
+<span class="fc" id="L1101">        this.sampleBy = sampleBy;</span>
+<span class="fc" id="L1102">        this.sampleByUnit = sampleByUnit;</span>
+<span class="fc" id="L1103">    }</span>
+
+    public void setSampleByOffset(ExpressionNode sampleByOffset) {
+<span class="fc" id="L1106">        this.sampleByOffset = sampleByOffset;</span>
+<span class="fc" id="L1107">    }</span>
+
+    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+<span class="fc" id="L1110">        this.sampleByTimezoneName = sampleByTimezoneName;</span>
+<span class="fc" id="L1111">    }</span>
+
+    public void setSelectModelType(int selectModelType) {
+<span class="fc" id="L1114">        this.selectModelType = selectModelType;</span>
+<span class="fc" id="L1115">    }</span>
+
+    public void setSelectTranslation(boolean isSelectTranslation) {
+<span class="fc" id="L1118">        this.isSelectTranslation = isSelectTranslation;</span>
+<span class="fc" id="L1119">    }</span>
+
+    public void setSetOperationType(int setOperationType) {
+<span class="fc" id="L1122">        this.setOperationType = setOperationType;</span>
+<span class="fc" id="L1123">    }</span>
+
+    public void setTableId(int id) {
+<span class="fc" id="L1126">        this.tableId = id;</span>
+<span class="fc" id="L1127">    }</span>
+
+    public void setTableNameExpr(ExpressionNode tableNameExpr) {
+<span class="fc" id="L1130">        this.tableNameExpr = tableNameExpr;</span>
+<span class="fc" id="L1131">    }</span>
+
+    public void setTableNameFunction(Function function) {
+<span class="fc" id="L1134">        this.tableNameFunction = function;</span>
+<span class="fc" id="L1135">    }</span>
+
+    public void setTableVersion(long tableVersion) {
+<span class="fc" id="L1138">        this.tableVersion = tableVersion;</span>
+<span class="fc" id="L1139">    }</span>
+
+    public void setTimestamp(ExpressionNode timestamp) {
+<span class="fc" id="L1142">        this.timestamp = timestamp;</span>
+<span class="fc" id="L1143">    }</span>
+
+    public void setUnionModel(QueryModel unionModel) {
+<span class="fc" id="L1146">        this.unionModel = unionModel;</span>
+<span class="fc" id="L1147">    }</span>
+
+    public void setUpdateTableToken(TableToken tableName) {
+<span class="fc" id="L1150">        this.updateTableToken = tableName;</span>
+<span class="fc" id="L1151">    }</span>
+
+    public void setWhereClause(ExpressionNode whereClause) {
+<span class="fc" id="L1154">        this.whereClause = whereClause;</span>
+<span class="fc" id="L1155">    }</span>
+
+    @Override
+    public void toSink(CharSink sink) {
+<span class="fc bfc" id="L1159" title="All 2 branches covered.">        if (modelType == ExecutionModel.QUERY) {</span>
+<span class="fc" id="L1160">            toSink0(sink, false, false);</span>
+<span class="pc bpc" id="L1161" title="1 of 2 branches missed.">        } else if (modelType == ExecutionModel.UPDATE) {</span>
+<span class="fc" id="L1162">            updateToSink(sink);</span>
+        }
+<span class="fc" id="L1164">    }</span>
+
+    @Override
+    public CharSequence translateAlias(CharSequence column) {
+<span class="fc" id="L1168">        return aliasToColumnNameMap.get(column);</span>
+    }
+
+    private static void aliasToSink(CharSequence alias, CharSink sink) {
+<span class="fc" id="L1172">        sink.put(' ');</span>
+<span class="fc bfc" id="L1173" title="All 2 branches covered.">        boolean quote = Chars.indexOf(alias, ' ') != -1;</span>
+<span class="fc bfc" id="L1174" title="All 2 branches covered.">        if (quote) {</span>
+<span class="fc" id="L1175">            sink.put('\'').put(alias).put('\'');</span>
+        } else {
+<span class="fc" id="L1177">            sink.put(alias);</span>
+        }
+<span class="fc" id="L1179">    }</span>
+
+    private String getSelectModelTypeText() {
+<span class="fc" id="L1182">        return modelTypeName.get(selectModelType);</span>
+    }
+
+    private void sinkColumns(CharSink sink, ObjList&lt;QueryColumn&gt; columns) {
+<span class="fc bfc" id="L1186" title="All 2 branches covered.">        for (int i = 0, n = columns.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L1187" title="All 2 branches covered.">            if (i &gt; 0) {</span>
+<span class="fc" id="L1188">                sink.put(&quot;, &quot;);</span>
+            }
+<span class="fc" id="L1190">            QueryColumn column = columns.getQuick(i);</span>
+<span class="fc" id="L1191">            CharSequence name = column.getName();</span>
+<span class="fc" id="L1192">            CharSequence alias = column.getAlias();</span>
+<span class="fc" id="L1193">            ExpressionNode ast = column.getAst();</span>
+<span class="fc" id="L1194">            ast.toSink(sink);</span>
+<span class="pc bpc" id="L1195" title="1 of 4 branches missed.">            if (column instanceof AnalyticColumn || name == null) {</span>
+
+<span class="pc bpc" id="L1197" title="1 of 2 branches missed.">                if (alias != null) {</span>
+<span class="fc" id="L1198">                    aliasToSink(alias, sink);</span>
+                }
+
+                // this can only be analytic column
+<span class="pc bpc" id="L1202" title="1 of 2 branches missed.">                if (name != null) {</span>
+<span class="fc" id="L1203">                    AnalyticColumn ac = (AnalyticColumn) column;</span>
+<span class="fc" id="L1204">                    sink.put(&quot; over (&quot;);</span>
+<span class="fc" id="L1205">                    final ObjList&lt;ExpressionNode&gt; partitionBy = ac.getPartitionBy();</span>
+<span class="fc bfc" id="L1206" title="All 2 branches covered.">                    if (partitionBy.size() &gt; 0) {</span>
+<span class="fc" id="L1207">                        sink.put(&quot;partition by &quot;);</span>
+<span class="fc bfc" id="L1208" title="All 2 branches covered.">                        for (int k = 0, z = partitionBy.size(); k &lt; z; k++) {</span>
+<span class="fc bfc" id="L1209" title="All 2 branches covered.">                            if (k &gt; 0) {</span>
+<span class="fc" id="L1210">                                sink.put(&quot;, &quot;);</span>
+                            }
+<span class="fc" id="L1212">                            partitionBy.getQuick(k).toSink(sink);</span>
+                        }
+                    }
+
+<span class="fc" id="L1216">                    final ObjList&lt;ExpressionNode&gt; orderBy = ac.getOrderBy();</span>
+<span class="fc bfc" id="L1217" title="All 2 branches covered.">                    if (orderBy.size() &gt; 0) {</span>
+<span class="fc bfc" id="L1218" title="All 2 branches covered.">                        if (partitionBy.size() &gt; 0) {</span>
+<span class="fc" id="L1219">                            sink.put(' ');</span>
+                        }
+<span class="fc" id="L1221">                        sink.put(&quot;order by &quot;);</span>
+<span class="fc bfc" id="L1222" title="All 2 branches covered.">                        for (int k = 0, z = orderBy.size(); k &lt; z; k++) {</span>
+<span class="fc bfc" id="L1223" title="All 2 branches covered.">                            if (k &gt; 0) {</span>
+<span class="fc" id="L1224">                                sink.put(&quot;, &quot;);</span>
+                            }
+<span class="fc" id="L1226">                            orderBy.getQuick(k).toSink(sink);</span>
+<span class="fc bfc" id="L1227" title="All 2 branches covered.">                            if (ac.getOrderByDirection().getQuick(k) == 1) {</span>
+<span class="fc" id="L1228">                                sink.put(&quot; desc&quot;);</span>
+                            }
+                        }
+                    }
+<span class="fc" id="L1232">                    sink.put(')');</span>
+<span class="fc" id="L1233">                }</span>
+            } else {
+                // do not repeat alias when it is the same as AST token, provided AST is a literal
+<span class="pc bpc" id="L1236" title="1 of 6 branches missed.">                if (alias != null &amp;&amp; (ast.type != ExpressionNode.LITERAL || !ast.token.equals(alias))) {</span>
+<span class="fc" id="L1237">                    aliasToSink(alias, sink);</span>
+                }
+            }
+        }
+<span class="fc" id="L1241">    }</span>
+
+    //returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
+    private void toSink0(CharSink sink, boolean joinSlave, boolean showOrderBy) {
+<span class="fc bfc" id="L1245" title="All 4 branches covered.">        final boolean hasColumns = this.topDownColumns.size() &gt; 0 || this.bottomUpColumns.size() &gt; 0;</span>
+<span class="fc bfc" id="L1246" title="All 2 branches covered.">        if (hasColumns) {</span>
+<span class="fc" id="L1247">            sink.put(getSelectModelTypeText());</span>
+<span class="fc bfc" id="L1248" title="All 2 branches covered.">            if (this.topDownColumns.size() &gt; 0) {</span>
+<span class="fc" id="L1249">                sink.put(' ');</span>
+<span class="fc" id="L1250">                sink.put('[');</span>
+<span class="fc" id="L1251">                sinkColumns(sink, this.topDownColumns);</span>
+<span class="fc" id="L1252">                sink.put(']');</span>
+            }
+<span class="fc bfc" id="L1254" title="All 2 branches covered.">            if (this.bottomUpColumns.size() &gt; 0) {</span>
+<span class="fc" id="L1255">                sink.put(' ');</span>
+<span class="fc" id="L1256">                sinkColumns(sink, this.bottomUpColumns);</span>
+            }
+<span class="fc" id="L1258">            sink.put(&quot; from &quot;);</span>
+        }
+<span class="fc bfc" id="L1260" title="All 2 branches covered.">        if (tableNameExpr != null) {</span>
+<span class="fc" id="L1261">            tableNameExpr.toSink(sink);</span>
+        } else {
+<span class="fc" id="L1263">            sink.put('(');</span>
+<span class="fc" id="L1264">            nestedModel.toSink0(sink, false, showOrderBy);</span>
+<span class="fc" id="L1265">            sink.put(')');</span>
+        }
+<span class="fc bfc" id="L1267" title="All 2 branches covered.">        if (alias != null) {</span>
+<span class="fc" id="L1268">            aliasToSink(alias.token, sink);</span>
+        }
+
+<span class="fc bfc" id="L1271" title="All 4 branches covered.">        if (getLatestByType() != LATEST_BY_NEW &amp;&amp; timestamp != null) {</span>
+<span class="fc" id="L1272">            sink.put(&quot; timestamp (&quot;);</span>
+<span class="fc" id="L1273">            timestamp.toSink(sink);</span>
+<span class="fc" id="L1274">            sink.put(')');</span>
+        }
+
+<span class="pc bpc" id="L1277" title="1 of 4 branches missed.">        if (getLatestByType() == LATEST_BY_DEPRECATED &amp;&amp; getLatestBy().size() &gt; 0) {</span>
+<span class="fc" id="L1278">            sink.put(&quot; latest by &quot;);</span>
+<span class="fc bfc" id="L1279" title="All 2 branches covered.">            for (int i = 0, n = getLatestBy().size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L1280" title="All 2 branches covered.">                if (i &gt; 0) {</span>
+<span class="fc" id="L1281">                    sink.put(',');</span>
+                }
+<span class="fc" id="L1283">                getLatestBy().getQuick(i).toSink(sink);</span>
+            }
+        }
+
+<span class="fc bfc" id="L1287" title="All 2 branches covered.">        if (orderedJoinModels.size() &gt; 1) {</span>
+<span class="fc bfc" id="L1288" title="All 2 branches covered.">            for (int i = 0, n = orderedJoinModels.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L1289">                QueryModel model = joinModels.getQuick(orderedJoinModels.getQuick(i));</span>
+<span class="fc bfc" id="L1290" title="All 2 branches covered.">                if (model != this) {</span>
+<span class="fc bfc" id="L1291" title="All 6 branches covered.">                    switch (model.getJoinType()) {</span>
+                        case JOIN_OUTER:
+<span class="fc" id="L1293">                            sink.put(&quot; left join &quot;);</span>
+<span class="fc" id="L1294">                            break;</span>
+                        case JOIN_ASOF:
+<span class="fc" id="L1296">                            sink.put(&quot; asof join &quot;);</span>
+<span class="fc" id="L1297">                            break;</span>
+                        case JOIN_SPLICE:
+<span class="fc" id="L1299">                            sink.put(&quot; splice join &quot;);</span>
+<span class="fc" id="L1300">                            break;</span>
+                        case JOIN_CROSS:
+<span class="fc" id="L1302">                            sink.put(&quot; cross join &quot;);</span>
+<span class="fc" id="L1303">                            break;</span>
+                        case JOIN_LT:
+<span class="fc" id="L1305">                            sink.put(&quot; lt join &quot;);</span>
+<span class="fc" id="L1306">                            break;</span>
+                        default:
+<span class="fc" id="L1308">                            sink.put(&quot; join &quot;);</span>
+                            break;
+                    }
+
+<span class="fc bfc" id="L1312" title="All 2 branches covered.">                    if (model.getWhereClause() != null) {</span>
+<span class="fc" id="L1313">                        sink.put('(');</span>
+<span class="fc" id="L1314">                        model.toSink0(sink, true, showOrderBy);</span>
+<span class="fc" id="L1315">                        sink.put(')');</span>
+<span class="fc bfc" id="L1316" title="All 2 branches covered.">                        if (model.getAlias() != null) {</span>
+<span class="fc" id="L1317">                            aliasToSink(model.getAlias().token, sink);</span>
+<span class="pc bpc" id="L1318" title="1 of 2 branches missed.">                        } else if (model.getTableName() != null) {</span>
+<span class="fc" id="L1319">                            aliasToSink(model.getTableName(), sink);</span>
+                        }
+                    } else {
+<span class="fc" id="L1322">                        model.toSink0(sink, true, showOrderBy);</span>
+                    }
+
+<span class="fc" id="L1325">                    JoinContext jc = model.getContext();</span>
+<span class="fc bfc" id="L1326" title="All 4 branches covered.">                    if (jc != null &amp;&amp; jc.aIndexes.size() &gt; 0) {</span>
+                        // join clause
+<span class="fc" id="L1328">                        sink.put(&quot; on &quot;);</span>
+<span class="fc bfc" id="L1329" title="All 2 branches covered.">                        for (int k = 0, z = jc.aIndexes.size(); k &lt; z; k++) {</span>
+<span class="fc bfc" id="L1330" title="All 2 branches covered.">                            if (k &gt; 0) {</span>
+<span class="fc" id="L1331">                                sink.put(&quot; and &quot;);</span>
+                            }
+<span class="fc" id="L1333">                            jc.aNodes.getQuick(k).toSink(sink);</span>
+<span class="fc" id="L1334">                            sink.put(&quot; = &quot;);</span>
+<span class="fc" id="L1335">                            jc.bNodes.getQuick(k).toSink(sink);</span>
+                        }
+                    }
+
+<span class="fc bfc" id="L1339" title="All 2 branches covered.">                    if (model.getOuterJoinExpressionClause() != null) {</span>
+<span class="fc" id="L1340">                        sink.put(&quot; outer-join-expression &quot;);</span>
+<span class="fc" id="L1341">                        model.getOuterJoinExpressionClause().toSink(sink);</span>
+                    }
+
+<span class="fc bfc" id="L1344" title="All 2 branches covered.">                    if (model.getPostJoinWhereClause() != null) {</span>
+<span class="fc" id="L1345">                        sink.put(&quot; post-join-where &quot;);</span>
+<span class="fc" id="L1346">                        model.getPostJoinWhereClause().toSink(sink);</span>
+                    }
+                }
+            }
+        }
+
+<span class="fc bfc" id="L1352" title="All 2 branches covered.">        if (getWhereClause() != null) {</span>
+<span class="fc" id="L1353">            sink.put(&quot; where &quot;);</span>
+<span class="fc" id="L1354">            whereClause.toSink(sink);</span>
+        }
+
+<span class="fc bfc" id="L1357" title="All 2 branches covered.">        if (constWhereClause != null) {</span>
+<span class="fc" id="L1358">            sink.put(&quot; const-where &quot;);</span>
+<span class="fc" id="L1359">            constWhereClause.toSink(sink);</span>
+        }
+
+<span class="pc bpc" id="L1362" title="1 of 4 branches missed.">        if (!joinSlave &amp;&amp; postJoinWhereClause != null) {</span>
+<span class="nc" id="L1363">            sink.put(&quot; post-join-where &quot;);</span>
+<span class="nc" id="L1364">            postJoinWhereClause.toSink(sink);</span>
+        }
+
+<span class="pc bpc" id="L1367" title="1 of 4 branches missed.">        if (!joinSlave &amp;&amp; outerJoinExpressionClause != null) {</span>
+<span class="nc" id="L1368">            sink.put(&quot; outer-join-expressions &quot;);</span>
+<span class="nc" id="L1369">            outerJoinExpressionClause.toSink(sink);</span>
+        }
+
+<span class="pc bpc" id="L1372" title="1 of 4 branches missed.">        if (getLatestByType() == LATEST_BY_NEW &amp;&amp; getLatestBy().size() &gt; 0) {</span>
+<span class="fc" id="L1373">            sink.put(&quot; latest on &quot;);</span>
+<span class="fc" id="L1374">            timestamp.toSink(sink);</span>
+<span class="fc" id="L1375">            sink.put(&quot; partition by &quot;);</span>
+<span class="fc bfc" id="L1376" title="All 2 branches covered.">            for (int i = 0, n = getLatestBy().size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L1377" title="All 2 branches covered.">                if (i &gt; 0) {</span>
+<span class="fc" id="L1378">                    sink.put(',');</span>
+                }
+<span class="fc" id="L1380">                getLatestBy().getQuick(i).toSink(sink);</span>
+            }
+        }
+
+<span class="fc bfc" id="L1384" title="All 2 branches covered.">        if (sampleBy != null) {</span>
+<span class="fc" id="L1385">            sink.put(&quot; sample by &quot;);</span>
+<span class="fc" id="L1386">            sampleBy.toSink(sink);</span>
+
+<span class="fc" id="L1388">            final int fillCount = sampleByFill.size();</span>
+<span class="fc bfc" id="L1389" title="All 2 branches covered.">            if (fillCount &gt; 0) {</span>
+<span class="fc" id="L1390">                sink.put(&quot; fill(&quot;);</span>
+<span class="fc" id="L1391">                sink.put(sampleByFill.getQuick(0));</span>
+
+<span class="fc bfc" id="L1393" title="All 2 branches covered.">                if (fillCount &gt; 1) {</span>
+<span class="fc bfc" id="L1394" title="All 2 branches covered.">                    for (int i = 1; i &lt; fillCount; i++) {</span>
+<span class="fc" id="L1395">                        sink.put(',');</span>
+<span class="fc" id="L1396">                        sink.put(sampleByFill.getQuick(i));</span>
+                    }
+                }
+<span class="fc" id="L1399">                sink.put(')');</span>
+            }
+
+<span class="fc bfc" id="L1402" title="All 4 branches covered.">            if (sampleByTimezoneName != null || sampleByOffset != null) {</span>
+<span class="fc" id="L1403">                sink.put(&quot; align to calendar&quot;);</span>
+<span class="fc bfc" id="L1404" title="All 2 branches covered.">                if (sampleByTimezoneName != null) {</span>
+<span class="fc" id="L1405">                    sink.put(&quot; time zone &quot;);</span>
+<span class="fc" id="L1406">                    sink.put(sampleByTimezoneName);</span>
+                }
+
+<span class="pc bpc" id="L1409" title="1 of 2 branches missed.">                if (sampleByOffset != null) {</span>
+<span class="fc" id="L1410">                    sink.put(&quot; with offset &quot;);</span>
+<span class="fc" id="L1411">                    sink.put(sampleByOffset);</span>
+                }
+            }
+        }
+
+<span class="pc bpc" id="L1416" title="3 of 4 branches missed.">        if (showOrderBy &amp;&amp; orderBy.size() &gt; 0) {</span>
+<span class="nc" id="L1417">            sink.put(&quot; order by &quot;);</span>
+<span class="nc bnc" id="L1418" title="All 2 branches missed.">            for (int i = 0, n = orderBy.size(); i &lt; n; i++) {</span>
+<span class="nc bnc" id="L1419" title="All 2 branches missed.">                if (i &gt; 0) {</span>
+<span class="nc" id="L1420">                    sink.put(&quot;, &quot;);</span>
+                }
+<span class="nc" id="L1422">                sink.put(orderBy.get(i));</span>
+<span class="nc bnc" id="L1423" title="All 2 branches missed.">                if (orderByDirection.get(i) == 1) {</span>
+<span class="nc" id="L1424">                    sink.put(&quot; desc&quot;);</span>
+                }
+            }
+<span class="pc bpc" id="L1427" title="1 of 4 branches missed.">        } else if (orderHash.size() &gt; 0 &amp;&amp; orderBy.size() &gt; 0) {</span>
+<span class="fc" id="L1428">            sink.put(&quot; order by &quot;);</span>
+
+<span class="fc" id="L1430">            ObjList&lt;CharSequence&gt; columnNames = orderHash.keys();</span>
+<span class="fc bfc" id="L1431" title="All 2 branches covered.">            for (int i = 0, n = columnNames.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L1432" title="All 2 branches covered.">                if (i &gt; 0) {</span>
+<span class="fc" id="L1433">                    sink.put(&quot;, &quot;);</span>
+                }
+
+<span class="fc" id="L1436">                CharSequence key = columnNames.getQuick(i);</span>
+<span class="fc" id="L1437">                sink.put(key);</span>
+<span class="fc bfc" id="L1438" title="All 2 branches covered.">                if (orderHash.get(key) == 1) {</span>
+<span class="fc" id="L1439">                    sink.put(&quot; desc&quot;);</span>
+                }
+            }
+        }
+
+<span class="fc bfc" id="L1444" title="All 4 branches covered.">        if (getLimitLo() != null || getLimitHi() != null) {</span>
+<span class="fc" id="L1445">            sink.put(&quot; limit &quot;);</span>
+<span class="fc bfc" id="L1446" title="All 2 branches covered.">            if (getLimitLo() != null) {</span>
+<span class="fc" id="L1447">                getLimitLo().toSink(sink);</span>
+            }
+<span class="fc bfc" id="L1449" title="All 2 branches covered.">            if (getLimitHi() != null) {</span>
+<span class="fc" id="L1450">                sink.put(',');</span>
+<span class="fc" id="L1451">                getLimitHi().toSink(sink);</span>
+            }
+        }
+
+<span class="fc bfc" id="L1455" title="All 2 branches covered.">        if (unionModel != null) {</span>
+<span class="fc bfc" id="L1456" title="All 2 branches covered.">            if (setOperationType == QueryModel.SET_OPERATION_INTERSECT) {</span>
+<span class="fc" id="L1457">                sink.put(&quot; intersect &quot;);</span>
+<span class="fc bfc" id="L1458" title="All 2 branches covered.">            } else if (setOperationType == QueryModel.SET_OPERATION_EXCEPT) {</span>
+<span class="fc" id="L1459">                sink.put(&quot; except &quot;);</span>
+            } else {
+<span class="fc" id="L1461">                sink.put(&quot; union &quot;);</span>
+<span class="fc bfc" id="L1462" title="All 2 branches covered.">                if (setOperationType == QueryModel.SET_OPERATION_UNION_ALL) {</span>
+<span class="fc" id="L1463">                    sink.put(&quot;all &quot;);</span>
+                }
+            }
+<span class="fc" id="L1466">            unionModel.toSink0(sink, false, showOrderBy);</span>
+        }
+<span class="fc" id="L1468">    }</span>
+
+    private void updateToSink(CharSink sink) {
+<span class="fc" id="L1471">        sink.put(&quot;update &quot;);</span>
+<span class="fc" id="L1472">        tableNameExpr.toSink(sink);</span>
+<span class="fc bfc" id="L1473" title="All 2 branches covered.">        if (alias != null) {</span>
+<span class="fc" id="L1474">            sink.put(&quot; as&quot;);</span>
+<span class="fc" id="L1475">            aliasToSink(alias.token, sink);</span>
+        }
+<span class="fc" id="L1477">        sink.put(&quot; set &quot;);</span>
+<span class="fc bfc" id="L1478" title="All 2 branches covered.">        for (int i = 0, n = getUpdateExpressions().size(); i &lt; n; i++) {</span>
+
+<span class="fc bfc" id="L1480" title="All 2 branches covered.">            if (i &gt; 0) {</span>
+<span class="fc" id="L1481">                sink.put(',');</span>
+            }
+<span class="fc" id="L1483">            CharSequence columnExpr = getUpdateExpressions().get(i).token;</span>
+<span class="fc" id="L1484">            sink.put(columnExpr);</span>
+<span class="fc" id="L1485">            sink.put(&quot; = &quot;);</span>
+<span class="fc" id="L1486">            QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);</span>
+<span class="fc" id="L1487">            setColumn.getAst().toSink(sink);</span>
+        }
+
+<span class="pc bpc" id="L1490" title="1 of 2 branches missed.">        if (getNestedModel() != null) {</span>
+<span class="fc" id="L1491">            sink.put(&quot; from (&quot;);</span>
+<span class="fc" id="L1492">            getNestedModel().toSink(sink);</span>
+<span class="fc" id="L1493">            sink.put(&quot;)&quot;);</span>
+        }
+<span class="fc" id="L1495">    }</span>
+
+<span class="fc" id="L1497">    public static final class QueryModelFactory implements ObjectFactory&lt;QueryModel&gt; {</span>
+        @Override
+        public QueryModel newInstance() {
+<span class="fc" id="L1500">            return new QueryModel();</span>
+        }
+    }
+
+    static {
+<span class="fc" id="L1505">        modelTypeName.extendAndSet(SELECT_MODEL_NONE, &quot;select&quot;);</span>
+<span class="fc" id="L1506">        modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, &quot;select-choose&quot;);</span>
+<span class="fc" id="L1507">        modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, &quot;select-virtual&quot;);</span>
+<span class="fc" id="L1508">        modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, &quot;select-analytic&quot;);</span>
+<span class="fc" id="L1509">        modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, &quot;select-group-by&quot;);</span>
+<span class="fc" id="L1510">        modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, &quot;select-distinct&quot;);</span>
+<span class="fc" id="L1511">        modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, &quot;select-cursor&quot;);</span>
+<span class="fc" id="L1512">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EqStrCharFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.eq</a> &gt; <span class="el_source">EqStrCharFunctionFactory.java</span></div><h1>EqStrCharFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.eq;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+<span class="fc" id="L41">public class EqStrCharFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L44">        return &quot;=(SA)&quot;;</span>
+    }
+
+    @Override
+    public boolean isBoolean() {
+<span class="fc" id="L49">        return true;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        // there are optimisation opportunities
+        // 1. when one of args is constant null comparison can boil down to checking
+        //    length of non-constant (must be -1)
+        // 2. when one of arguments is constant, save method call and use a field
+
+<span class="fc" id="L59">        Function strFunc = args.getQuick(0);</span>
+<span class="fc" id="L60">        Function charFunc = args.getQuick(1);</span>
+
+<span class="fc bfc" id="L62" title="All 4 branches covered.">        if (ColumnType.isNull(strFunc.getType()) || ColumnType.isNull(charFunc.getType())) {</span>
+<span class="fc" id="L63">            return new Func(strFunc, charFunc);</span>
+        }
+
+<span class="fc bfc" id="L66" title="All 4 branches covered.">        if (strFunc.isConstant() &amp;&amp; !charFunc.isConstant()) {</span>
+<span class="fc" id="L67">            CharSequence str = strFunc.getStr(null);</span>
+<span class="pc bpc" id="L68" title="2 of 4 branches missed.">            if (str == null || str.length() != 1) {</span>
+<span class="fc" id="L69">                return new NegatedAwareBooleanConstantFunc();</span>
+            }
+<span class="nc" id="L71">            return new ConstStrFunc(charFunc, str.charAt(0));</span>
+        }
+
+<span class="fc bfc" id="L74" title="All 4 branches covered.">        if (!strFunc.isConstant() &amp;&amp; charFunc.isConstant()) {</span>
+<span class="fc" id="L75">            return new ConstChrFunc(strFunc, charFunc.getChar(null));</span>
+        }
+
+<span class="pc bpc" id="L78" title="1 of 4 branches missed.">        if (strFunc.isConstant() &amp;&amp; charFunc.isConstant()) {</span>
+<span class="fc" id="L79">            return new ConstStrConstChrFunc(Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));</span>
+        }
+
+<span class="fc" id="L82">        return new Func(strFunc, charFunc);</span>
+    }
+
+    private static class ConstChrFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final char chrConst;
+        private final Function strFunc;
+
+<span class="fc" id="L89">        public ConstChrFunc(Function strFunc, char chrConst) {</span>
+<span class="fc" id="L90">            this.strFunc = strFunc;</span>
+<span class="fc" id="L91">            this.chrConst = chrConst;</span>
+<span class="fc" id="L92">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="fc" id="L96">            return strFunc;</span>
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc bfc" id="L101" title="All 2 branches covered.">            return negated != Chars.equalsNc(strFunc.getStr(rec), chrConst);</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L106">            sink.val(strFunc);</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">            if (negated) {</span>
+<span class="fc" id="L108">                sink.val('!');</span>
+            }
+<span class="fc" id="L110">            sink.val(&quot;='&quot;);</span>
+<span class="fc" id="L111">            sink.val(chrConst).val(&quot;'&quot;);</span>
+<span class="fc" id="L112">        }</span>
+    }
+
+    private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
+        private final boolean equals;
+
+<span class="fc" id="L118">        public ConstStrConstChrFunc(boolean equals) {</span>
+<span class="fc" id="L119">            this.equals = equals;</span>
+<span class="fc" id="L120">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc bfc" id="L124" title="All 2 branches covered.">            return negated != equals;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L129">            sink.val(getBool(null));</span>
+<span class="fc" id="L130">        }</span>
+    }
+
+    private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final char chrConst;
+        private final Function chrFunc;
+
+<span class="nc" id="L137">        public ConstStrFunc(Function chrFunc, char chrConst) {</span>
+<span class="nc" id="L138">            this.chrFunc = chrFunc;</span>
+<span class="nc" id="L139">            this.chrConst = chrConst;</span>
+<span class="nc" id="L140">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="nc" id="L144">            return chrFunc;</span>
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="nc bnc" id="L149" title="All 4 branches missed.">            return negated != (chrFunc.getChar(rec) == chrConst);</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="nc" id="L154">            sink.val(chrFunc);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            if (negated) {</span>
+<span class="nc" id="L156">                sink.val('!');</span>
+            }
+<span class="nc" id="L158">            sink.val('=');</span>
+<span class="nc" id="L159">            sink.val(chrConst);</span>
+<span class="nc" id="L160">        }</span>
+    }
+
+    private static class Func extends AbstractEqBinaryFunction {
+        public Func(Function strFunc, Function chrFunc) {
+<span class="fc" id="L165">            super(strFunc, chrFunc);</span>
+<span class="fc" id="L166">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc bfc" id="L170" title="All 2 branches covered.">            return negated != (Chars.equalsNc(left.getStr(rec), right.getChar(rec)));</span>
+        }
+    }
+
+    private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L178">            return negated;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L183">            sink.val(getBool(null));</span>
+<span class="fc" id="L184">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

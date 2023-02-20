@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MetadataPool.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.pool</a> &gt; <span class="el_source">MetadataPool.java</span></div><h1>MetadataPool.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.pool;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+
+public class MetadataPool extends AbstractMultiTenantPool&lt;MetadataPool.MetadataTenant&gt; {
+    private final CairoEngine engine;
+
+    public MetadataPool(CairoConfiguration configuration, CairoEngine engine) {
+<span class="fc" id="L35">        super(configuration);</span>
+<span class="fc" id="L36">        this.engine = engine;</span>
+<span class="fc" id="L37">    }</span>
+
+    @Override
+    protected byte getListenerSrc() {
+<span class="fc" id="L41">        return PoolListener.SRC_METADATA;</span>
+    }
+
+    @Override
+    protected MetadataTenant newTenant(TableToken tableToken, Entry&lt;MetadataTenant&gt; entry, int index) {
+<span class="fc bfc" id="L46" title="All 2 branches covered.">        if (engine.isWalTable(tableToken)) {</span>
+<span class="fc" id="L47">            return new SequencerMetadataTenant(this, entry, index, tableToken, engine.getTableSequencerAPI());</span>
+        }
+<span class="fc" id="L49">        return new TableReaderMetadataTenant(this, entry, index, tableToken);</span>
+    }
+
+    public interface MetadataTenant extends TableRecordMetadata, PoolTenant {
+    }
+
+    private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
+        private final int index;
+        private final TableSequencerAPI tableSequencerAPI;
+        private final TableToken tableToken;
+        private AbstractMultiTenantPool.Entry&lt;MetadataTenant&gt; entry;
+        private AbstractMultiTenantPool&lt;MetadataTenant&gt; pool;
+
+        public SequencerMetadataTenant(
+                AbstractMultiTenantPool&lt;MetadataTenant&gt; pool,
+                Entry&lt;MetadataTenant&gt; entry,
+                int index,
+                TableToken tableToken,
+                TableSequencerAPI tableSequencerAPI
+<span class="fc" id="L68">        ) {</span>
+<span class="fc" id="L69">            this.pool = pool;</span>
+<span class="fc" id="L70">            this.entry = entry;</span>
+<span class="fc" id="L71">            this.index = index;</span>
+<span class="fc" id="L72">            this.tableSequencerAPI = tableSequencerAPI;</span>
+<span class="fc" id="L73">            this.tableToken = tableToken;</span>
+<span class="fc" id="L74">            tableSequencerAPI.getTableMetadata(tableToken, this);</span>
+<span class="fc" id="L75">        }</span>
+
+        @Override
+        public void close() {
+<span class="pc bpc" id="L79" title="1 of 4 branches missed.">            if (pool != null &amp;&amp; getEntry() != null) {</span>
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">                if (pool.returnToPool(this)) {</span>
+<span class="fc" id="L81">                    return;</span>
+                }
+            }
+<span class="fc" id="L84">            super.close();</span>
+<span class="fc" id="L85">        }</span>
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+        @Override
+        public AbstractMultiTenantPool.Entry&lt;MetadataTenant&gt; getEntry() {
+<span class="fc" id="L90">            return entry;</span>
+        }
+
+        @Override
+        public int getIndex() {
+<span class="fc" id="L95">            return index;</span>
+        }
+
+        public void goodbye() {
+<span class="fc" id="L99">            entry = null;</span>
+<span class="fc" id="L100">            pool = null;</span>
+<span class="fc" id="L101">        }</span>
+
+        @Override
+        public void refresh() {
+<span class="fc" id="L105">            tableSequencerAPI.reloadMetadataConditionally(tableToken, getStructureVersion(), this);</span>
+<span class="fc" id="L106">        }</span>
+    }
+
+    private static class TableReaderMetadataTenant extends DynamicTableReaderMetadata implements MetadataTenant {
+        private final int index;
+        private AbstractMultiTenantPool.Entry&lt;MetadataTenant&gt; entry;
+        private AbstractMultiTenantPool&lt;MetadataTenant&gt; pool;
+
+        public TableReaderMetadataTenant(
+                AbstractMultiTenantPool&lt;MetadataTenant&gt; pool,
+                AbstractMultiTenantPool.Entry&lt;MetadataTenant&gt; entry,
+                int index,
+                TableToken tableToken
+        ) {
+<span class="fc" id="L120">            super(pool.getConfiguration(), tableToken);</span>
+<span class="fc" id="L121">            this.pool = pool;</span>
+<span class="fc" id="L122">            this.entry = entry;</span>
+<span class="fc" id="L123">            this.index = index;</span>
+<span class="fc" id="L124">        }</span>
+
+        @Override
+        public void close() {
+<span class="pc bpc" id="L128" title="1 of 4 branches missed.">            if (pool != null &amp;&amp; getEntry() != null) {</span>
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">                if (pool.returnToPool(this)) {</span>
+<span class="fc" id="L130">                    return;</span>
+                }
+            }
+<span class="fc" id="L133">            super.close();</span>
+<span class="fc" id="L134">        }</span>
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+        @Override
+        public AbstractMultiTenantPool.Entry&lt;MetadataTenant&gt; getEntry() {
+<span class="fc" id="L139">            return entry;</span>
+        }
+
+        @Override
+        public int getIndex() {
+<span class="fc" id="L144">            return index;</span>
+        }
+
+        public void goodbye() {
+<span class="fc" id="L148">            entry = null;</span>
+<span class="fc" id="L149">            pool = null;</span>
+<span class="fc" id="L150">        }</span>
+
+        @Override
+        public void refresh() {
+<span class="fc" id="L154">            reload();</span>
+<span class="fc" id="L155">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

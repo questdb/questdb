@@ -1,0 +1,690 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ApplyWal2TableJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal</a> &gt; <span class="el_source">ApplyWal2TableJob.java</span></div><h1>ApplyWal2TableJob.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal;
+
+import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.*;
+import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Job;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
+import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.TelemetryWalTask;
+import io.questdb.tasks.WalTxnNotificationTask;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+
+import static io.questdb.TelemetrySystemEvent.*;
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
+import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
+
+public class ApplyWal2TableJob extends AbstractQueueConsumerJob&lt;WalTxnNotificationTask&gt; implements Closeable {
+    public static final String WAL_2_TABLE_RESUME_REASON = &quot;Resume WAL Data Application&quot;;
+    private static final int FORCE_FULL_COMMIT = -2;
+<span class="fc" id="L61">    private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);</span>
+    private static final int TXN_METADATA_LONGS_SIZE = 3;
+    private static final String WAL_2_TABLE_WRITE_REASON = &quot;WAL Data Application&quot;;
+    private static final int WAL_APPLY_FAILED = -2;
+    private final long commitSquashRowLimit;
+    private final CairoEngine engine;
+<span class="fc" id="L67">    private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();</span>
+    private final WalMetrics metrics;
+    private final MicrosecondClock microClock;
+    private final OperationCompiler operationCompiler;
+    private final TableSequencerAPI tableSequencerAPI;
+    private final Telemetry&lt;TelemetryTask&gt; telemetry;
+    private final TelemetryFacade telemetryFacade;
+<span class="fc" id="L74">    private final LongList transactionMeta = new LongList();</span>
+    private final WalEventReader walEventReader;
+    private final Telemetry&lt;TelemetryWalTask&gt; walTelemetry;
+    private final WalTelemetryFacade walTelemetryFacade;
+    private final int lookAheadTransactionCount;
+    private long rowsSinceLastCommit;
+
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
+<span class="fc" id="L82">        super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());</span>
+<span class="fc" id="L83">        this.engine = engine;</span>
+<span class="fc" id="L84">        tableSequencerAPI = engine.getTableSequencerAPI();</span>
+<span class="fc" id="L85">        walTelemetry = engine.getTelemetryWal();</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;</span>
+<span class="fc" id="L87">        telemetry = engine.getTelemetry();</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;</span>
+<span class="fc" id="L89">        operationCompiler = new OperationCompiler(engine, workerCount, sharedWorkerCount, ffCache);</span>
+<span class="fc" id="L90">        CairoConfiguration configuration = engine.getConfiguration();</span>
+<span class="fc" id="L91">        microClock = configuration.getMicrosecondClock();</span>
+<span class="fc" id="L92">        walEventReader = new WalEventReader(configuration.getFilesFacade());</span>
+<span class="fc" id="L93">        commitSquashRowLimit = configuration.getWalCommitSquashRowLimit();</span>
+<span class="fc" id="L94">        metrics = engine.getMetrics().getWalMetrics();</span>
+<span class="fc" id="L95">        lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();</span>
+<span class="fc" id="L96">    }</span>
+
+    public long applyWAL(
+            TableToken tableToken,
+            CairoEngine engine,
+            OperationCompiler operationCompiler,
+            Job.RunStatus runStatus
+    ) {
+<span class="fc" id="L104">        long lastSequencerTxn = -1;</span>
+<span class="fc" id="L105">        long lastWriterTxn = -1;</span>
+<span class="fc" id="L106">        Path tempPath = Path.PATH.get();</span>
+
+        try {
+            do {
+                // security context is checked on writing to the WAL and can be ignored here
+<span class="fc" id="L111">                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">                if (updatedToken == null) {</span>
+<span class="pc bpc" id="L113" title="1 of 2 branches missed.">                    if (engine.isTableDropped(tableToken)) {</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">                        return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;</span>
+                    }
+                    // else: table is dropped and fully cleaned, this is late notification.
+<span class="fc" id="L117">                    return Long.MAX_VALUE;</span>
+                }
+
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">                if (!engine.isWalTable(tableToken)) {</span>
+<span class="nc" id="L121">                    LOG.info().$(&quot;table '&quot;).utf8(tableToken.getDirName()).$(&quot;' does not exist, skipping WAL application&quot;).$();</span>
+<span class="nc" id="L122">                    return 0;</span>
+                }
+
+<span class="fc" id="L125">                rowsSinceLastCommit = 0;</span>
+<span class="fc" id="L126">                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON, false)) {</span>
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">                    assert writer.getMetadata().getTableId() == tableToken.getTableId();</span>
+<span class="fc" id="L128">                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);</span>
+<span class="fc" id="L129">                    lastWriterTxn = writer.getSeqTxn();</span>
+<span class="fc" id="L130">                } catch (EntryUnavailableException tableBusy) {</span>
+<span class="pc bpc" id="L131" title="2 of 4 branches missed.">                    if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) &amp;&amp; !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {</span>
+<span class="fc" id="L132">                        LOG.critical().$(&quot;unsolicited table lock [table=&quot;).utf8(tableToken.getDirName()).$(&quot;, lock_reason=&quot;).$(tableBusy.getReason()).I$();</span>
+                        // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
+                    }
+                    // This is good, someone else will apply the data
+<span class="fc" id="L136">                    break;</span>
+<span class="fc" id="L137">                }</span>
+
+<span class="fc" id="L139">                lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableToken);</span>
+<span class="fc bfc" id="L140" title="All 4 branches covered.">            } while (lastWriterTxn &lt; lastSequencerTxn &amp;&amp; !runStatus.isTerminating());</span>
+<span class="fc" id="L141">        } catch (CairoException ex) {</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">            if (engine.isTableDropped(tableToken)) {</span>
+                // Table is dropped, and we received cairo exception in the middle of apply
+<span class="fc bfc" id="L144" title="All 2 branches covered.">                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;</span>
+            }
+<span class="fc" id="L146">            telemetryFacade.store(TelemetryOrigin.WAL_APPLY, WAL_APPLY_SUSPEND);</span>
+<span class="fc" id="L147">            LOG.critical().$(&quot;WAL apply job failed, table suspended [table=&quot;).utf8(tableToken.getDirName())</span>
+<span class="fc" id="L148">                    .$(&quot;, error=&quot;).$(ex.getFlyweightMessage())</span>
+<span class="fc" id="L149">                    .$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="fc" id="L150">                    .I$();</span>
+<span class="fc" id="L151">            return WAL_APPLY_FAILED;</span>
+<span class="fc" id="L152">        }</span>
+<span class="pc bpc" id="L153" title="1 of 4 branches missed.">        assert lastWriterTxn == lastSequencerTxn || runStatus.isTerminating();</span>
+
+<span class="fc" id="L155">        return lastWriterTxn;</span>
+    }
+
+    @Override
+    public void close() {
+<span class="fc" id="L160">        Misc.free(operationCompiler);</span>
+<span class="fc" id="L161">        Misc.free(walEventReader);</span>
+<span class="fc" id="L162">    }</span>
+
+    private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
+        // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
+<span class="fc" id="L166">        boolean allClean = true;</span>
+<span class="fc" id="L167">        FilesFacade ff = engine.getConfiguration().getFilesFacade();</span>
+<span class="fc" id="L168">        tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken);</span>
+<span class="fc" id="L169">        int rootLen = tempPath.length();</span>
+
+<span class="fc" id="L171">        long p = ff.findFirst(tempPath.$());</span>
+<span class="pc bpc" id="L172" title="1 of 2 branches missed.">        if (p &gt; 0) {</span>
+            try {
+                do {
+<span class="fc" id="L175">                    long pUtf8NameZ = ff.findName(p);</span>
+<span class="fc" id="L176">                    int type = ff.findType(p);</span>
+<span class="fc bfc" id="L177" title="All 2 branches covered.">                    if (ff.isDirOrSoftLinkDirNoDots(tempPath, rootLen, pUtf8NameZ, type)) {</span>
+<span class="fc bfc" id="L178" title="All 4 branches covered.">                        if (!Chars.endsWith(tempPath, SEQ_DIR) &amp;&amp; !Chars.equals(tempPath, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {</span>
+<span class="fc bfc" id="L179" title="All 2 branches covered.">                            if (ff.unlinkOrRemove(tempPath, LOG) != 0) {</span>
+<span class="fc" id="L180">                                allClean = false;</span>
+                            }
+                        }
+
+<span class="fc bfc" id="L184" title="All 2 branches covered.">                    } else if (type == Files.DT_FILE) {</span>
+<span class="fc" id="L185">                        tempPath.trimTo(rootLen);</span>
+<span class="fc" id="L186">                        tempPath.concat(pUtf8NameZ);</span>
+
+<span class="fc bfc" id="L188" title="All 6 branches covered.">                        if (Chars.endsWith(tempPath, TableUtils.TXN_FILE_NAME) || Chars.endsWith(tempPath, TableUtils.META_FILE_NAME) || matchesWalLock(tempPath)) {</span>
+<span class="fc" id="L189">                            continue;</span>
+                        }
+
+<span class="fc bfc" id="L192" title="All 2 branches covered.">                        if (!ff.remove(tempPath.$())) {</span>
+<span class="fc" id="L193">                            allClean = false;</span>
+<span class="fc" id="L194">                            LOG.info().$(&quot;could not remove [tempPath=&quot;).utf8(tempPath).$(&quot;, errno=&quot;).$(ff.errno()).I$();</span>
+                        }
+                    }
+<span class="fc bfc" id="L197" title="All 2 branches covered.">                } while (ff.findNext(p) &gt; 0);</span>
+
+<span class="fc bfc" id="L199" title="All 2 branches covered.">                if (allClean) {</span>
+                    // Remove _txn and _meta files when all other files are removed
+<span class="fc" id="L201">                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());</span>
+<span class="fc" id="L202">                    ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());</span>
+<span class="fc" id="L203">                    return true;</span>
+                }
+            } finally {
+<span class="fc" id="L206">                ff.findClose(p);</span>
+            }
+        }
+<span class="fc" id="L209">        return false;</span>
+    }
+
+    private static AlterOperation compileAlter(TableWriter tableWriter, OperationCompiler compiler, CharSequence sql, long seqTxn) throws SqlException {
+        try {
+<span class="fc" id="L214">            return compiler.compileAlterSql(sql, tableWriter.getTableToken());</span>
+<span class="fc" id="L215">        } catch (SqlException ex) {</span>
+<span class="fc" id="L216">            tableWriter.markSeqTxnCommitted(seqTxn);</span>
+<span class="fc" id="L217">            throw ex;</span>
+        }
+    }
+
+    private static UpdateOperation compileUpdate(TableWriter tableWriter, OperationCompiler compiler, CharSequence sql, long seqTxn) throws SqlException {
+        try {
+<span class="fc" id="L223">            return compiler.compileUpdateSql(sql, tableWriter.getTableToken());</span>
+<span class="nc" id="L224">        } catch (SqlException ex) {</span>
+<span class="nc" id="L225">            tableWriter.markSeqTxnCommitted(seqTxn);</span>
+<span class="nc" id="L226">            throw ex;</span>
+        }
+    }
+
+    private static boolean matchesWalLock(CharSequence name) {
+<span class="fc bfc" id="L231" title="All 2 branches covered.">        if (Chars.endsWith(name, &quot;.lock&quot;)) {</span>
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">            for (int i = name.length() - &quot;.lock&quot;.length() - 1; i &gt; 0; i--) {</span>
+<span class="fc" id="L233">                char c = name.charAt(i);</span>
+<span class="pc bpc" id="L234" title="1 of 4 branches missed.">                if (c &lt; '0' || c &gt; '9') {</span>
+<span class="fc" id="L235">                    return Chars.equals(name, i - WAL_NAME_BASE.length() + 1, i + 1, WAL_NAME_BASE, 0, WAL_NAME_BASE.length());</span>
+                }
+            }
+        }
+
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">        for (int i = 0, n = name.length(); i &lt; n; i++) {</span>
+<span class="fc" id="L241">            char c = name.charAt(i);</span>
+<span class="pc bpc" id="L242" title="3 of 4 branches missed.">            if (c &lt; '0' || c &gt; '9') {</span>
+<span class="fc" id="L243">                return false;</span>
+            }
+        }
+<span class="nc" id="L246">        return true;</span>
+    }
+
+    private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
+<span class="fc bfc" id="L250" title="All 2 branches covered.">        if (engine.lockReadersByTableToken(tableToken)) {</span>
+<span class="fc" id="L251">            TableWriter writerToClose = null;</span>
+            try {
+<span class="fc" id="L253">                final CairoConfiguration configuration = engine.getConfiguration();</span>
+<span class="fc bfc" id="L254" title="All 4 branches covered.">                if (writer == null &amp;&amp; TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {</span>
+                    try {
+<span class="fc" id="L256">                        writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON, false);</span>
+<span class="fc" id="L257">                    } catch (CairoException ex) {</span>
+                        // Ignore it, table can be half deleted.
+<span class="fc" id="L259">                    }</span>
+                }
+<span class="fc bfc" id="L261" title="All 2 branches covered.">                if (writer != null) {</span>
+                    // Force writer to close all the files.
+<span class="fc" id="L263">                    writer.destroy();</span>
+                }
+<span class="fc" id="L265">                return cleanDroppedTableDirectory(engine, tempPath, tableToken);</span>
+            } finally {
+<span class="fc bfc" id="L267" title="All 2 branches covered.">                if (writerToClose != null) {</span>
+<span class="fc" id="L268">                    writerToClose.close();</span>
+                }
+<span class="fc" id="L270">                engine.releaseReadersByTableToken(tableToken);</span>
+            }
+        } else {
+<span class="fc" id="L273">            LOG.info().$(&quot;table '&quot;).utf8(tableToken.getDirName())</span>
+<span class="fc" id="L274">                    .$(&quot;' is dropped, waiting to acquire Table Readers lock to delete the table files&quot;).$();</span>
+        }
+<span class="fc" id="L276">        return false;</span>
+    }
+
+    private void applyOutstandingWalTransactions(
+            TableToken tableToken,
+            TableWriter writer,
+            CairoEngine engine,
+            OperationCompiler operationCompiler,
+            Path tempPath,
+            Job.RunStatus runStatus
+    ) {
+        boolean isTerminating;
+<span class="fc" id="L288">        try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getSeqTxn())) {</span>
+<span class="fc" id="L289">            TableMetadataChangeLog structuralChangeCursor = null;</span>
+
+            try {
+
+<span class="fc" id="L293">                int iTransaction = 0;</span>
+<span class="fc" id="L294">                int totalTransactionCount = 0;</span>
+<span class="fc" id="L295">                long rowsAdded = 0;</span>
+<span class="fc" id="L296">                long physicalRowsAdded = 0;</span>
+<span class="fc" id="L297">                long insertTimespan = 0;</span>
+
+<span class="fc" id="L299">                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash();</span>
+<span class="fc" id="L300">                int rootLen = tempPath.length();</span>
+
+                // Populate transactionMeta with timestamps of future transactions
+                // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
+<span class="fc" id="L304">                LongList transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen, writer.getMaxTimestamp());</span>
+<span class="fc" id="L305">                transactionLogCursor.toTop();</span>
+
+<span class="fc" id="L307">                isTerminating = runStatus.isTerminating();</span>
+                WHILE_TRANSACTION_CURSOR:
+<span class="pc bpc" id="L309" title="1 of 4 branches missed.">                while (transactionLogCursor.hasNext() &amp;&amp; !isTerminating) {</span>
+<span class="fc" id="L310">                    final int walId = transactionLogCursor.getWalId();</span>
+<span class="fc" id="L311">                    final int segmentId = transactionLogCursor.getSegmentId();</span>
+<span class="fc" id="L312">                    final long segmentTxn = transactionLogCursor.getSegmentTxn();</span>
+<span class="fc" id="L313">                    final long commitTimestamp = transactionLogCursor.getCommitTimestamp();</span>
+<span class="fc" id="L314">                    final long seqTxn = transactionLogCursor.getTxn();</span>
+
+<span class="pc bpc" id="L316" title="1 of 2 branches missed.">                    if (seqTxn != writer.getSeqTxn() + 1) {</span>
+<span class="nc" id="L317">                        throw CairoException.critical(0)</span>
+<span class="nc" id="L318">                                .put(&quot;unexpected sequencer transaction, expected &quot;).put(writer.getSeqTxn() + 1)</span>
+<span class="nc" id="L319">                                .put(&quot; but was &quot;).put(seqTxn);</span>
+                    }
+
+<span class="pc bpc" id="L322" title="1 of 4 branches missed.">                    switch (walId) {</span>
+                        case METADATA_WALID:
+                            // This is metadata change
+                            // to be taken from Sequencer directly
+<span class="fc" id="L326">                            final long newStructureVersion = transactionLogCursor.getStructureVersion();</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">                            if (writer.getStructureVersion() != newStructureVersion - 1) {</span>
+<span class="fc" id="L328">                                throw CairoException.critical(0)</span>
+<span class="fc" id="L329">                                        .put(&quot;unexpected new WAL structure version [walStructure=&quot;).put(newStructureVersion)</span>
+<span class="fc" id="L330">                                        .put(&quot;, tableStructureVersion=&quot;).put(writer.getStructureVersion())</span>
+<span class="fc" id="L331">                                        .put(']');</span>
+                            }
+
+                            boolean hasNext;
+<span class="fc bfc" id="L335" title="All 4 branches covered.">                            if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {</span>
+<span class="fc" id="L336">                                Misc.free(structuralChangeCursor);</span>
+<span class="fc" id="L337">                                structuralChangeCursor = tableSequencerAPI.getMetadataChangeLog(tableToken, newStructureVersion - 1);</span>
+<span class="fc" id="L338">                                hasNext = structuralChangeCursor.hasNext();</span>
+                            }
+
+<span class="pc bpc" id="L341" title="1 of 2 branches missed.">                            if (hasNext) {</span>
+<span class="fc" id="L342">                                final long start = microClock.getTicks();</span>
+<span class="fc" id="L343">                                walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);</span>
+<span class="fc" id="L344">                                structuralChangeCursor.next().apply(writer, true);</span>
+<span class="fc" id="L345">                                writer.setSeqTxn(seqTxn);</span>
+<span class="fc" id="L346">                                walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start);</span>
+<span class="fc" id="L347">                            } else {</span>
+                                // Something messed up in sequencer.
+                                // There is a transaction in WAL but no structure change record.
+<span class="nc" id="L350">                                throw CairoException.critical(0)</span>
+<span class="nc" id="L351">                                        .put(&quot;could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=&quot;)</span>
+<span class="nc" id="L352">                                        .put(newStructureVersion)</span>
+<span class="nc" id="L353">                                        .put(']');</span>
+                            }
+                            break;
+
+                        case DROP_TABLE_WALID:
+<span class="fc" id="L358">                            tryDestroyDroppedTable(tableToken, writer, engine, tempPath);</span>
+<span class="fc" id="L359">                            return;</span>
+
+                        case 0:
+<span class="nc" id="L362">                            throw CairoException.critical(0)</span>
+<span class="nc" id="L363">                                    .put(&quot;broken table transaction record in sequencer log, walId cannot be 0 [table=&quot;)</span>
+<span class="nc" id="L364">                                    .put(tableToken.getTableName()).put(&quot;, seqTxn=&quot;).put(seqTxn).put(']');</span>
+
+                        default:
+                            // Always set full path when using thread static path
+<span class="fc" id="L368">                            operationCompiler.setNowAndFixClock(commitTimestamp);</span>
+<span class="fc" id="L369">                            tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);</span>
+<span class="fc" id="L370">                            final long start = microClock.getTicks();</span>
+
+<span class="fc bfc" id="L372" title="All 4 branches covered.">                            if (iTransaction &gt; 0 &amp;&amp; transactionMeta.size() &lt; (iTransaction + lookAheadTransactionCount) * TXN_METADATA_LONGS_SIZE) {</span>
+                                // Last few transactions left to process from the list
+                                // of observed transactions built upfront in the beginning of the loop.
+                                // Check if more transaction exist, exit restart the loop to have better picture
+                                // of the future transactions and optimise the application.
+<span class="fc bfc" id="L377" title="All 2 branches covered.">                                if (transactionLogCursor.reset()) {</span>
+<span class="fc" id="L378">                                    transactionMeta = readObservableTxnMeta(tempPath, transactionLogCursor, rootLen, writer.getMaxTimestamp());</span>
+<span class="fc" id="L379">                                    transactionLogCursor.toTop();</span>
+<span class="fc" id="L380">                                    totalTransactionCount += iTransaction;</span>
+<span class="fc" id="L381">                                    iTransaction = 0;</span>
+<span class="fc" id="L382">                                    continue;</span>
+                                }
+                            }
+
+<span class="fc" id="L386">                            isTerminating = runStatus.isTerminating();</span>
+<span class="fc" id="L387">                            final long added = processWalCommit(</span>
+                                    writer,
+                                    walId,
+                                    tempPath,
+                                    segmentTxn,
+                                    operationCompiler,
+                                    seqTxn,
+                                    commitTimestamp,
+                                    isTerminating,
+                                    transactionMeta,
+                                    iTransaction * TXN_METADATA_LONGS_SIZE
+                            );
+
+<span class="fc bfc" id="L400" title="All 2 branches covered.">                            if (added &gt; -1L) {</span>
+<span class="fc" id="L401">                                insertTimespan += microClock.getTicks() - start;</span>
+<span class="fc" id="L402">                                rowsAdded += added;</span>
+<span class="fc" id="L403">                                iTransaction++;</span>
+<span class="fc" id="L404">                                physicalRowsAdded += writer.getPhysicallyWrittenRowsSinceLastCommit();</span>
+                            }
+<span class="fc bfc" id="L406" title="All 4 branches covered.">                            if (added == -2L || isTerminating) {</span>
+                                // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
+<span class="fc" id="L408">                                break WHILE_TRANSACTION_CURSOR;</span>
+                            }
+                    }
+<span class="fc" id="L411">                }</span>
+<span class="fc" id="L412">                totalTransactionCount += iTransaction;</span>
+<span class="fc bfc" id="L413" title="All 2 branches covered.">                if (totalTransactionCount &gt; 0) {</span>
+<span class="fc" id="L414">                    LOG.info().$(&quot;WAL apply job finished [table=&quot;).$(writer.getTableToken())</span>
+<span class="fc" id="L415">                            .$(&quot;, transactions=&quot;).$(totalTransactionCount)</span>
+<span class="fc" id="L416">                            .$(&quot;, rows=&quot;).$(rowsAdded)</span>
+<span class="fc" id="L417">                            .$(&quot;, time=&quot;).$(insertTimespan / 1000)</span>
+<span class="fc" id="L418">                            .$(&quot;ms, rate=&quot;).$(rowsAdded * 1000000L / Math.max(1, insertTimespan))</span>
+<span class="fc" id="L419">                            .$(&quot;rows/s, physicalWrittenRowsMultiplier=&quot;).$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)</span>
+<span class="fc" id="L420">                            .I$();</span>
+                }
+            } finally {
+<span class="fc" id="L423">                Misc.free(structuralChangeCursor);</span>
+            }
+<span class="pc bpc" id="L425" title="1 of 2 branches missed.">        }</span>
+<span class="fc" id="L426">    }</span>
+
+    private void doStoreTelemetry(short event, short origin) {
+<span class="fc" id="L429">        TelemetryTask.store(telemetry, origin, event);</span>
+<span class="fc" id="L430">    }</span>
+
+    private void doStoreWalTelemetry(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+<span class="fc" id="L433">        TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);</span>
+<span class="fc" id="L434">    }</span>
+
+    private long processWalCommit(
+            TableWriter writer,
+            int walId,
+            @Transient Path walPath,
+            long segmentTxn,
+            OperationCompiler operationCompiler,
+            long seqTxn,
+            long commitTimestamp,
+            boolean isTerminating,
+            LongList minTimestamps,
+            int minTimestampsIndex
+    ) {
+<span class="fc" id="L448">        try (WalEventReader eventReader = walEventReader) {</span>
+<span class="fc" id="L449">            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);</span>
+<span class="fc" id="L450">            final byte walTxnType = walEventCursor.getType();</span>
+<span class="pc bpc" id="L451" title="1 of 4 branches missed.">            switch (walTxnType) {</span>
+                case DATA:
+<span class="fc" id="L453">                    final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();</span>
+<span class="fc bfc" id="L454" title="All 2 branches covered.">                    if (minTimestampsIndex &lt; minTimestamps.size()) {</span>
+<span class="fc" id="L455">                        long commitToTimestamp = minTimestamps.getQuick(minTimestampsIndex);</span>
+<span class="fc" id="L456">                        long rowCount = dataInfo.getEndRowID() - dataInfo.getStartRowID();</span>
+<span class="fc bfc" id="L457" title="All 4 branches covered.">                        if (commitToTimestamp &lt; 0 || isTerminating) {</span>
+                            // commit everything, do not store data in memory LAG buffer
+<span class="fc" id="L459">                            commitToTimestamp = Long.MAX_VALUE;</span>
+<span class="fc" id="L460">                            rowsSinceLastCommit = 0;</span>
+                        } else {
+<span class="fc" id="L462">                            rowsSinceLastCommit += rowCount;</span>
+<span class="fc bfc" id="L463" title="All 2 branches covered.">                            if (rowsSinceLastCommit &lt; commitSquashRowLimit) {</span>
+                                // This is an optimisation to apply small commits.
+                                // We want to store data in memory LAG buffer and commit it later when the buffer size is reasonably big
+                                // or when there is no more data available in WAL.
+                                // Do not commit yet, copy to LAG memory buffer and wait for more rows
+<span class="fc" id="L468">                                commitToTimestamp = -1;</span>
+                            }
+                        }
+<span class="fc" id="L471">                        final long start = microClock.getTicks();</span>
+<span class="fc" id="L472">                        walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);</span>
+<span class="fc" id="L473">                        final long rowsAdded = writer.processWalData(</span>
+                                walPath,
+<span class="fc bfc" id="L475" title="All 2 branches covered.">                                !dataInfo.isOutOfOrder(),</span>
+<span class="fc" id="L476">                                dataInfo.getStartRowID(),</span>
+<span class="fc" id="L477">                                dataInfo.getEndRowID(),</span>
+<span class="fc" id="L478">                                dataInfo.getMinTimestamp(),</span>
+<span class="fc" id="L479">                                dataInfo.getMaxTimestamp(),</span>
+                                dataInfo,
+                                seqTxn,
+                                commitToTimestamp
+                        );
+<span class="fc" id="L484">                        rowsSinceLastCommit -= rowsAdded;</span>
+<span class="fc" id="L485">                        final long latency = microClock.getTicks() - start;</span>
+<span class="fc" id="L486">                        long physicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();</span>
+<span class="fc" id="L487">                        metrics.addApplyRowsWritten(rowCount, physicalRowCount, latency);</span>
+<span class="fc" id="L488">                        walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, seqTxn, rowsAdded, physicalRowCount, latency);</span>
+<span class="fc" id="L489">                        return rowCount;</span>
+                    } else {
+<span class="fc" id="L491">                        return -2L;</span>
+                    }
+
+                case SQL:
+<span class="fc" id="L495">                    final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();</span>
+<span class="fc" id="L496">                    final long start = microClock.getTicks();</span>
+<span class="fc" id="L497">                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);</span>
+<span class="fc" id="L498">                    processWalSql(writer, sqlInfo, operationCompiler, seqTxn);</span>
+<span class="fc" id="L499">                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start);</span>
+<span class="fc" id="L500">                    return -1L;</span>
+                case TRUNCATE:
+<span class="fc" id="L502">                    long txn = writer.getTxn();</span>
+<span class="fc" id="L503">                    writer.setSeqTxn(seqTxn);</span>
+<span class="fc" id="L504">                    writer.removeAllPartitions();</span>
+<span class="fc bfc" id="L505" title="All 2 branches covered.">                    if (writer.getTxn() == txn) {</span>
+                        // force mark the transaction as applied
+<span class="fc" id="L507">                        writer.markSeqTxnCommitted(seqTxn);</span>
+                    }
+<span class="fc" id="L509">                    return -1L;</span>
+                default:
+<span class="nc" id="L511">                    throw new UnsupportedOperationException(&quot;Unsupported WAL txn type: &quot; + walTxnType);</span>
+            }
+<span class="pc bpc" id="L513" title="3 of 6 branches missed.">        }</span>
+    }
+
+    private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationCompiler operationCompiler, long seqTxn) {
+<span class="fc" id="L517">        final int cmdType = sqlInfo.getCmdType();</span>
+<span class="fc" id="L518">        final CharSequence sql = sqlInfo.getSql();</span>
+<span class="fc" id="L519">        operationCompiler.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());</span>
+<span class="fc" id="L520">        sqlInfo.populateBindVariableService(operationCompiler.getBindVariableService());</span>
+        try {
+<span class="pc bpc" id="L522" title="1 of 3 branches missed.">            switch (cmdType) {</span>
+                case CMD_ALTER_TABLE:
+<span class="fc" id="L524">                    AlterOperation alterOperation = compileAlter(tableWriter, operationCompiler, sql, seqTxn);</span>
+                    try {
+<span class="fc" id="L526">                        tableWriter.apply(alterOperation, seqTxn);</span>
+                    } finally {
+<span class="fc" id="L528">                        Misc.free(alterOperation);</span>
+                    }
+<span class="fc" id="L530">                    break;</span>
+                case CMD_UPDATE_TABLE:
+<span class="fc" id="L532">                    UpdateOperation updateOperation = compileUpdate(tableWriter, operationCompiler, sql, seqTxn);</span>
+                    try {
+<span class="fc" id="L534">                        tableWriter.apply(updateOperation, seqTxn);</span>
+                    } finally {
+<span class="fc" id="L536">                        Misc.free(updateOperation);</span>
+                    }
+<span class="fc" id="L538">                    break;</span>
+                default:
+<span class="nc" id="L540">                    throw new UnsupportedOperationException(&quot;Unsupported command type: &quot; + cmdType);</span>
+            }
+<span class="fc" id="L542">        } catch (SqlException ex) {</span>
+            // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
+<span class="fc" id="L544">            LOG.error().$(&quot;error applying SQL to wal table [table=&quot;)</span>
+<span class="fc" id="L545">                    .utf8(tableWriter.getTableToken().getTableName()).$(&quot;, sql=&quot;).$(sql).$(&quot;, error=&quot;).$(ex.getFlyweightMessage()).I$();</span>
+<span class="fc" id="L546">        } catch (CairoException e) {</span>
+<span class="fc bfc" id="L547" title="All 2 branches covered.">            if (e.isWALTolerable()) {</span>
+                // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
+<span class="fc" id="L549">                LOG.error().$(&quot;error applying SQL to wal table [table=&quot;)</span>
+<span class="fc" id="L550">                        .utf8(tableWriter.getTableToken().getTableName()).$(&quot;, sql=&quot;).$(sql).$(&quot;, error=&quot;).$(e.getFlyweightMessage()).I$();</span>
+            } else {
+<span class="fc" id="L552">                throw e;</span>
+            }
+<span class="fc" id="L554">        }</span>
+<span class="fc" id="L555">    }</span>
+
+    private LongList readObservableTxnMeta(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {
+<span class="fc" id="L558">        try (WalEventReader eventReader = walEventReader) {</span>
+<span class="fc" id="L559">            transactionMeta.clear();</span>
+<span class="fc" id="L560">            int prevWalId = Integer.MIN_VALUE;</span>
+<span class="fc" id="L561">            int prevSegmentId = Integer.MIN_VALUE;</span>
+<span class="fc" id="L562">            int prevSegmentTxn = Integer.MIN_VALUE;</span>
+<span class="fc" id="L563">            WalEventCursor walEventCursor = null;</span>
+
+<span class="fc bfc" id="L565" title="All 2 branches covered.">            while (transactionLogCursor.hasNext()) {</span>
+
+<span class="fc" id="L567">                final int walId = transactionLogCursor.getWalId();</span>
+<span class="fc" id="L568">                final int segmentId = transactionLogCursor.getSegmentId();</span>
+<span class="fc" id="L569">                final int segmentTxn = transactionLogCursor.getSegmentTxn();</span>
+
+<span class="fc" id="L571">                boolean recordAdded = false;</span>
+<span class="fc bfc" id="L572" title="All 2 branches covered.">                if (walId &gt; 0) {</span>
+<span class="fc" id="L573">                    tempPath.trimTo(rootLen).put(WAL_NAME_BASE).put(walId).slash().put(segmentId);</span>
+
+<span class="pc bpc" id="L575" title="1 of 6 branches missed.">                    if (prevWalId != walId || prevSegmentId != segmentId || prevSegmentTxn + 1 != segmentTxn) {</span>
+<span class="fc" id="L576">                        walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);</span>
+                    } else {
+                        // This is same WALE file, just read next txn transaction.
+<span class="pc bpc" id="L579" title="1 of 2 branches missed.">                        if (!walEventCursor.hasNext()) {</span>
+<span class="nc" id="L580">                            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);</span>
+                        }
+                    }
+
+<span class="fc" id="L584">                    final byte walTxnType = walEventCursor.getType();</span>
+<span class="fc bfc" id="L585" title="All 2 branches covered.">                    if (walTxnType == DATA) {</span>
+<span class="fc" id="L586">                        recordAdded = true;</span>
+<span class="fc" id="L587">                        WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();</span>
+<span class="fc" id="L588">                        transactionMeta.add(-1); // commit to timestamp</span>
+<span class="fc" id="L589">                        transactionMeta.add(commitInfo.getMaxTimestamp());</span>
+<span class="fc" id="L590">                        transactionMeta.add(commitInfo.getMinTimestamp());</span>
+                    }
+                }
+<span class="fc" id="L593">                prevWalId = walId;</span>
+<span class="fc" id="L594">                prevSegmentId = segmentId;</span>
+<span class="fc" id="L595">                prevSegmentTxn = segmentTxn;</span>
+
+                // This is a structural change, UPDATE or non-structural ALTER
+                // when it happens in between the transactions, we want to commit everything before it.
+<span class="fc bfc" id="L599" title="All 4 branches covered.">                if (!recordAdded &amp;&amp; transactionMeta.size() &gt; 0) {</span>
+<span class="fc" id="L600">                    transactionMeta.setQuick(transactionMeta.size() - 3, FORCE_FULL_COMMIT); // commit to timestamp of prev record</span>
+                }
+<span class="fc" id="L602">            }</span>
+        }
+
+        // find min timestamp after every transaction
+<span class="fc" id="L606">        long runningMinTimestamp = Long.MAX_VALUE;</span>
+<span class="fc" id="L607">        long maxLag = 0;</span>
+<span class="fc bfc" id="L608" title="All 2 branches covered.">        for (int n = transactionMeta.size(), i = n - 1; i &gt; -1; i -= TXN_METADATA_LONGS_SIZE) {</span>
+
+<span class="fc" id="L610">            long currentMinTimestamp = transactionMeta.getQuick(i);</span>
+<span class="fc" id="L611">            long currentMaxTimestamp = transactionMeta.getQuick(i - 1);</span>
+
+<span class="fc" id="L613">            long nextMinTimestamp = Math.min(currentMaxTimestamp, runningMinTimestamp);</span>
+<span class="fc" id="L614">            long lag = currentMaxTimestamp - nextMinTimestamp;</span>
+<span class="fc bfc" id="L615" title="All 2 branches covered.">            if (lag &gt; maxLag) {</span>
+<span class="fc" id="L616">                maxLag = lag;</span>
+            }
+
+<span class="fc" id="L619">            runningMinTimestamp = Math.min(runningMinTimestamp, currentMinTimestamp);</span>
+            // No point to hold data in lag buffer if it's already intersects with committed data
+<span class="fc" id="L621">            transactionMeta.setQuick(i, Math.max(maxCommittedTimestamp, runningMinTimestamp));</span>
+
+            // Leave last commitToTimestamp as -1 so everything is committed at the end
+<span class="fc bfc" id="L624" title="All 2 branches covered.">            if (i &lt; n - 1) {</span>
+<span class="fc" id="L625">                long commitToTimestamp = transactionMeta.getQuick(i - 2);</span>
+<span class="fc bfc" id="L626" title="All 2 branches covered.">                if (commitToTimestamp != FORCE_FULL_COMMIT) {</span>
+                    // set commitToTimestamp to be nextMinTimestamp
+                    // so that O3 does not happen
+<span class="fc" id="L629">                    transactionMeta.setQuick(i - 2, nextMinTimestamp);</span>
+                } else {
+                    // This is a flag that the commit has to be done in full
+                    // because of following UPDATE or ALTER.
+                    // Everything will be committed at this point, so it's safe to reset runningMinTimestamp
+<span class="fc" id="L634">                    runningMinTimestamp = Long.MAX_VALUE;</span>
+                }
+            }
+        }
+<span class="fc" id="L638">        return transactionMeta;</span>
+    }
+
+    private void storeTelemetryNoop(short event, short origin) {
+<span class="fc" id="L642">    }</span>
+
+    private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+<span class="fc" id="L645">    }</span>
+
+    @Override
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+        final TableToken tableToken;
+        final long seqTxn;
+
+        try {
+<span class="fc" id="L653">            WalTxnNotificationTask task = queue.get(cursor);</span>
+<span class="fc" id="L654">            tableToken = task.getTableToken();</span>
+<span class="fc" id="L655">            seqTxn = task.getTxn();</span>
+        } finally {
+            // Don't hold the queue until the all the transactions applied to the table
+<span class="fc" id="L658">            subSeq.done(cursor);</span>
+        }
+
+<span class="fc" id="L661">        final int tableId = tableToken.getTableId();</span>
+<span class="fc bfc" id="L662" title="All 2 branches covered.">        if (lastAppliedSeqTxns.get(tableId) &lt; seqTxn) {</span>
+            // Check, maybe we already processed this table to higher txn.
+<span class="fc" id="L664">            final long lastAppliedSeqTxn = applyWAL(tableToken, engine, operationCompiler, runStatus);</span>
+<span class="fc bfc" id="L665" title="All 2 branches covered.">            if (lastAppliedSeqTxn &gt; -1L) {</span>
+<span class="fc" id="L666">                lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);</span>
+<span class="fc bfc" id="L667" title="All 2 branches covered.">            } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {</span>
+                // Set processed transaction marker as Long.MAX_VALUE - 1
+                // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
+                // and got picked up for processing in this apply job.
+<span class="fc" id="L671">                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);</span>
+<span class="fc" id="L672">                engine.getTableSequencerAPI().suspendTable(tableToken);</span>
+            }
+<span class="fc" id="L674">        } else {</span>
+<span class="fc" id="L675">            LOG.debug().$(&quot;Skipping WAL processing for table, already processed [table=&quot;).$(tableToken).$(&quot;, txn=&quot;).$(seqTxn).I$();</span>
+        }
+<span class="fc" id="L677">        return true;</span>
+    }
+
+    @FunctionalInterface
+    private interface TelemetryFacade {
+        void store(short event, short origin);
+    }
+
+    @FunctionalInterface
+    private interface WalTelemetryFacade {
+        void store(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

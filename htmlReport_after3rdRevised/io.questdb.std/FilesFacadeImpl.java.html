@@ -1,0 +1,489 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FilesFacadeImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">FilesFacadeImpl.java</span></div><h1>FilesFacadeImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+<span class="fc" id="L34">public class FilesFacadeImpl implements FilesFacade {</span>
+
+<span class="fc" id="L36">    public static final FilesFacade INSTANCE = new FilesFacadeImpl();</span>
+    public static final int _16M = 16 * 1024 * 1024;
+<span class="fc" id="L38">    private final FsOperation copyFsOperation = this::copy;</span>
+<span class="fc" id="L39">    private final FsOperation hardLinkFsOperation = this::hardLink;</span>
+<span class="fc" id="L40">    private long mapPageSize = 0;</span>
+
+    @Override
+    public boolean allocate(int fd, long size) {
+<span class="fc" id="L44">        return Files.allocate(fd, size);</span>
+    }
+
+    @Override
+    public long append(int fd, long buf, int len) {
+<span class="fc" id="L49">        return Files.append(fd, buf, len);</span>
+    }
+
+    @Override
+    public boolean close(int fd) {
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        return Files.close(fd) == 0;</span>
+    }
+
+    @Override
+    public boolean closeRemove(int fd, LPSZ path) {
+<span class="pc bpc" id="L59" title="1 of 2 branches missed.">        if (fd &gt; -1) {</span>
+<span class="fc" id="L60">            Files.close(fd);</span>
+        }
+<span class="fc" id="L62">        return remove(path);</span>
+    }
+
+    @Override
+    public int copy(LPSZ from, LPSZ to) {
+<span class="fc" id="L67">        return Files.copy(from, to);</span>
+    }
+
+    @Override
+    public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
+<span class="fc" id="L72">        return Files.copyData(srcFd, destFd, offsetSrc, length);</span>
+    }
+
+    @Override
+    public int copyRecursive(Path src, Path dst, int dirMode) {
+<span class="fc" id="L77">        return runRecursive(src, dst, dirMode, copyFsOperation);</span>
+    }
+
+    @Override
+    public int errno() {
+<span class="fc" id="L82">        return Os.errno();</span>
+    }
+
+    @Override
+    public boolean exists(LPSZ path) {
+<span class="fc" id="L87">        return Files.exists(path);</span>
+    }
+
+    @Override
+    public boolean exists(int fd) {
+<span class="fc" id="L92">        return Files.exists(fd);</span>
+    }
+
+    @Override
+    public void fadvise(int fd, long offset, long len, int advise) {
+<span class="pc bpc" id="L97" title="1 of 2 branches missed.">        if (advise &gt; -1) {</span>
+<span class="nc" id="L98">            Files.fadvise(fd, offset, len, advise);</span>
+        }
+<span class="fc" id="L100">    }</span>
+
+    @Override
+    public long findClose(long findPtr) {
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (findPtr != 0) {</span>
+<span class="fc" id="L105">            Files.findClose(findPtr);</span>
+        }
+<span class="fc" id="L107">        return 0;</span>
+    }
+
+    @Override
+    public long findFirst(LPSZ path) {
+<span class="fc" id="L112">        long ptr = Files.findFirst(path);</span>
+<span class="pc bpc" id="L113" title="1 of 2 branches missed.">        if (ptr == -1) {</span>
+<span class="nc" id="L114">            throw CairoException.critical(Os.errno()).put(&quot;findFirst failed on &quot;).put(path);</span>
+        }
+<span class="fc" id="L116">        return ptr;</span>
+    }
+
+    @Override
+    public long findName(long findPtr) {
+<span class="fc" id="L121">        return Files.findName(findPtr);</span>
+    }
+
+    @Override
+    public int findNext(long findPtr) {
+<span class="fc" id="L126">        int r = Files.findNext(findPtr);</span>
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">        if (r == -1) {</span>
+<span class="nc" id="L128">            throw CairoException.critical(Os.errno()).put(&quot;findNext failed&quot;);</span>
+        }
+<span class="fc" id="L130">        return r;</span>
+    }
+
+    @Override
+    public int findType(long findPtr) {
+<span class="fc" id="L135">        return Files.findType(findPtr);</span>
+    }
+
+    @Override
+    public int fsync(int fd) {
+<span class="fc" id="L140">        return Files.fsync(fd);</span>
+    }
+
+    @Override
+    public long getDiskSize(LPSZ path) {
+<span class="nc" id="L145">        return Files.getDiskSize(path);</span>
+    }
+
+    @Override
+    public long getLastModified(LPSZ path) {
+<span class="fc" id="L150">        return Files.getLastModified(path);</span>
+    }
+
+    @Override
+    public long getMapPageSize() {
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        if (mapPageSize == 0) {</span>
+<span class="fc" id="L156">            mapPageSize = computeMapPageSize();</span>
+        }
+<span class="fc" id="L158">        return mapPageSize;</span>
+    }
+
+    @Override
+    public long getOpenFileCount() {
+<span class="fc" id="L163">        return Files.getOpenFileCount();</span>
+    }
+
+    @Override
+    public long getPageSize() {
+<span class="fc" id="L168">        return Files.PAGE_SIZE;</span>
+    }
+
+    @Override
+    public int hardLink(LPSZ src, LPSZ hardLink) {
+<span class="fc" id="L173">        return Files.hardLink(src, hardLink);</span>
+    }
+
+    @Override
+    public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
+<span class="fc" id="L178">        return runRecursive(src, dst, dirMode, hardLinkFsOperation);</span>
+    }
+
+    @Override
+    public boolean isCrossDeviceCopyError(int errno) {
+<span class="pc bpc" id="L183" title="2 of 4 branches missed.">        return Os.isPosix() &amp;&amp; errno == 18;</span>
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+<span class="fc" id="L188">        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type);</span>
+    }
+
+    @Override
+    public boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, StringSink nameSink) {
+<span class="fc" id="L193">        return Files.isDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);</span>
+    }
+
+    @Override
+    public boolean isRestrictedFileSystem() {
+<span class="fc" id="L198">        return Os.isWindows();</span>
+    }
+
+    @Override
+    public boolean isSoftLink(LPSZ softLink) {
+<span class="fc" id="L203">        return Files.isSoftLink(softLink);</span>
+    }
+
+    @Override
+    public void iterateDir(LPSZ path, FindVisitor func) {
+<span class="fc" id="L208">        long p = findFirst(path);</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">        if (p &gt; 0) {</span>
+            try {
+                do {
+<span class="fc" id="L212">                    func.onFind(findName(p), findType(p));</span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">                } while (findNext(p) &gt; 0);</span>
+            } finally {
+<span class="fc" id="L215">                findClose(p);</span>
+            }
+        }
+<span class="fc" id="L218">    }</span>
+
+    @Override
+    public long length(int fd) {
+<span class="fc" id="L222">        long r = Files.length(fd);</span>
+<span class="pc bpc" id="L223" title="1 of 2 branches missed.">        if (r &lt; 0) {</span>
+<span class="nc" id="L224">            throw CairoException.critical(Os.errno()).put(&quot;Checking file size failed&quot;);</span>
+        }
+<span class="fc" id="L226">        return r;</span>
+    }
+
+    @Override
+    public long length(LPSZ name) {
+<span class="fc" id="L231">        return Files.length(name);</span>
+    }
+
+    @Override
+    public int lock(int fd) {
+<span class="fc" id="L236">        return Files.lock(fd);</span>
+    }
+
+    @Override
+    public void madvise(long address, long len, int advise) {
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">        if (advise &gt; -1) {</span>
+<span class="nc" id="L242">            Files.madvise(address, len, advise);</span>
+        }
+<span class="fc" id="L244">    }</span>
+
+    @Override
+    public int mkdir(Path path, int mode) {
+<span class="fc" id="L248">        return Files.mkdir(path, mode);</span>
+    }
+
+    @Override
+    public int mkdirs(Path path, int mode) {
+<span class="fc" id="L253">        return Files.mkdirs(path, mode);</span>
+    }
+
+    @Override
+    public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+<span class="fc" id="L258">        return Files.mmap(fd, len, offset, flags, memoryTag);</span>
+    }
+
+    @Override
+    public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+<span class="fc" id="L263">        return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);</span>
+    }
+
+    @Override
+    public int msync(long addr, long len, boolean async) {
+<span class="fc" id="L268">        return Files.msync(addr, len, async);</span>
+    }
+
+    @Override
+    public void munmap(long address, long size, int memoryTag) {
+<span class="fc" id="L273">        Files.munmap(address, size, memoryTag);</span>
+<span class="fc" id="L274">    }</span>
+
+    @Override
+    public int openAppend(LPSZ name) {
+<span class="fc" id="L278">        return Files.openAppend(name);</span>
+    }
+
+    @Override
+    public int openCleanRW(LPSZ name, long size) {
+        // Open files and if file exists, try exclusively lock it
+        // If exclusive lock worked the file will be cleaned and allocated to the given size
+        // Shared lock will be left on the file which will be removed when file descriptor is closed
+        // If file did not exist, it will be allocated to the size and shared lock set
+<span class="fc" id="L287">        return Files.openCleanRW(name, size);</span>
+    }
+
+    @Override
+    public int openRO(LPSZ name) {
+<span class="fc" id="L292">        return Files.openRO(name);</span>
+    }
+
+    @Override
+    public int openRW(LPSZ name, long opts) {
+<span class="fc" id="L297">        return Files.openRW(name, opts);</span>
+    }
+
+    @Override
+    public long read(int fd, long buf, long len, long offset) {
+<span class="fc" id="L302">        return Files.read(fd, buf, len, offset);</span>
+    }
+
+    @Override
+    public byte readNonNegativeByte(int fd, long offset) {
+<span class="fc" id="L307">        return Files.readNonNegativeByte(fd, offset);</span>
+    }
+
+    @Override
+    public int readNonNegativeInt(int fd, long offset) {
+<span class="fc" id="L312">        return Files.readNonNegativeInt(fd, offset);</span>
+    }
+
+    @Override
+    public long readNonNegativeLong(int fd, long offset) {
+<span class="fc" id="L317">        return Files.readNonNegativeLong(fd, offset);</span>
+    }
+
+    @Override
+    public boolean remove(LPSZ name) {
+<span class="fc" id="L322">        return Files.remove(name);</span>
+    }
+
+    @Override
+    public int rename(LPSZ from, LPSZ to) {
+<span class="fc" id="L327">        return Files.rename(from, to);</span>
+    }
+
+    @Override
+    public int rmdir(Path name) {
+<span class="fc" id="L332">        return Files.rmdir(name);</span>
+    }
+
+    @Override
+    public int softLink(LPSZ src, LPSZ softLink) {
+<span class="fc" id="L337">        return Files.softLink(src, softLink);</span>
+    }
+
+    @Override
+    public int sync() {
+<span class="fc" id="L342">        return Files.sync();</span>
+    }
+
+    @Override
+    public boolean touch(LPSZ path) {
+<span class="fc" id="L347">        return Files.touch(path);</span>
+    }
+
+    @Override
+    public boolean truncate(int fd, long size) {
+<span class="fc" id="L352">        return Files.truncate(fd, size);</span>
+    }
+
+    @Override
+    public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+<span class="fc" id="L357">        return Files.typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);</span>
+    }
+
+    @Override
+    public int unlink(LPSZ softLink) {
+<span class="fc" id="L362">        return Files.unlink(softLink);</span>
+    }
+
+    @Override
+    public int unlinkOrRemove(Path path, Log LOG) {
+<span class="fc bfc" id="L367" title="All 2 branches covered.">        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;</span>
+<span class="fc" id="L368">        return unlinkOrRemove(path, checkedType, LOG);</span>
+    }
+
+    @Override
+    public int unlinkOrRemove(Path path, int checkedType, Log LOG) {
+<span class="fc bfc" id="L373" title="All 2 branches covered.">        if (checkedType == Files.DT_LNK) {</span>
+            // in Windows ^ ^ will return DT_DIR, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+<span class="pc bpc" id="L378" title="1 of 2 branches missed.">            if (unlink(path) == 0) {</span>
+<span class="fc" id="L379">                LOG.info().$(&quot;removed by unlink [path=&quot;).utf8(path).I$();</span>
+<span class="fc" id="L380">                return 0;</span>
+            } else {
+<span class="nc" id="L382">                LOG.error().$(&quot;failed to unlink, will remove [path=&quot;).utf8(path).I$();</span>
+            }
+        }
+
+        int errno;
+<span class="fc bfc" id="L387" title="All 2 branches covered.">        if ((errno = rmdir(path)) == 0) {</span>
+<span class="fc" id="L388">            LOG.info().$(&quot;removed [path=&quot;).utf8(path).I$();</span>
+        } else {
+<span class="fc" id="L390">            LOG.error().$(&quot;cannot remove [path=&quot;).utf8(path).$(&quot;, errno=&quot;).$(errno).I$();</span>
+        }
+<span class="fc" id="L392">        return errno;</span>
+    }
+
+    public void walk(Path path, FindVisitor func) {
+<span class="fc" id="L396">        int len = path.length();</span>
+<span class="fc" id="L397">        long p = findFirst(path);</span>
+<span class="pc bpc" id="L398" title="1 of 2 branches missed.">        if (p &gt; 0) {</span>
+            try {
+                do {
+<span class="fc" id="L401">                    long name = findName(p);</span>
+<span class="fc bfc" id="L402" title="All 2 branches covered.">                    if (Files.notDots(name)) {</span>
+<span class="fc" id="L403">                        int type = findType(p);</span>
+<span class="fc" id="L404">                        path.trimTo(len);</span>
+<span class="pc bpc" id="L405" title="1 of 2 branches missed.">                        if (type == Files.DT_FILE) {</span>
+<span class="fc" id="L406">                            func.onFind(name, type);</span>
+                        } else {
+<span class="nc" id="L408">                            walk(path.concat(name).$(), func);</span>
+                        }
+                    }
+<span class="fc bfc" id="L411" title="All 2 branches covered.">                } while (findNext(p) &gt; 0);</span>
+            } finally {
+<span class="fc" id="L413">                findClose(p);</span>
+            }
+        }
+<span class="fc" id="L416">    }</span>
+
+    @Override
+    public long write(int fd, long address, long len, long offset) {
+<span class="fc" id="L420">        return Files.write(fd, address, len, offset);</span>
+    }
+
+    private long computeMapPageSize() {
+<span class="fc" id="L424">        long pageSize = getPageSize();</span>
+<span class="fc" id="L425">        long mapPageSize = pageSize * pageSize;</span>
+<span class="pc bpc" id="L426" title="2 of 4 branches missed.">        if (mapPageSize &lt; pageSize || mapPageSize &gt; _16M) {</span>
+<span class="fc bfc" id="L427" title="All 2 branches covered.">            if (_16M % pageSize == 0) {</span>
+<span class="fc" id="L428">                return _16M;</span>
+            }
+<span class="fc" id="L430">            return pageSize;</span>
+        } else {
+<span class="nc" id="L432">            return mapPageSize;</span>
+        }
+    }
+
+    private int runRecursive(Path src, Path dst, int dirMode, FsOperation operation) {
+<span class="fc" id="L437">        int dstLen = dst.length();</span>
+<span class="fc" id="L438">        int srcLen = src.length();</span>
+<span class="fc" id="L439">        int len = src.length();</span>
+<span class="fc" id="L440">        long p = findFirst(src.$());</span>
+
+<span class="pc bpc" id="L442" title="1 of 4 branches missed.">        if (!exists(dst.$()) &amp;&amp; -1 == mkdir(dst, dirMode)) {</span>
+<span class="nc" id="L443">            return -1;</span>
+        }
+
+<span class="pc bpc" id="L446" title="1 of 2 branches missed.">        if (p &gt; 0) {</span>
+            try {
+                int res;
+                do {
+<span class="fc" id="L450">                    long name = findName(p);</span>
+<span class="fc bfc" id="L451" title="All 2 branches covered.">                    if (Files.notDots(name)) {</span>
+<span class="fc" id="L452">                        int type = findType(p);</span>
+<span class="fc" id="L453">                        src.trimTo(len);</span>
+<span class="fc" id="L454">                        src.concat(name);</span>
+<span class="fc" id="L455">                        dst.concat(name);</span>
+<span class="fc bfc" id="L456" title="All 2 branches covered.">                        if (type == Files.DT_FILE) {</span>
+<span class="pc bpc" id="L457" title="1 of 2 branches missed.">                            if ((res = operation.invoke(src.$(), dst.$())) &lt; 0) {</span>
+<span class="nc" id="L458">                                return res;</span>
+                            }
+                        } else {
+
+                            // Ignore if subfolder already exists
+<span class="fc" id="L463">                            mkdir(dst.$(), dirMode);</span>
+
+<span class="pc bpc" id="L465" title="1 of 2 branches missed.">                            if ((res = runRecursive(src, dst, dirMode, operation)) &lt; 0) {</span>
+<span class="nc" id="L466">                                return res;</span>
+                            }
+
+                        }
+<span class="fc" id="L470">                        src.trimTo(srcLen);</span>
+<span class="fc" id="L471">                        dst.trimTo(dstLen);</span>
+                    }
+<span class="fc bfc" id="L473" title="All 2 branches covered.">                } while (findNext(p) &gt; 0);</span>
+            } finally {
+<span class="fc" id="L475">                findClose(p);</span>
+<span class="fc" id="L476">                src.trimTo(srcLen);</span>
+<span class="fc" id="L477">                dst.trimTo(dstLen);</span>
+            }
+        }
+
+<span class="fc" id="L481">        return 0;</span>
+    }
+
+    @FunctionalInterface
+    private interface FsOperation {
+        int invoke(LPSZ src, LPSZ dst);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,1083 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BindVariableServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.bind</a> &gt; <span class="el_source">BindVariableServiceImpl.java</span></div><h1>BindVariableServiceImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.bind;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.std.*;
+import org.jetbrains.annotations.Nullable;
+
+<span class="fc" id="L38">public class BindVariableServiceImpl implements BindVariableService {</span>
+    private final ObjectPool&lt;BooleanBindVariable&gt; booleanVarPool;
+    private final ObjectPool&lt;ByteBindVariable&gt; byteVarPool;
+    private final ObjectPool&lt;CharBindVariable&gt; charVarPool;
+    private final ObjectPool&lt;DateBindVariable&gt; dateVarPool;
+    private final ObjectPool&lt;DoubleBindVariable&gt; doubleVarPool;
+    private final ObjectPool&lt;FloatBindVariable&gt; floatVarPool;
+    private final ObjectPool&lt;GeoHashBindVariable&gt; geoHashVarPool;
+<span class="fc" id="L46">    private final ObjList&lt;Function&gt; indexedVariables = new ObjList&lt;&gt;();</span>
+    private final ObjectPool&lt;IntBindVariable&gt; intVarPool;
+    private final ObjectPool&lt;Long256BindVariable&gt; long256VarPool;
+    private final ObjectPool&lt;LongBindVariable&gt; longVarPool;
+<span class="fc" id="L50">    private final CharSequenceObjHashMap&lt;Function&gt; namedVariables = new CharSequenceObjHashMap&lt;&gt;();</span>
+    private final ObjectPool&lt;ShortBindVariable&gt; shortVarPool;
+    private final ObjectPool&lt;StrBindVariable&gt; strVarPool;
+    private final ObjectPool&lt;TimestampBindVariable&gt; timestampVarPool;
+    private final ObjectPool&lt;UuidBindVariable&gt; uuidVarPool;
+
+<span class="fc" id="L56">    public BindVariableServiceImpl(CairoConfiguration configuration) {</span>
+<span class="fc" id="L57">        final int poolSize = configuration.getBindVariablePoolSize();</span>
+<span class="fc" id="L58">        this.doubleVarPool = new ObjectPool&lt;&gt;(DoubleBindVariable::new, poolSize);</span>
+<span class="fc" id="L59">        this.floatVarPool = new ObjectPool&lt;&gt;(FloatBindVariable::new, poolSize);</span>
+<span class="fc" id="L60">        this.intVarPool = new ObjectPool&lt;&gt;(IntBindVariable::new, poolSize);</span>
+<span class="fc" id="L61">        this.longVarPool = new ObjectPool&lt;&gt;(LongBindVariable::new, poolSize);</span>
+<span class="fc" id="L62">        this.timestampVarPool = new ObjectPool&lt;&gt;(TimestampBindVariable::new, poolSize);</span>
+<span class="fc" id="L63">        this.dateVarPool = new ObjectPool&lt;&gt;(DateBindVariable::new, poolSize);</span>
+<span class="fc" id="L64">        this.shortVarPool = new ObjectPool&lt;&gt;(ShortBindVariable::new, poolSize);</span>
+<span class="fc" id="L65">        this.byteVarPool = new ObjectPool&lt;&gt;(ByteBindVariable::new, poolSize);</span>
+<span class="fc" id="L66">        this.geoHashVarPool = new ObjectPool&lt;&gt;(GeoHashBindVariable::new, poolSize);</span>
+<span class="fc" id="L67">        this.booleanVarPool = new ObjectPool&lt;&gt;(BooleanBindVariable::new, poolSize);</span>
+<span class="fc" id="L68">        this.strVarPool = new ObjectPool&lt;&gt;(() -&gt; new StrBindVariable(configuration.getFloatToStrCastScale()), poolSize);</span>
+<span class="fc" id="L69">        this.charVarPool = new ObjectPool&lt;&gt;(CharBindVariable::new, 8);</span>
+<span class="fc" id="L70">        this.long256VarPool = new ObjectPool&lt;&gt;(Long256BindVariable::new, 8);</span>
+<span class="fc" id="L71">        this.uuidVarPool = new ObjectPool&lt;&gt;(UuidBindVariable::new, 8);</span>
+<span class="fc" id="L72">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L76">        namedVariables.clear();</span>
+<span class="fc" id="L77">        indexedVariables.clear();</span>
+<span class="fc" id="L78">        doubleVarPool.clear();</span>
+<span class="fc" id="L79">        floatVarPool.clear();</span>
+<span class="fc" id="L80">        intVarPool.clear();</span>
+<span class="fc" id="L81">        longVarPool.clear();</span>
+<span class="fc" id="L82">        timestampVarPool.clear();</span>
+<span class="fc" id="L83">        dateVarPool.clear();</span>
+<span class="fc" id="L84">        shortVarPool.clear();</span>
+<span class="fc" id="L85">        byteVarPool.clear();</span>
+<span class="fc" id="L86">        booleanVarPool.clear();</span>
+<span class="fc" id="L87">        strVarPool.clear();</span>
+<span class="fc" id="L88">        charVarPool.clear();</span>
+<span class="fc" id="L89">        long256VarPool.clear();</span>
+<span class="fc" id="L90">        geoHashVarPool.clear();</span>
+<span class="fc" id="L91">    }</span>
+
+    @Override
+    public int define(int index, int type, int position) throws SqlException {
+<span class="fc bfc" id="L95" title="All 16 branches covered.">        switch (ColumnType.tagOf(type)) {</span>
+            case ColumnType.BOOLEAN:
+<span class="fc" id="L97">                setBoolean(index);</span>
+<span class="fc" id="L98">                return type;</span>
+            case ColumnType.BYTE:
+<span class="fc" id="L100">                setByte(index);</span>
+<span class="fc" id="L101">                return type;</span>
+            case ColumnType.SHORT:
+<span class="fc" id="L103">                setShort(index);</span>
+<span class="fc" id="L104">                return type;</span>
+            case ColumnType.CHAR:
+<span class="fc" id="L106">                setChar(index);</span>
+<span class="fc" id="L107">                return type;</span>
+            case ColumnType.INT:
+<span class="fc" id="L109">                setInt(index);</span>
+<span class="fc" id="L110">                return type;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L112">                setLong(index);</span>
+<span class="fc" id="L113">                return type;</span>
+            case ColumnType.DATE:
+<span class="fc" id="L115">                setDate(index);</span>
+<span class="fc" id="L116">                return type;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L118">                setTimestamp(index);</span>
+<span class="fc" id="L119">                return type;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L121">                setFloat(index);</span>
+<span class="fc" id="L122">                return type;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L124">                setDouble(index);</span>
+<span class="fc" id="L125">                return type;</span>
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.VAR_ARG:
+<span class="fc" id="L129">                setStr(index);</span>
+<span class="fc" id="L130">                return ColumnType.STRING;</span>
+            case ColumnType.LONG256:
+<span class="fc" id="L132">                setLong256(index);</span>
+<span class="fc" id="L133">                return type;</span>
+            case ColumnType.BINARY:
+<span class="fc" id="L135">                setBin(index);</span>
+<span class="fc" id="L136">                return type;</span>
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+<span class="fc" id="L141">                setGeoHash(index, type);</span>
+<span class="fc" id="L142">                return type;</span>
+            case ColumnType.UUID:
+<span class="fc" id="L144">                setUuid(index);</span>
+<span class="fc" id="L145">                return type;</span>
+            default:
+<span class="fc" id="L147">                throw SqlException.$(position, &quot;bind variable cannot be used [contextType=&quot;).put(ColumnType.nameOf(type)).put(&quot;, index=&quot;).put(index).put(']');</span>
+        }
+    }
+
+    @Override
+    public Function getFunction(CharSequence name) {
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">        assert name != null;</span>
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">        assert Chars.startsWith(name, ':');</span>
+<span class="fc" id="L155">        return namedVariables.valueAt(namedVariables.keyIndex(name, 1, name.length()));</span>
+    }
+
+    @Override
+    public Function getFunction(int index) {
+<span class="fc" id="L160">        final int n = indexedVariables.size();</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        if (index &lt; n) {</span>
+<span class="fc" id="L162">            return indexedVariables.getQuick(index);</span>
+        }
+<span class="fc" id="L164">        return null;</span>
+    }
+
+    @Override
+    public int getIndexedVariableCount() {
+<span class="fc" id="L169">        return indexedVariables.size();</span>
+    }
+
+    @Override
+    public ObjList&lt;CharSequence&gt; getNamedVariables() {
+<span class="fc" id="L174">        return namedVariables.keys();</span>
+    }
+
+    @Override
+    public void setBin(CharSequence name, BinarySequence value) throws SqlException {
+<span class="fc" id="L179">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L181">            namedVariables.putAt(index, name, new BinBindVariable(value));</span>
+        } else {
+<span class="fc" id="L183">            Function function = namedVariables.valueAtQuick(index);</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">            if (function instanceof BinBindVariable) {</span>
+<span class="fc" id="L185">                ((BinBindVariable) function).value = value;</span>
+            } else {
+<span class="fc" id="L187">                throw SqlException.$(0, &quot;bind variable '&quot;).put(name).put(&quot;' is already defined as &quot;).put(ColumnType.nameOf(function.getType()));</span>
+            }
+        }
+<span class="fc" id="L190">    }</span>
+
+    @Override
+    public void setBin(int index) throws SqlException {
+<span class="fc" id="L194">        setBin(index, null);</span>
+<span class="fc" id="L195">    }</span>
+
+    @Override
+    public void setBin(int index, BinarySequence value) throws SqlException {
+<span class="fc" id="L199">        indexedVariables.extendPos(index + 1);</span>
+<span class="fc" id="L200">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">        if (function == null) {</span>
+<span class="fc" id="L202">            indexedVariables.setQuick(index, new BinBindVariable(value));</span>
+<span class="fc bfc" id="L203" title="All 2 branches covered.">        } else if (function instanceof BinBindVariable) {</span>
+<span class="fc" id="L204">            ((BinBindVariable) function).value = value;</span>
+        } else {
+<span class="fc" id="L206">            throw SqlException.$(0, &quot;bind variable at &quot;).put(index).put(&quot; is already defined as &quot;).put(ColumnType.nameOf(function.getType()));</span>
+        }
+<span class="fc" id="L208">    }</span>
+
+    @Override
+    public void setBoolean(CharSequence name, boolean value) throws SqlException {
+<span class="fc" id="L212">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final BooleanBindVariable function;
+<span class="fc" id="L215">            namedVariables.putAt(index, name, function = booleanVarPool.next());</span>
+<span class="fc" id="L216">            function.value = value;</span>
+<span class="fc" id="L217">        } else {</span>
+<span class="fc" id="L218">            setBoolean0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L220">    }</span>
+
+    @Override
+    public void setBoolean(int index) throws SqlException {
+<span class="fc" id="L224">        setBoolean(index, false);</span>
+<span class="fc" id="L225">    }</span>
+
+    @Override
+    public void setBoolean(int index, boolean value) throws SqlException {
+<span class="fc" id="L229">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L231">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L232" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L233">            setBoolean0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L235">            indexedVariables.setQuick(index, function = booleanVarPool.next());</span>
+<span class="fc" id="L236">            ((BooleanBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L238">    }</span>
+
+    @Override
+    public void setByte(CharSequence name, byte value) throws SqlException {
+<span class="fc" id="L242">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final ByteBindVariable function;
+<span class="fc" id="L245">            namedVariables.putAt(index, name, function = byteVarPool.next());</span>
+<span class="fc" id="L246">            function.value = value;</span>
+<span class="fc" id="L247">        } else {</span>
+<span class="fc" id="L248">            setByte0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L250">    }</span>
+
+    @Override
+    public void setByte(int index, byte value) throws SqlException {
+<span class="fc" id="L254">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L256">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L257" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L258">            setByte0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L260">            indexedVariables.setQuick(index, function = byteVarPool.next());</span>
+<span class="fc" id="L261">            ((ByteBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L263">    }</span>
+
+    @Override
+    public void setByte(int index) throws SqlException {
+<span class="fc" id="L267">        setByte(index, (byte) 0);</span>
+<span class="fc" id="L268">    }</span>
+
+    @Override
+    public void setChar(CharSequence name, char value) throws SqlException {
+<span class="fc" id="L272">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L273" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final CharBindVariable function;
+<span class="fc" id="L275">            namedVariables.putAt(index, name, function = charVarPool.next());</span>
+<span class="fc" id="L276">            function.value = value;</span>
+<span class="fc" id="L277">        } else {</span>
+<span class="fc" id="L278">            setChar0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L280">    }</span>
+
+    @Override
+    public void setChar(int index) throws SqlException {
+<span class="fc" id="L284">        setChar(index, (char) 0);</span>
+<span class="fc" id="L285">    }</span>
+
+    @Override
+    public void setChar(int index, char value) throws SqlException {
+<span class="fc" id="L289">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L291">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L293">            setChar0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L295">            indexedVariables.setQuick(index, function = charVarPool.next());</span>
+<span class="fc" id="L296">            ((CharBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L298">    }</span>
+
+    @Override
+    public void setDate(CharSequence name, long value) throws SqlException {
+<span class="fc" id="L302">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L303" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final DateBindVariable function;
+<span class="fc" id="L305">            namedVariables.putAt(index, name, function = dateVarPool.next());</span>
+<span class="fc" id="L306">            function.value = value;</span>
+<span class="fc" id="L307">        } else {</span>
+<span class="fc" id="L308">            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.DATE);</span>
+        }
+<span class="fc" id="L310">    }</span>
+
+    @Override
+    public void setDate(int index) throws SqlException {
+<span class="fc" id="L314">        setDate(index, Numbers.LONG_NaN);</span>
+<span class="fc" id="L315">    }</span>
+
+    @Override
+    public void setDate(int index, long value) throws SqlException {
+<span class="fc" id="L319">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L321">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L322" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L323">            setLong0(function, value, index, null, ColumnType.DATE);</span>
+        } else {
+<span class="fc" id="L325">            indexedVariables.setQuick(index, function = dateVarPool.next());</span>
+<span class="fc" id="L326">            ((DateBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L328">    }</span>
+
+    @Override
+    public void setDouble(CharSequence name, double value) throws SqlException {
+<span class="fc" id="L332">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L333" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final DoubleBindVariable function;
+<span class="fc" id="L335">            namedVariables.putAt(index, name, function = doubleVarPool.next());</span>
+<span class="fc" id="L336">            function.value = value;</span>
+<span class="fc" id="L337">        } else {</span>
+<span class="fc" id="L338">            setDouble0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L340">    }</span>
+
+    @Override
+    public void setDouble(int index) throws SqlException {
+<span class="fc" id="L344">        setDouble(index, Double.NaN);</span>
+<span class="fc" id="L345">    }</span>
+
+    @Override
+    public void setDouble(int index, double value) throws SqlException {
+<span class="fc" id="L349">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L351">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L352" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L353">            setDouble0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L355">            indexedVariables.setQuick(index, function = doubleVarPool.next());</span>
+<span class="fc" id="L356">            ((DoubleBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L358">    }</span>
+
+    @Override
+    public void setFloat(CharSequence name, float value) throws SqlException {
+<span class="fc" id="L362">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L363" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final FloatBindVariable function;
+<span class="fc" id="L365">            namedVariables.putAt(index, name, function = floatVarPool.next());</span>
+<span class="fc" id="L366">            function.value = value;</span>
+<span class="fc" id="L367">        } else {</span>
+<span class="fc" id="L368">            setFloat0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L370">    }</span>
+
+    @Override
+    public void setFloat(int index) throws SqlException {
+<span class="fc" id="L374">        setFloat(index, Float.NaN);</span>
+<span class="fc" id="L375">    }</span>
+
+    @Override
+    public void setFloat(int index, float value) throws SqlException {
+<span class="fc" id="L379">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L381">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L382" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L383">            setFloat0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L385">            indexedVariables.setQuick(index, function = floatVarPool.next());</span>
+<span class="fc" id="L386">            ((FloatBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L388">    }</span>
+
+    @Override
+    public void setGeoHash(CharSequence name, long value, int type) throws SqlException {
+<span class="fc" id="L392">        int index = namedVariables.keyIndex(name);</span>
+<span class="pc bpc" id="L393" title="1 of 2 branches missed.">        if (index &gt; -1) {</span>
+            final GeoHashBindVariable function;
+<span class="fc" id="L395">            namedVariables.putAt(index, name, function = geoHashVarPool.next());</span>
+<span class="fc" id="L396">            function.value = value;</span>
+<span class="fc" id="L397">            function.setType(type);</span>
+<span class="fc" id="L398">        } else {</span>
+<span class="nc" id="L399">            setGeoHash0(namedVariables.valueAtQuick(index), value, type, -1, name);</span>
+        }
+<span class="fc" id="L401">    }</span>
+
+    @Override
+    public void setGeoHash(int index, long value, int type) throws SqlException {
+<span class="fc" id="L405">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L407">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L408" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L409">            setGeoHash0(function, value, type, index, null);</span>
+        } else {
+<span class="fc" id="L411">            indexedVariables.setQuick(index, function = geoHashVarPool.next());</span>
+<span class="fc" id="L412">            ((GeoHashBindVariable) function).value = value;</span>
+<span class="fc" id="L413">            ((GeoHashBindVariable) function).setType(type);</span>
+        }
+<span class="fc" id="L415">    }</span>
+
+    @Override
+    public void setGeoHash(int index, int type) throws SqlException {
+<span class="fc" id="L419">        setGeoHash(index, GeoHashes.NULL, type);</span>
+<span class="fc" id="L420">    }</span>
+
+    @Override
+    public void setInt(CharSequence name, int value) throws SqlException {
+<span class="fc" id="L424">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L425" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final IntBindVariable function;
+<span class="fc" id="L427">            namedVariables.putAt(index, name, function = intVarPool.next());</span>
+<span class="fc" id="L428">            function.value = value;</span>
+<span class="fc" id="L429">        } else {</span>
+<span class="fc" id="L430">            setInt0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L432">    }</span>
+
+    @Override
+    public void setInt(int index) throws SqlException {
+<span class="fc" id="L436">        setInt(index, Numbers.INT_NaN);</span>
+<span class="fc" id="L437">    }</span>
+
+    @Override
+    public void setInt(int index, int value) throws SqlException {
+<span class="fc" id="L441">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L443">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L444" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L445">            setInt0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L447">            indexedVariables.setQuick(index, function = intVarPool.next());</span>
+<span class="fc" id="L448">            ((IntBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L450">    }</span>
+
+    @Override
+    public void setLong(CharSequence name, long value) throws SqlException {
+<span class="fc" id="L454">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L455" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final LongBindVariable function;
+<span class="fc" id="L457">            namedVariables.putAt(index, name, function = longVarPool.next());</span>
+<span class="fc" id="L458">            function.value = value;</span>
+<span class="fc" id="L459">        } else {</span>
+<span class="fc" id="L460">            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.LONG);</span>
+        }
+<span class="fc" id="L462">    }</span>
+
+    @Override
+    public void setLong(int index) throws SqlException {
+<span class="fc" id="L466">        setLong(index, Numbers.LONG_NaN);</span>
+<span class="fc" id="L467">    }</span>
+
+    @Override
+    public void setLong(int index, long value) throws SqlException {
+<span class="fc" id="L471">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L473">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L474" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L475">            setLong0(function, value, index, null, ColumnType.LONG);</span>
+        } else {
+<span class="fc" id="L477">            indexedVariables.setQuick(index, function = longVarPool.next());</span>
+<span class="fc" id="L478">            ((LongBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L480">    }</span>
+
+    @Override
+    public void setLong256(CharSequence name, long l0, long l1, long l2, long l3) throws SqlException {
+<span class="fc" id="L484">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L485" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final Long256BindVariable function;
+<span class="fc" id="L487">            namedVariables.putAt(index, name, function = long256VarPool.next());</span>
+<span class="fc" id="L488">            function.value.setAll(l0, l1, l2, l3);</span>
+<span class="fc" id="L489">        } else {</span>
+<span class="fc" id="L490">            setLong2560(namedVariables.valueAtQuick(index), l0, l1, l2, l3, -1, name);</span>
+        }
+<span class="fc" id="L492">    }</span>
+
+    @Override
+    public void setLong256(CharSequence name, Long256 value) throws SqlException {
+<span class="fc" id="L496">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L497" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final Long256BindVariable function;
+<span class="fc" id="L499">            namedVariables.putAt(index, name, function = long256VarPool.next());</span>
+<span class="fc" id="L500">            function.value.copyFrom(value);</span>
+<span class="fc" id="L501">        } else {</span>
+<span class="fc" id="L502">            setLong2560(</span>
+<span class="fc" id="L503">                    namedVariables.valueAtQuick(index),</span>
+<span class="fc" id="L504">                    value.getLong0(),</span>
+<span class="fc" id="L505">                    value.getLong1(),</span>
+<span class="fc" id="L506">                    value.getLong2(),</span>
+<span class="fc" id="L507">                    value.getLong3(),</span>
+                    -1,
+                    name
+            );
+        }
+<span class="fc" id="L512">    }</span>
+
+    @Override
+    public void setLong256(int index) throws SqlException {
+<span class="fc" id="L516">        setLong256(index, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);</span>
+<span class="fc" id="L517">    }</span>
+
+    @Override
+    public void setLong256(int index, long l0, long l1, long l2, long l3) throws SqlException {
+<span class="fc" id="L521">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L523">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L524" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L525">            setLong2560(</span>
+                    function,
+                    l0,
+                    l1,
+                    l2,
+                    l3,
+                    index,
+                    null
+            );
+        } else {
+<span class="fc" id="L535">            indexedVariables.setQuick(index, function = long256VarPool.next());</span>
+<span class="fc" id="L536">            ((Long256BindVariable) function).setValue(l0, l1, l2, l3);</span>
+        }
+<span class="fc" id="L538">    }</span>
+
+    @Override
+    public void setLong256(CharSequence name) throws SqlException {
+<span class="fc" id="L542">        setLong256(name, Long256Impl.NULL_LONG256);</span>
+<span class="fc" id="L543">    }</span>
+
+    @Override
+    public void setShort(int index) throws SqlException {
+<span class="fc" id="L547">        setShort(index, (short) 0);</span>
+<span class="fc" id="L548">    }</span>
+
+    @Override
+    public void setShort(int index, short value) throws SqlException {
+<span class="fc" id="L552">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L554">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L555" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L556">            setShort0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L558">            indexedVariables.setQuick(index, function = shortVarPool.next());</span>
+<span class="fc" id="L559">            ((ShortBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L561">    }</span>
+
+    @Override
+    public void setShort(CharSequence name, short value) throws SqlException {
+<span class="fc" id="L565">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L566" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final ShortBindVariable function;
+<span class="fc" id="L568">            namedVariables.putAt(index, name, function = shortVarPool.next());</span>
+<span class="fc" id="L569">            function.value = value;</span>
+<span class="fc" id="L570">        } else {</span>
+<span class="fc" id="L571">            setShort0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L573">    }</span>
+
+    @Override
+    public void setStr(int index) throws SqlException {
+<span class="fc" id="L577">        setStr(index, null);</span>
+<span class="fc" id="L578">    }</span>
+
+    @Override
+    public void setStr(int index, CharSequence value) throws SqlException {
+<span class="fc" id="L582">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L584">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L585" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L586">            setStr0(function, value, index, null);</span>
+        } else {
+<span class="fc" id="L588">            indexedVariables.setQuick(index, function = strVarPool.next());</span>
+<span class="fc" id="L589">            ((StrBindVariable) function).setValue(value);</span>
+        }
+<span class="fc" id="L591">    }</span>
+
+    @Override
+    public void setStr(CharSequence name, CharSequence value) throws SqlException {
+<span class="fc" id="L595">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L596" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final StrBindVariable function;
+<span class="fc" id="L598">            namedVariables.putAt(index, name, function = strVarPool.next());</span>
+<span class="fc" id="L599">            function.setValue(value);</span>
+<span class="fc" id="L600">        } else {</span>
+<span class="fc" id="L601">            setStr0(namedVariables.valueAtQuick(index), value, -1, name);</span>
+        }
+<span class="fc" id="L603">    }</span>
+
+    @Override
+    public void setTimestamp(int index) throws SqlException {
+<span class="fc" id="L607">        setTimestamp(index, Numbers.LONG_NaN);</span>
+<span class="fc" id="L608">    }</span>
+
+    @Override
+    public void setTimestamp(int index, long value) throws SqlException {
+<span class="fc" id="L612">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L614">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L615" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L616">            setTimestamp0(function, value, index);</span>
+        } else {
+<span class="fc" id="L618">            indexedVariables.setQuick(index, function = timestampVarPool.next());</span>
+<span class="fc" id="L619">            ((TimestampBindVariable) function).value = value;</span>
+        }
+<span class="fc" id="L621">    }</span>
+
+    @Override
+    public void setTimestamp(CharSequence name, long value) throws SqlException {
+<span class="fc" id="L625">        int index = namedVariables.keyIndex(name);</span>
+<span class="fc bfc" id="L626" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+            final TimestampBindVariable function;
+<span class="fc" id="L628">            namedVariables.putAt(index, name, function = timestampVarPool.next());</span>
+<span class="fc" id="L629">            function.value = value;</span>
+<span class="fc" id="L630">        } else {</span>
+<span class="fc" id="L631">            setLong0(namedVariables.valueAtQuick(index), value, -1, name, ColumnType.TIMESTAMP);</span>
+        }
+<span class="fc" id="L633">    }</span>
+
+    @Override
+    public void setUuid(int index, long lo, long hi) throws SqlException {
+<span class="fc" id="L637">        indexedVariables.extendPos(index + 1);</span>
+        // variable exists
+<span class="fc" id="L639">        Function function = indexedVariables.getQuick(index);</span>
+<span class="fc bfc" id="L640" title="All 2 branches covered.">        if (function != null) {</span>
+<span class="fc" id="L641">            setUuid(function, lo, hi, index, null);</span>
+        } else {
+<span class="fc" id="L643">            indexedVariables.setQuick(index, function = uuidVarPool.next());</span>
+<span class="fc" id="L644">            ((UuidBindVariable) function).set(lo, hi);</span>
+        }
+<span class="fc" id="L646">    }</span>
+
+    @Override
+    public void setUuid(CharSequence name, long lo, long hi) throws SqlException {
+<span class="fc" id="L650">        int index = namedVariables.keyIndex(name);</span>
+<span class="pc bpc" id="L651" title="1 of 2 branches missed.">        if (index &gt; -1) {</span>
+            final UuidBindVariable function;
+<span class="fc" id="L653">            namedVariables.putAt(index, name, function = uuidVarPool.next());</span>
+<span class="fc" id="L654">            function.set(lo, hi);</span>
+<span class="fc" id="L655">        } else {</span>
+<span class="nc" id="L656">            setUuid(namedVariables.valueAtQuick(index), lo, hi, -1, name);</span>
+        }
+<span class="fc" id="L658">    }</span>
+
+    public void setUuid(int index) throws SqlException {
+<span class="fc" id="L661">        setUuid(index, Numbers.LONG_NaN, Numbers.LONG_NaN);</span>
+<span class="fc" id="L662">    }</span>
+
+    private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc bfc" id="L665" title="All 2 branches covered.">        if (name == null) {</span>
+<span class="fc" id="L666">            throw SqlException.$(0, &quot;bind variable at &quot;).put(index).put(&quot; is defined as &quot;).put(ColumnType.nameOf(function.getType())).put(&quot; and cannot accept &quot;).put(ColumnType.nameOf(srcType));</span>
+        }
+<span class="fc" id="L668">        throw SqlException.$(0, &quot;bind variable '&quot;).put(name).put(&quot;' is defined as &quot;).put(ColumnType.nameOf(function.getType())).put(&quot; and cannot accept &quot;).put(ColumnType.nameOf(srcType));</span>
+    }
+
+    private static void setBoolean0(Function function, boolean value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L672">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L673" title="1 of 3 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BOOLEAN:
+<span class="fc" id="L675">                ((BooleanBindVariable) function).value = value;</span>
+<span class="fc" id="L676">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L678">                ((StrBindVariable) function).setValue(Boolean.toString(value));</span>
+<span class="fc" id="L679">                break;</span>
+            default:
+<span class="nc" id="L681">                reportError(function, ColumnType.BOOLEAN, index, name);</span>
+                break;
+        }
+<span class="fc" id="L684">    }</span>
+
+    private static void setByte0(Function function, byte value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L687">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L688" title="1 of 11 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BYTE:
+<span class="fc" id="L690">                ((ByteBindVariable) function).value = value;</span>
+<span class="fc" id="L691">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc" id="L693">                ((ShortBindVariable) function).value = value;</span>
+<span class="fc" id="L694">                break;</span>
+            case ColumnType.INT:
+<span class="fc" id="L696">                ((IntBindVariable) function).value = value;</span>
+<span class="fc" id="L697">                break;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L699">                ((LongBindVariable) function).value = value;</span>
+<span class="fc" id="L700">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L702">                ((TimestampBindVariable) function).value = value;</span>
+<span class="fc" id="L703">                break;</span>
+            case ColumnType.DATE:
+<span class="fc" id="L705">                ((DateBindVariable) function).value = value;</span>
+<span class="fc" id="L706">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L708">                ((FloatBindVariable) function).value = value;</span>
+<span class="fc" id="L709">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L711">                ((DoubleBindVariable) function).value = value;</span>
+<span class="fc" id="L712">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L714">                ((StrBindVariable) function).setValue(value);</span>
+<span class="fc" id="L715">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc" id="L717">                ((CharBindVariable) function).value = SqlUtil.implicitCastAsChar(value, ColumnType.BYTE);</span>
+<span class="fc" id="L718">                break;</span>
+            default:
+<span class="nc" id="L720">                reportError(function, ColumnType.BYTE, index, name);</span>
+                break;
+        }
+<span class="fc" id="L723">    }</span>
+
+    private static void setChar0(Function function, char value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L726">        final int functionType = ColumnType.tagOf(function.getType());</span>
+        // treat char as string representation of numeric type
+<span class="pc bpc" id="L728" title="1 of 12 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BYTE:
+<span class="fc" id="L730">                ((ByteBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.BYTE);</span>
+<span class="fc" id="L731">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc" id="L733">                ((ShortBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.SHORT);</span>
+<span class="fc" id="L734">                break;</span>
+            case ColumnType.INT:
+<span class="fc" id="L736">                ((IntBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.INT);</span>
+<span class="fc" id="L737">                break;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L739">                ((LongBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.LONG);</span>
+<span class="fc" id="L740">                break;</span>
+            case ColumnType.DATE:
+<span class="fc" id="L742">                ((DateBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.DATE);</span>
+<span class="fc" id="L743">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L745">                ((TimestampBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.TIMESTAMP);</span>
+<span class="fc" id="L746">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L748">                ((FloatBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.FLOAT);</span>
+<span class="fc" id="L749">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L751">                ((DoubleBindVariable) function).value = SqlUtil.implicitCastCharAsType(value, ColumnType.DOUBLE);</span>
+<span class="fc" id="L752">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc" id="L754">                ((CharBindVariable) function).value = value;</span>
+<span class="fc" id="L755">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L757">                ((StrBindVariable) function).setValue(value);</span>
+<span class="fc" id="L758">                break;</span>
+            case ColumnType.GEOBYTE:
+<span class="fc" id="L760">                ((GeoHashBindVariable) function).value = SqlUtil.implicitCastCharAsGeoHash(value, function.getType());</span>
+<span class="fc" id="L761">                break;</span>
+            default:
+<span class="nc" id="L763">                reportError(function, ColumnType.CHAR, index, name);</span>
+                break;
+        }
+<span class="fc" id="L766">    }</span>
+
+    private static void setDouble0(Function function, double value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L769">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L770" title="1 of 4 branches missed.">        switch (functionType) {</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L772">                ((FloatBindVariable) function).value = SqlUtil.implicitCastAsFloat(value, ColumnType.DOUBLE);</span>
+<span class="fc" id="L773">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L775">                ((DoubleBindVariable) function).value = value;</span>
+<span class="fc" id="L776">                break;</span>
+            case ColumnType.STRING:
+<span class="fc bfc" id="L778" title="All 2 branches covered.">                if (value == value) {</span>
+<span class="fc" id="L779">                    ((StrBindVariable) function).setValue(value);</span>
+                } else {
+<span class="fc" id="L781">                    ((StrBindVariable) function).setValue(null);</span>
+                }
+<span class="fc" id="L783">                break;</span>
+            default:
+<span class="nc" id="L785">                reportError(function, ColumnType.DOUBLE, index, name);</span>
+                break;
+        }
+<span class="fc" id="L788">    }</span>
+
+    private static void setFloat0(Function function, float value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L791">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L792" title="1 of 4 branches missed.">        switch (functionType) {</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L794">                ((FloatBindVariable) function).value = value;</span>
+<span class="fc" id="L795">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L797">                ((DoubleBindVariable) function).value = value;</span>
+<span class="fc" id="L798">                break;</span>
+            case ColumnType.STRING:
+<span class="fc bfc" id="L800" title="All 2 branches covered.">                if (value == value) {</span>
+<span class="fc" id="L801">                    ((StrBindVariable) function).setValue(value);</span>
+                } else {
+<span class="fc" id="L803">                    ((StrBindVariable) function).setValue(null);</span>
+                }
+<span class="fc" id="L805">                break;</span>
+            default:
+<span class="nc" id="L807">                reportError(function, ColumnType.FLOAT, index, name);</span>
+                break;
+        }
+<span class="fc" id="L810">    }</span>
+
+    private static void setGeoHash0(Function function, long value, int type, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L813">        final int varType = function.getType();</span>
+<span class="pc bpc" id="L814" title="1 of 2 branches missed.">        switch (ColumnType.tagOf(varType)) {</span>
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOLONG:
+<span class="fc" id="L819">                int fromBits = ColumnType.getGeoHashBits(type);</span>
+<span class="fc" id="L820">                int toBits = ColumnType.getGeoHashBits(varType);</span>
+<span class="fc bfc" id="L821" title="All 2 branches covered.">                if (fromBits == toBits) {</span>
+<span class="fc" id="L822">                    ((GeoHashBindVariable) function).value = value;</span>
+<span class="fc bfc" id="L823" title="All 2 branches covered.">                } else if (fromBits &gt; toBits) {</span>
+<span class="fc" id="L824">                    ((GeoHashBindVariable) function).value = GeoHashes.widen(value, fromBits, toBits);</span>
+<span class="pc bpc" id="L825" title="1 of 2 branches missed.">                } else if (name != null) {</span>
+<span class="nc" id="L826">                    throw SqlException.$(0, &quot;inconvertible types: &quot;)</span>
+<span class="nc" id="L827">                            .put(ColumnType.nameOf(type))</span>
+<span class="nc" id="L828">                            .put(&quot; -&gt; &quot;)</span>
+<span class="nc" id="L829">                            .put(ColumnType.nameOf(varType))</span>
+<span class="nc" id="L830">                            .put(&quot; [varName=&quot;).put(name).put(']');</span>
+                } else {
+<span class="fc" id="L832">                    throw SqlException.$(0, &quot;inconvertible types: &quot;)</span>
+<span class="fc" id="L833">                            .put(ColumnType.nameOf(type))</span>
+<span class="fc" id="L834">                            .put(&quot; -&gt; &quot;)</span>
+<span class="fc" id="L835">                            .put(ColumnType.nameOf(varType))</span>
+<span class="fc" id="L836">                            .put(&quot; [varIndex=&quot;).put(index).put(']');</span>
+                }
+                break;
+            default:
+<span class="nc" id="L840">                reportError(function, type, index, name);</span>
+        }
+<span class="fc" id="L842">    }</span>
+
+    private static void setInt0(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L845">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L846" title="1 of 11 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BYTE:
+<span class="fc bfc" id="L848" title="All 2 branches covered.">                ((ByteBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.INT) : 0;</span>
+<span class="fc" id="L849">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc bfc" id="L851" title="All 2 branches covered.">                ((ShortBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.INT) : 0;</span>
+<span class="fc" id="L852">                break;</span>
+            case ColumnType.INT:
+<span class="fc" id="L854">                ((IntBindVariable) function).value = value;</span>
+<span class="fc" id="L855">                break;</span>
+            case ColumnType.LONG:
+<span class="fc bfc" id="L857" title="All 2 branches covered.">                ((LongBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;</span>
+<span class="fc" id="L858">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc bfc" id="L860" title="All 2 branches covered.">                ((TimestampBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;</span>
+<span class="fc" id="L861">                break;</span>
+            case ColumnType.DATE:
+<span class="fc bfc" id="L863" title="All 2 branches covered.">                ((DateBindVariable) function).value = value != Numbers.INT_NaN ? value : Numbers.LONG_NaN;</span>
+<span class="fc" id="L864">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc bfc" id="L866" title="All 2 branches covered.">                ((FloatBindVariable) function).value = value != Numbers.INT_NaN ? value : Float.NaN;</span>
+<span class="fc" id="L867">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc bfc" id="L869" title="All 2 branches covered.">                ((DoubleBindVariable) function).value = value != Numbers.INT_NaN ? value : Double.NaN;</span>
+<span class="fc" id="L870">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L872">                ((StrBindVariable) function).setValue(value);</span>
+<span class="fc" id="L873">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc bfc" id="L875" title="All 2 branches covered.">                ((CharBindVariable) function).value = value != Numbers.INT_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.INT) : 0;</span>
+<span class="fc" id="L876">                break;</span>
+            default:
+<span class="nc" id="L878">                reportError(function, ColumnType.INT, index, name);</span>
+                break;
+        }
+<span class="fc" id="L881">    }</span>
+
+    private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
+<span class="fc" id="L884">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L885" title="1 of 11 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BYTE:
+<span class="fc bfc" id="L887" title="All 2 branches covered.">                ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.LONG) : 0;</span>
+<span class="fc" id="L888">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc bfc" id="L890" title="All 2 branches covered.">                ((ShortBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.LONG) : 0;</span>
+<span class="fc" id="L891">                break;</span>
+            case ColumnType.INT:
+<span class="pc bpc" id="L893" title="1 of 2 branches missed.">                ((IntBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsInt(value, ColumnType.LONG) : Numbers.INT_NaN;</span>
+<span class="fc" id="L894">                break;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L896">                ((LongBindVariable) function).value = value;</span>
+<span class="fc" id="L897">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L899">                ((TimestampBindVariable) function).value = value;</span>
+<span class="fc" id="L900">                break;</span>
+            case ColumnType.DATE:
+<span class="fc" id="L902">                ((DateBindVariable) function).value = value;</span>
+<span class="fc" id="L903">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc bfc" id="L905" title="All 2 branches covered.">                ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;</span>
+<span class="fc" id="L906">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc bfc" id="L908" title="All 2 branches covered.">                ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;</span>
+<span class="fc" id="L909">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L911">                ((StrBindVariable) function).setValue(value);</span>
+<span class="fc" id="L912">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc bfc" id="L914" title="All 2 branches covered.">                ((CharBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsChar(value, ColumnType.LONG) : 0;</span>
+<span class="fc" id="L915">                break;</span>
+            default:
+<span class="nc" id="L917">                reportError(function, srcType, index, name);</span>
+                break;
+        }
+<span class="fc" id="L920">    }</span>
+
+    private static void setLong2560(
+            Function function,
+            long l0,
+            long l1,
+            long l2,
+            long l3,
+            int index,
+            @Nullable CharSequence name
+    ) throws SqlException {
+<span class="fc" id="L931">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L932" title="1 of 3 branches missed.">        switch (functionType) {</span>
+            case ColumnType.LONG256:
+<span class="fc" id="L934">                ((Long256BindVariable) function).setValue(l0, l1, l2, l3);</span>
+<span class="fc" id="L935">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L937">                ((StrBindVariable) function).setValue(l0, l1, l2, l3);</span>
+<span class="fc" id="L938">                break;</span>
+            default:
+<span class="nc" id="L940">                reportError(function, ColumnType.LONG256, index, name);</span>
+                break;
+        }
+<span class="fc" id="L943">    }</span>
+
+    private static void setShort0(Function function, short value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L946">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L947" title="1 of 11 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BYTE:
+<span class="fc" id="L949">                ((ByteBindVariable) function).value = SqlUtil.implicitCastAsByte(value, ColumnType.SHORT);</span>
+<span class="fc" id="L950">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc" id="L952">                ((ShortBindVariable) function).value = value;</span>
+<span class="fc" id="L953">                break;</span>
+            case ColumnType.INT:
+<span class="fc" id="L955">                ((IntBindVariable) function).value = value;</span>
+<span class="fc" id="L956">                break;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L958">                ((LongBindVariable) function).value = value;</span>
+<span class="fc" id="L959">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L961">                ((TimestampBindVariable) function).value = value;</span>
+<span class="fc" id="L962">                break;</span>
+            case ColumnType.DATE:
+<span class="fc" id="L964">                ((DateBindVariable) function).value = value;</span>
+<span class="fc" id="L965">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L967">                ((FloatBindVariable) function).value = value;</span>
+<span class="fc" id="L968">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L970">                ((DoubleBindVariable) function).value = value;</span>
+<span class="fc" id="L971">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L973">                ((StrBindVariable) function).setValue(value);</span>
+<span class="fc" id="L974">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc" id="L976">                ((CharBindVariable) function).value = SqlUtil.implicitCastAsChar(value, ColumnType.SHORT);</span>
+<span class="fc" id="L977">                break;</span>
+            default:
+<span class="nc" id="L979">                reportError(function, ColumnType.SHORT, index, name);</span>
+                break;
+        }
+<span class="fc" id="L982">    }</span>
+
+    private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L985">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L986" title="1 of 14 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BOOLEAN:
+<span class="fc" id="L988">                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);</span>
+<span class="fc" id="L989">                break;</span>
+            case ColumnType.BYTE:
+<span class="fc" id="L991">                ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);</span>
+<span class="fc" id="L992">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc" id="L994">                ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);</span>
+<span class="fc" id="L995">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc" id="L997">                ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);</span>
+<span class="fc" id="L998">                break;</span>
+            case ColumnType.INT:
+<span class="fc" id="L1000">                ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);</span>
+<span class="fc" id="L1001">                break;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L1003">                ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);</span>
+<span class="fc" id="L1004">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L1006">                ((TimestampBindVariable) function).value = SqlUtil.implicitCastStrAsTimestamp(value);</span>
+<span class="fc" id="L1007">                break;</span>
+            case ColumnType.DATE:
+<span class="fc" id="L1009">                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(value);</span>
+<span class="fc" id="L1010">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L1012">                ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);</span>
+<span class="fc" id="L1013">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L1015">                ((DoubleBindVariable) function).value = SqlUtil.implicitCastStrAsDouble(value);</span>
+<span class="fc" id="L1016">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L1018">                ((StrBindVariable) function).setValue(value);</span>
+<span class="fc" id="L1019">                break;</span>
+            case ColumnType.LONG256:
+<span class="fc" id="L1021">                SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);</span>
+<span class="fc" id="L1022">                break;</span>
+            case ColumnType.UUID:
+<span class="fc" id="L1024">                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);</span>
+<span class="fc" id="L1025">                break;</span>
+            default:
+<span class="nc" id="L1027">                reportError(function, ColumnType.STRING, index, name);</span>
+                break;
+        }
+<span class="fc" id="L1030">    }</span>
+
+    private static void setTimestamp0(Function function, long value, int index) throws SqlException {
+<span class="fc" id="L1033">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L1034" title="1 of 10 branches missed.">        switch (functionType) {</span>
+            case ColumnType.BYTE:
+<span class="fc bfc" id="L1036" title="All 2 branches covered.">                ((ByteBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsByte(value, ColumnType.TIMESTAMP) : 0;</span>
+<span class="fc" id="L1037">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc bfc" id="L1039" title="All 2 branches covered.">                ((ShortBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsShort(value, ColumnType.TIMESTAMP) : 0;</span>
+<span class="fc" id="L1040">                break;</span>
+            case ColumnType.INT:
+<span class="fc bfc" id="L1042" title="All 2 branches covered.">                ((IntBindVariable) function).value = value != Numbers.LONG_NaN ? SqlUtil.implicitCastAsInt(value, ColumnType.TIMESTAMP) : Numbers.INT_NaN;</span>
+<span class="fc" id="L1043">                break;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L1045">                ((LongBindVariable) function).value = value;</span>
+<span class="fc" id="L1046">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L1048">                ((TimestampBindVariable) function).value = value;</span>
+<span class="fc" id="L1049">                break;</span>
+            case ColumnType.DATE:
+<span class="fc bfc" id="L1051" title="All 2 branches covered.">                ((DateBindVariable) function).value = value != Numbers.LONG_NaN ? value / 1000 : value;</span>
+<span class="fc" id="L1052">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc bfc" id="L1054" title="All 2 branches covered.">                ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;</span>
+<span class="fc" id="L1055">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc bfc" id="L1057" title="All 2 branches covered.">                ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;</span>
+<span class="fc" id="L1058">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L1060">                ((StrBindVariable) function).setTimestamp(value);</span>
+<span class="fc" id="L1061">                break;</span>
+            default:
+<span class="nc" id="L1063">                reportError(function, ColumnType.TIMESTAMP, index, null);</span>
+                break;
+        }
+<span class="fc" id="L1066">    }</span>
+
+    private static void setUuid(Function function, long lo, long hi, int index, @Nullable CharSequence name) throws SqlException {
+<span class="fc" id="L1069">        final int functionType = ColumnType.tagOf(function.getType());</span>
+<span class="pc bpc" id="L1070" title="1 of 3 branches missed.">        switch (functionType) {</span>
+            case ColumnType.UUID:
+<span class="fc" id="L1072">                ((UuidBindVariable) function).set(lo, hi);</span>
+<span class="fc" id="L1073">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L1075">                ((StrBindVariable) function).setUuidValue(lo, hi);</span>
+<span class="fc" id="L1076">                break;</span>
+            default:
+<span class="nc" id="L1078">                reportError(function, ColumnType.UUID, index, name);</span>
+                break;
+        }
+<span class="fc" id="L1081">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

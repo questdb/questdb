@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SampleByInterpolateRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby</a> &gt; <span class="el_source">SampleByInterpolateRecordCursorFactory.java</span></div><h1>SampleByInterpolateRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+
+public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
+
+    protected final RecordCursorFactory base;
+    private final SampleByInterpolateRecordCursor cursor;
+    private final int groupByFunctionCount;
+    private final ObjList&lt;GroupByFunction&gt; groupByFunctions;
+    private final int groupByScalarFunctionCount;
+    private final ObjList&lt;GroupByFunction&gt; groupByScalarFunctions;
+    private final int groupByTwoPointFunctionCount;
+    private final ObjList&lt;GroupByFunction&gt; groupByTwoPointFunctions;
+    private final ObjList&lt;InterpolationUtil.InterpolatorFunction&gt; interpolatorFunctions;
+    private final RecordSink mapSink;
+    // this sink is used to copy recordKeyMap keys to dataMap
+    private final RecordSink mapSink2;
+    private final ObjList&lt;Function&gt; recordFunctions;
+    private final TimestampSampler sampler;
+    private final ObjList&lt;InterpolationUtil.StoreYFunction&gt; storeYFunctions;
+    private final int timestampIndex;
+    private final int yDataSize;
+    private long yData;
+
+    public SampleByInterpolateRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
+            CairoConfiguration configuration,
+            RecordCursorFactory base,
+            RecordMetadata metadata,
+            ObjList&lt;GroupByFunction&gt; groupByFunctions,
+            ObjList&lt;Function&gt; recordFunctions,
+            @NotNull TimestampSampler timestampSampler,
+            @Transient @NotNull QueryModel model,
+            @Transient @NotNull ListColumnFilter listColumnFilter,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
+            @Transient @NotNull EntityColumnFilter entityColumnFilter,
+            @Transient @NotNull IntList groupByFunctionPositions,
+            int timestampIndex
+    ) throws SqlException {
+<span class="fc" id="L80">        super(metadata);</span>
+<span class="fc" id="L81">        final int columnCount = model.getBottomUpColumns().size();</span>
+<span class="fc" id="L82">        this.groupByFunctions = groupByFunctions;</span>
+<span class="fc" id="L83">        this.recordFunctions = recordFunctions;</span>
+<span class="fc" id="L84">        this.base = base;</span>
+<span class="fc" id="L85">        this.sampler = timestampSampler;</span>
+
+        // create timestamp column
+<span class="fc" id="L88">        TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        for (int i = 0, n = recordFunctions.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">            if (recordFunctions.getQuick(i) == null) {</span>
+<span class="fc" id="L91">                recordFunctions.setQuick(i, timestampColumn);</span>
+            }
+        }
+
+<span class="fc" id="L95">        this.groupByScalarFunctions = new ObjList&lt;&gt;(columnCount);</span>
+<span class="fc" id="L96">        this.groupByTwoPointFunctions = new ObjList&lt;&gt;(columnCount);</span>
+<span class="fc" id="L97">        this.storeYFunctions = new ObjList&lt;&gt;(columnCount);</span>
+<span class="fc" id="L98">        this.interpolatorFunctions = new ObjList&lt;&gt;(columnCount);</span>
+<span class="fc" id="L99">        this.groupByFunctionCount = groupByFunctions.size();</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        for (int i = 0; i &lt; groupByFunctionCount; i++) {</span>
+<span class="fc" id="L101">            GroupByFunction function = groupByFunctions.getQuick(i);</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">            if (function.isScalar()) {</span>
+<span class="fc" id="L103">                groupByScalarFunctions.add(function);</span>
+<span class="pc bpc" id="L104" title="2 of 7 branches missed.">                switch (ColumnType.tagOf(function.getType())) {</span>
+                    case ColumnType.BYTE:
+<span class="nc" id="L106">                        storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);</span>
+<span class="nc" id="L107">                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);</span>
+<span class="nc" id="L108">                        break;</span>
+                    case ColumnType.SHORT:
+<span class="nc" id="L110">                        storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);</span>
+<span class="nc" id="L111">                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);</span>
+<span class="nc" id="L112">                        break;</span>
+                    case ColumnType.INT:
+<span class="fc" id="L114">                        storeYFunctions.add(InterpolationUtil.STORE_Y_INT);</span>
+<span class="fc" id="L115">                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);</span>
+<span class="fc" id="L116">                        break;</span>
+                    case ColumnType.LONG:
+<span class="fc" id="L118">                        storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);</span>
+<span class="fc" id="L119">                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);</span>
+<span class="fc" id="L120">                        break;</span>
+                    case ColumnType.DOUBLE:
+<span class="fc" id="L122">                        storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);</span>
+<span class="fc" id="L123">                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);</span>
+<span class="fc" id="L124">                        break;</span>
+                    case ColumnType.FLOAT:
+<span class="fc" id="L126">                        storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);</span>
+<span class="fc" id="L127">                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);</span>
+<span class="fc" id="L128">                        break;</span>
+                    default:
+<span class="fc" id="L130">                        Misc.freeObjList(groupByScalarFunctions);</span>
+<span class="fc" id="L131">                        throw SqlException.$(groupByFunctionPositions.getQuick(i), &quot;Unsupported interpolation type: &quot;).put(ColumnType.nameOf(function.getType()));</span>
+                }
+            } else {
+<span class="fc" id="L134">                groupByTwoPointFunctions.add(function);</span>
+            }
+        }
+
+<span class="fc" id="L138">        this.groupByScalarFunctionCount = groupByScalarFunctions.size();</span>
+<span class="fc" id="L139">        this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();</span>
+<span class="fc" id="L140">        this.timestampIndex = timestampIndex;</span>
+<span class="fc" id="L141">        this.yDataSize = groupByFunctionCount * 16;</span>
+<span class="fc" id="L142">        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);</span>
+
+        // sink will be storing record columns to map key
+<span class="fc" id="L145">        this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);</span>
+<span class="fc" id="L146">        entityColumnFilter.of(keyTypes.getColumnCount());</span>
+<span class="fc" id="L147">        this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);</span>
+
+<span class="fc" id="L149">        this.cursor = new SampleByInterpolateRecordCursor(recordFunctions, configuration, keyTypes, valueTypes);</span>
+<span class="fc" id="L150">    }</span>
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+<span class="fc" id="L154">        return base;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        for (int i = 0; i &lt; groupByTwoPointFunctionCount; i++) {</span>
+<span class="fc" id="L160">            final GroupByFunction function = groupByTwoPointFunctions.getQuick(i);</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">            if (!function.isInterpolationSupported()) {</span>
+<span class="fc" id="L162">                throw SqlException.position(0).put(&quot;interpolation is not supported for function: &quot;).put(function.getClass().getName());</span>
+            }
+        }
+
+<span class="fc" id="L166">        final RecordCursor baseCursor = base.getCursor(executionContext);</span>
+        try {
+            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+<span class="fc" id="L169">            Function.init(recordFunctions, baseCursor, executionContext);</span>
+<span class="fc" id="L170">            cursor.of(baseCursor, executionContext);</span>
+<span class="fc" id="L171">            return cursor;</span>
+<span class="nc" id="L172">        } catch (Throwable e) {</span>
+<span class="nc" id="L173">            baseCursor.close();</span>
+<span class="nc" id="L174">            cursor.close();</span>
+<span class="nc" id="L175">            throw e;</span>
+        }
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L181">        return true;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L186">        sink.type(&quot;SampleBy&quot;);</span>
+<span class="fc" id="L187">        sink.attr(&quot;fill&quot;).val(&quot;linear&quot;);</span>
+<span class="fc" id="L188">        sink.optAttr(&quot;keys&quot;, GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));</span>
+<span class="fc" id="L189">        sink.optAttr(&quot;values&quot;, groupByFunctions, true);</span>
+<span class="fc" id="L190">        sink.child(base);</span>
+<span class="fc" id="L191">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="nc" id="L195">        return base.usesCompiledFilter();</span>
+    }
+
+    private void freeYData() {
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">        if (yData != 0) {</span>
+<span class="fc" id="L200">            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);</span>
+<span class="fc" id="L201">            yData = 0;</span>
+        }
+<span class="fc" id="L203">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L207">        Misc.freeObjList(recordFunctions);</span>
+<span class="fc" id="L208">        freeYData();</span>
+<span class="fc" id="L209">        Misc.free(base);</span>
+<span class="fc" id="L210">        Misc.free(cursor);</span>
+<span class="fc" id="L211">    }</span>
+
+<span class="fc" id="L213">    private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {</span>
+
+        protected final Map recordKeyMap;
+        private final Map dataMap;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+<span class="fc" id="L218">        private long hiSample = -1;</span>
+        private boolean isHasNextPending;
+        private boolean isMapBuilt;
+        private boolean isMapFilled;
+        private boolean isMapInitialized;
+        private boolean isOpen;
+<span class="fc" id="L224">        private long loSample = -1;</span>
+        private Record managedRecord;
+<span class="fc" id="L226">        private long prevSample = -1;</span>
+
+        public SampleByInterpolateRecordCursor(
+                ObjList&lt;Function&gt; functions,
+                CairoConfiguration configuration,
+                @Transient @NotNull ArrayColumnTypes keyTypes,
+                @Transient @NotNull ArrayColumnTypes valueTypes
+<span class="fc" id="L233">        ) {</span>
+<span class="fc" id="L234">            super(functions);</span>
+            // this is the map itself, which we must not forget to free when factory closes
+<span class="fc" id="L236">            recordKeyMap = MapFactory.createMap(configuration, keyTypes);</span>
+            // data map will contain rounded timestamp value as last key column
+<span class="fc" id="L238">            keyTypes.add(ColumnType.TIMESTAMP);</span>
+<span class="fc" id="L239">            dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);</span>
+<span class="fc" id="L240">            isOpen = true;</span>
+<span class="fc" id="L241">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc bfc" id="L245" title="All 2 branches covered.">            if (isOpen) {</span>
+<span class="fc" id="L246">                isOpen = false;</span>
+<span class="fc" id="L247">                recordKeyMap.close();</span>
+<span class="fc" id="L248">                dataMap.close();</span>
+<span class="fc" id="L249">                Misc.clearObjList(groupByFunctions);</span>
+<span class="fc" id="L250">                super.close();</span>
+            }
+<span class="fc" id="L252">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L256" title="All 2 branches covered.">            if (!isMapBuilt) {</span>
+<span class="fc" id="L257">                buildMap();</span>
+<span class="fc" id="L258">                isMapBuilt = true;</span>
+            }
+<span class="fc" id="L260">            return super.hasNext();</span>
+        }
+
+        public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) {
+<span class="fc bfc" id="L264" title="All 2 branches covered.">            if (!isOpen) {</span>
+<span class="fc" id="L265">                isOpen = true;</span>
+<span class="fc" id="L266">                recordKeyMap.reopen();</span>
+<span class="fc" id="L267">                dataMap.reopen();</span>
+            }
+<span class="fc" id="L269">            super.of(managedCursor, dataMap.getCursor());</span>
+<span class="fc" id="L270">            circuitBreaker = executionContext.getCircuitBreaker();</span>
+<span class="fc" id="L271">            managedRecord = managedCursor.getRecord();</span>
+<span class="fc" id="L272">            loSample = -1;</span>
+<span class="fc" id="L273">            hiSample = -1;</span>
+<span class="fc" id="L274">            prevSample = -1;</span>
+<span class="fc" id="L275">            isHasNextPending = false;</span>
+<span class="fc" id="L276">            isMapInitialized = false;</span>
+<span class="fc" id="L277">            isMapFilled = false;</span>
+<span class="fc" id="L278">            isMapBuilt = false;</span>
+<span class="fc" id="L279">        }</span>
+
+        @Override
+        public long size() {
+<span class="fc bfc" id="L283" title="All 2 branches covered.">            return isMapBuilt ? super.size() : -1;</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L288">            super.toTop();</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">            if (!isMapBuilt) {</span>
+                // we need to reset everything, so that the map will be re-built
+<span class="fc" id="L291">                recordKeyMap.clear();</span>
+<span class="fc" id="L292">                dataMap.clear();</span>
+<span class="fc" id="L293">                loSample = -1;</span>
+<span class="fc" id="L294">                hiSample = -1;</span>
+<span class="fc" id="L295">                prevSample = -1;</span>
+<span class="fc" id="L296">                isHasNextPending = false;</span>
+<span class="fc" id="L297">                isMapInitialized = false;</span>
+<span class="fc" id="L298">                isMapFilled = false;</span>
+            }
+<span class="fc" id="L300">        }</span>
+
+        private void buildMap() {
+<span class="fc bfc" id="L303" title="All 2 branches covered.">            if (!isMapInitialized) {</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">                if (!initMap()) {</span>
+                    // managed cursor has no data, nothing to do
+<span class="fc" id="L306">                    return;</span>
+                }
+<span class="fc" id="L308">                isMapInitialized = true;</span>
+            }
+
+<span class="pc bpc" id="L311" title="1 of 2 branches missed.">            if (!isMapFilled) {</span>
+<span class="fc" id="L312">                fillMap();</span>
+<span class="fc" id="L313">                isMapFilled = true;</span>
+            }
+
+            // the rest doesn't use managed cursor, so we can proceed freely
+
+<span class="fc bfc" id="L318" title="All 2 branches covered.">            if (groupByTwoPointFunctionCount &gt; 0) {</span>
+<span class="fc" id="L319">                final RecordCursor mapCursor = recordKeyMap.getCursor();</span>
+<span class="fc" id="L320">                final Record mapRecord = mapCursor.getRecord();</span>
+<span class="fc bfc" id="L321" title="All 2 branches covered.">                while (mapCursor.hasNext()) {</span>
+<span class="fc" id="L322">                    circuitBreaker.statefulThrowExceptionIfTripped();</span>
+
+<span class="fc" id="L324">                    MapValue value = findDataMapValue(mapRecord, loSample);</span>
+<span class="fc bfc" id="L325" title="All 2 branches covered.">                    if (value.getByte(0) == 0) { //we have at least 1 data point</span>
+<span class="fc" id="L326">                        long x1 = loSample;</span>
+<span class="fc" id="L327">                        long x2 = x1;</span>
+                        while (true) {
+                            // to timestamp after 'sample' to begin with
+<span class="fc" id="L330">                            x2 = sampler.nextTimestamp(x2);</span>
+<span class="fc bfc" id="L331" title="All 2 branches covered.">                            if (x2 &lt; hiSample) {</span>
+<span class="fc" id="L332">                                value = findDataMapValue(mapRecord, x2);</span>
+<span class="fc bfc" id="L333" title="All 2 branches covered.">                                if (value.getByte(0) == 0) {</span>
+<span class="fc" id="L334">                                    interpolateBoundaryRange(x1, x2, mapRecord);</span>
+<span class="fc" id="L335">                                    x1 = x2;</span>
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+<span class="fc" id="L342">                }</span>
+            }
+
+            // find gaps by checking each of the unique keys against every sample
+            long sample;
+            long prevSample;
+<span class="fc bfc" id="L348" title="All 2 branches covered.">            for (sample = prevSample = loSample; sample &lt; hiSample; prevSample = sample, sample = sampler.nextTimestamp(sample)) {</span>
+<span class="fc" id="L349">                final RecordCursor mapCursor = recordKeyMap.getCursor();</span>
+<span class="fc" id="L350">                final Record mapRecord = mapCursor.getRecord();</span>
+<span class="fc bfc" id="L351" title="All 2 branches covered.">                while (mapCursor.hasNext()) {</span>
+<span class="fc" id="L352">                    circuitBreaker.statefulThrowExceptionIfTripped();</span>
+
+                    // locate the first gap
+<span class="fc" id="L355">                    MapValue value = findDataMapValue(mapRecord, sample);</span>
+<span class="fc bfc" id="L356" title="All 2 branches covered.">                    if (value.getByte(0) == 1) {</span>
+                        // gap is at 'sample', so potential X-value is at 'prevSample'
+                        // now we need to find Y-value
+<span class="fc" id="L359">                        long current = sample;</span>
+
+                        while (true) {
+                            // to timestamp after 'sample' to begin with
+<span class="fc" id="L363">                            long x2 = sampler.nextTimestamp(current);</span>
+                            // is this timestamp within range?
+<span class="fc bfc" id="L365" title="All 2 branches covered.">                            if (x2 &lt; hiSample) {</span>
+<span class="fc" id="L366">                                value = findDataMapValue(mapRecord, x2);</span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">                                if (value.getByte(0) == 1) { // gap</span>
+<span class="fc" id="L368">                                    current = x2;</span>
+                                } else {
+                                    // got something
+                                    // Y-value is at 'x2', which is on first iteration
+                                    // is 'sample+1', so
+
+                                    // do we really have X-value?
+<span class="fc bfc" id="L375" title="All 2 branches covered.">                                    if (sample == loSample) {</span>
+                                        // prevSample does not exist
+                                        // find first valid value from 'x2+1' onwards
+<span class="fc" id="L378">                                        long x1 = x2;</span>
+                                        while (true) {
+<span class="fc" id="L380">                                            x2 = sampler.nextTimestamp(x2);</span>
+<span class="fc bfc" id="L381" title="All 2 branches covered.">                                            if (x2 &lt; hiSample) {</span>
+<span class="fc" id="L382">                                                final MapValue x2value = findDataMapValue(mapRecord, x2);</span>
+<span class="fc bfc" id="L383" title="All 2 branches covered.">                                                if (x2value.getByte(0) == 0) { // non-gap</span>
+                                                    // found value at 'x2' - this is our Y-value
+                                                    // the X-value it at 'x1'
+                                                    // compute slope and go back down all the way to start
+                                                    // computing values in records
+
+                                                    // this has to be a loop that would store y1 and y2 values for each
+                                                    // group-by function
+                                                    // use current 'value' for record
+<span class="fc" id="L392">                                                    MapValue x1Value = findDataMapValue2(mapRecord, x1);</span>
+<span class="fc" id="L393">                                                    interpolate(loSample, x1, mapRecord, x1, x2, x1Value, x2value);</span>
+<span class="fc" id="L394">                                                    break;</span>
+                                                }
+<span class="fc" id="L396">                                            } else {</span>
+                                                // we only have a single value at 'x1' - cannot interpolate
+                                                // make all values before and after 'x1' NULL
+<span class="fc" id="L399">                                                nullifyRange(loSample, x1, mapRecord);</span>
+<span class="fc" id="L400">                                                nullifyRange(sampler.nextTimestamp(x1), hiSample, mapRecord);</span>
+<span class="fc" id="L401">                                                break;</span>
+                                            }
+                                        }
+<span class="fc" id="L404">                                    } else {</span>
+                                        // calculate slope between 'preSample' and 'x2'
+                                        // yep, that's right, and go all the way back down
+                                        // to 'sample' calculating interpolated values
+<span class="fc" id="L408">                                        MapValue x1Value = findDataMapValue2(mapRecord, prevSample);</span>
+<span class="fc" id="L409">                                        interpolate(sampler.nextTimestamp(prevSample), x2, mapRecord, prevSample, x2, x1Value, value);</span>
+                                    }
+<span class="fc" id="L411">                                    break;</span>
+                                }
+                            } else {
+                                // try using first two values
+                                // we had X-value at 'prevSample'
+                                // it will become Y-value and X is at 'prevSample-1'
+                                // and calculate interpolated value all the way to 'hiSample'
+
+<span class="fc" id="L419">                                long x1 = sampler.previousTimestamp(prevSample);</span>
+
+<span class="fc bfc" id="L421" title="All 2 branches covered.">                                if (x1 &lt; loSample) {</span>
+                                    // not enough data points
+                                    // fill all data points from 'sample' down with null
+<span class="fc" id="L424">                                    nullifyRange(sample, hiSample, mapRecord);</span>
+                                } else {
+<span class="fc" id="L426">                                    MapValue x1Value = findDataMapValue2(mapRecord, x1);</span>
+<span class="fc" id="L427">                                    MapValue x2value = findDataMapValue(mapRecord, prevSample);</span>
+<span class="fc" id="L428">                                    interpolate(sampler.nextTimestamp(prevSample), hiSample, mapRecord, x1, prevSample, x1Value, x2value);</span>
+                                }
+<span class="fc" id="L430">                                break;</span>
+                            }
+<span class="fc" id="L432">                        }</span>
+                    }
+<span class="fc" id="L434">                }</span>
+            }
+            // refresh map cursor
+<span class="fc" id="L437">            baseCursor = dataMap.getCursor();</span>
+<span class="fc" id="L438">        }</span>
+
+        private void computeYPoints(MapValue x1Value, MapValue x2value) {
+<span class="fc bfc" id="L441" title="All 2 branches covered.">            for (int i = 0; i &lt; groupByScalarFunctionCount; i++) {</span>
+<span class="fc" id="L442">                InterpolationUtil.StoreYFunction storeYFunction = storeYFunctions.getQuick(i);</span>
+<span class="fc" id="L443">                GroupByFunction groupByFunction = groupByScalarFunctions.getQuick(i);</span>
+<span class="fc" id="L444">                storeYFunction.store(groupByFunction, x1Value, yData + i * 16L);</span>
+<span class="fc" id="L445">                storeYFunction.store(groupByFunction, x2value, yData + i * 16L + 8);</span>
+            }
+<span class="fc" id="L447">        }</span>
+
+        private void fillGaps(long lo, long hi) {
+<span class="fc" id="L450">            final RecordCursor keyCursor = recordKeyMap.getCursor();</span>
+<span class="fc" id="L451">            final Record record = keyCursor.getRecord();</span>
+<span class="fc" id="L452">            long timestamp = lo;</span>
+<span class="fc bfc" id="L453" title="All 2 branches covered.">            while (timestamp &lt; hi) {</span>
+<span class="fc bfc" id="L454" title="All 2 branches covered.">                while (keyCursor.hasNext()) {</span>
+<span class="fc" id="L455">                    circuitBreaker.statefulThrowExceptionIfTripped();</span>
+
+<span class="fc" id="L457">                    MapKey key = dataMap.withKey();</span>
+<span class="fc" id="L458">                    mapSink2.copy(record, key);</span>
+<span class="fc" id="L459">                    key.putLong(timestamp);</span>
+<span class="fc" id="L460">                    MapValue value = key.createValue();</span>
+<span class="fc bfc" id="L461" title="All 2 branches covered.">                    if (value.isNew()) {</span>
+<span class="fc" id="L462">                        value.putByte(0, (byte) 1); // this is a gap</span>
+                    }
+<span class="fc" id="L464">                }</span>
+<span class="fc" id="L465">                timestamp = sampler.nextTimestamp(timestamp);</span>
+<span class="fc" id="L466">                keyCursor.toTop();</span>
+            }
+<span class="fc" id="L468">        }</span>
+
+        private void fillMap() {
+            // Evaluate group-by functions.
+            // On every change of timestamp sample value we
+            // check group for gaps and fill them with placeholder
+            // entries. Values for these entries will be interpolated later.
+
+<span class="fc bfc" id="L476" title="All 2 branches covered.">            if (prevSample == -1) {</span>
+                // we have data in cursor, so we can grab first value
+<span class="fc" id="L478">                final boolean good = managedCursor.hasNext();</span>
+<span class="pc bpc" id="L479" title="1 of 2 branches missed.">                assert good;</span>
+<span class="fc" id="L480">                long timestamp = managedRecord.getTimestamp(timestampIndex);</span>
+<span class="fc" id="L481">                sampler.setStart(timestamp);</span>
+<span class="fc" id="L482">                prevSample = sampler.round(timestamp);</span>
+<span class="fc" id="L483">                loSample = prevSample; // the lowest timestamp value</span>
+            }
+
+            do {
+<span class="fc" id="L487">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+
+<span class="fc bfc" id="L489" title="All 2 branches covered.">                if (!isHasNextPending) {</span>
+                    // this seems inefficient, but we only double-sample
+                    // very first record and nothing else
+<span class="fc" id="L492">                    long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));</span>
+<span class="fc bfc" id="L493" title="All 2 branches covered.">                    if (sample != prevSample) {</span>
+                        // before we continue with next interval
+                        // we need to fill gaps in current interval
+                        // we will go over unique keys and attempt to
+                        // find them in data map with current timestamp
+
+<span class="fc" id="L499">                        fillGaps(prevSample, sample);</span>
+<span class="fc" id="L500">                        prevSample = sample;</span>
+<span class="fc" id="L501">                        GroupByUtils.toTop(groupByFunctions);</span>
+                    }
+
+                    // same data group - evaluate group-by functions
+<span class="fc" id="L505">                    MapKey key = dataMap.withKey();</span>
+<span class="fc" id="L506">                    mapSink.copy(managedRecord, key);</span>
+<span class="fc" id="L507">                    key.putLong(sample);</span>
+
+<span class="fc" id="L509">                    MapValue value = key.createValue();</span>
+<span class="fc bfc" id="L510" title="All 2 branches covered.">                    if (value.isNew()) {</span>
+<span class="fc" id="L511">                        value.putByte(0, (byte) 0); // not a gap</span>
+<span class="fc bfc" id="L512" title="All 2 branches covered.">                        for (int i = 0; i &lt; groupByFunctionCount; i++) {</span>
+<span class="fc" id="L513">                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord);</span>
+                        }
+                    } else {
+<span class="fc bfc" id="L516" title="All 2 branches covered.">                        for (int i = 0; i &lt; groupByFunctionCount; i++) {</span>
+<span class="fc" id="L517">                            groupByFunctions.getQuick(i).computeNext(value, managedRecord);</span>
+                        }
+                    }
+                }
+
+<span class="fc" id="L522">                isHasNextPending = true;</span>
+<span class="fc" id="L523">                boolean hasNext = managedCursor.hasNext();</span>
+<span class="fc" id="L524">                isHasNextPending = false;</span>
+
+<span class="fc bfc" id="L526" title="All 2 branches covered.">                if (!hasNext) {</span>
+<span class="fc" id="L527">                    hiSample = sampler.nextTimestamp(prevSample);</span>
+<span class="fc" id="L528">                    break;</span>
+                }
+<span class="fc" id="L530">            } while (true);</span>
+
+            // fill gaps if any at the end of base cursor
+<span class="fc" id="L533">            fillGaps(prevSample, hiSample);</span>
+<span class="fc" id="L534">        }</span>
+
+        private MapValue findDataMapValue(Record record, long timestamp) {
+<span class="fc" id="L537">            final MapKey key = dataMap.withKey();</span>
+<span class="fc" id="L538">            mapSink2.copy(record, key);</span>
+<span class="fc" id="L539">            key.putLong(timestamp);</span>
+<span class="fc" id="L540">            return key.findValue();</span>
+        }
+
+        private MapValue findDataMapValue2(Record record, long timestamp) {
+<span class="fc" id="L544">            final MapKey key = dataMap.withKey();</span>
+<span class="fc" id="L545">            mapSink2.copy(record, key);</span>
+<span class="fc" id="L546">            key.putLong(timestamp);</span>
+<span class="fc" id="L547">            return key.findValue2();</span>
+        }
+
+        private MapValue findDataMapValue3(Record record, long timestamp) {
+<span class="fc" id="L551">            final MapKey key = dataMap.withKey();</span>
+<span class="fc" id="L552">            mapSink2.copy(record, key);</span>
+<span class="fc" id="L553">            key.putLong(timestamp);</span>
+<span class="fc" id="L554">            return key.findValue3();</span>
+        }
+
+        private boolean initMap() {
+            // Collect map of unique key values.
+            // using these values we will fill gaps in main
+            // data before jumping to another timestamp.
+            // This will allow maintaining chronological order of
+            // main data map.
+            //
+            // At the same time check if cursor has data.
+<span class="fc bfc" id="L565" title="All 2 branches covered.">            while (managedCursor.hasNext()) {</span>
+<span class="fc" id="L566">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+
+<span class="fc" id="L568">                final MapKey key = recordKeyMap.withKey();</span>
+<span class="fc" id="L569">                mapSink.copy(managedRecord, key);</span>
+<span class="fc" id="L570">                key.createValue();</span>
+<span class="fc" id="L571">            }</span>
+
+            // no data, nothing to do
+<span class="fc bfc" id="L574" title="All 2 branches covered.">            if (recordKeyMap.size() == 0) {</span>
+<span class="fc" id="L575">                return false;</span>
+            }
+
+            // toTop() guarantees that we get
+            // the same data as previous while() loop
+            // there is no data
+<span class="fc" id="L581">            managedCursor.toTop();</span>
+<span class="fc" id="L582">            return true;</span>
+        }
+
+        private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
+<span class="fc" id="L586">            computeYPoints(x1Value, x2value);</span>
+<span class="fc bfc" id="L587" title="All 2 branches covered.">            for (long x = lo; x &lt; hi; x = sampler.nextTimestamp(x)) {</span>
+<span class="fc" id="L588">                final MapValue result = findDataMapValue3(mapRecord, x);</span>
+<span class="pc bpc" id="L589" title="2 of 4 branches missed.">                assert result != null &amp;&amp; result.getByte(0) == 1;</span>
+<span class="fc bfc" id="L590" title="All 2 branches covered.">                for (int i = 0; i &lt; groupByTwoPointFunctionCount; i++) {</span>
+<span class="fc" id="L591">                    GroupByFunction function = groupByTwoPointFunctions.getQuick(i);</span>
+<span class="fc" id="L592">                    InterpolationUtil.interpolateGap(function, result, sampler.getBucketSize(), x1Value, x2value);</span>
+                }
+<span class="fc bfc" id="L594" title="All 2 branches covered.">                for (int i = 0; i &lt; groupByScalarFunctionCount; i++) {</span>
+<span class="fc" id="L595">                    GroupByFunction function = groupByScalarFunctions.getQuick(i);</span>
+<span class="fc" id="L596">                    interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16L, yData + i * 16L + 8);</span>
+                }
+<span class="fc" id="L598">                result.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'</span>
+            }
+<span class="fc" id="L600">        }</span>
+
+        private void interpolateBoundaryRange(long x1, long x2, Record record) {
+            // interpolating boundary
+<span class="fc bfc" id="L604" title="All 2 branches covered.">            for (int i = 0; i &lt; groupByTwoPointFunctionCount; i++) {</span>
+<span class="fc" id="L605">                GroupByFunction function = groupByTwoPointFunctions.getQuick(i);</span>
+<span class="fc" id="L606">                MapValue startValue = findDataMapValue2(record, x1);</span>
+<span class="fc" id="L607">                MapValue endValue = findDataMapValue3(record, x2);</span>
+<span class="fc" id="L608">                InterpolationUtil.interpolateBoundary(function, sampler.nextTimestamp(x1), startValue, endValue, true);</span>
+<span class="fc" id="L609">                InterpolationUtil.interpolateBoundary(function, x2, startValue, endValue, false);</span>
+            }
+<span class="fc" id="L611">        }</span>
+
+        private void nullifyRange(long lo, long hi, Record record) {
+<span class="fc bfc" id="L614" title="All 2 branches covered.">            for (long x = lo; x &lt; hi; x = sampler.nextTimestamp(x)) {</span>
+<span class="fc" id="L615">                final MapKey key = dataMap.withKey();</span>
+<span class="fc" id="L616">                mapSink2.copy(record, key);</span>
+<span class="fc" id="L617">                key.putLong(x);</span>
+<span class="fc" id="L618">                MapValue value = key.findValue();</span>
+<span class="pc bpc" id="L619" title="2 of 4 branches missed.">                assert value != null &amp;&amp; value.getByte(0) == 1; // expect  'gap' flag</span>
+<span class="fc" id="L620">                value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'</span>
+<span class="fc bfc" id="L621" title="All 2 branches covered.">                for (int i = 0; i &lt; groupByFunctionCount; i++) {</span>
+<span class="fc" id="L622">                    groupByFunctions.getQuick(i).setNull(value);</span>
+                }
+            }
+<span class="fc" id="L625">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CursorDereferenceFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.catalogue</a> &gt; <span class="el_source">CursorDereferenceFunctionFactory.java</span></div><h1>CursorDereferenceFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.catalogue;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+<span class="fc" id="L40">public class CursorDereferenceFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L43">        return &quot;.(Rs)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList&lt;Function&gt; args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+<span class="fc" id="L54">        Function cursorFunction = args.getQuick(0);</span>
+<span class="fc" id="L55">        Function columnNameFunction = args.getQuick(1);</span>
+<span class="fc" id="L56">        RecordMetadata metadata = cursorFunction.getMetadata();</span>
+        // name is always constant
+<span class="fc" id="L58">        final CharSequence columnName = columnNameFunction.getStr(null);</span>
+<span class="fc" id="L59">        final int columnIndex = metadata.getColumnIndexQuiet(columnName);</span>
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        if (columnIndex == -1) {</span>
+<span class="nc" id="L61">            throw SqlException.invalidColumn(argPositions.getQuick(1), columnName);</span>
+        }
+<span class="fc" id="L63">        final int columnType = metadata.getColumnType(columnIndex);</span>
+
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">        if (ColumnType.isInt(columnType)) {</span>
+<span class="fc" id="L66">            return new IntColumnFunction(</span>
+                    cursorFunction,
+                    columnNameFunction,
+                    columnIndex
+            );
+        }
+
+<span class="nc" id="L73">        throw SqlException.$(argPositions.getQuick(1), &quot;unsupported column type: &quot;).put(ColumnType.nameOf(columnType));</span>
+    }
+
+    private static class IntColumnFunction extends IntFunction implements BinaryFunction {
+        private final int columnIndex;
+        private final Function columnNameFunction;
+        private final Function cursorFunction;
+
+        public IntColumnFunction(
+                Function cursorFunction,
+                Function columnNameFunction,
+                int columnIndex
+        ) {
+<span class="fc" id="L86">            super();</span>
+<span class="fc" id="L87">            this.cursorFunction = cursorFunction;</span>
+<span class="fc" id="L88">            this.columnNameFunction = columnNameFunction;</span>
+<span class="fc" id="L89">            this.columnIndex = columnIndex;</span>
+<span class="fc" id="L90">        }</span>
+
+        @Override
+        public int getInt(Record rec) {
+<span class="fc" id="L94">            return cursorFunction.getRecord(rec).getInt(columnIndex);</span>
+        }
+
+        @Override
+        public Function getLeft() {
+<span class="fc" id="L99">            return cursorFunction;</span>
+        }
+
+        @Override
+        public String getName() {
+<span class="fc" id="L104">            return &quot;.&quot;;</span>
+        }
+
+        @Override
+        public Function getRight() {
+<span class="fc" id="L109">            return columnNameFunction;</span>
+        }
+
+        @Override
+        public boolean isOperator() {
+<span class="fc" id="L114">            return true;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

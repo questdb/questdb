@@ -1,0 +1,1322 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableReader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">TableReader.java</span></div><h1>TableReader.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
+public class TableReader implements Closeable, SymbolTableSource {
+<span class="fc" id="L49">    private static final Log LOG = LogFactory.getLog(TableReader.class);</span>
+    private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = 3;
+    private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
+    private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
+    private static final int PARTITIONS_SLOT_SIZE = 4;
+<span class="fc" id="L54">    private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);</span>
+    private final MillisecondClock clock;
+    private final ColumnVersionReader columnVersionReader;
+    private final CairoConfiguration configuration;
+    private final FilesFacade ff;
+    private final MessageBus messageBus;
+    private final TableReaderMetadata metadata;
+    private final LongList openPartitionInfo;
+    private final int partitionBy;
+    private final DateFormat partitionDirFormatMethod;
+    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final Path path;
+<span class="fc" id="L66">    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();</span>
+    private final int rootLen;
+<span class="fc" id="L68">    private final ObjList&lt;SymbolMapReader&gt; symbolMapReaders = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L69">    private final MemoryMR todoMem = Vm.getMRInstance();</span>
+    private final TxReader txFile;
+    private final TxnScoreboard txnScoreboard;
+    private ObjList&lt;BitmapIndexReader&gt; bitmapIndexes;
+    private int columnCount;
+    private int columnCountShl;
+    private LongList columnTops;
+    private ObjList&lt;MemoryMR&gt; columns;
+    private int partitionCount;
+    private long rowCount;
+    private TableToken tableToken;
+<span class="fc" id="L80">    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);</span>
+<span class="fc" id="L81">    private long txColumnVersion = -1;</span>
+<span class="fc" id="L82">    private long txPartitionVersion = -1;</span>
+<span class="fc" id="L83">    private long txTruncateVersion = -1;</span>
+<span class="fc" id="L84">    private long txn = TableUtils.INITIAL_TXN;</span>
+<span class="fc" id="L85">    private boolean txnAcquired = false;</span>
+
+    public TableReader(CairoConfiguration configuration, TableToken tableToken) {
+<span class="fc" id="L88">        this(configuration, tableToken, null);</span>
+<span class="fc" id="L89">    }</span>
+
+    public TableReader(CairoConfiguration configuration,
+                       TableToken tableToken,
+                       @Nullable MessageBus messageBus
+<span class="fc" id="L94">    ) {</span>
+<span class="fc" id="L95">        this.configuration = configuration;</span>
+<span class="fc" id="L96">        this.clock = configuration.getMillisecondClock();</span>
+<span class="fc" id="L97">        this.ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L98">        this.tableToken = tableToken;</span>
+<span class="fc" id="L99">        this.messageBus = messageBus;</span>
+<span class="fc" id="L100">        this.path = new Path();</span>
+<span class="fc" id="L101">        this.path.of(configuration.getRoot()).concat(this.tableToken.getDirName());</span>
+<span class="fc" id="L102">        this.rootLen = path.length();</span>
+<span class="fc" id="L103">        path.trimTo(rootLen);</span>
+        try {
+<span class="fc" id="L105">            metadata = openMetaFile();</span>
+<span class="fc" id="L106">            partitionBy = metadata.getPartitionBy();</span>
+<span class="fc" id="L107">            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());</span>
+<span class="fc" id="L108">            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));</span>
+<span class="fc" id="L109">            LOG.debug()</span>
+<span class="fc" id="L110">                    .$(&quot;open [id=&quot;).$(metadata.getTableId())</span>
+<span class="fc" id="L111">                    .$(&quot;, table=&quot;).utf8(this.tableToken.getTableName())</span>
+<span class="fc" id="L112">                    .$(&quot;, dirName=&quot;).utf8(this.tableToken.getDirName())</span>
+<span class="fc" id="L113">                    .I$();</span>
+<span class="fc" id="L114">            txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);</span>
+<span class="fc" id="L115">            path.trimTo(rootLen);</span>
+<span class="fc" id="L116">            reloadSlow(false);</span>
+<span class="fc" id="L117">            columnCount = metadata.getColumnCount();</span>
+<span class="fc" id="L118">            columnCountShl = getColumnBits(columnCount);</span>
+<span class="fc" id="L119">            openSymbolMaps();</span>
+<span class="fc" id="L120">            partitionCount = txFile.getPartitionCount();</span>
+<span class="fc" id="L121">            partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);</span>
+<span class="fc" id="L122">            partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);</span>
+
+<span class="fc" id="L124">            int capacity = getColumnBase(partitionCount);</span>
+<span class="fc" id="L125">            columns = new ObjList&lt;&gt;(capacity + 2);</span>
+<span class="fc" id="L126">            columns.setPos(capacity + 2);</span>
+<span class="fc" id="L127">            columns.setQuick(0, NullMemoryMR.INSTANCE);</span>
+<span class="fc" id="L128">            columns.setQuick(1, NullMemoryMR.INSTANCE);</span>
+<span class="fc" id="L129">            bitmapIndexes = new ObjList&lt;&gt;(capacity + 2);</span>
+<span class="fc" id="L130">            bitmapIndexes.setPos(capacity + 2);</span>
+
+<span class="fc" id="L132">            openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);</span>
+<span class="fc" id="L133">            openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">            for (int i = 0; i &lt; partitionCount; i++) {</span>
+                // ts, number of rows, txn, column version for each partition
+                // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
+<span class="fc" id="L137">                int baseOffset = i * PARTITIONS_SLOT_SIZE;</span>
+<span class="fc" id="L138">                openPartitionInfo.setQuick(baseOffset, txFile.getPartitionTimestamp(i));</span>
+<span class="fc" id="L139">                this.openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1L); // -1L means it is not open</span>
+<span class="fc" id="L140">                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));</span>
+<span class="fc" id="L141">                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, txFile.getPartitionColumnVersion(i));</span>
+            }
+<span class="fc" id="L143">            columnTops = new LongList(capacity / 2);</span>
+<span class="fc" id="L144">            columnTops.setPos(capacity / 2);</span>
+<span class="fc" id="L145">            recordCursor.of(this);</span>
+<span class="fc" id="L146">        } catch (Throwable e) {</span>
+<span class="fc" id="L147">            close();</span>
+<span class="fc" id="L148">            throw e;</span>
+<span class="fc" id="L149">        }</span>
+<span class="fc" id="L150">    }</span>
+
+    public static int getPrimaryColumnIndex(int base, int index) {
+<span class="fc" id="L153">        return 2 + base + index * 2;</span>
+    }
+
+    @Override
+    public void close() {
+<span class="pc bpc" id="L158" title="1 of 2 branches missed.">        if (isOpen()) {</span>
+<span class="fc" id="L159">            goPassive();</span>
+<span class="fc" id="L160">            freeSymbolMapReaders();</span>
+<span class="fc" id="L161">            freeBitmapIndexCache();</span>
+<span class="fc" id="L162">            Misc.free(metadata);</span>
+<span class="fc" id="L163">            Misc.free(txFile);</span>
+<span class="fc" id="L164">            Misc.free(todoMem);</span>
+<span class="fc" id="L165">            freeColumns();</span>
+<span class="fc" id="L166">            freeTempMem();</span>
+<span class="fc" id="L167">            Misc.free(txnScoreboard);</span>
+<span class="fc" id="L168">            Misc.free(path);</span>
+<span class="fc" id="L169">            Misc.free(columnVersionReader);</span>
+<span class="fc" id="L170">            LOG.debug().$(&quot;closed '&quot;).utf8(tableToken.getTableName()).$('\'').$();</span>
+        }
+<span class="fc" id="L172">    }</span>
+
+    /**
+     * Closed column files. Similarly to {@link #closeColumnForRemove(CharSequence)} closed reader column files before
+     * column can be removed. This method takes column index usually resolved from column name by #TableReaderMetadata.
+     * Bounds checking is performed via assertion.
+     *
+     * @param columnIndex column index
+     */
+    public void closeColumnForRemove(int columnIndex) {
+<span class="pc bpc" id="L182" title="2 of 4 branches missed.">        assert columnIndex &gt; -1 &amp;&amp; columnIndex &lt; columnCount;</span>
+<span class="fc bfc" id="L183" title="All 2 branches covered.">        for (int partitionIndex = 0; partitionIndex &lt; partitionCount; partitionIndex++) {</span>
+            // replace columns we force closed with special marker object
+            // when we come to reloading table reader we would be able to
+            // tell that column has to be attempted to be read from disk
+<span class="fc" id="L187">            closePartitionColumnFile(getColumnBase(partitionIndex), columnIndex);</span>
+        }
+
+<span class="fc bfc" id="L190" title="All 2 branches covered.">        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {</span>
+            // same goes for symbol map reader - replace object with maker instance
+<span class="fc" id="L192">            Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));</span>
+        }
+<span class="fc" id="L194">    }</span>
+
+    /**
+     * Closes column files. This method should be used before call to TableWriter.removeColumn() on
+     * Windows OS.
+     *
+     * @param columnName name of column to be closed.
+     */
+    public void closeColumnForRemove(CharSequence columnName) {
+<span class="fc" id="L203">        closeColumnForRemove(metadata.getColumnIndex(columnName));</span>
+<span class="fc" id="L204">    }</span>
+
+    public long floorToPartitionTimestamp(long timestamp) {
+<span class="fc" id="L207">        return partitionFloorMethod.floor(timestamp);</span>
+    }
+
+    public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
+<span class="fc" id="L211">        int columnBase = getColumnBase(partitionIndex);</span>
+<span class="fc" id="L212">        return getBitmapIndexReader(partitionIndex, columnBase, columnIndex, direction);</span>
+    }
+
+    public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnBase, int columnIndex, int direction) {
+<span class="fc" id="L216">        final int index = getPrimaryColumnIndex(columnBase, columnIndex);</span>
+<span class="fc" id="L217">        final long partitionTimestamp = txFile.getPartitionTimestamp(partitionIndex);</span>
+<span class="fc" id="L218">        final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));</span>
+<span class="fc" id="L219">        final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);</span>
+
+<span class="fc bfc" id="L221" title="All 2 branches covered.">        BitmapIndexReader reader = bitmapIndexes.getQuick(direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1);</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">        if (reader != null) {</span>
+            // make sure to reload the reader
+<span class="fc" id="L224">            final String columnName = metadata.getColumnName(columnIndex);</span>
+<span class="fc" id="L225">            final long columnTop = getColumnTop(columnBase, columnIndex);</span>
+<span class="fc" id="L226">            Path path = pathGenPartitioned(partitionIndex);</span>
+            try {
+<span class="fc" id="L228">                reader.of(configuration, path, columnName, columnNameTxn, columnTop, partitionTxn);</span>
+            } finally {
+<span class="fc" id="L230">                path.trimTo(rootLen);</span>
+            }
+<span class="fc" id="L232">            return reader;</span>
+        }
+<span class="fc" id="L234">        return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);</span>
+    }
+
+    public MemoryR getColumn(int absoluteIndex) {
+<span class="fc" id="L238">        return columns.getQuick(absoluteIndex);</span>
+    }
+
+    public int getColumnBase(int partitionIndex) {
+<span class="fc" id="L242">        return partitionIndex &lt;&lt; columnCountShl;</span>
+    }
+
+    public long getColumnTop(int base, int columnIndex) {
+<span class="fc" id="L246">        return columnTops.getQuick(base / 2 + columnIndex);</span>
+    }
+
+    public ColumnVersionReader getColumnVersionReader() {
+<span class="fc" id="L250">        return columnVersionReader;</span>
+    }
+
+    public TableReaderRecordCursor getCursor() {
+<span class="fc" id="L254">        recordCursor.toTop();</span>
+<span class="fc" id="L255">        return recordCursor;</span>
+    }
+
+    public long getDataVersion() {
+<span class="fc" id="L259">        return this.txFile.getDataVersion();</span>
+    }
+
+    public long getMaxTimestamp() {
+<span class="fc" id="L263">        return txFile.getMaxTimestamp();</span>
+    }
+
+    public int getMaxUncommittedRows() {
+<span class="fc" id="L267">        return metadata.getMaxUncommittedRows();</span>
+    }
+
+    public TableReaderMetadata getMetadata() {
+<span class="fc" id="L271">        return metadata;</span>
+    }
+
+    public long getMinTimestamp() {
+<span class="fc" id="L275">        return txFile.getMinTimestamp();</span>
+    }
+
+    public long getO3MaxLag() {
+<span class="fc" id="L279">        return metadata.getO3MaxLag();</span>
+    }
+
+    public int getPartitionCount() {
+<span class="fc" id="L283">        return partitionCount;</span>
+    }
+
+    public int getPartitionIndexByTimestamp(long timestamp) {
+<span class="fc" id="L287">        int end = openPartitionInfo.binarySearchBlock(PARTITIONS_SLOT_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);</span>
+<span class="fc bfc" id="L288" title="All 2 branches covered.">        if (end &lt; 0) {</span>
+            // This will return -1 if searched timestamp is before the first partition
+            // The caller should handle negative return values
+<span class="fc" id="L291">            return (-end - 2) / PARTITIONS_SLOT_SIZE;</span>
+        }
+<span class="fc" id="L293">        return end / PARTITIONS_SLOT_SIZE;</span>
+    }
+
+    public long getPartitionTimestampByIndex(int partitionIndex) {
+<span class="fc" id="L297">        return txFile.getPartitionTimestamp(partitionIndex);</span>
+    }
+
+    public int getPartitionedBy() {
+<span class="fc" id="L301">        return metadata.getPartitionBy();</span>
+    }
+
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+<span class="fc" id="L305">        return symbolMapReaders.getQuick(columnIndex);</span>
+    }
+
+    @Override
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
+<span class="fc" id="L310">        return getSymbolMapReader(columnIndex);</span>
+    }
+
+    public TableToken getTableToken() {
+<span class="fc" id="L314">        return tableToken;</span>
+    }
+
+    public long getTransientRowCount() {
+<span class="fc" id="L318">        return txFile.getTransientRowCount();</span>
+    }
+
+    public TxReader getTxFile() {
+<span class="fc" id="L322">        return txFile;</span>
+    }
+
+    public long getTxn() {
+<span class="fc" id="L326">        return txn;</span>
+    }
+
+    public long getTxnStructureVersion() {
+<span class="fc" id="L330">        return txFile.getStructureVersion();</span>
+    }
+
+    public long getVersion() {
+<span class="fc" id="L334">        return txFile.getStructureVersion();</span>
+    }
+
+    public void goActive() {
+<span class="fc" id="L338">        reload();</span>
+<span class="fc" id="L339">    }</span>
+
+    public void goPassive() {
+<span class="fc bfc" id="L342" title="All 4 branches covered.">        if (releaseTxn() &amp;&amp; PartitionBy.isPartitioned(partitionBy)) {</span>
+            // check if reader unlocks a transaction in scoreboard
+            // to house keep the partition versions
+<span class="fc" id="L345">            checkSchedulePurgeO3Partitions();</span>
+        }
+<span class="fc" id="L347">    }</span>
+
+    public boolean isOpen() {
+<span class="fc bfc" id="L350" title="All 2 branches covered.">        return tempMem8b != 0L;</span>
+    }
+
+    @Override
+    public StaticSymbolTable newSymbolTable(int columnIndex) {
+<span class="fc" id="L355">        return getSymbolMapReader(columnIndex).newSymbolTableView();</span>
+    }
+
+    /**
+     * Opens given partition for reading.
+     *
+     * @param partitionIndex partition index
+     * @return partition size in rows
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
+     */
+    public long openPartition(int partitionIndex) {
+<span class="fc" id="L366">        final long size = getPartitionRowCount(partitionIndex);</span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">        if (size != -1L) {</span>
+<span class="fc" id="L368">            return size;</span>
+        }
+<span class="fc" id="L370">        return openPartition0(partitionIndex);</span>
+    }
+
+    public void reconcileOpenPartitionsFrom(int partitionIndex, boolean forceTruncate) {
+<span class="fc" id="L374">        int txPartitionCount = txFile.getPartitionCount();</span>
+<span class="fc" id="L375">        int txPartitionIndex = partitionIndex;</span>
+<span class="fc" id="L376">        boolean changed = false;</span>
+
+<span class="fc bfc" id="L378" title="All 4 branches covered.">        while (partitionIndex &lt; partitionCount &amp;&amp; txPartitionIndex &lt; txPartitionCount) {</span>
+<span class="fc" id="L379">            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;</span>
+<span class="fc" id="L380">            final long txPartTs = txFile.getPartitionTimestamp(txPartitionIndex);</span>
+<span class="fc" id="L381">            final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);</span>
+
+<span class="fc bfc" id="L383" title="All 2 branches covered.">            if (openPartitionTimestamp &lt; txPartTs) {</span>
+                // Deleted partitions
+                // This will decrement partitionCount
+<span class="fc" id="L386">                deletePartition(partitionIndex);</span>
+<span class="fc bfc" id="L387" title="All 2 branches covered.">            } else if (openPartitionTimestamp &gt; txPartTs) {</span>
+                // Insert partition
+<span class="fc" id="L389">                insertPartition(partitionIndex, txPartTs);</span>
+<span class="fc" id="L390">                changed = true;</span>
+<span class="fc" id="L391">                txPartitionIndex++;</span>
+<span class="fc" id="L392">                partitionIndex++;</span>
+            } else {
+                // Refresh partition
+<span class="fc" id="L395">                final long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);</span>
+<span class="fc" id="L396">                final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);</span>
+<span class="fc" id="L397">                final long txPartitionColumnVersion = txFile.getPartitionColumnVersion(partitionIndex);</span>
+<span class="fc" id="L398">                final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);</span>
+<span class="fc" id="L399">                final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);</span>
+<span class="fc" id="L400">                final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);</span>
+
+<span class="fc bfc" id="L402" title="All 2 branches covered.">                if (!forceTruncate) {</span>
+<span class="fc bfc" id="L403" title="All 4 branches covered.">                    if (openPartitionNameTxn == txPartitionNameTxn &amp;&amp; openPartitionColumnVersion == txPartitionColumnVersion) {</span>
+<span class="fc bfc" id="L404" title="All 2 branches covered.">                        if (openPartitionSize != newPartitionSize) {</span>
+<span class="fc bfc" id="L405" title="All 2 branches covered.">                            if (openPartitionSize &gt; -1L) {</span>
+<span class="fc" id="L406">                                reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);</span>
+<span class="fc" id="L407">                                this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);</span>
+<span class="fc" id="L408">                                LOG.debug().$(&quot;updated partition size [partition=&quot;).$(openPartitionTimestamp).I$();</span>
+                            }
+<span class="fc" id="L410">                            changed = true;</span>
+                        }
+                    } else {
+<span class="fc" id="L413">                        reOpenPartition(offset, partitionIndex, txPartitionNameTxn);</span>
+<span class="fc" id="L414">                        changed = true;</span>
+                    }
+<span class="pc bpc" id="L416" title="1 of 4 branches missed.">                } else if (openPartitionSize &gt; -1L &amp;&amp; newPartitionSize &gt; -1L) { // Don't force re-open if not yet opened</span>
+<span class="fc" id="L417">                    reOpenPartition(offset, partitionIndex, txPartitionNameTxn);</span>
+                }
+<span class="fc" id="L419">                txPartitionIndex++;</span>
+<span class="fc" id="L420">                partitionIndex++;</span>
+            }
+<span class="fc" id="L422">        }</span>
+
+        // if while finished on txPartitionIndex == txPartitionCount condition
+        // remove deleted opened partitions
+<span class="fc bfc" id="L426" title="All 2 branches covered.">        while (partitionIndex &lt; partitionCount) {</span>
+<span class="fc" id="L427">            deletePartition(partitionIndex);</span>
+<span class="fc" id="L428">            changed = true;</span>
+        }
+
+        // if while finished on partitionIndex == partitionCount condition
+        // insert new partitions at the end
+<span class="fc bfc" id="L433" title="All 2 branches covered.">        for (; partitionIndex &lt; txPartitionCount; partitionIndex++) {</span>
+<span class="fc" id="L434">            insertPartition(partitionIndex, txFile.getPartitionTimestamp(partitionIndex));</span>
+<span class="fc" id="L435">            changed = true;</span>
+        }
+
+<span class="fc bfc" id="L438" title="All 2 branches covered.">        if (forceTruncate) {</span>
+<span class="fc" id="L439">            reloadAllSymbols();</span>
+<span class="fc bfc" id="L440" title="All 2 branches covered.">        } else if (changed) {</span>
+<span class="fc" id="L441">            reloadSymbolMapCounts();</span>
+        }
+<span class="fc" id="L443">    }</span>
+
+    public boolean reload() {
+<span class="fc bfc" id="L446" title="All 2 branches covered.">        if (acquireTxn()) {</span>
+<span class="fc" id="L447">            return false;</span>
+        }
+        try {
+<span class="fc" id="L450">            reloadSlow(true);</span>
+            // partition reload will apply truncate if necessary
+            // applyTruncate for non-partitioned tables only
+<span class="fc" id="L453">            reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);</span>
+
+            // Save transaction details which impact the reloading. Do not rely on txReader, it can be reloaded outside this method.
+<span class="fc" id="L456">            txPartitionVersion = this.txFile.getPartitionTableVersion();</span>
+<span class="fc" id="L457">            txColumnVersion = this.txFile.getColumnVersion();</span>
+<span class="fc" id="L458">            txTruncateVersion = this.txFile.getTruncateVersion();</span>
+
+<span class="fc" id="L460">            return true;</span>
+<span class="fc" id="L461">        } catch (Throwable e) {</span>
+<span class="fc" id="L462">            releaseTxn();</span>
+<span class="fc" id="L463">            throw e;</span>
+        }
+    }
+
+    public long size() {
+<span class="fc" id="L468">        return rowCount;</span>
+    }
+
+    public void updateTableToken(TableToken tableToken) {
+<span class="fc" id="L472">        this.tableToken = tableToken;</span>
+<span class="fc" id="L473">        this.metadata.updateTableToken(tableToken);</span>
+<span class="fc" id="L474">    }</span>
+
+    private static int getColumnBits(int columnCount) {
+<span class="fc" id="L477">        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);</span>
+    }
+
+    private static void growColumn(MemoryR mem1, MemoryR mem2, int type, long rowCount) {
+<span class="pc bpc" id="L481" title="1 of 2 branches missed.">        if (rowCount &gt; 0) {</span>
+<span class="fc bfc" id="L482" title="All 2 branches covered.">            if (ColumnType.isVariableLength(type)) {</span>
+<span class="pc bpc" id="L483" title="1 of 2 branches missed.">                assert mem2 != null;</span>
+<span class="fc" id="L484">                mem2.extend((rowCount + 1) * 8);</span>
+<span class="fc" id="L485">                mem1.extend(mem2.getLong(rowCount * 8));</span>
+            } else {
+<span class="fc" id="L487">                mem1.extend(rowCount &lt;&lt; ColumnType.pow2SizeOf(type));</span>
+            }
+        }
+<span class="fc" id="L490">    }</span>
+
+    private boolean acquireTxn() {
+<span class="fc bfc" id="L493" title="All 2 branches covered.">        if (!txnAcquired) {</span>
+<span class="fc bfc" id="L494" title="All 2 branches covered.">            if (txnScoreboard.acquireTxn(txn)) {</span>
+<span class="fc" id="L495">                txnAcquired = true;</span>
+            } else {
+<span class="fc" id="L497">                return false;</span>
+            }
+        }
+
+        // txFile can also be reloaded in goPassive-&gt;checkSchedulePurgeO3Partitions
+        // if txFile txn doesn't much reader txn, reader has to be slow reloaded
+<span class="fc bfc" id="L503" title="All 2 branches covered.">        if (txn == txFile.getTxn()) {</span>
+            // We have to be sure last txn is acquired in Scoreboard
+            // otherwise writer can delete partition version files
+            // between reading txn file and acquiring txn in the Scoreboard.
+<span class="fc" id="L507">            Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L508" title="All 2 branches covered.">            return txFile.getVersion() == txFile.unsafeReadVersion();</span>
+        }
+<span class="fc" id="L510">        return false;</span>
+    }
+
+    private void checkSchedulePurgeO3Partitions() {
+<span class="fc" id="L514">        long txnLocks = txnScoreboard.getActiveReaderCount(txn);</span>
+<span class="fc" id="L515">        long partitionTableVersion = txFile.getPartitionTableVersion();</span>
+<span class="pc bpc" id="L516" title="2 of 6 branches missed.">        if (txnLocks == 0 &amp;&amp; txFile.unsafeLoadAll() &amp;&amp; txFile.getPartitionTableVersion() &gt; partitionTableVersion) {</span>
+            // Last lock for this txn is released and this is not latest txn number
+            // Schedule a job to clean up partition versions this reader may hold
+<span class="pc bpc" id="L519" title="1 of 2 branches missed.">            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {</span>
+<span class="fc" id="L520">                return;</span>
+            }
+
+<span class="nc" id="L523">            LOG.error()</span>
+<span class="nc" id="L524">                    .$(&quot;could not queue purge partition task, queue is full [&quot;)</span>
+<span class="nc" id="L525">                    .$(&quot;dirName=&quot;).utf8(this.tableToken.getDirName())</span>
+<span class="nc" id="L526">                    .$(&quot;, txn=&quot;).$(txn)</span>
+<span class="nc" id="L527">                    .$(']').$();</span>
+        }
+<span class="fc" id="L529">    }</span>
+
+    private void closePartitionColumnFile(int base, int columnIndex) {
+<span class="fc" id="L532">        int index = getPrimaryColumnIndex(base, columnIndex);</span>
+<span class="fc" id="L533">        Misc.free(columns.getAndSetQuick(index, NullMemoryMR.INSTANCE));</span>
+<span class="fc" id="L534">        Misc.free(columns.getAndSetQuick(index + 1, NullMemoryMR.INSTANCE));</span>
+<span class="fc" id="L535">        Misc.free(bitmapIndexes.getAndSetQuick(index, null));</span>
+<span class="fc" id="L536">        Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));</span>
+<span class="fc" id="L537">    }</span>
+
+    private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase, Path path) {
+<span class="fc" id="L540">        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;</span>
+<span class="fc" id="L541">        long partitionTs = openPartitionInfo.getQuick(offset);</span>
+<span class="fc" id="L542">        long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);</span>
+<span class="fc" id="L543">        long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);</span>
+<span class="fc" id="L544">        long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);</span>
+<span class="pc bpc" id="L545" title="1 of 4 branches missed.">        if (existingPartitionNameTxn != newNameTxn || newSize &lt; 0) {</span>
+<span class="fc" id="L546">            LOG.debugW().$(&quot;close outdated partition files [table=&quot;).utf8(tableToken.getTableName()).$(&quot;, ts=&quot;).$ts(partitionTs).$(&quot;, nameTxn=&quot;).$(newNameTxn).$();</span>
+            // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
+<span class="fc bfc" id="L548" title="All 2 branches covered.">            for (int i = 0; i &lt; this.columnCount; i++) {</span>
+<span class="fc" id="L549">                closePartitionColumnFile(oldBase, i);</span>
+            }
+<span class="fc" id="L551">            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);</span>
+<span class="fc" id="L552">            return -1;</span>
+        }
+<span class="fc" id="L554">        pathGenPartitioned(partitionIndex);</span>
+<span class="fc" id="L555">        TableUtils.txnPartitionConditionally(path, existingPartitionNameTxn);</span>
+<span class="fc" id="L556">        return newSize;</span>
+    }
+
+    private void copyColumns(
+            int fromBase,
+            int fromColumnIndex,
+            ObjList&lt;MemoryMR&gt; toColumns,
+            LongList toColumnTops,
+            ObjList&lt;BitmapIndexReader&gt; toIndexReaders,
+            int toBase,
+            int toColumnIndex
+    ) {
+<span class="fc" id="L568">        final int fromIndex = getPrimaryColumnIndex(fromBase, fromColumnIndex);</span>
+<span class="fc" id="L569">        final int toIndex = getPrimaryColumnIndex(toBase, toColumnIndex);</span>
+
+<span class="fc" id="L571">        toColumns.setQuick(toIndex, columns.getAndSetQuick(fromIndex, null));</span>
+<span class="fc" id="L572">        toColumns.setQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));</span>
+<span class="fc" id="L573">        toColumnTops.setQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));</span>
+<span class="fc" id="L574">        toIndexReaders.setQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));</span>
+<span class="fc" id="L575">        toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));</span>
+<span class="fc" id="L576">    }</span>
+
+    private void copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
+<span class="pc bpc" id="L579" title="1 of 4 branches missed.">        if (reader != null &amp;&amp; reader.isDeleted()) {</span>
+<span class="nc" id="L580">            reader = reloadSymbolMapReader(columnIndex, reader);</span>
+        }
+<span class="fc" id="L582">        symbolMapReaders.setQuick(columnIndex, reader);</span>
+<span class="fc" id="L583">    }</span>
+
+    private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
+        BitmapIndexReader reader;
+<span class="fc bfc" id="L587" title="All 2 branches covered.">        if (!metadata.isColumnIndexed(columnIndex)) {</span>
+<span class="fc" id="L588">            throw CairoException.critical(0).put(&quot;Not indexed: &quot;).put(metadata.getColumnName(columnIndex));</span>
+        }
+
+<span class="fc" id="L591">        MemoryR col = columns.getQuick(globalIndex);</span>
+<span class="fc bfc" id="L592" title="All 2 branches covered.">        if (col instanceof NullMemoryMR) {</span>
+<span class="fc bfc" id="L593" title="All 2 branches covered.">            if (direction == BitmapIndexReader.DIR_BACKWARD) {</span>
+<span class="fc" id="L594">                reader = new BitmapIndexBwdNullReader();</span>
+<span class="fc" id="L595">                bitmapIndexes.setQuick(globalIndex, reader);</span>
+            } else {
+<span class="fc" id="L597">                reader = new BitmapIndexFwdNullReader();</span>
+<span class="fc" id="L598">                bitmapIndexes.setQuick(globalIndex + 1, reader);</span>
+            }
+        } else {
+<span class="fc" id="L601">            Path path = pathGenPartitioned(getPartitionIndex(columnBase));</span>
+            try {
+<span class="fc bfc" id="L603" title="All 2 branches covered.">                if (direction == BitmapIndexReader.DIR_BACKWARD) {</span>
+<span class="fc" id="L604">                    reader = new BitmapIndexBwdReader(</span>
+                            configuration,
+                            path,
+<span class="fc" id="L607">                            metadata.getColumnName(columnIndex),</span>
+                            columnNameTxn,
+<span class="fc" id="L609">                            getColumnTop(columnBase, columnIndex),</span>
+                            txn
+                    );
+<span class="fc" id="L612">                    bitmapIndexes.setQuick(globalIndex, reader);</span>
+                } else {
+<span class="fc" id="L614">                    reader = new BitmapIndexFwdReader(</span>
+                            configuration,
+                            path,
+<span class="fc" id="L617">                            metadata.getColumnName(columnIndex),</span>
+                            columnNameTxn,
+<span class="fc" id="L619">                            getColumnTop(columnBase, columnIndex),</span>
+                            txn
+                    );
+<span class="fc" id="L622">                    bitmapIndexes.setQuick(globalIndex + 1, reader);</span>
+                }
+            } finally {
+<span class="fc" id="L625">                path.trimTo(rootLen);</span>
+            }
+        }
+<span class="fc" id="L628">        return reader;</span>
+    }
+
+    private void createNewColumnList(int columnCount, long pTransitionIndex, int columnCountShl) {
+<span class="fc" id="L632">        LOG.debug().$(&quot;resizing columns file list [table=&quot;).utf8(tableToken.getTableName()).I$();</span>
+<span class="fc" id="L633">        int capacity = partitionCount &lt;&lt; columnCountShl;</span>
+<span class="fc" id="L634">        final ObjList&lt;MemoryMR&gt; toColumns = new ObjList&lt;&gt;(capacity + 2);</span>
+<span class="fc" id="L635">        final LongList toColumnTops = new LongList(capacity / 2);</span>
+<span class="fc" id="L636">        final ObjList&lt;BitmapIndexReader&gt; toIndexReaders = new ObjList&lt;&gt;(capacity);</span>
+<span class="fc" id="L637">        toColumns.setPos(capacity + 2);</span>
+<span class="fc" id="L638">        toColumns.setQuick(0, NullMemoryMR.INSTANCE);</span>
+<span class="fc" id="L639">        toColumns.setQuick(1, NullMemoryMR.INSTANCE);</span>
+<span class="fc" id="L640">        toColumnTops.setPos(capacity / 2);</span>
+<span class="fc" id="L641">        toIndexReaders.setPos(capacity + 2);</span>
+<span class="fc" id="L642">        final long pIndexBase = pTransitionIndex + 8;</span>
+<span class="fc" id="L643">        int iterateCount = Math.max(columnCount, this.columnCount);</span>
+
+<span class="fc bfc" id="L645" title="All 2 branches covered.">        for (int partitionIndex = 0; partitionIndex &lt; partitionCount; partitionIndex++) {</span>
+<span class="fc" id="L646">            final int toBase = partitionIndex &lt;&lt; columnCountShl;</span>
+<span class="fc" id="L647">            final int fromBase = partitionIndex &lt;&lt; this.columnCountShl;</span>
+
+            try {
+<span class="fc" id="L650">                long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);</span>
+<span class="fc bfc" id="L651" title="All 4 branches covered.">                if (partitionRowCount &gt; -1L &amp;&amp; (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, fromBase, path)) &gt; -1L) {</span>
+<span class="fc bfc" id="L652" title="All 2 branches covered.">                    for (int i = 0; i &lt; iterateCount; i++) {</span>
+<span class="fc" id="L653">                        final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);</span>
+<span class="fc" id="L654">                        final int fromColumnIndex = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);</span>
+
+<span class="fc bfc" id="L656" title="All 2 branches covered.">                        if (action == -1) {</span>
+<span class="fc" id="L657">                            closePartitionColumnFile(fromBase, i);</span>
+                        }
+
+<span class="fc bfc" id="L660" title="All 2 branches covered.">                        if (fromColumnIndex &gt; -1) {</span>
+<span class="fc" id="L661">                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);</span>
+<span class="pc bpc" id="L662" title="1 of 2 branches missed.">                        } else if (fromColumnIndex != Integer.MIN_VALUE) {</span>
+                            // new instance
+<span class="fc" id="L664">                            reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toBase, i, partitionRowCount);</span>
+                        }
+                    }
+                }
+            } finally {
+<span class="fc" id="L669">                path.trimTo(rootLen);</span>
+            }
+        }
+<span class="fc" id="L672">        this.columns = toColumns;</span>
+<span class="fc" id="L673">        this.columnTops = toColumnTops;</span>
+<span class="fc" id="L674">        this.columnCountShl = columnCountShl;</span>
+<span class="fc" id="L675">        this.bitmapIndexes = toIndexReaders;</span>
+<span class="fc" id="L676">    }</span>
+
+    private void deletePartition(int partitionIndex) {
+<span class="fc" id="L679">        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;</span>
+<span class="fc" id="L680">        long partitionTimestamp = openPartitionInfo.getQuick(offset);</span>
+<span class="fc" id="L681">        long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);</span>
+<span class="fc" id="L682">        int columnBase = getColumnBase(partitionIndex);</span>
+<span class="fc bfc" id="L683" title="All 2 branches covered.">        if (partitionSize &gt; -1L) {</span>
+<span class="fc bfc" id="L684" title="All 2 branches covered.">            for (int k = 0; k &lt; columnCount; k++) {</span>
+<span class="fc" id="L685">                closePartitionColumnFile(columnBase, k);</span>
+            }
+        }
+<span class="fc" id="L688">        int baseIndex = getPrimaryColumnIndex(columnBase, 0);</span>
+<span class="fc" id="L689">        int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);</span>
+<span class="fc" id="L690">        columns.remove(baseIndex, newBaseIndex - 1);</span>
+<span class="fc" id="L691">        openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);</span>
+
+<span class="fc" id="L693">        LOG.info().$(&quot;deleted partition [path=&quot;).$(path).$(&quot;,timestamp=&quot;).$ts(partitionTimestamp).I$();</span>
+<span class="fc" id="L694">        partitionCount--;</span>
+<span class="fc" id="L695">    }</span>
+
+    private void formatPartitionDirName(int partitionIndex, CharSink sink) {
+<span class="fc" id="L698">        partitionDirFormatMethod.format(</span>
+<span class="fc" id="L699">                openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),</span>
+                null, // this format does not need locale access
+                null,
+                sink
+        );
+<span class="fc" id="L704">    }</span>
+
+    private void freeBitmapIndexCache() {
+<span class="fc" id="L707">        Misc.freeObjList(bitmapIndexes);</span>
+<span class="fc" id="L708">    }</span>
+
+    private void freeColumns() {
+<span class="fc" id="L711">        Misc.freeObjList(columns);</span>
+<span class="fc" id="L712">    }</span>
+
+    private void freeSymbolMapReaders() {
+<span class="fc bfc" id="L715" title="All 2 branches covered.">        for (int i = 0, n = symbolMapReaders.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L716">            Misc.freeIfCloseable(symbolMapReaders.getQuick(i));</span>
+        }
+<span class="fc" id="L718">        symbolMapReaders.clear();</span>
+<span class="fc" id="L719">    }</span>
+
+    private void freeTempMem() {
+<span class="pc bpc" id="L722" title="1 of 2 branches missed.">        if (tempMem8b != 0L) {</span>
+<span class="fc" id="L723">            Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);</span>
+<span class="fc" id="L724">            tempMem8b = 0L;</span>
+        }
+<span class="fc" id="L726">    }</span>
+
+    private void insertPartition(int partitionIndex, long timestamp) {
+<span class="fc" id="L729">        final int columnBase = getColumnBase(partitionIndex);</span>
+<span class="fc" id="L730">        final int columnSlotSize = getColumnBase(1);</span>
+<span class="fc" id="L731">        final int topBase = columnBase / 2;</span>
+<span class="fc" id="L732">        final int topSlotSize = columnSlotSize / 2;</span>
+<span class="fc" id="L733">        final int idx = getPrimaryColumnIndex(columnBase, 0);</span>
+<span class="fc" id="L734">        columns.insert(idx, columnSlotSize, NullMemoryMR.INSTANCE);</span>
+<span class="fc" id="L735">        bitmapIndexes.insert(idx, columnSlotSize, null);</span>
+<span class="fc" id="L736">        columnTops.insert(topBase, topSlotSize);</span>
+<span class="fc" id="L737">        columnTops.seed(topBase, topSlotSize, 0);</span>
+
+<span class="fc" id="L739">        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;</span>
+<span class="fc" id="L740">        openPartitionInfo.insert(offset, PARTITIONS_SLOT_SIZE);</span>
+<span class="fc" id="L741">        openPartitionInfo.setQuick(offset, timestamp);</span>
+<span class="fc" id="L742">        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);</span>
+<span class="fc" id="L743">        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1L);</span>
+<span class="fc" id="L744">        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1L);</span>
+<span class="fc" id="L745">        partitionCount++;</span>
+<span class="fc" id="L746">        LOG.debug().$(&quot;inserted partition [index=&quot;).$(partitionIndex).$(&quot;, path=&quot;).$(path).$(&quot;, timestamp=&quot;).$ts(timestamp).I$();</span>
+<span class="fc" id="L747">    }</span>
+
+    @NotNull
+    // this method is not thread safe
+    private SymbolMapReaderImpl newSymbolMapReader(int symbolColumnIndex, int columnIndex) {
+        // symbol column index is the index of symbol column in dense array of symbol columns, e.g.
+        // if table has only one symbol columns, the symbolColumnIndex is 0 regardless of column position
+        // in the metadata.
+<span class="fc" id="L755">        return new SymbolMapReaderImpl(</span>
+                configuration,
+                path,
+<span class="fc" id="L758">                metadata.getColumnName(columnIndex),</span>
+<span class="fc" id="L759">                columnVersionReader.getDefaultColumnNameTxn(metadata.getWriterIndex(columnIndex)),</span>
+<span class="fc" id="L760">                txFile.getSymbolValueCount(symbolColumnIndex)</span>
+        );
+    }
+
+    private TableReaderMetadata openMetaFile() {
+<span class="fc" id="L765">        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);</span>
+        try {
+<span class="fc" id="L767">            metadata.load();</span>
+<span class="fc" id="L768">            return metadata;</span>
+<span class="fc" id="L769">        } catch (Throwable th) {</span>
+<span class="fc" id="L770">            metadata.close();</span>
+<span class="fc" id="L771">            throw th;</span>
+        }
+    }
+
+    @NotNull
+    private MemoryMR openOrCreateMemory(
+            Path path,
+            ObjList&lt;MemoryMR&gt; columns,
+            int primaryIndex,
+            MemoryMR mem,
+            long columnSize
+    ) {
+<span class="fc bfc" id="L783" title="All 4 branches covered.">        if (mem != null &amp;&amp; mem != NullMemoryMR.INSTANCE) {</span>
+<span class="fc" id="L784">            mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);</span>
+        } else {
+<span class="fc" id="L786">            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);</span>
+<span class="fc" id="L787">            columns.setQuick(primaryIndex, mem);</span>
+        }
+<span class="pc bpc" id="L789" title="1 of 2 branches missed.">        return mem;</span>
+    }
+
+    private long openPartition0(int partitionIndex) {
+<span class="fc bfc" id="L793" title="All 4 branches covered.">        if (txFile.getPartitionCount() &lt; 2 &amp;&amp; txFile.getTransientRowCount() == 0) {</span>
+            // Empty single partition. Don't check that directory exists on the disk
+<span class="fc" id="L795">            return -1;</span>
+        }
+
+        try {
+<span class="fc" id="L799">            final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);</span>
+<span class="fc" id="L800">            Path path = pathGenPartitioned(partitionIndex);</span>
+<span class="fc" id="L801">            TableUtils.txnPartitionConditionally(path, partitionNameTxn);</span>
+
+<span class="fc bfc" id="L803" title="All 2 branches covered.">            if (ff.exists(path.$())) {</span>
+<span class="fc" id="L804">                final long partitionSize = txFile.getPartitionSize(partitionIndex);</span>
+<span class="pc bpc" id="L805" title="1 of 2 branches missed.">                if (partitionSize &gt; -1L) {</span>
+<span class="fc" id="L806">                    LOG.info()</span>
+<span class="fc" id="L807">                            .$(&quot;open partition &quot;).utf8(path)</span>
+<span class="fc" id="L808">                            .$(&quot; [rowCount=&quot;).$(partitionSize)</span>
+<span class="fc" id="L809">                            .$(&quot;, partitionNameTxn=&quot;).$(partitionNameTxn)</span>
+<span class="fc" id="L810">                            .$(&quot;, transientRowCount=&quot;).$(txFile.getTransientRowCount())</span>
+<span class="fc" id="L811">                            .$(&quot;, partitionIndex=&quot;).$(partitionIndex)</span>
+<span class="fc" id="L812">                            .$(&quot;, partitionCount=&quot;).$(partitionCount)</span>
+<span class="fc" id="L813">                            .I$();</span>
+
+<span class="fc" id="L815">                    openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);</span>
+<span class="fc" id="L816">                    final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;</span>
+<span class="fc" id="L817">                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);</span>
+<span class="fc" id="L818">                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);</span>
+<span class="fc" id="L819">                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, txFile.getPartitionColumnVersion(partitionIndex));</span>
+                }
+
+<span class="fc" id="L822">                return partitionSize;</span>
+            }
+<span class="fc" id="L824">            LOG.error().$(&quot;open partition failed, partition does not exist on the disk. [path=&quot;).utf8(path).I$();</span>
+
+<span class="fc bfc" id="L826" title="All 2 branches covered.">            if (PartitionBy.isPartitioned(getPartitionedBy())) {</span>
+<span class="fc" id="L827">                CairoException exception = CairoException.critical(0).put(&quot;Partition '&quot;);</span>
+<span class="fc" id="L828">                formatPartitionDirName(partitionIndex, exception.message);</span>
+<span class="fc" id="L829">                exception.put(&quot;' does not exist in table '&quot;)</span>
+<span class="fc" id="L830">                        .put(tableToken.getTableName())</span>
+<span class="fc" id="L831">                        .put(&quot;' directory. Run [ALTER TABLE &quot;).put(tableToken.getTableName()).put(&quot; DROP PARTITION LIST '&quot;);</span>
+<span class="fc" id="L832">                formatPartitionDirName(partitionIndex, exception.message);</span>
+<span class="fc" id="L833">                exception.put(&quot;'] to repair the table or restore the partition directory.&quot;);</span>
+<span class="fc" id="L834">                throw exception;</span>
+            } else {
+<span class="fc" id="L836">                throw CairoException.critical(0).put(&quot;Table '&quot;).put(tableToken.getTableName())</span>
+<span class="fc" id="L837">                        .put(&quot;' data directory does not exist on the disk at &quot;)</span>
+<span class="fc" id="L838">                        .put(path)</span>
+<span class="fc" id="L839">                        .put(&quot;. Restore data on disk or drop the table.&quot;);</span>
+            }
+        } finally {
+<span class="fc" id="L842">            path.trimTo(rootLen);</span>
+        }
+    }
+
+    private void openPartitionColumns(int partitionIndex, Path path, int columnBase, long partitionRowCount) {
+<span class="fc bfc" id="L847" title="All 2 branches covered.">        for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L848">            reloadColumnAt(</span>
+                    partitionIndex,
+                    path,
+                    columns,
+                    columnTops,
+                    bitmapIndexes,
+                    columnBase,
+                    i,
+                    partitionRowCount
+            );
+        }
+<span class="fc" id="L859">    }</span>
+
+    private void openSymbolMaps() {
+<span class="fc" id="L862">        int symbolColumnIndex = 0;</span>
+<span class="fc" id="L863">        final int columnCount = metadata.getColumnCount();</span>
+<span class="fc" id="L864">        symbolMapReaders.setPos(columnCount);</span>
+<span class="fc bfc" id="L865" title="All 2 branches covered.">        for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc bfc" id="L866" title="All 2 branches covered.">            if (ColumnType.isSymbol(metadata.getColumnType(i))) {</span>
+                // symbol map index array is sparse
+<span class="fc" id="L868">                symbolMapReaders.extendAndSet(i, newSymbolMapReader(symbolColumnIndex++, i));</span>
+            }
+        }
+<span class="fc" id="L871">    }</span>
+
+    private Path pathGenPartitioned(int partitionIndex) {
+<span class="fc" id="L874">        formatPartitionDirName(partitionIndex, path.slash());</span>
+<span class="fc" id="L875">        return path;</span>
+    }
+
+    private void reOpenPartition(int offset, int partitionIndex, long txPartitionNameTxn) {
+<span class="fc" id="L879">        this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);</span>
+<span class="fc" id="L880">        openPartition0(partitionIndex);</span>
+<span class="fc" id="L881">        this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);</span>
+<span class="fc" id="L882">    }</span>
+
+    private void readTxnSlow(long deadline) {
+<span class="fc" id="L885">        int count = 0;</span>
+
+        while (true) {
+<span class="fc bfc" id="L888" title="All 2 branches covered.">            if (txFile.unsafeLoadAll()) {</span>
+                // good, very stable, congrats
+<span class="fc" id="L890">                long txn = txFile.getTxn();</span>
+<span class="fc" id="L891">                releaseTxn();</span>
+<span class="fc" id="L892">                this.txn = txn;</span>
+
+<span class="fc bfc" id="L894" title="All 2 branches covered.">                if (acquireTxn()) {</span>
+<span class="fc" id="L895">                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();</span>
+<span class="fc" id="L896">                    LOG.debug()</span>
+<span class="fc" id="L897">                            .$(&quot;new transaction [txn=&quot;).$(txn)</span>
+<span class="fc" id="L898">                            .$(&quot;, transientRowCount=&quot;).$(txFile.getTransientRowCount())</span>
+<span class="fc" id="L899">                            .$(&quot;, fixedRowCount=&quot;).$(txFile.getFixedRowCount())</span>
+<span class="fc" id="L900">                            .$(&quot;, maxTimestamp=&quot;).$ts(txFile.getMaxTimestamp())</span>
+<span class="fc" id="L901">                            .$(&quot;, attempts=&quot;).$(count)</span>
+<span class="fc" id="L902">                            .$(&quot;, thread=&quot;).$(Thread.currentThread().getName())</span>
+<span class="fc" id="L903">                            .I$();</span>
+<span class="fc" id="L904">                    break;</span>
+                }
+            }
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
+<span class="fc" id="L909">            count++;</span>
+<span class="fc bfc" id="L910" title="All 2 branches covered.">            if (clock.getTicks() &gt; deadline) {</span>
+<span class="fc" id="L911">                LOG.error().$(&quot;tx read timeout [timeout=&quot;).$(configuration.getSpinLockTimeout()).$(&quot;ms]&quot;).$();</span>
+<span class="fc" id="L912">                throw CairoException.critical(0).put(&quot;Transaction read timeout&quot;);</span>
+            }
+<span class="fc" id="L914">            Os.pause();</span>
+        }
+<span class="fc" id="L916">    }</span>
+
+    private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
+        // Reconcile partition full or partial will only update row count of last partition and append new partitions
+<span class="fc bfc" id="L920" title="All 2 branches covered.">        boolean truncateHappened = this.txFile.getTruncateVersion() != prevTruncateVersion;</span>
+<span class="pc bpc" id="L921" title="1 of 6 branches missed.">        if (txFile.getPartitionTableVersion() == prevPartitionVersion &amp;&amp; txFile.getColumnVersion() == prevColumnVersion &amp;&amp; !truncateHappened) {</span>
+<span class="fc" id="L922">            int partitionIndex = Math.max(0, partitionCount - 1);</span>
+<span class="fc" id="L923">            final int txPartitionCount = txFile.getPartitionCount();</span>
+<span class="pc bpc" id="L924" title="1 of 2 branches missed.">            if (partitionIndex &lt; txPartitionCount) {</span>
+<span class="fc bfc" id="L925" title="All 2 branches covered.">                if (partitionIndex &lt; partitionCount) {</span>
+<span class="fc" id="L926">                    final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;</span>
+<span class="fc" id="L927">                    final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);</span>
+                    // we check that open partition size is non-negative to avoid loading
+                    // partition that is not yet in memory
+<span class="fc bfc" id="L930" title="All 2 branches covered.">                    if (openPartitionSize &gt; -1L) {</span>
+<span class="fc" id="L931">                        final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);</span>
+<span class="fc" id="L932">                        final long txPartitionSize = txFile.getPartitionSize(partitionIndex);</span>
+<span class="fc" id="L933">                        final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);</span>
+
+<span class="pc bpc" id="L935" title="1 of 2 branches missed.">                        if (openPartitionNameTxn == txPartitionNameTxn) {</span>
+<span class="fc bfc" id="L936" title="All 2 branches covered.">                            if (openPartitionSize != txPartitionSize) {</span>
+<span class="fc" id="L937">                                reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);</span>
+<span class="fc" id="L938">                                this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);</span>
+<span class="fc" id="L939">                                LOG.debug().$(&quot;updated partition size [partition=&quot;).$(openPartitionInfo.getQuick(offset)).I$();</span>
+                            }
+                        } else {
+<span class="nc" id="L942">                            openPartition0(partitionIndex);</span>
+                        }
+                    }
+<span class="fc" id="L945">                    partitionIndex++;</span>
+                }
+<span class="fc bfc" id="L947" title="All 2 branches covered.">                for (; partitionIndex &lt; txPartitionCount; partitionIndex++) {</span>
+<span class="fc" id="L948">                    insertPartition(partitionIndex, txFile.getPartitionTimestamp(partitionIndex));</span>
+                }
+<span class="fc" id="L950">                reloadSymbolMapCounts();</span>
+            }
+<span class="fc" id="L952">            return;</span>
+        }
+<span class="fc" id="L954">        reconcileOpenPartitionsFrom(0, truncateHappened);</span>
+<span class="fc" id="L955">    }</span>
+
+    private boolean releaseTxn() {
+<span class="fc bfc" id="L958" title="All 2 branches covered.">        if (txnAcquired) {</span>
+<span class="fc" id="L959">            long readerCount = txnScoreboard.releaseTxn(txn);</span>
+<span class="fc" id="L960">            txnAcquired = false;</span>
+<span class="fc bfc" id="L961" title="All 2 branches covered.">            return readerCount == 0;</span>
+        }
+<span class="fc" id="L963">        return false;</span>
+    }
+
+    private void reloadAllSymbols() {
+<span class="fc" id="L967">        int symbolMapIndex = 0;</span>
+<span class="fc bfc" id="L968" title="All 2 branches covered.">        for (int columnIndex = 0; columnIndex &lt; columnCount; columnIndex++) {</span>
+<span class="fc bfc" id="L969" title="All 2 branches covered.">            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {</span>
+<span class="fc" id="L970">                SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);</span>
+<span class="pc bpc" id="L971" title="1 of 2 branches missed.">                if (symbolMapReader instanceof SymbolMapReaderImpl) {</span>
+<span class="fc" id="L972">                    final int writerColumnIndex = metadata.getWriterIndex(columnIndex);</span>
+<span class="fc" id="L973">                    final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);</span>
+<span class="fc" id="L974">                    int symbolCount = txFile.getSymbolValueCount(symbolMapIndex++);</span>
+<span class="fc" id="L975">                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, symbolCount);</span>
+                }
+            }
+        }
+<span class="fc" id="L979">    }</span>
+
+    private void reloadColumnAt(
+            int partitionIndex,
+            Path path,
+            ObjList&lt;MemoryMR&gt; columns,
+            LongList columnTops,
+            ObjList&lt;BitmapIndexReader&gt; indexReaders,
+            int columnBase,
+            int columnIndex,
+            long partitionRowCount
+    ) {
+<span class="fc" id="L991">        final int plen = path.length();</span>
+        try {
+<span class="fc" id="L993">            final CharSequence name = metadata.getColumnName(columnIndex);</span>
+<span class="fc" id="L994">            final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);</span>
+<span class="fc" id="L995">            final int secondaryIndex = primaryIndex + 1;</span>
+
+<span class="fc" id="L997">            MemoryMR mem1 = columns.getQuick(primaryIndex);</span>
+<span class="fc" id="L998">            MemoryMR mem2 = columns.getQuick(secondaryIndex);</span>
+
+<span class="fc" id="L1000">            final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);</span>
+<span class="fc" id="L1001">            int writerIndex = metadata.getWriterIndex(columnIndex);</span>
+<span class="fc" id="L1002">            final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);</span>
+<span class="fc bfc" id="L1003" title="All 2 branches covered.">            final long columnTop = versionRecordIndex &gt; -1L ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0L;</span>
+<span class="fc bfc" id="L1004" title="All 2 branches covered.">            long columnTxn = versionRecordIndex &gt; -1L ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1L;</span>
+<span class="fc bfc" id="L1005" title="All 2 branches covered.">            if (columnTxn == -1L) {</span>
+                // When column is added, column version will have txn number for the partition
+                // where it's added. It will also have the txn number in the [default] partition
+<span class="fc" id="L1008">                columnTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);</span>
+            }
+<span class="fc" id="L1010">            final long columnRowCount = partitionRowCount - columnTop;</span>
+<span class="pc bpc" id="L1011" title="2 of 4 branches missed.">            assert partitionRowCount &lt; 0 || columnRowCount &gt;= 0;</span>
+
+            // When column is added mid-table existence the top record is only
+            // created in the current partition. Older partitions would simply have no
+            // column file. This makes it necessary to check the partition timestamp in Column Version file
+            // of when the column was added.
+<span class="fc bfc" id="L1017" title="All 6 branches covered.">            if (columnRowCount &gt; 0 &amp;&amp; (versionRecordIndex &gt; -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) &lt;= partitionTimestamp)) {</span>
+<span class="fc" id="L1018">                final int columnType = metadata.getColumnType(columnIndex);</span>
+
+<span class="fc bfc" id="L1020" title="All 2 branches covered.">                if (ColumnType.isVariableLength(columnType)) {</span>
+<span class="fc" id="L1021">                    long columnSize = columnRowCount * 8L + 8L;</span>
+<span class="fc" id="L1022">                    TableUtils.iFile(path.trimTo(plen), name, columnTxn);</span>
+<span class="fc" id="L1023">                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);</span>
+<span class="fc" id="L1024">                    columnSize = mem2.getLong(columnRowCount * 8L);</span>
+<span class="fc" id="L1025">                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);</span>
+<span class="fc" id="L1026">                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);</span>
+<span class="fc" id="L1027">                } else {</span>
+<span class="fc" id="L1028">                    long columnSize = columnRowCount &lt;&lt; ColumnType.pow2SizeOf(columnType);</span>
+<span class="fc" id="L1029">                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);</span>
+<span class="fc" id="L1030">                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);</span>
+<span class="fc" id="L1031">                    Misc.free(columns.getAndSetQuick(secondaryIndex, null));</span>
+                }
+
+<span class="fc" id="L1034">                columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);</span>
+
+<span class="fc bfc" id="L1036" title="All 2 branches covered.">                if (metadata.isColumnIndexed(columnIndex)) {</span>
+<span class="fc" id="L1037">                    BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);</span>
+<span class="fc bfc" id="L1038" title="All 2 branches covered.">                    if (indexReader != null) {</span>
+                        // name txn is -1 because the parent call sets up partition name for us
+<span class="fc" id="L1040">                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);</span>
+                    }
+<span class="fc" id="L1042">                } else {</span>
+<span class="fc" id="L1043">                    Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));</span>
+<span class="fc" id="L1044">                    Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));</span>
+                }
+<span class="fc" id="L1046">            } else {</span>
+<span class="fc" id="L1047">                Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryMR.INSTANCE));</span>
+<span class="fc" id="L1048">                Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryMR.INSTANCE));</span>
+                // the appropriate index for NUllColumn will be created lazily when requested
+                // these indexes have state and may not be always required
+<span class="fc" id="L1051">                Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));</span>
+<span class="fc" id="L1052">                Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));</span>
+
+                // Column is not present in the partition. Set column top to be the size of the partition.
+<span class="fc" id="L1055">                columnTops.setQuick(columnBase / 2 + columnIndex, partitionRowCount);</span>
+            }
+        } finally {
+<span class="fc" id="L1058">            path.trimTo(plen);</span>
+        }
+<span class="fc" id="L1060">    }</span>
+
+    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+<span class="fc bfc" id="L1063" title="All 2 branches covered.">        if (columnVersionReader.getVersion() != columnVersion) {</span>
+<span class="fc" id="L1064">            columnVersionReader.readSafe(clock, deadline);</span>
+        }
+<span class="fc bfc" id="L1066" title="All 2 branches covered.">        return columnVersionReader.getVersion() == columnVersion;</span>
+    }
+
+    private boolean reloadMetadata(long txnStructureVersion, long deadline, boolean reshuffleColumns) {
+        // create transition index, which will help us reuse already open resources
+<span class="fc bfc" id="L1071" title="All 2 branches covered.">        if (txnStructureVersion == metadata.getStructureVersion()) {</span>
+<span class="fc" id="L1072">            return true;</span>
+        }
+
+        while (true) {
+            long pTransitionIndex;
+            try {
+<span class="fc" id="L1078">                pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);</span>
+<span class="fc bfc" id="L1079" title="All 2 branches covered.">                if (pTransitionIndex &lt; 0) {</span>
+<span class="fc bfc" id="L1080" title="All 2 branches covered.">                    if (clock.getTicks() &lt; deadline) {</span>
+<span class="fc" id="L1081">                        return false;</span>
+                    }
+<span class="fc" id="L1083">                    LOG.error().$(&quot;metadata read timeout [timeout=&quot;).$(configuration.getSpinLockTimeout()).utf8(&quot;ms, table=&quot;).$(tableToken.getTableName()).I$();</span>
+<span class="fc" id="L1084">                    throw CairoException.critical(0).put(&quot;Metadata read timeout [table=&quot;).put(tableToken.getTableName()).put(']');</span>
+                }
+<span class="fc" id="L1086">            } catch (CairoException ex) {</span>
+                // This is temporary solution until we can get multiple version of metadata not overwriting each other
+<span class="fc" id="L1088">                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());</span>
+<span class="fc" id="L1089">                continue;</span>
+<span class="fc" id="L1090">            }</span>
+
+            try {
+<span class="fc" id="L1093">                metadata.applyTransitionIndex();</span>
+<span class="pc bpc" id="L1094" title="1 of 2 branches missed.">                if (reshuffleColumns) {</span>
+<span class="fc" id="L1095">                    final int columnCount = metadata.getColumnCount();</span>
+
+<span class="fc" id="L1097">                    int columnCountShl = getColumnBits(columnCount);</span>
+                    // when a column is added we cannot easily reshuffle columns in-place
+                    // the reason is that we'd have to create gaps in columns list between
+                    // partitions. It is possible in theory, but this could be an algo for
+                    // another day.
+<span class="fc bfc" id="L1102" title="All 2 branches covered.">                    if (columnCountShl &gt; this.columnCountShl) {</span>
+<span class="fc" id="L1103">                        createNewColumnList(columnCount, pTransitionIndex, columnCountShl);</span>
+                    } else {
+<span class="fc" id="L1105">                        reshuffleColumns(columnCount, pTransitionIndex);</span>
+                    }
+                    // rearrange symbol map reader list
+<span class="fc" id="L1108">                    reshuffleSymbolMapReaders(pTransitionIndex, columnCount);</span>
+<span class="fc" id="L1109">                    this.columnCount = columnCount;</span>
+<span class="fc" id="L1110">                    reloadSymbolMapCounts();</span>
+                }
+<span class="fc" id="L1112">                return true;</span>
+            } finally {
+<span class="fc" id="L1114">                TableUtils.freeTransitionIndex(pTransitionIndex);</span>
+            }
+        }
+    }
+
+    /**
+     * Updates boundaries of all columns in partition.
+     *
+     * @param partitionIndex index of partition
+     * @param rowCount       number of rows in partition
+     */
+    private void reloadPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
+<span class="fc" id="L1126">        Path path = pathGenPartitioned(partitionIndex);</span>
+<span class="fc" id="L1127">        TableUtils.txnPartitionConditionally(path, openPartitionNameTxn);</span>
+        try {
+<span class="fc" id="L1129">            int symbolMapIndex = 0;</span>
+<span class="fc" id="L1130">            int columnBase = getColumnBase(partitionIndex);</span>
+<span class="fc bfc" id="L1131" title="All 2 branches covered.">            for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L1132">                final int index = getPrimaryColumnIndex(columnBase, i);</span>
+<span class="fc" id="L1133">                final MemoryMR mem1 = columns.getQuick(index);</span>
+<span class="fc bfc" id="L1134" title="All 2 branches covered.">                if (mem1 instanceof NullMemoryMR) {</span>
+<span class="fc" id="L1135">                    reloadColumnAt(</span>
+                            partitionIndex,
+                            path,
+                            columns,
+                            columnTops,
+                            bitmapIndexes,
+                            columnBase,
+                            i,
+                            rowCount
+                    );
+                } else {
+<span class="fc" id="L1146">                    growColumn(</span>
+                            mem1,
+<span class="fc" id="L1148">                            columns.getQuick(index + 1),</span>
+<span class="fc" id="L1149">                            metadata.getColumnType(i),</span>
+<span class="fc" id="L1150">                            rowCount - getColumnTop(columnBase, i)</span>
+                    );
+                }
+
+                // reload symbol map
+<span class="fc" id="L1155">                SymbolMapReader reader = symbolMapReaders.getQuick(i);</span>
+<span class="fc bfc" id="L1156" title="All 2 branches covered.">                if (reader == null) {</span>
+<span class="fc" id="L1157">                    continue;</span>
+                }
+<span class="fc" id="L1159">                reader.updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));</span>
+            }
+        } finally {
+<span class="fc" id="L1162">            path.trimTo(rootLen);</span>
+        }
+<span class="fc" id="L1164">    }</span>
+
+    private void reloadSlow(boolean reshuffle) {
+<span class="fc" id="L1167">        final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();</span>
+        do {
+            // Reload txn
+<span class="fc" id="L1170">            readTxnSlow(deadline);</span>
+            // Reload _meta if structure version updated, reload _cv if column version updated
+<span class="fc" id="L1172">        } while (</span>
+            // Reload column versions, column version used in metadata reload column shuffle
+<span class="fc bfc" id="L1174" title="All 2 branches covered.">                !reloadColumnVersion(txFile.getColumnVersion(), deadline)</span>
+                        // Start again if _meta with matching structure version cannot be loaded
+<span class="fc bfc" id="L1176" title="All 2 branches covered.">                        || !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle)</span>
+        );
+<span class="fc" id="L1178">    }</span>
+
+    private void reloadSymbolMapCounts() {
+<span class="fc" id="L1181">        int symbolMapIndex = 0;</span>
+<span class="fc bfc" id="L1182" title="All 2 branches covered.">        for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc bfc" id="L1183" title="All 2 branches covered.">            if (!ColumnType.isSymbol(metadata.getColumnType(i))) {</span>
+<span class="fc" id="L1184">                continue;</span>
+            }
+<span class="fc" id="L1186">            symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));</span>
+        }
+<span class="fc" id="L1188">    }</span>
+
+    private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
+<span class="fc bfc" id="L1191" title="All 2 branches covered.">        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {</span>
+<span class="fc" id="L1192">            final int writerColumnIndex = metadata.getWriterIndex(columnIndex);</span>
+<span class="fc" id="L1193">            final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);</span>
+<span class="pc bpc" id="L1194" title="1 of 2 branches missed.">            if (reader instanceof SymbolMapReaderImpl) {</span>
+<span class="nc" id="L1195">                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, 0);</span>
+<span class="nc" id="L1196">                return reader;</span>
+            }
+<span class="fc" id="L1198">            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, 0);</span>
+        } else {
+<span class="fc" id="L1200">            return reader;</span>
+        }
+    }
+
+    private void reshuffleColumns(int columnCount, long pTransitionIndex) {
+<span class="fc" id="L1205">        LOG.debug().$(&quot;reshuffling columns file list [table=&quot;).utf8(tableToken.getTableName()).I$();</span>
+<span class="fc" id="L1206">        final long pIndexBase = pTransitionIndex + 8;</span>
+<span class="fc" id="L1207">        int iterateCount = Math.max(columnCount, this.columnCount);</span>
+
+<span class="fc bfc" id="L1209" title="All 2 branches covered.">        for (int partitionIndex = 0; partitionIndex &lt; partitionCount; partitionIndex++) {</span>
+<span class="fc" id="L1210">            int base = getColumnBase(partitionIndex);</span>
+            try {
+<span class="fc" id="L1212">                long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);</span>
+<span class="fc bfc" id="L1213" title="All 4 branches covered.">                if (partitionRowCount &gt; -1L &amp;&amp; (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base, path)) &gt; -1L) {</span>
+<span class="fc bfc" id="L1214" title="All 2 branches covered.">                    for (int i = 0; i &lt; iterateCount; i++) {</span>
+<span class="fc" id="L1215">                        final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);</span>
+<span class="fc" id="L1216">                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);</span>
+
+<span class="fc bfc" id="L1218" title="All 2 branches covered.">                        if (action == -1) {</span>
+                            // This column is deleted (not moved).
+                            // Close all files
+<span class="fc" id="L1221">                            closePartitionColumnFile(base, i);</span>
+                        }
+
+                        // We should only remove columns from existing metadata if column count has reduced.
+                        // And we should not attempt to reload columns, which have no matches in the metadata
+<span class="fc bfc" id="L1226" title="All 2 branches covered.">                        if (i &lt; columnCount) {</span>
+<span class="fc bfc" id="L1227" title="All 2 branches covered.">                            if (copyFrom == i) {</span>
+                                // It appears that column hasn't changed its position. There are three possibilities here:
+                                // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                                //    on Windows before column can be deleted. In this case we must check for marker
+                                //    instance and the column from disk
+                                // 2. Column hasn't been altered, and we can skip to next column.
+<span class="fc" id="L1233">                                MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));</span>
+<span class="fc bfc" id="L1234" title="All 2 branches covered.">                                if (col instanceof NullMemoryMR) {</span>
+<span class="fc" id="L1235">                                    reloadColumnAt(</span>
+                                            partitionIndex,
+                                            path,
+                                            columns,
+                                            columnTops,
+                                            bitmapIndexes,
+                                            base,
+                                            i,
+                                            partitionRowCount
+                                    );
+                                }
+<span class="fc bfc" id="L1246" title="All 2 branches covered.">                            } else if (copyFrom &gt; -1) {</span>
+<span class="fc" id="L1247">                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);</span>
+<span class="pc bpc" id="L1248" title="1 of 2 branches missed.">                            } else if (copyFrom != Integer.MIN_VALUE) {</span>
+                                // new instance
+<span class="fc" id="L1250">                                reloadColumnAt(</span>
+                                        partitionIndex,
+                                        path,
+                                        columns,
+                                        columnTops,
+                                        bitmapIndexes,
+                                        base,
+                                        i,
+                                        partitionRowCount
+                                );
+                            }
+                        }
+                    }
+                }
+            } finally {
+<span class="fc" id="L1265">                path.trimTo(rootLen);</span>
+            }
+        }
+<span class="fc" id="L1268">    }</span>
+
+    private void reshuffleSymbolMapReaders(long pTransitionIndex, int columnCount) {
+<span class="fc" id="L1271">        final long pIndexBase = pTransitionIndex + Long.BYTES;</span>
+<span class="fc bfc" id="L1272" title="All 2 branches covered.">        if (columnCount &gt; this.columnCount) {</span>
+<span class="fc" id="L1273">            symbolMapReaders.setPos(columnCount);</span>
+        }
+
+<span class="fc bfc" id="L1276" title="All 2 branches covered.">        for (int i = 0, n = Math.max(columnCount, this.columnCount); i &lt; n; i++) {</span>
+<span class="fc" id="L1277">            long offset = pIndexBase + (long) i * Long.BYTES;</span>
+<span class="fc" id="L1278">            final int action = Unsafe.getUnsafe().getInt(offset);</span>
+<span class="fc" id="L1279">            final int copyFrom = Unsafe.getUnsafe().getInt(offset + 4L);</span>
+
+<span class="fc bfc" id="L1281" title="All 2 branches covered.">            if (action == -1) {</span>
+                // deleted
+<span class="fc" id="L1283">                Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(i, null));</span>
+            }
+
+            // don't copy entries to themselves, unless symbol map was deleted
+<span class="fc bfc" id="L1287" title="All 2 branches covered.">            if (copyFrom == i) {</span>
+<span class="fc" id="L1288">                SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);</span>
+<span class="pc bpc" id="L1289" title="1 of 4 branches missed.">                if (reader != null &amp;&amp; reader.isDeleted()) {</span>
+<span class="nc" id="L1290">                    symbolMapReaders.setQuick(copyFrom, reloadSymbolMapReader(copyFrom, reader));</span>
+                }
+<span class="fc bfc" id="L1292" title="All 2 branches covered.">            } else if (copyFrom &gt; -1) {</span>
+<span class="fc" id="L1293">                SymbolMapReader tmp = symbolMapReaders.getQuick(copyFrom);</span>
+<span class="fc" id="L1294">                copyOrRenewSymbolMapReader(tmp, i);</span>
+<span class="fc bfc" id="L1295" title="All 2 branches covered.">            } else if (copyFrom != Integer.MIN_VALUE) {</span>
+                // New instance
+<span class="fc" id="L1297">                symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));</span>
+            }
+        }
+<span class="fc" id="L1300">    }</span>
+
+    int getColumnCount() {
+<span class="fc" id="L1303">        return columnCount;</span>
+    }
+
+    int getPartitionIndex(int columnBase) {
+<span class="fc" id="L1307">        return columnBase &gt;&gt;&gt; columnCountShl;</span>
+    }
+
+    long getPartitionRowCount(int partitionIndex) {
+<span class="fc" id="L1311">        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);</span>
+    }
+
+    TxnScoreboard getTxnScoreboard() {
+<span class="fc" id="L1315">        return txnScoreboard;</span>
+    }
+
+    boolean isColumnCached(int columnIndex) {
+<span class="fc" id="L1319">        return symbolMapReaders.getQuick(columnIndex).isCached();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

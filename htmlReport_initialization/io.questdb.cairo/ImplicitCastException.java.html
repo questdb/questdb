@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ImplicitCastException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">ImplicitCastException.java</span></div><h1>ImplicitCastException.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.std.Chars;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.StringSink;
+
+<span class="fc" id="L32">public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {</span>
+<span class="fc" id="L33">    private static final StackTraceElement[] EMPTY_STACK_TRACE = {};</span>
+<span class="fc" id="L34">    private static final ThreadLocal&lt;ImplicitCastException&gt; tlException = new ThreadLocal&lt;&gt;(ImplicitCastException::new);</span>
+<span class="fc" id="L35">    protected final StringSink message = new StringSink();</span>
+
+    public static ImplicitCastException inconvertibleValue(double value, int fromType, int toType) {
+<span class="fc" id="L38">        return instance().put(&quot;inconvertible value: &quot;)</span>
+<span class="fc" id="L39">                .put(value)</span>
+<span class="fc" id="L40">                .put(&quot; [&quot;)</span>
+<span class="fc" id="L41">                .put(ColumnType.nameOf(fromType))</span>
+<span class="fc" id="L42">                .put(&quot; -&gt; &quot;)</span>
+<span class="fc" id="L43">                .put(ColumnType.nameOf(toType))</span>
+<span class="fc" id="L44">                .put(']');</span>
+    }
+
+    public static ImplicitCastException inconvertibleValue(char value, int fromType, int toType) {
+<span class="fc" id="L48">        return instance().put(&quot;inconvertible value: &quot;)</span>
+<span class="fc" id="L49">                .put(value)</span>
+<span class="fc" id="L50">                .put(&quot; [&quot;)</span>
+<span class="fc" id="L51">                .put(ColumnType.nameOf(fromType))</span>
+<span class="fc" id="L52">                .put(&quot; -&gt; &quot;)</span>
+<span class="fc" id="L53">                .put(ColumnType.nameOf(toType))</span>
+<span class="fc" id="L54">                .put(']');</span>
+    }
+
+    public static ImplicitCastException inconvertibleValue(int tupleIndex, CharSequence value, int fromType, int toType) {
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">        if (tupleIndex == -1) {</span>
+<span class="nc" id="L59">            return inconvertibleValue(value, fromType, toType);</span>
+        }
+
+<span class="fc" id="L62">        ImplicitCastException ice = instance();</span>
+<span class="fc" id="L63">        ice.put(&quot;inconvertible value: &quot;);</span>
+<span class="pc bpc" id="L64" title="1 of 2 branches missed.">        if (value != null) {</span>
+<span class="fc" id="L65">            ice.put('`').put(value).put('`');</span>
+        } else {
+<span class="nc" id="L67">            ice.put(&quot;null&quot;);</span>
+        }
+
+<span class="fc" id="L70">        return ice.put(&quot; [&quot;)</span>
+<span class="fc" id="L71">                .put(ColumnType.nameOf(fromType))</span>
+<span class="fc" id="L72">                .put(&quot; -&gt; &quot;)</span>
+<span class="fc" id="L73">                .put(ColumnType.nameOf(toType))</span>
+<span class="fc" id="L74">                .put(']')</span>
+<span class="fc" id="L75">                .put(&quot; tuple: &quot;)</span>
+<span class="fc" id="L76">                .put(tupleIndex);</span>
+    }
+
+    public static ImplicitCastException inconvertibleValue(CharSequence value, int fromType, int toType) {
+<span class="fc" id="L80">        ImplicitCastException ice = instance();</span>
+<span class="fc" id="L81">        ice.put(&quot;inconvertible value: &quot;);</span>
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">        if (value != null) {</span>
+<span class="fc" id="L83">            ice.put('`').put(value).put('`');</span>
+        } else {
+<span class="nc" id="L85">            ice.put(&quot;null&quot;);</span>
+        }
+
+<span class="fc" id="L88">        return ice.put(&quot; [&quot;)</span>
+<span class="fc" id="L89">                .put(ColumnType.nameOf(fromType))</span>
+<span class="fc" id="L90">                .put(&quot; -&gt; &quot;)</span>
+<span class="fc" id="L91">                .put(ColumnType.nameOf(toType))</span>
+<span class="fc" id="L92">                .put(']');</span>
+    }
+
+    public static ImplicitCastException inconvertibleValue(long value, int fromType, int toType) {
+<span class="fc" id="L96">        return instance().put(&quot;inconvertible value: &quot;)</span>
+<span class="fc" id="L97">                .put(value)</span>
+<span class="fc" id="L98">                .put(&quot; [&quot;)</span>
+<span class="fc" id="L99">                .put(ColumnType.nameOf(fromType))</span>
+<span class="fc" id="L100">                .put(&quot; -&gt; &quot;)</span>
+<span class="fc" id="L101">                .put(ColumnType.nameOf(toType))</span>
+<span class="fc" id="L102">                .put(']');</span>
+    }
+
+    public static ImplicitCastException instance() {
+<span class="fc" id="L106">        ImplicitCastException ex = tlException.get();</span>
+        // This is to have correct stack trace in local debugging with -ea option
+<span class="pc bpc" id="L108" title="1 of 2 branches missed.">        assert (ex = new ImplicitCastException()) != null;</span>
+<span class="fc" id="L109">        ex.message.clear();</span>
+<span class="fc" id="L110">        return ex;</span>
+    }
+
+    @Override
+    public CharSequence getFlyweightMessage() {
+<span class="fc" id="L115">        return message;</span>
+    }
+
+    @Override
+    public String getMessage() {
+<span class="fc" id="L120">        return Chars.toString(message);</span>
+    }
+
+    @Override
+    public StackTraceElement[] getStackTrace() {
+<span class="fc" id="L125">        StackTraceElement[] result = EMPTY_STACK_TRACE;</span>
+        // This is to have correct stack trace reported in CI
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">        assert (result = super.getStackTrace()) != null;</span>
+<span class="fc" id="L128">        return result;</span>
+    }
+
+    public ImplicitCastException put(long value) {
+<span class="fc" id="L132">        message.put(value);</span>
+<span class="fc" id="L133">        return this;</span>
+    }
+
+    public ImplicitCastException put(double value) {
+<span class="fc" id="L137">        message.put(value);</span>
+<span class="fc" id="L138">        return this;</span>
+    }
+
+    public ImplicitCastException put(CharSequence cs) {
+<span class="fc" id="L142">        message.put(cs);</span>
+<span class="fc" id="L143">        return this;</span>
+    }
+
+    public ImplicitCastException put(char c) {
+<span class="fc" id="L147">        message.put(c);</span>
+<span class="fc" id="L148">        return this;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

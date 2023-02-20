@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Mig506.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.mig</a> &gt; <span class="el_source">Mig506.java</span></div><h1>Mig506.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.mig;
+
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
+
+<span class="pc" id="L35">final class Mig506 {</span>
+    private static final String TXN_FILE_NAME = &quot;_txn&quot;;
+    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    private static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT + 8;
+    private static final long TX_OFFSET_MIN_TIMESTAMP = TX_OFFSET_FIXED_ROW_COUNT_64 + 8;
+    private static final long TX_OFFSET_MAX_TIMESTAMP = TX_OFFSET_MIN_TIMESTAMP + 8;
+    private static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = &quot;_archive&quot;;
+    private static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
+
+    private static boolean removedPartitionsIncludes(long ts, MemoryR txMem, int symbolsCount) {
+<span class="fc" id="L45">        long removedPartitionLo = MigrationActions.prefixedBlockOffset(</span>
+                MigrationActions.TX_OFFSET_MAP_WRITER_COUNT_505,
+                symbolsCount + 1L,
+                Integer.BYTES
+        );
+<span class="fc" id="L50">        long removedPartitionCount = txMem.getInt(removedPartitionLo);</span>
+<span class="fc" id="L51">        long removedPartitionsHi = MigrationActions.prefixedBlockOffset(removedPartitionLo, Long.BYTES, removedPartitionCount);</span>
+
+<span class="pc bpc" id="L53" title="1 of 2 branches missed.">        for (long offset = removedPartitionLo + Integer.BYTES; offset &lt; removedPartitionsHi; offset += Long.BYTES) {</span>
+<span class="nc" id="L54">            long removedPartition = txMem.getLong(offset);</span>
+<span class="nc bnc" id="L55" title="All 2 branches missed.">            if (removedPartition == ts) {</span>
+<span class="nc" id="L56">                return true;</span>
+            }
+        }
+<span class="fc" id="L59">        return false;</span>
+    }
+
+    private static void writeAttachedPartitions(
+            FilesFacade ff,
+            long tempMem8b,
+            Path path,
+            MemoryMARW txMem,
+            int partitionBy,
+            int symbolsCount,
+            MemoryARW writeTo
+    ) {
+<span class="fc" id="L71">        int rootLen = path.length();</span>
+
+<span class="fc" id="L73">        long minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);</span>
+<span class="fc" id="L74">        long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);</span>
+<span class="fc" id="L75">        long transientCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);</span>
+
+<span class="fc" id="L77">        final PartitionBy.PartitionFloorMethod partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">        assert partitionFloorMethod != null;</span>
+
+<span class="fc" id="L80">        final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);</span>
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">        assert partitionAddMethod != null;</span>
+
+<span class="fc" id="L83">        final long tsLimit = partitionFloorMethod.floor(maxTimestamp);</span>
+
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        for (long ts = partitionFloorMethod.floor(minTimestamp); ts &lt; tsLimit; ts = partitionAddMethod.calculate(ts, 1)) {</span>
+<span class="fc" id="L86">            path.trimTo(rootLen);</span>
+<span class="fc" id="L87">            TableUtils.setPathForPartition(path, partitionBy, ts, false);</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">            if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">                if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {</span>
+<span class="fc" id="L90">                    long partitionSize = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);</span>
+
+                    // Update tx file with 4 longs per partition
+<span class="fc" id="L93">                    writeTo.putLong(ts);</span>
+<span class="fc" id="L94">                    writeTo.putLong(partitionSize);</span>
+<span class="fc" id="L95">                    writeTo.putLong(-1L);</span>
+<span class="fc" id="L96">                    writeTo.putLong(0L);</span>
+                }
+            }
+        }
+        // last partition
+<span class="fc" id="L101">        writeTo.putLong(tsLimit);</span>
+<span class="fc" id="L102">        writeTo.putLong(transientCount);</span>
+<span class="fc" id="L103">        writeTo.putLong(-1);</span>
+<span class="fc" id="L104">        writeTo.putLong(0);</span>
+<span class="fc" id="L105">    }</span>
+
+    static void migrate(MigrationContext migrationContext) {
+        // Update transaction file
+        // Before there was 1 int per symbol and list of removed partitions
+        // Now there is 2 ints per symbol and 4 longs per each non-removed partition
+
+<span class="fc" id="L112">        MigrationActions.LOG.info().$(&quot;rebuilding tx file [table=&quot;).$(migrationContext.getTablePath()).I$();</span>
+<span class="fc" id="L113">        Path path = migrationContext.getTablePath();</span>
+<span class="fc" id="L114">        final FilesFacade ff = migrationContext.getFf();</span>
+<span class="fc" id="L115">        int pathDirLen = path.length();</span>
+
+<span class="fc" id="L117">        path.concat(TXN_FILE_NAME).$();</span>
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">        if (!ff.exists(path)) {</span>
+<span class="nc" id="L119">            MigrationActions.LOG.error().$(&quot;tx file does not exist, nothing to migrate [path=&quot;).$(path).I$();</span>
+<span class="nc" id="L120">            return;</span>
+        }
+
+<span class="fc" id="L123">        EngineMigration.backupFile(</span>
+                ff,
+                path,
+<span class="fc" id="L126">                migrationContext.getTablePath2(),</span>
+                TXN_FILE_NAME,
+                417
+        );
+
+<span class="fc" id="L131">        MigrationActions.LOG.debug().$(&quot;opening for rw [path=&quot;).$(path).I$();</span>
+<span class="fc" id="L132">        try (MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$())) {</span>
+<span class="fc" id="L133">            long tempMem8b = migrationContext.getTempMemory(8);</span>
+
+<span class="fc" id="L135">            MemoryARW txFileUpdate = migrationContext.getTempVirtualMem();</span>
+<span class="fc" id="L136">            txFileUpdate.jumpTo(0);</span>
+
+<span class="fc" id="L138">            int symbolColumnCount = txMem.getInt(MigrationActions.TX_OFFSET_MAP_WRITER_COUNT_505);</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">            for (int i = 0; i &lt; symbolColumnCount; i++) {</span>
+<span class="fc" id="L140">                final int symbolCount = txMem.getInt(</span>
+<span class="fc" id="L141">                        MigrationActions.prefixedBlockOffset(</span>
+                                MigrationActions.TX_OFFSET_MAP_WRITER_COUNT_505,
+                                i + 1L,
+                                Integer.BYTES
+                        )
+                );
+<span class="fc" id="L147">                txFileUpdate.putInt(symbolCount);</span>
+<span class="fc" id="L148">                txFileUpdate.putInt(symbolCount);</span>
+            }
+
+            // Set partition segment size as 0 for now
+<span class="fc" id="L152">            long partitionSegmentOffset = txFileUpdate.getAppendOffset();</span>
+<span class="fc" id="L153">            txFileUpdate.putInt(0);</span>
+
+<span class="fc" id="L155">            final int partitionBy = TableUtils.readIntOrFail(</span>
+                    ff,
+<span class="fc" id="L157">                    migrationContext.getMetadataFd(),</span>
+                    TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY,
+                    tempMem8b,
+                    path
+            );
+<span class="fc bfc" id="L162" title="All 2 branches covered.">            if (PartitionBy.isPartitioned(partitionBy)) {</span>
+<span class="fc" id="L163">                path.trimTo(pathDirLen);</span>
+<span class="fc" id="L164">                writeAttachedPartitions(ff, tempMem8b, path, txMem, partitionBy, symbolColumnCount, txFileUpdate);</span>
+            }
+<span class="fc" id="L166">            long updateSize = txFileUpdate.getAppendOffset();</span>
+<span class="fc" id="L167">            long partitionSegmentSize = updateSize - partitionSegmentOffset - Integer.BYTES;</span>
+<span class="fc" id="L168">            txFileUpdate.putInt(partitionSegmentOffset, (int) partitionSegmentSize);</span>
+
+            // Save txFileUpdate to tx file starting at LOCAL_TX_OFFSET_MAP_WRITER_COUNT + 4
+<span class="fc" id="L171">            long writeOffset = MigrationActions.TX_OFFSET_MAP_WRITER_COUNT_505 + Integer.BYTES;</span>
+<span class="fc" id="L172">            txMem.jumpTo(writeOffset);</span>
+
+<span class="pc bpc" id="L174" title="1 of 4 branches missed.">            for (int i = 0, size = 1; i &lt; size &amp;&amp; updateSize &gt; 0; i++) {</span>
+<span class="fc" id="L175">                long writeSize = Math.min(updateSize, txFileUpdate.getPageSize());</span>
+<span class="fc" id="L176">                txMem.putBlockOfBytes(txFileUpdate.getPageAddress(i), writeSize);</span>
+<span class="fc" id="L177">                updateSize -= writeSize;</span>
+            }
+
+<span class="pc bpc" id="L180" title="1 of 2 branches missed.">            assert updateSize == 0;</span>
+        }
+<span class="fc" id="L182">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

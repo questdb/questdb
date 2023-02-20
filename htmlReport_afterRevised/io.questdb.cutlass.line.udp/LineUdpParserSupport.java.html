@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineUdpParserSupport.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.udp</a> &gt; <span class="el_source">LineUdpParserSupport.java</span></div><h1>LineUdpParserSupport.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.udp;
+
+import io.questdb.cairo.*;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+
+<span class="nc" id="L34">public class LineUdpParserSupport {</span>
+<span class="fc" id="L35">    private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);</span>
+
+    public static int getValueType(CharSequence value) {
+<span class="fc" id="L38">        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG);</span>
+    }
+
+    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType) {
+        // method called for inbound ilp messages on each value.
+        // returning UNDEFINED makes the whole line be skipped.
+        // 0 len values, return null type.
+        // the goal of this method is to guess the potential type
+        // and then it will be parsed accordingly by 'putValue'.
+<span class="fc" id="L47">        int valueLen = value.length();</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        if (valueLen &gt; 0) {</span>
+<span class="fc" id="L49">            char first = value.charAt(0);</span>
+<span class="fc" id="L50">            char last = value.charAt(valueLen - 1); // see AbstractLineSender.field methods</span>
+<span class="fc bfc" id="L51" title="All 5 branches covered.">            switch (last) {</span>
+                case 'i':
+<span class="pc bpc" id="L53" title="1 of 6 branches missed.">                    if (valueLen &gt; 3 &amp;&amp; value.charAt(0) == '0' &amp;&amp; value.charAt(1) == 'x') {</span>
+<span class="fc" id="L54">                        return ColumnType.LONG256;</span>
+                    }
+<span class="fc bfc" id="L56" title="All 2 branches covered.">                    return valueLen == 1 ? ColumnType.SYMBOL : defaultIntegerColumnType;</span>
+                case 't':
+<span class="fc bfc" id="L58" title="All 8 branches covered.">                    if (valueLen &gt; 1 &amp;&amp; ((first &gt;= '0' &amp;&amp; first &lt;= '9') || first == '-')) {</span>
+<span class="fc" id="L59">                        return ColumnType.TIMESTAMP;</span>
+                    }
+                    // fall through
+                case 'T':
+                    // t
+                    // T
+                case 'e':
+                case 'E':
+                    // tru(e)
+                    // fals(e)
+                case 'f':
+                case 'F':
+                    // f
+                    // F
+<span class="fc bfc" id="L73" title="All 2 branches covered.">                    if (valueLen == 1) {</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">                        return last != 'e' ? ColumnType.BOOLEAN : ColumnType.SYMBOL;</span>
+                    }
+<span class="fc bfc" id="L76" title="All 4 branches covered.">                    return SqlKeywords.isTrueKeyword(value) || SqlKeywords.isFalseKeyword(value) ?</span>
+<span class="fc" id="L77">                            ColumnType.BOOLEAN : ColumnType.SYMBOL;</span>
+                case '&quot;':
+<span class="pc bpc" id="L79" title="1 of 4 branches missed.">                    if (valueLen &lt; 2 || value.charAt(0) != '\&quot;') {</span>
+<span class="fc" id="L80">                        LOG.error().$(&quot;incorrectly quoted string: &quot;).$(value).$();</span>
+<span class="fc" id="L81">                        return ColumnType.UNDEFINED;</span>
+                    }
+<span class="fc" id="L83">                    return ColumnType.STRING;</span>
+                default:
+<span class="fc bfc" id="L85" title="All 12 branches covered.">                    if (last &gt;= '0' &amp;&amp; last &lt;= '9' &amp;&amp; ((first &gt;= '0' &amp;&amp; first &lt;= '9') || first == '-' || first == '.')) {</span>
+<span class="fc" id="L86">                        return defaultFloatColumnType;</span>
+                    }
+<span class="fc bfc" id="L88" title="All 2 branches covered.">                    if (SqlKeywords.isNanKeyword(value)) {</span>
+<span class="fc" id="L89">                        return defaultFloatColumnType;</span>
+                    }
+<span class="fc bfc" id="L91" title="All 2 branches covered.">                    if (value.charAt(0) == '&quot;') {</span>
+<span class="fc" id="L92">                        return ColumnType.UNDEFINED;</span>
+                    }
+<span class="fc" id="L94">                    return ColumnType.SYMBOL;</span>
+            }
+        }
+<span class="fc" id="L97">        return ColumnType.NULL;</span>
+    }
+
+    /**
+     * Writes column value to table row. CharSequence value is interpreted depending on
+     * column type and written to column, identified by columnIndex. If value cannot be
+     * cast to column type, #BadCastException is thrown.
+     *
+     * @param row            table row
+     * @param columnType     column type value will be cast to
+     * @param columnTypeMeta if columnType's tag is GeoHash it contains bits precision (low short)
+     *                       and tag size (high short negative), otherwise -1
+     * @param columnIndex    index of column to write value to
+     * @param value          value characters
+     */
+    public static void putValue(
+            TableWriter.Row row,
+            int columnType,
+            int columnTypeMeta,
+            int columnIndex,
+            CharSequence value
+    ) {
+<span class="fc bfc" id="L119" title="All 2 branches covered.">        if (value.length() &gt; 0) {</span>
+            try {
+<span class="pc bpc" id="L121" title="1 of 18 branches missed.">                switch (ColumnType.tagOf(columnType)) {</span>
+                    case ColumnType.LONG:
+<span class="fc" id="L123">                        row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));</span>
+<span class="fc" id="L124">                        break;</span>
+                    case ColumnType.BOOLEAN:
+<span class="fc" id="L126">                        row.putBool(columnIndex, isTrue(value));</span>
+<span class="fc" id="L127">                        break;</span>
+                    case ColumnType.STRING:
+<span class="fc" id="L129">                        row.putStr(columnIndex, value, 1, value.length() - 2);</span>
+<span class="fc" id="L130">                        break;</span>
+                    case ColumnType.SYMBOL:
+<span class="fc" id="L132">                        row.putSym(columnIndex, value);</span>
+<span class="fc" id="L133">                        break;</span>
+                    case ColumnType.DOUBLE:
+<span class="fc" id="L135">                        row.putDouble(columnIndex, Numbers.parseDouble(value));</span>
+<span class="fc" id="L136">                        break;</span>
+                    case ColumnType.FLOAT:
+<span class="fc" id="L138">                        row.putFloat(columnIndex, Numbers.parseFloat(value));</span>
+<span class="fc" id="L139">                        break;</span>
+                    case ColumnType.INT:
+<span class="fc" id="L141">                        row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));</span>
+<span class="fc" id="L142">                        break;</span>
+                    case ColumnType.SHORT:
+<span class="fc" id="L144">                        row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));</span>
+<span class="fc" id="L145">                        break;</span>
+                    case ColumnType.BYTE:
+<span class="fc" id="L147">                        long v = Numbers.parseLong(value, 0, value.length() - 1);</span>
+<span class="fc bfc" id="L148" title="All 4 branches covered.">                        if (v &lt; Byte.MIN_VALUE || v &gt; Byte.MAX_VALUE) {</span>
+<span class="fc" id="L149">                            throw CairoException.nonCritical()</span>
+<span class="fc" id="L150">                                    .put(&quot;line protocol integer is out of byte bounds [columnIndex=&quot;)</span>
+<span class="fc" id="L151">                                    .put(columnIndex)</span>
+<span class="fc" id="L152">                                    .put(&quot;, v=&quot;)</span>
+<span class="fc" id="L153">                                    .put(v)</span>
+<span class="fc" id="L154">                                    .put(']');</span>
+                        }
+<span class="fc" id="L156">                        row.putByte(columnIndex, (byte) v);</span>
+<span class="fc" id="L157">                        break;</span>
+                    case ColumnType.DATE:
+<span class="fc" id="L159">                        row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));</span>
+<span class="fc" id="L160">                        break;</span>
+                    case ColumnType.LONG256:
+<span class="fc" id="L162">                        int limit = value.length() - 1;</span>
+<span class="pc bpc" id="L163" title="1 of 2 branches missed.">                        if (value.charAt(limit) != 'i') {</span>
+<span class="nc" id="L164">                            limit++;</span>
+                        }
+<span class="fc" id="L166">                        row.putLong256(columnIndex, value, 2, limit);</span>
+<span class="fc" id="L167">                        break;</span>
+                    case ColumnType.TIMESTAMP:
+<span class="fc" id="L169">                        row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));</span>
+<span class="fc" id="L170">                        break;</span>
+                    case ColumnType.CHAR:
+<span class="fc bfc" id="L172" title="All 2 branches covered.">                        row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes</span>
+<span class="fc" id="L173">                        break;</span>
+                    case ColumnType.GEOBYTE:
+<span class="fc" id="L175">                        row.putByte(</span>
+                                columnIndex,  // skip quotes
+<span class="fc" id="L177">                                (byte) GeoHashes.fromStringTruncatingNl(</span>
+                                        value,
+                                        1,
+<span class="fc" id="L180">                                        value.length() - 1,</span>
+                                        columnTypeMeta
+                                )
+                        );
+<span class="fc" id="L184">                        break;</span>
+                    case ColumnType.GEOSHORT:
+<span class="fc" id="L186">                        row.putShort(</span>
+                                columnIndex,
+<span class="fc" id="L188">                                (short) GeoHashes.fromStringTruncatingNl(</span>
+                                        value,
+                                        1,
+<span class="fc" id="L191">                                        value.length() - 1,</span>
+                                        columnTypeMeta
+                                )
+                        );
+<span class="fc" id="L195">                        break;</span>
+                    case ColumnType.GEOINT:
+<span class="fc" id="L197">                        row.putInt(</span>
+                                columnIndex,
+<span class="fc" id="L199">                                (int) GeoHashes.fromStringTruncatingNl(</span>
+                                        value,
+                                        1,
+<span class="fc" id="L202">                                        value.length() - 1,</span>
+                                        columnTypeMeta
+                                )
+                        );
+<span class="fc" id="L206">                        break;</span>
+                    case ColumnType.GEOLONG:
+<span class="fc" id="L208">                        row.putLong(</span>
+                                columnIndex,
+<span class="fc" id="L210">                                GeoHashes.fromStringTruncatingNl(</span>
+                                        value,
+                                        1,
+<span class="fc" id="L213">                                        value.length() - 1,</span>
+                                        columnTypeMeta
+                                )
+                        );
+<span class="fc" id="L217">                        break;</span>
+                    case ColumnType.NULL:
+                    default:
+                        // unsupported types and null are ignored
+                        break;
+                }
+<span class="fc" id="L223">            } catch (NumericException | ImplicitCastException e) {</span>
+<span class="fc" id="L224">                LOG.info()</span>
+<span class="fc" id="L225">                        .$(&quot;cast error [value=&quot;)</span>
+<span class="fc" id="L226">                        .$(value).$(&quot;, toType=&quot;)</span>
+<span class="fc" id="L227">                        .$(ColumnType.nameOf(columnType))</span>
+<span class="fc" id="L228">                        .$(']')</span>
+<span class="fc" id="L229">                        .$();</span>
+<span class="fc" id="L230">            }</span>
+        } else {
+<span class="fc" id="L232">            putNullValue(row, columnIndex, columnType);</span>
+        }
+<span class="fc" id="L234">    }</span>
+
+    private static boolean isTrue(CharSequence value) {
+<span class="fc bfc" id="L237" title="All 2 branches covered.">        return (value.charAt(0) | 32) == 't';</span>
+    }
+
+    private static void putNullValue(TableWriter.Row row, int columnIndex, int columnType) {
+<span class="pc bpc" id="L241" title="5 of 18 branches missed.">        switch (ColumnType.tagOf(columnType)) {</span>
+            case ColumnType.BOOLEAN:
+<span class="fc" id="L243">                row.putBool(columnIndex, false);</span>
+<span class="fc" id="L244">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L246">                row.putStr(columnIndex, null);</span>
+<span class="fc" id="L247">                break;</span>
+            case ColumnType.SYMBOL:
+<span class="fc" id="L249">                row.putSym(columnIndex, null);</span>
+<span class="fc" id="L250">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L252">                row.putDouble(columnIndex, Double.NaN);</span>
+<span class="fc" id="L253">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L255">                row.putFloat(columnIndex, Float.NaN);</span>
+<span class="fc" id="L256">                break;</span>
+            case ColumnType.LONG:
+<span class="fc" id="L258">                row.putLong(columnIndex, Numbers.LONG_NaN);</span>
+<span class="fc" id="L259">                break;</span>
+            case ColumnType.INT:
+<span class="fc" id="L261">                row.putInt(columnIndex, Numbers.INT_NaN);</span>
+<span class="fc" id="L262">                break;</span>
+            case ColumnType.SHORT:
+<span class="fc" id="L264">                row.putShort(columnIndex, (short) 0);</span>
+<span class="fc" id="L265">                break;</span>
+            case ColumnType.BYTE:
+<span class="fc" id="L267">                row.putByte(columnIndex, (byte) 0);</span>
+<span class="fc" id="L268">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc" id="L270">                row.putChar(columnIndex, (char) 0);</span>
+<span class="fc" id="L271">                break;</span>
+            case ColumnType.DATE:
+<span class="fc" id="L273">                row.putDate(columnIndex, Numbers.LONG_NaN);</span>
+<span class="fc" id="L274">                break;</span>
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L276">                row.putTimestamp(columnIndex, Numbers.LONG_NaN);</span>
+<span class="fc" id="L277">                break;</span>
+            case ColumnType.LONG256:
+<span class="fc" id="L279">                row.putLong256(columnIndex, &quot;&quot;);</span>
+<span class="fc" id="L280">                break;</span>
+            case ColumnType.GEOBYTE:
+<span class="nc" id="L282">                row.putByte(columnIndex, GeoHashes.BYTE_NULL);</span>
+<span class="nc" id="L283">                break;</span>
+            case ColumnType.GEOSHORT:
+<span class="nc" id="L285">                row.putShort(columnIndex, GeoHashes.SHORT_NULL);</span>
+<span class="nc" id="L286">                break;</span>
+            case ColumnType.GEOINT:
+<span class="nc" id="L288">                row.putInt(columnIndex, GeoHashes.INT_NULL);</span>
+<span class="nc" id="L289">                break;</span>
+            case ColumnType.GEOLONG:
+<span class="nc" id="L291">                row.putLong(columnIndex, GeoHashes.NULL);</span>
+<span class="nc" id="L292">                break;</span>
+            default:
+                // unsupported types are ignored
+                break;
+        }
+<span class="fc" id="L297">    }</span>
+
+<span class="nc" id="L299">    public static class BadCastException extends Exception {</span>
+<span class="nc" id="L300">        public static final BadCastException INSTANCE = new BadCastException();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

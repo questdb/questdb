@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SortedSymbolIndexRowCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">SortedSymbolIndexRowCursorFactory.java</span></div><h1>SortedSymbolIndexRowCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
+
+import java.util.Comparator;
+
+public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
+<span class="fc" id="L41">    private final static ThreadLocal&lt;SortHelper&gt; TL_SORT_HELPER = new ThreadLocal&lt;&gt;(SortHelper::new);</span>
+    private final int columnIndex;
+    private final boolean columnOrderDirectionAsc;
+<span class="fc" id="L44">    private final ListBasedSymbolIndexRowCursor cursor = new ListBasedSymbolIndexRowCursor();</span>
+    private final int indexDirection;
+<span class="fc" id="L46">    private final IntList symbolKeys = new IntList();</span>
+    private int symbolKeyLimit;
+
+<span class="fc" id="L49">    public SortedSymbolIndexRowCursorFactory(int columnIndex, boolean columnOrderDirectionAsc, int indexDirection) {</span>
+<span class="fc" id="L50">        this.columnIndex = columnIndex;</span>
+<span class="fc" id="L51">        this.indexDirection = indexDirection;</span>
+<span class="fc" id="L52">        this.columnOrderDirectionAsc = columnOrderDirectionAsc;</span>
+<span class="fc" id="L53">    }</span>
+
+    @Override
+    public RowCursor getCursor(DataFrame dataFrame) {
+<span class="fc" id="L57">        cursor.of(dataFrame);</span>
+<span class="fc" id="L58">        return cursor;</span>
+    }
+
+    @Override
+    public boolean isEntity() {
+<span class="nc" id="L63">        return false;</span>
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader) {
+<span class="fc" id="L68">        symbolKeys.clear();</span>
+
+<span class="fc" id="L70">        final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndex);</span>
+<span class="fc" id="L71">        int count = staticSymbolTable.getSymbolCount();</span>
+
+<span class="fc" id="L73">        final SortHelper sortHelper = TL_SORT_HELPER.get();</span>
+<span class="fc" id="L74">        final ObjList&lt;SymbolTableEntry&gt; entries = sortHelper.getEntries();</span>
+<span class="fc" id="L75">        symbolKeyLimit = count + 1;</span>
+
+<span class="fc" id="L77">        sortHelper.fillEntries(symbolKeyLimit);</span>
+
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc" id="L80">            final SymbolTableEntry e = entries.getQuick(i);</span>
+<span class="fc" id="L81">            e.key = TableUtils.toIndexKey(i);</span>
+<span class="fc" id="L82">            e.value = Chars.toString(staticSymbolTable.valueOf(i));</span>
+        }
+
+        // add NULL
+<span class="fc" id="L86">        final SymbolTableEntry e = entries.getQuick(count);</span>
+<span class="fc" id="L87">        e.key = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);</span>
+<span class="fc" id="L88">        e.value = null;</span>
+
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (columnOrderDirectionAsc) {</span>
+<span class="fc" id="L91">            sortHelper.sort(symbolKeyLimit, sortHelper.ascComparator);</span>
+        } else {
+<span class="fc" id="L93">            sortHelper.sort(symbolKeyLimit, sortHelper.dscComparator);</span>
+        }
+        // populate our list
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        for (int i = 0; i &lt; symbolKeyLimit; i++) {</span>
+<span class="fc" id="L97">            symbolKeys.add(entries.getQuick(i).key);</span>
+        }
+<span class="fc" id="L99">    }</span>
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L103">        sink.type(&quot;Index &quot;).type(BitmapIndexReader.nameOf(indexDirection)).type(&quot; scan&quot;).meta(&quot;on&quot;).putColumnName(columnIndex);</span>
+<span class="pc bpc" id="L104" title="1 of 2 branches missed.">        sink.attr(&quot;symbolOrder&quot;).val(columnOrderDirectionAsc ? &quot;asc&quot; : &quot;desc&quot;);</span>
+<span class="fc" id="L105">    }</span>
+
+<span class="fc" id="L107">    private static class SortHelper {</span>
+<span class="fc" id="L108">        private final Comparator&lt;SymbolTableEntry&gt; ascComparator = this::compareAsc;</span>
+<span class="fc" id="L109">        private final Comparator&lt;SymbolTableEntry&gt; dscComparator = this::compareDesc;</span>
+<span class="fc" id="L110">        private final ObjList&lt;SymbolTableEntry&gt; entries = new ObjList&lt;&gt;();</span>
+
+        public void fillEntries(int max) {
+<span class="fc" id="L113">            int size = entries.size();</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">            if (max &gt; entries.size()) {</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">                while (size++ &lt; max) {</span>
+<span class="fc" id="L116">                    entries.add(new SymbolTableEntry());</span>
+                }
+            }
+<span class="fc" id="L119">        }</span>
+
+        public ObjList&lt;SymbolTableEntry&gt; getEntries() {
+<span class="fc" id="L122">            return entries;</span>
+        }
+
+        public void sort(int max, Comparator&lt;SymbolTableEntry&gt; comparator) {
+<span class="fc" id="L126">            entries.sort(0, max, comparator);</span>
+<span class="fc" id="L127">        }</span>
+
+        private int compareAsc(SymbolTableEntry e1, SymbolTableEntry e2) {
+<span class="pc bpc" id="L130" title="1 of 6 branches missed.">            return (e1.value == null &amp;&amp; e2.value == null) ? 0 : e1.value == null ? -1 : e1.value.compareTo(e2.value);</span>
+        }
+
+        private int compareDesc(SymbolTableEntry e1, SymbolTableEntry e2) {
+<span class="pc bpc" id="L134" title="1 of 6 branches missed.">            return (e1.value == null &amp;&amp; e2.value == null) ? 0 : e1.value == null ? 1 : e2.value.compareTo(e1.value);</span>
+        }
+    }
+
+    // this is a thread-local contraption used for sorting symbol values. We ought to think of something better
+    private static class SymbolTableEntry {
+        private int key;
+        private String value;
+    }
+
+<span class="fc" id="L144">    private class ListBasedSymbolIndexRowCursor implements RowCursor {</span>
+        private RowCursor current;
+        private DataFrame dataFrame;
+        private int index;
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L151" title="All 4 branches covered.">            return current.hasNext() || fetchNext();</span>
+        }
+
+        @Override
+        public long next() {
+<span class="fc" id="L156">            return current.next();</span>
+        }
+
+        private boolean fetchNext() {
+<span class="fc bfc" id="L160" title="All 2 branches covered.">            while (index &lt; symbolKeyLimit) {</span>
+<span class="fc" id="L161">                current = dataFrame</span>
+<span class="fc" id="L162">                        .getBitmapIndexReader(columnIndex, indexDirection)</span>
+<span class="fc" id="L163">                        .getCursor(</span>
+                                true,
+<span class="fc" id="L165">                                symbolKeys.getQuick(index++),</span>
+<span class="fc" id="L166">                                dataFrame.getRowLo(),</span>
+<span class="fc" id="L167">                                dataFrame.getRowHi() - 1</span>
+                        );
+
+<span class="fc bfc" id="L170" title="All 2 branches covered.">                if (current.hasNext()) {</span>
+<span class="fc" id="L171">                    return true;</span>
+                }
+            }
+<span class="fc" id="L174">            return false;</span>
+        }
+
+        private void of(DataFrame dataFrame) {
+<span class="fc" id="L178">            this.dataFrame = dataFrame;</span>
+<span class="fc" id="L179">            this.index = 0;</span>
+<span class="fc" id="L180">            this.current = EmptyRowCursor.INSTANCE;</span>
+<span class="fc" id="L181">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

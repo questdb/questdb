@@ -1,0 +1,491 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableSequencerAPI.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal.seq</a> &gt; <span class="el_source">TableSequencerAPI.java</span></div><h1>TableSequencerAPI.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal.seq;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.function.BiFunction;
+
+import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
+import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
+
+public class TableSequencerAPI implements QuietCloseable {
+<span class="fc" id="L48">    private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);</span>
+    private final CairoConfiguration configuration;
+    private final CairoEngine engine;
+    private final long inactiveTtlUs;
+    private final BiFunction&lt;CharSequence, Object, TableSequencerEntry&gt; openSequencerInstanceLambda;
+    private final int recreateDistressedSequencerAttempts;
+<span class="fc" id="L54">    private final ConcurrentHashMap&lt;TableSequencerEntry&gt; seqRegistry = new ConcurrentHashMap&lt;&gt;(false);</span>
+    private volatile boolean closed;
+
+<span class="fc" id="L57">    public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {</span>
+<span class="fc" id="L58">        this.configuration = configuration;</span>
+<span class="fc" id="L59">        this.engine = engine;</span>
+<span class="fc" id="L60">        this.openSequencerInstanceLambda = this::openSequencerInstance;</span>
+<span class="fc" id="L61">        this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;</span>
+<span class="fc" id="L62">        this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();</span>
+<span class="fc" id="L63">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L67">        closed = true;</span>
+<span class="fc" id="L68">        releaseAll();</span>
+<span class="fc" id="L69">    }</span>
+
+    @TestOnly
+    public void closeSequencer(TableToken tableToken) {
+<span class="fc" id="L73">        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            try {
+<span class="fc" id="L75">                sequencer.close();</span>
+            } finally {
+<span class="fc" id="L77">                sequencer.unlockWrite();</span>
+            }
+        }
+<span class="fc" id="L80">    }</span>
+
+    public void dropTable(TableToken tableToken, boolean failedCreate) {
+<span class="fc" id="L83">        LOG.info().$(&quot;dropping wal table [name=&quot;).$(tableToken).$(&quot;, dirName=&quot;).utf8(tableToken.getDirName()).I$();</span>
+<span class="fc" id="L84">        try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            try {
+<span class="fc" id="L86">                seq.dropTable();</span>
+            } finally {
+<span class="fc" id="L88">                seq.unlockWrite();</span>
+            }
+<span class="fc" id="L90">        } catch (CairoException e) {</span>
+<span class="fc" id="L91">            LOG.info().$(&quot;failed to drop wal table [name=&quot;).$(tableToken).$(&quot;, dirName=&quot;).utf8(tableToken.getDirName()).I$();</span>
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">            if (!failedCreate) {</span>
+<span class="nc" id="L93">                throw e;</span>
+            }
+<span class="fc" id="L95">        }</span>
+<span class="fc" id="L96">    }</span>
+
+    public void forAllWalTables(ObjList&lt;TableToken&gt; tableTokenBucket, boolean includeDropped, RegisteredTable callback) {
+<span class="fc" id="L99">        final CharSequence root = configuration.getRoot();</span>
+<span class="fc" id="L100">        final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L101">        Path path = Path.PATH.get();</span>
+
+<span class="fc" id="L103">        engine.getTableTokens(tableTokenBucket, includeDropped);</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        for (int i = 0, n = tableTokenBucket.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L105">            TableToken tableToken = tableTokenBucket.getQuick(i);</span>
+
+            // Exclude locked entries.
+            // Use includeDropped argument to decide whether to include dropped tables.
+<span class="fc" id="L109">            String publicTableName = tableToken.getTableName();</span>
+<span class="pc bpc" id="L110" title="1 of 4 branches missed.">            boolean isDropped = includeDropped &amp;&amp; engine.isTableDropped(tableToken);</span>
+<span class="fc bfc" id="L111" title="All 4 branches covered.">            if (engine.isWalTable(tableToken) &amp;&amp; !isDropped) {</span>
+                long lastTxn;
+                int tableId;
+
+                try {
+<span class="fc bfc" id="L116" title="All 2 branches covered.">                    if (!seqRegistry.containsKey(tableToken.getDirName())) {</span>
+                        // Fast path.
+                        // The following calls are racy, i.e. there might be a sequencer modifying both
+                        // metadata and log concurrently as we read the values. It's ok since we iterate
+                        // through the WAL tables periodically, so eventually we should see the updates.
+<span class="fc" id="L121">                        path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);</span>
+<span class="fc" id="L122">                        tableId = tableToken.getTableId();</span>
+<span class="fc" id="L123">                        int fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);</span>
+<span class="fc" id="L124">                        lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET); // does not throw</span>
+<span class="fc" id="L125">                        ff.close(fdTxn);</span>
+<span class="fc" id="L126">                    } else {</span>
+                        // Slow path.
+<span class="fc" id="L128">                        try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {</span>
+<span class="fc" id="L129">                            lastTxn = tableSequencer.lastTxn();</span>
+<span class="fc" id="L130">                            tableId = tableSequencer.getTableId();</span>
+                        }
+                    }
+<span class="nc" id="L133">                } catch (CairoException ex) {</span>
+<span class="nc" id="L134">                    LOG.critical().$(&quot;could not read WAL table transaction file [table=&quot;).utf8(publicTableName).$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="nc" id="L135">                            .$(&quot;, error=&quot;).$((Throwable) ex).I$();</span>
+<span class="nc" id="L136">                    continue;</span>
+<span class="fc" id="L137">                }</span>
+
+<span class="pc bpc" id="L139" title="2 of 4 branches missed.">                if (tableId &lt; 0 || lastTxn &lt; 0) {</span>
+<span class="nc" id="L140">                    LOG.critical().$(&quot;could not read WAL table metadata [table=&quot;).utf8(publicTableName).$(&quot;, tableId=&quot;).$(tableId)</span>
+<span class="nc" id="L141">                            .$(&quot;, lastTxn=&quot;).$(lastTxn).I$();</span>
+<span class="nc" id="L142">                    continue;</span>
+                }
+
+                try {
+<span class="fc" id="L146">                    callback.onTable(tableId, tableToken, lastTxn);</span>
+<span class="nc" id="L147">                } catch (CairoException ex) {</span>
+<span class="nc" id="L148">                    LOG.critical().$(&quot;could not process table sequencer [table=&quot;).utf8(publicTableName).$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="nc" id="L149">                            .$(&quot;, error=&quot;).$((Throwable) ex).I$();</span>
+<span class="fc" id="L150">                }</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">            } else if (isDropped) {</span>
+                try {
+<span class="fc" id="L153">                    callback.onTable(tableToken.getTableId(), tableToken, -1);</span>
+<span class="nc" id="L154">                } catch (CairoException ex) {</span>
+<span class="nc" id="L155">                    LOG.critical().$(&quot;could not process table sequencer [table=&quot;).utf8(publicTableName).$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="nc" id="L156">                            .$(&quot;, error=&quot;).$((Throwable) ex).I$();</span>
+<span class="fc" id="L157">                }</span>
+            }
+        }
+<span class="fc" id="L160">    }</span>
+
+    public @NotNull TransactionLogCursor getCursor(final TableToken tableToken, long seqTxn) {
+<span class="fc" id="L163">        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {</span>
+            TransactionLogCursor cursor;
+            try {
+<span class="fc" id="L166">                cursor = tableSequencer.getTransactionLogCursor(seqTxn);</span>
+            } finally {
+<span class="fc" id="L168">                tableSequencer.unlockRead();</span>
+            }
+<span class="pc bpc" id="L170" title="1 of 2 branches missed.">            return cursor;</span>
+        }
+    }
+
+    public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
+<span class="fc" id="L175">        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {</span>
+            TableMetadataChangeLog metadataChangeLog;
+            try {
+<span class="fc" id="L178">                metadataChangeLog = tableSequencer.getMetadataChangeLog(structureVersionLo);</span>
+            } finally {
+<span class="fc" id="L180">                tableSequencer.unlockRead();</span>
+            }
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">            return metadataChangeLog;</span>
+        }
+    }
+
+    public int getNextWalId(final TableToken tableToken) {
+<span class="fc" id="L187">        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {</span>
+            int walId;
+            try {
+<span class="fc" id="L190">                walId = tableSequencer.getNextWalId();</span>
+            } finally {
+<span class="fc" id="L192">                tableSequencer.unlockRead();</span>
+            }
+<span class="fc" id="L194">            return walId;</span>
+        }
+    }
+
+    public long getTableMetadata(final TableToken tableToken, final TableRecordMetadataSink sink) {
+<span class="fc" id="L199">        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {</span>
+            try {
+<span class="fc" id="L201">                return tableSequencer.getTableMetadata(sink);</span>
+            } finally {
+<span class="fc" id="L203">                tableSequencer.unlockRead();</span>
+            }
+        }
+    }
+
+    @TestOnly
+    public boolean isSuspended(final TableToken tableToken) {
+<span class="fc" id="L210">        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {</span>
+            boolean isSuspended;
+            try {
+<span class="fc" id="L213">                isSuspended = sequencer.isSuspended();</span>
+            } finally {
+<span class="fc" id="L215">                sequencer.unlockRead();</span>
+            }
+<span class="fc" id="L217">            return isSuspended;</span>
+        }
+    }
+
+    public long lastTxn(final TableToken tableName) {
+<span class="fc" id="L222">        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {</span>
+            long lastTxn;
+            try {
+<span class="fc" id="L225">                lastTxn = sequencer.lastTxn();</span>
+            } finally {
+<span class="fc" id="L227">                sequencer.unlockRead();</span>
+            }
+<span class="fc" id="L229">            return lastTxn;</span>
+        }
+    }
+
+    public long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp) {
+<span class="fc" id="L234">        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            long txn;
+            try {
+<span class="fc" id="L237">                txn = tableSequencer.nextStructureTxn(structureVersion, alterOp);</span>
+            } finally {
+<span class="fc" id="L239">                tableSequencer.unlockWrite();</span>
+            }
+<span class="fc" id="L241">            return txn;</span>
+        }
+    }
+
+    public long nextTxn(final TableToken tableToken, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn) {
+<span class="fc" id="L246">        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            long txn;
+            try {
+<span class="fc" id="L249">                txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);</span>
+            } finally {
+<span class="fc" id="L251">                tableSequencer.unlockWrite();</span>
+            }
+<span class="fc" id="L253">            return txn;</span>
+        }
+    }
+
+    @TestOnly
+    public void openSequencer(TableToken tableToken) {
+<span class="fc" id="L259">        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            try {
+<span class="fc" id="L261">                sequencer.open();</span>
+            } finally {
+<span class="fc" id="L263">                sequencer.unlockWrite();</span>
+            }
+        }
+<span class="fc" id="L266">    }</span>
+
+    public void registerTable(int tableId, final TableDescriptor tableDescriptor, final TableToken tableToken) {
+        try (
+<span class="fc" id="L270">                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt) -&gt; {</span>
+<span class="fc" id="L271">                final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt);</span>
+<span class="fc" id="L272">                sequencer.create(tableId, tableDescriptor);</span>
+<span class="fc" id="L273">                sequencer.open();</span>
+<span class="fc" id="L274">                return sequencer;</span>
+            })
+        ) {
+<span class="fc" id="L277">            tableSequencer.unlockWrite();</span>
+        }
+<span class="fc" id="L279">    }</span>
+
+    public void deregisterTable(final TableToken tableToken) {
+<span class="fc" id="L282">        final TableSequencerEntry tableSequencer = seqRegistry.get(tableToken.getDirName());</span>
+<span class="pc bpc" id="L283" title="3 of 4 branches missed.">        if (tableSequencer != null &amp;&amp; tableSequencer.checkClose()) {</span>
+<span class="nc" id="L284">            LOG.info().$(&quot;table is converted to non-WAL, closed table sequencer [table=&quot;).$(tableToken).I$();</span>
+<span class="nc" id="L285">            seqRegistry.remove(tableToken.getDirName(), tableSequencer);</span>
+        }
+<span class="fc" id="L287">    }</span>
+
+    public boolean releaseAll() {
+<span class="fc" id="L290">        return releaseAll(Long.MAX_VALUE);</span>
+    }
+
+    public boolean releaseInactive() {
+<span class="fc" id="L294">        return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);</span>
+    }
+
+    public void reloadMetadataConditionally(
+            final TableToken tableToken,
+            long expectedStructureVersion,
+            TableRecordMetadataSink sink
+    ) {
+<span class="fc" id="L302">        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {</span>
+            try {
+<span class="fc bfc" id="L304" title="All 2 branches covered.">                if (tableSequencer.getStructureVersion() != expectedStructureVersion) {</span>
+<span class="fc" id="L305">                    tableSequencer.getTableMetadata(sink);</span>
+                }
+            } finally {
+<span class="fc" id="L308">                tableSequencer.unlockRead();</span>
+            }
+        }
+<span class="fc" id="L311">    }</span>
+
+    public void renameWalTable(TableToken tableToken, TableToken newTableToken) {
+<span class="pc bpc" id="L314" title="1 of 2 branches missed.">        assert tableToken.getDirName().equals(newTableToken.getDirName());</span>
+<span class="fc" id="L315">        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            try {
+<span class="fc" id="L317">                sequencer.rename(newTableToken);</span>
+            } finally {
+<span class="fc" id="L319">                sequencer.unlockWrite();</span>
+            }
+        }
+<span class="fc" id="L322">        LOG.advisory().$(&quot;renamed wal table [table=&quot;)</span>
+<span class="fc" id="L323">                .utf8(tableToken.getTableName()).$(&quot;, newName=&quot;).utf8(newTableToken.getTableName())</span>
+<span class="fc" id="L324">                .$(&quot;, dirName=&quot;).utf8(newTableToken.getDirName()).I$();</span>
+<span class="fc" id="L325">    }</span>
+
+    public void resumeTable(TableToken tableToken, long resumeFromTxn, CairoSecurityContext cairoSecurityContext) {
+<span class="fc" id="L328">        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            try {
+<span class="fc bfc" id="L330" title="All 2 branches covered.">                if (!sequencer.isSuspended()) {</span>
+<span class="fc" id="L331">                    return;</span>
+                }
+<span class="fc" id="L333">                final long nextTxn = sequencer.lastTxn() + 1;</span>
+<span class="fc bfc" id="L334" title="All 2 branches covered.">                if (resumeFromTxn &gt; nextTxn) {</span>
+<span class="fc" id="L335">                    throw CairoException.nonCritical().put(&quot;resume txn is higher than next available transaction [resumeFromTxn=&quot;).put(resumeFromTxn).put(&quot;, nextTxn=&quot;).put(nextTxn).put(']');</span>
+                }
+                // resume from the latest on negative value
+<span class="fc bfc" id="L338" title="All 2 branches covered.">                if (resumeFromTxn &gt; 0) {</span>
+<span class="fc" id="L339">                    try (TableWriter tableWriter = engine.getWriter(cairoSecurityContext, tableToken, WAL_2_TABLE_RESUME_REASON)) {</span>
+<span class="fc" id="L340">                        long seqTxn = tableWriter.getSeqTxn();</span>
+<span class="pc bpc" id="L341" title="1 of 2 branches missed.">                        if (resumeFromTxn - 1 &gt; seqTxn) {</span>
+                            // including resumeFromTxn 
+<span class="fc" id="L343">                            tableWriter.commitSeqTxn(resumeFromTxn - 1);</span>
+                        }
+                    }
+                }
+<span class="fc" id="L347">                sequencer.resumeTable();</span>
+            } finally {
+<span class="fc" id="L349">                sequencer.unlockWrite();</span>
+            }
+<span class="pc bpc" id="L351" title="1 of 2 branches missed.">        }</span>
+<span class="fc" id="L352">    }</span>
+
+    @TestOnly
+    public void setDistressed(TableToken tableToken) {
+<span class="fc" id="L356">        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            try {
+<span class="fc" id="L358">                sequencer.setDistressed();</span>
+            } finally {
+<span class="fc" id="L360">                sequencer.unlockWrite();</span>
+            }
+        }
+<span class="fc" id="L363">    }</span>
+
+    public void suspendTable(final TableToken tableToken) {
+<span class="fc" id="L366">        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {</span>
+            try {
+<span class="fc" id="L368">                sequencer.suspendTable();</span>
+            } finally {
+<span class="fc" id="L370">                sequencer.unlockWrite();</span>
+            }
+        }
+<span class="fc" id="L373">    }</span>
+
+    @NotNull
+    private TableSequencerEntry getTableSequencerEntry(
+            TableToken tableToken,
+            SequencerLockType lock,
+            BiFunction&lt;CharSequence, Object, TableSequencerEntry&gt; getSequencerLambda
+    ) {
+        TableSequencerEntry entry;
+<span class="fc" id="L382">        int attempt = 0;</span>
+<span class="pc bpc" id="L383" title="1 of 2 branches missed.">        while (attempt &lt; recreateDistressedSequencerAttempts) {</span>
+<span class="fc" id="L384">            throwIfClosed();</span>
+<span class="fc" id="L385">            entry = seqRegistry.computeIfAbsent(tableToken.getDirName(), tableToken, getSequencerLambda);</span>
+<span class="fc bfc" id="L386" title="All 2 branches covered.">            if (lock == SequencerLockType.READ) {</span>
+<span class="fc" id="L387">                entry.readLock();</span>
+<span class="fc bfc" id="L388" title="All 2 branches covered.">            } else if (lock == SequencerLockType.WRITE) {</span>
+<span class="fc" id="L389">                entry.writeLock();</span>
+            }
+
+<span class="fc" id="L392">            boolean isDistressed = entry.isDistressed();</span>
+<span class="fc bfc" id="L393" title="All 4 branches covered.">            if (!isDistressed &amp;&amp; !entry.isClosed()) {</span>
+<span class="pc bpc" id="L394" title="1 of 2 branches missed.">                return entry;</span>
+            } else {
+<span class="fc bfc" id="L396" title="All 2 branches covered.">                if (lock == SequencerLockType.READ) {</span>
+<span class="fc" id="L397">                    entry.unlockRead();</span>
+<span class="fc bfc" id="L398" title="All 2 branches covered.">                } else if (lock == SequencerLockType.WRITE) {</span>
+<span class="fc" id="L399">                    entry.unlockWrite();</span>
+                }
+            }
+<span class="fc bfc" id="L402" title="All 2 branches covered.">            if (isDistressed) {</span>
+<span class="fc" id="L403">                attempt++;</span>
+            }
+<span class="fc" id="L405">        }</span>
+
+<span class="nc" id="L407">        throw CairoException.critical(0).put(&quot;sequencer is distressed [table=&quot;).put(tableToken.getDirName()).put(']');</span>
+    }
+
+    private TableSequencerEntry openSequencerInstance(CharSequence tableDir, Object tableToken) {
+<span class="fc" id="L411">        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tableToken);</span>
+<span class="fc" id="L412">        sequencer.open();</span>
+<span class="fc" id="L413">        return sequencer;</span>
+    }
+
+    @NotNull
+    private TableSequencerEntry openSequencerLocked(TableToken tableToken, SequencerLockType lock) {
+<span class="fc" id="L418">        return getTableSequencerEntry(tableToken, lock, this.openSequencerInstanceLambda);</span>
+    }
+
+    private boolean releaseEntries(long deadline) {
+<span class="fc bfc" id="L422" title="All 2 branches covered.">        if (seqRegistry.size() == 0) {</span>
+            // nothing to release
+<span class="fc" id="L424">            return true;</span>
+        }
+<span class="fc" id="L426">        boolean removed = false;</span>
+<span class="fc bfc" id="L427" title="All 2 branches covered.">        for (CharSequence tableDir : seqRegistry.keySet()) {</span>
+<span class="fc" id="L428">            final TableSequencerEntry sequencer = seqRegistry.get(tableDir);</span>
+<span class="fc bfc" id="L429" title="All 6 branches covered.">            if (sequencer != null &amp;&amp; deadline &gt;= sequencer.releaseTime &amp;&amp; !sequencer.isClosed()) {</span>
+                // Remove from registry only if this thread closed the instance
+<span class="fc bfc" id="L431" title="All 2 branches covered.">                if (sequencer.checkClose()) {</span>
+<span class="fc" id="L432">                    LOG.info().$(&quot;releasing idle table sequencer [tableDir=&quot;).utf8(tableDir).I$();</span>
+<span class="fc" id="L433">                    seqRegistry.remove(tableDir, sequencer);</span>
+<span class="fc" id="L434">                    removed = true;</span>
+                }
+            }
+<span class="fc" id="L437">        }</span>
+<span class="fc" id="L438">        return removed;</span>
+    }
+
+    private void throwIfClosed() {
+<span class="pc bpc" id="L442" title="1 of 2 branches missed.">        if (closed) {</span>
+<span class="nc" id="L443">            LOG.info().$(&quot;is closed&quot;).$();</span>
+<span class="nc" id="L444">            throw PoolClosedException.INSTANCE;</span>
+        }
+<span class="fc" id="L446">    }</span>
+
+    protected boolean releaseAll(long deadline) {
+<span class="fc" id="L449">        return releaseEntries(deadline);</span>
+    }
+
+<span class="fc" id="L452">    enum SequencerLockType {</span>
+<span class="fc" id="L453">        WRITE,</span>
+<span class="fc" id="L454">        READ,</span>
+<span class="fc" id="L455">        NONE</span>
+    }
+
+    @FunctionalInterface
+    public interface RegisteredTable {
+        void onTable(int tableId, final TableToken tableName, long lastTxn);
+    }
+
+    private static class TableSequencerEntry extends TableSequencerImpl {
+        private final TableSequencerAPI pool;
+<span class="fc" id="L465">        private volatile long releaseTime = Long.MAX_VALUE;</span>
+
+        TableSequencerEntry(TableSequencerAPI pool, CairoEngine engine, TableToken tableToken) {
+<span class="fc" id="L468">            super(engine, tableToken);</span>
+<span class="fc" id="L469">            this.pool = pool;</span>
+<span class="fc" id="L470">        }</span>
+
+        @Override
+        public void close() {
+<span class="pc bpc" id="L474" title="1 of 2 branches missed.">            if (!pool.closed) {</span>
+<span class="fc bfc" id="L475" title="All 4 branches covered.">                if (!isDistressed() &amp;&amp; !isDropped()) {</span>
+<span class="fc" id="L476">                    releaseTime = pool.configuration.getMicrosecondClock().getTicks();</span>
+                } else {
+                    // Sequencer is distressed or dropped, close before removing from the pool.
+                    // Remove from registry only if this thread closed the instance.
+<span class="fc bfc" id="L480" title="All 2 branches covered.">                    if (checkClose()) {</span>
+<span class="fc" id="L481">                        LOG.info().$(&quot;closed distressed table sequencer [table=&quot;).$(getTableToken()).I$();</span>
+<span class="fc" id="L482">                        pool.seqRegistry.remove(getTableToken().getDirName(), this);</span>
+                    }
+                }
+            } else {
+<span class="nc" id="L486">                super.close();</span>
+            }
+<span class="fc" id="L488">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

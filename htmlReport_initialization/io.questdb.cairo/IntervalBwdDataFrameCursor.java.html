@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IntervalBwdDataFrameCursor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">IntervalBwdDataFrameCursor.java</span></div><h1>IntervalBwdDataFrameCursor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+
+public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
+
+<span class="fc" id="L35">    private static final Log LOG = LogFactory.getLog(IntervalBwdDataFrameCursor.class);</span>
+
+    /**
+     * Cursor for data frames that chronologically intersect collection of intervals.
+     * Data frame low and high row will be within intervals inclusive of edges. Intervals
+     * themselves are pairs of microsecond time.
+     *
+     * @param intervals      pairs of microsecond interval values, as in &quot;low&quot; and &quot;high&quot; inclusive of
+     *                       edges.
+     * @param timestampIndex index of timestamp column in the readr that is used by this cursor
+     */
+    public IntervalBwdDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
+<span class="fc" id="L47">        super(intervals, timestampIndex);</span>
+<span class="fc" id="L48">    }</span>
+
+    @Override
+    public DataFrame next() {
+        // order of logical operations is important
+        // we are not calculating partition rages when intervals are empty
+<span class="fc bfc" id="L54" title="All 4 branches covered.">        while (intervalsLo &lt; intervalsHi &amp;&amp; partitionLo &lt; partitionHi) {</span>
+            // We don't need to worry about column tops and null column because we
+            // are working with timestamp. Timestamp column cannot be added to existing table.
+<span class="fc" id="L57">            final int currentInterval = intervalsHi - 1;</span>
+<span class="fc" id="L58">            final int currentPartition = partitionHi - 1;</span>
+<span class="fc" id="L59">            long rowCount = reader.openPartition(currentPartition);</span>
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">            if (rowCount &gt; 0) {</span>
+
+<span class="fc" id="L62">                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(currentPartition), timestampIndex));</span>
+<span class="fc" id="L63">                final long intervalLo = intervals.getQuick(currentInterval * 2);</span>
+<span class="fc" id="L64">                final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);</span>
+
+                final long limitHi;
+<span class="fc bfc" id="L67" title="All 2 branches covered.">                if (partitionLimit == -1) {</span>
+<span class="fc" id="L68">                    limitHi = rowCount - 1;</span>
+                } else {
+<span class="fc" id="L70">                    limitHi = partitionLimit - 1;</span>
+                }
+
+<span class="fc" id="L73">                final long partitionTimestampLo = column.getLong(0);</span>
+
+<span class="fc" id="L75">                LOG.debug()</span>
+<span class="fc" id="L76">                        .$(&quot;next [partition=&quot;).$(currentPartition)</span>
+<span class="fc" id="L77">                        .$(&quot;, intervalLo=&quot;).microTime(intervalLo)</span>
+<span class="fc" id="L78">                        .$(&quot;, intervalHi=&quot;).microTime(intervalHi)</span>
+<span class="fc" id="L79">                        .$(&quot;, partitionLo=&quot;).microTime(partitionTimestampLo)</span>
+<span class="fc" id="L80">                        .$(&quot;, limitHi=&quot;).$(limitHi)</span>
+<span class="fc" id="L81">                        .$(&quot;, rowCount=&quot;).$(rowCount)</span>
+<span class="fc" id="L82">                        .$(&quot;, currentInterval=&quot;).$(currentInterval)</span>
+<span class="fc" id="L83">                        .$(']').$();</span>
+
+                // interval is wholly above partition, skip partition
+<span class="fc bfc" id="L86" title="All 2 branches covered.">                if (partitionTimestampLo &gt; intervalHi) {</span>
+<span class="fc" id="L87">                    skipPartition(currentPartition);</span>
+<span class="fc" id="L88">                    continue;</span>
+                }
+
+                // interval is wholly below partition, skip interval
+<span class="fc" id="L92">                final long partitionTimestampHi = column.getLong(limitHi * Long.BYTES);</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">                if (partitionTimestampHi &lt; intervalLo) {</span>
+<span class="fc" id="L94">                    skipInterval(currentInterval, limitHi + 1);</span>
+<span class="fc" id="L95">                    continue;</span>
+                }
+
+                // calculate intersection for inclusive intervals &quot;intervalLo&quot; and &quot;intervalHi&quot;
+                final long lo;
+<span class="fc bfc" id="L100" title="All 2 branches covered.">                if (partitionTimestampLo &lt; intervalLo) {</span>
+<span class="fc" id="L101">                    lo = BinarySearch.find(column, intervalLo - 1, 0, limitHi, BinarySearch.SCAN_DOWN) + 1;</span>
+                } else {
+<span class="fc" id="L103">                    lo = 0;</span>
+                }
+
+                final long hi;
+<span class="fc bfc" id="L107" title="All 2 branches covered.">                if (partitionTimestampHi &gt; intervalHi) {</span>
+<span class="fc" id="L108">                    hi = BinarySearch.find(column, intervalHi, lo, limitHi, BinarySearch.SCAN_DOWN) + 1;</span>
+                } else {
+<span class="fc" id="L110">                    hi = limitHi + 1;</span>
+                }
+
+<span class="fc bfc" id="L113" title="All 2 branches covered.">                if (lo == 0) {</span>
+                    // interval yielded empty data frame, skip partition
+<span class="fc" id="L115">                    skipPartition(currentPartition);</span>
+                } else {
+                    // only fragment, need to skip to next interval
+<span class="fc" id="L118">                    skipInterval(currentInterval, lo);</span>
+                }
+
+<span class="fc bfc" id="L121" title="All 2 branches covered.">                if (lo &lt; hi) {</span>
+<span class="fc" id="L122">                    dataFrame.partitionIndex = currentPartition;</span>
+<span class="fc" id="L123">                    dataFrame.rowLo = lo;</span>
+<span class="fc" id="L124">                    dataFrame.rowHi = hi;</span>
+<span class="fc" id="L125">                    sizeSoFar += hi - lo;</span>
+<span class="fc" id="L126">                    return dataFrame;</span>
+                }
+<span class="fc" id="L128">            } else {</span>
+                // partition was empty, just skip to next
+<span class="nc" id="L130">                partitionLimit = -1;</span>
+<span class="nc" id="L131">                partitionHi = currentPartition;</span>
+            }
+<span class="fc" id="L133">        }</span>
+<span class="fc" id="L134">        return null;</span>
+    }
+
+    @Override
+    public void toTop() {
+<span class="fc" id="L139">        super.toTop();</span>
+<span class="fc" id="L140">        partitionLimit = -1;</span>
+<span class="fc" id="L141">    }</span>
+
+    private void skipInterval(int intervalIndex, long limit) {
+<span class="fc" id="L144">        LOG.debug().$(&quot;next skips interval [partitionLimit=&quot;).$(limit).$(&quot;, intervalsHi=&quot;).$(intervalIndex).$(']').$();</span>
+<span class="fc" id="L145">        partitionLimit = limit; // use &quot;limit&quot; for max</span>
+<span class="fc" id="L146">        intervalsHi = intervalIndex;</span>
+<span class="fc" id="L147">    }</span>
+
+    private void skipPartition(int currentPartition) {
+<span class="fc" id="L150">        LOG.debug().$(&quot;next skips partition&quot;).$();</span>
+<span class="fc" id="L151">        partitionHi = currentPartition;</span>
+<span class="fc" id="L152">        partitionLimit = -1;</span>
+<span class="fc" id="L153">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

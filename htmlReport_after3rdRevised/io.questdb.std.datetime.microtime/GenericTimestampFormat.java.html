@@ -1,0 +1,736 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GenericTimestampFormat.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std.datetime.microtime</a> &gt; <span class="el_source">GenericTimestampFormat.java</span></div><h1>GenericTimestampFormat.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std.datetime.microtime;
+
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.datetime.AbstractDateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.CharSink;
+
+public class GenericTimestampFormat extends AbstractDateFormat {
+    private final IntList compiledOps;
+    private final ObjList&lt;String&gt; delimiters;
+
+<span class="fc" id="L39">    public GenericTimestampFormat(IntList compiledOps, ObjList&lt;String&gt; delimiters) {</span>
+<span class="fc" id="L40">        this.compiledOps = compiledOps;</span>
+<span class="fc" id="L41">        this.delimiters = delimiters;</span>
+<span class="fc" id="L42">    }</span>
+
+    @Override
+    public void format(long micros, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+<span class="fc" id="L46">        int day = -1;</span>
+<span class="fc" id="L47">        int month = -1;</span>
+<span class="fc" id="L48">        int year = Integer.MIN_VALUE;</span>
+<span class="fc" id="L49">        int hour = -1;</span>
+<span class="fc" id="L50">        int minute = -1;</span>
+<span class="fc" id="L51">        int second = -1;</span>
+<span class="fc" id="L52">        int dayOfWeek = -1;</span>
+<span class="fc" id="L53">        boolean leap = false;</span>
+<span class="fc" id="L54">        int millis = -1;</span>
+<span class="fc" id="L55">        int micros0 = -1;</span>
+
+<span class="fc bfc" id="L57" title="All 2 branches covered.">        for (int i = 0, n = compiledOps.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L58">            int op = compiledOps.getQuick(i);</span>
+<span class="fc bfc" id="L59" title="All 40 branches covered.">            switch (op) {</span>
+
+                // AM/PM
+                case TimestampFormatCompiler.OP_AM_PM:
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">                    if (hour == -1) {</span>
+<span class="fc" id="L64">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L66">                    TimestampFormatUtils.appendAmPm(sink, hour, locale);</span>
+<span class="fc" id="L67">                    break;</span>
+
+                // MICROS
+                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">                    if (micros0 == -1) {</span>
+<span class="fc" id="L73">                        micros0 = Timestamps.getMicrosOfMilli(micros);</span>
+                    }
+<span class="fc" id="L75">                    sink.put(micros0);</span>
+<span class="fc" id="L76">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+<span class="pc bpc" id="L80" title="1 of 2 branches missed.">                    if (micros0 == -1) {</span>
+<span class="fc" id="L81">                        micros0 = Timestamps.getMicrosOfSecond(micros);</span>
+                    }
+<span class="fc" id="L83">                    TimestampFormatUtils.append00000(sink, micros0);</span>
+<span class="fc" id="L84">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">                    if (micros0 == -1) {</span>
+<span class="fc" id="L88">                        micros0 = Timestamps.getMicrosOfMilli(micros);</span>
+                    }
+<span class="fc" id="L90">                    TimestampFormatUtils.append00(sink, micros0);</span>
+<span class="fc" id="L91">                    break;</span>
+
+                // MILLIS
+                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">                    if (millis == -1) {</span>
+<span class="fc" id="L97">                        millis = Timestamps.getMillisOfSecond(micros);</span>
+                    }
+<span class="fc" id="L99">                    sink.put(millis);</span>
+<span class="fc" id="L100">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">                    if (millis == -1) {</span>
+<span class="fc" id="L104">                        millis = Timestamps.getMillisOfSecond(micros);</span>
+                    }
+<span class="fc" id="L106">                    TimestampFormatUtils.append00(sink, millis);</span>
+<span class="fc" id="L107">                    break;</span>
+
+                // NANOS
+                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+<span class="fc" id="L112">                    sink.put(0);</span>
+<span class="fc" id="L113">                    break;</span>
+
+                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+<span class="fc" id="L116">                    TimestampFormatUtils.append00(sink, 0);</span>
+<span class="fc" id="L117">                    break;</span>
+
+                // SECOND
+                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">                    if (second == -1) {</span>
+<span class="fc" id="L123">                        second = Timestamps.getSecondOfMinute(micros);</span>
+                    }
+<span class="fc" id="L125">                    sink.put(second);</span>
+<span class="fc" id="L126">                    break;</span>
+
+                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">                    if (second == -1) {</span>
+<span class="fc" id="L130">                        second = Timestamps.getSecondOfMinute(micros);</span>
+                    }
+<span class="fc" id="L132">                    TimestampFormatUtils.append0(sink, second);</span>
+<span class="fc" id="L133">                    break;</span>
+
+
+                // MINUTE
+                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">                    if (minute == -1) {</span>
+<span class="fc" id="L140">                        minute = Timestamps.getMinuteOfHour(micros);</span>
+                    }
+<span class="fc" id="L142">                    sink.put(minute);</span>
+<span class="fc" id="L143">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+<span class="pc bpc" id="L146" title="1 of 2 branches missed.">                    if (minute == -1) {</span>
+<span class="fc" id="L147">                        minute = Timestamps.getMinuteOfHour(micros);</span>
+                    }
+<span class="fc" id="L149">                    TimestampFormatUtils.append0(sink, minute);</span>
+<span class="fc" id="L150">                    break;</span>
+
+
+                // HOUR (0-11)
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+<span class="fc bfc" id="L156" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L157">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L159">                    TimestampFormatUtils.appendHour12(sink, hour);</span>
+<span class="fc" id="L160">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+<span class="fc bfc" id="L163" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L164">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L166">                    TimestampFormatUtils.appendHour12Padded(sink, hour);</span>
+<span class="fc" id="L167">                    break;</span>
+
+                // HOUR (1-12)
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+<span class="fc bfc" id="L172" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L173">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L175">                    TimestampFormatUtils.appendHour121(sink, hour);</span>
+<span class="fc" id="L176">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<span class="fc bfc" id="L179" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L180">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L182">                    TimestampFormatUtils.appendHour121Padded(sink, hour);</span>
+<span class="fc" id="L183">                    break;</span>
+
+                // HOUR (0-23)
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+<span class="fc bfc" id="L188" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L189">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L191">                    sink.put(hour);</span>
+<span class="fc" id="L192">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+<span class="fc bfc" id="L195" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L196">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L198">                    TimestampFormatUtils.append0(sink, hour);</span>
+<span class="fc" id="L199">                    break;</span>
+
+                // HOUR (1 - 24)
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+<span class="fc bfc" id="L204" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L205">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L207">                    sink.put(hour + 1);</span>
+<span class="fc" id="L208">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<span class="fc bfc" id="L211" title="All 2 branches covered.">                    if (hour == -1) {</span>
+<span class="fc" id="L212">                        hour = Timestamps.getHourOfDay(micros);</span>
+                    }
+<span class="fc" id="L214">                    TimestampFormatUtils.append0(sink, hour + 1);</span>
+<span class="fc" id="L215">                    break;</span>
+
+                // DAY
+                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_DAY_GREEDY:
+<span class="pc bpc" id="L220" title="1 of 2 branches missed.">                    if (day == -1) {</span>
+<span class="pc bpc" id="L221" title="1 of 2 branches missed.">                        if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L222">                            year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L223">                            leap = Timestamps.isLeapYear(year);</span>
+                        }
+
+<span class="pc bpc" id="L226" title="1 of 2 branches missed.">                        if (month == -1) {</span>
+<span class="fc" id="L227">                            month = Timestamps.getMonthOfYear(micros, year, leap);</span>
+                        }
+
+<span class="fc" id="L230">                        day = Timestamps.getDayOfMonth(micros, year, month, leap);</span>
+                    }
+<span class="fc" id="L232">                    sink.put(day);</span>
+<span class="fc" id="L233">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">                    if (day == -1) {</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">                        if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L237">                            year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L238">                            leap = Timestamps.isLeapYear(year);</span>
+                        }
+
+<span class="fc bfc" id="L241" title="All 2 branches covered.">                        if (month == -1) {</span>
+<span class="fc" id="L242">                            month = Timestamps.getMonthOfYear(micros, year, leap);</span>
+                        }
+
+<span class="fc" id="L245">                        day = Timestamps.getDayOfMonth(micros, year, month, leap);</span>
+                    }
+<span class="fc" id="L247">                    TimestampFormatUtils.append0(sink, day);</span>
+<span class="fc" id="L248">                    break;</span>
+
+                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+<span class="pc bpc" id="L251" title="1 of 2 branches missed.">                    if (dayOfWeek == -1) {</span>
+<span class="fc" id="L252">                        dayOfWeek = Timestamps.getDayOfWeekSundayFirst(micros);</span>
+                    }
+<span class="fc" id="L254">                    sink.put(locale.getWeekday(dayOfWeek));</span>
+<span class="fc" id="L255">                    break;</span>
+
+                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">                    if (dayOfWeek == -1) {</span>
+<span class="fc" id="L259">                        dayOfWeek = Timestamps.getDayOfWeekSundayFirst(micros);</span>
+                    }
+<span class="fc" id="L261">                    sink.put(locale.getShortWeekday(dayOfWeek));</span>
+<span class="fc" id="L262">                    break;</span>
+
+                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+<span class="pc bpc" id="L265" title="1 of 2 branches missed.">                    if (dayOfWeek == -1) {</span>
+<span class="fc" id="L266">                        dayOfWeek = Timestamps.getDayOfWeekSundayFirst(micros);</span>
+                    }
+<span class="fc" id="L268">                    sink.put(dayOfWeek);</span>
+<span class="fc" id="L269">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+<span class="fc" id="L271">                    sink.put(Timestamps.getDayOfYear(micros));</span>
+<span class="fc" id="L272">                    break;</span>
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+<span class="fc" id="L274">                    TimestampFormatUtils.append0(sink, Timestamps.getWeek(micros));</span>
+<span class="fc" id="L275">                    break;</span>
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+<span class="fc" id="L277">                    sink.put(Timestamps.getWeekOfYear(micros));</span>
+<span class="fc" id="L278">                    break;</span>
+                // MONTH
+
+                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+<span class="fc bfc" id="L283" title="All 2 branches covered.">                    if (month == -1) {</span>
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">                        if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L285">                            year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L286">                            leap = Timestamps.isLeapYear(year);</span>
+                        }
+
+<span class="fc" id="L289">                        month = Timestamps.getMonthOfYear(micros, year, leap);</span>
+                    }
+<span class="fc" id="L291">                    sink.put(month);</span>
+<span class="fc" id="L292">                    break;</span>
+                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+<span class="fc bfc" id="L294" title="All 2 branches covered.">                    if (month == -1) {</span>
+<span class="fc bfc" id="L295" title="All 2 branches covered.">                        if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L296">                            year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L297">                            leap = Timestamps.isLeapYear(year);</span>
+                        }
+
+<span class="fc" id="L300">                        month = Timestamps.getMonthOfYear(micros, year, leap);</span>
+                    }
+<span class="fc" id="L302">                    TimestampFormatUtils.append0(sink, month);</span>
+<span class="fc" id="L303">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+<span class="fc bfc" id="L306" title="All 2 branches covered.">                    if (month == -1) {</span>
+<span class="fc bfc" id="L307" title="All 2 branches covered.">                        if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L308">                            year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L309">                            leap = Timestamps.isLeapYear(year);</span>
+                        }
+
+<span class="fc" id="L312">                        month = Timestamps.getMonthOfYear(micros, year, leap);</span>
+                    }
+<span class="fc" id="L314">                    sink.put(locale.getShortMonth(month - 1));</span>
+<span class="fc" id="L315">                    break;</span>
+                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+<span class="fc bfc" id="L317" title="All 2 branches covered.">                    if (month == -1) {</span>
+<span class="pc bpc" id="L318" title="1 of 2 branches missed.">                        if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L319">                            year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L320">                            leap = Timestamps.isLeapYear(year);</span>
+                        }
+
+<span class="fc" id="L323">                        month = Timestamps.getMonthOfYear(micros, year, leap);</span>
+                    }
+<span class="fc" id="L325">                    sink.put(locale.getMonth(month - 1));</span>
+<span class="fc" id="L326">                    break;</span>
+
+                // YEAR
+
+                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+<span class="fc bfc" id="L332" title="All 2 branches covered.">                    if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L333">                        year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L334">                        leap = Timestamps.isLeapYear(year);</span>
+                    }
+<span class="fc" id="L336">                    TimestampFormatUtils.appendYear(sink, year);</span>
+<span class="fc" id="L337">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+<span class="fc bfc" id="L339" title="All 2 branches covered.">                    if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L340">                        year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L341">                        leap = Timestamps.isLeapYear(year);</span>
+                    }
+<span class="fc" id="L343">                    TimestampFormatUtils.appendYear0(sink, year % 100);</span>
+<span class="fc" id="L344">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+<span class="fc bfc" id="L346" title="All 2 branches covered.">                    if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L347">                        year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L348">                        leap = Timestamps.isLeapYear(year);</span>
+                    }
+<span class="fc" id="L350">                    TimestampFormatUtils.appendYear00(sink, year % 1000);</span>
+<span class="fc" id="L351">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+<span class="fc bfc" id="L353" title="All 2 branches covered.">                    if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L354">                        year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L355">                        leap = Timestamps.isLeapYear(year);</span>
+                    }
+<span class="fc" id="L357">                    TimestampFormatUtils.appendYear000(sink, year);</span>
+<span class="fc" id="L358">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+<span class="pc bpc" id="L360" title="1 of 2 branches missed.">                    if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L361">                        year = Timestamps.getIsoYear(micros);</span>
+                    }
+<span class="fc" id="L363">                    TimestampFormatUtils.appendYear000(sink, year);</span>
+<span class="fc" id="L364">                    break;</span>
+                // ERA
+                case TimestampFormatCompiler.OP_ERA:
+<span class="pc bpc" id="L367" title="1 of 2 branches missed.">                    if (year == Integer.MIN_VALUE) {</span>
+<span class="fc" id="L368">                        year = Timestamps.getYear(micros);</span>
+<span class="fc" id="L369">                        leap = Timestamps.isLeapYear(year);</span>
+                    }
+<span class="fc" id="L371">                    TimestampFormatUtils.appendEra(sink, year, locale);</span>
+<span class="fc" id="L372">                    break;</span>
+
+                // TIMEZONE
+                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
+                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
+                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
+<span class="fc" id="L382">                    sink.put(timeZoneName);</span>
+<span class="fc" id="L383">                    break;</span>
+
+                // SEPARATORS
+                default:
+<span class="fc" id="L387">                    sink.put(delimiters.getQuick(-op - 1));</span>
+                    break;
+            }
+        }
+<span class="fc" id="L391">    }</span>
+
+    @Override
+    public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
+<span class="fc" id="L395">        int day = 1;</span>
+<span class="fc" id="L396">        int month = 1;</span>
+<span class="fc" id="L397">        int year = 1970;</span>
+<span class="fc" id="L398">        int hour = 0;</span>
+<span class="fc" id="L399">        int minute = 0;</span>
+<span class="fc" id="L400">        int second = 0;</span>
+<span class="fc" id="L401">        int millis = 0;</span>
+<span class="fc" id="L402">        int micros = 0;</span>
+<span class="fc" id="L403">        int week = -1;</span>
+<span class="fc" id="L404">        int era = 1;</span>
+<span class="fc" id="L405">        int timezone = -1;</span>
+<span class="fc" id="L406">        long offset = Long.MIN_VALUE;</span>
+<span class="fc" id="L407">        int hourType = TimestampFormatUtils.HOUR_24;</span>
+<span class="fc" id="L408">        int pos = lo;</span>
+        long l;
+        int len;
+
+<span class="fc bfc" id="L412" title="All 2 branches covered.">        for (int i = 0, n = compiledOps.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L413">            int op = compiledOps.getQuick(i);</span>
+<span class="fc bfc" id="L414" title="All 49 branches covered.">            switch (op) {</span>
+
+                // AM/PM
+                case TimestampFormatCompiler.OP_AM_PM:
+<span class="fc" id="L418">                    l = locale.matchAMPM(in, pos, hi);</span>
+<span class="fc" id="L419">                    hourType = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L420">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L421">                    break;</span>
+
+                // MICROS
+                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+<span class="fc" id="L425">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L426">                    micros = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L427">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+<span class="fc" id="L430">                    TimestampFormatUtils.assertRemaining(pos + 2, hi);</span>
+<span class="fc" id="L431">                    micros = Numbers.parseInt(in, pos, pos += 3);</span>
+<span class="fc" id="L432">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+<span class="fc" id="L435">                    l = Numbers.parseInt000Greedy(in, pos, hi);</span>
+<span class="fc" id="L436">                    micros = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L437">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L438">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+<span class="fc" id="L441">                    l = Numbers.parseLong000000Greedy(in, pos, hi);</span>
+<span class="fc" id="L442">                    micros = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L443">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L444">                    break;</span>
+
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+<span class="fc" id="L447">                    l = Timestamps.parseNanosAsMicrosGreedy(in, pos, hi);</span>
+<span class="fc" id="L448">                    micros = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L449">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L450">                    break;</span>
+
+                // NANOS - ignoring parsed values
+                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
+<span class="fc" id="L454">                    TimestampFormatUtils.assertRemaining(pos++, hi);</span>
+<span class="fc" id="L455">                    break;</span>
+
+                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+<span class="fc" id="L458">                    TimestampFormatUtils.assertRemaining(pos + 2, hi);</span>
+<span class="fc" id="L459">                    pos += 3;</span>
+<span class="fc" id="L460">                    break;</span>
+
+                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+<span class="fc" id="L463">                    pos += Numbers.decodeHighInt(Numbers.parseIntSafely(in, pos, hi));</span>
+<span class="fc" id="L464">                    break;</span>
+
+                // MILLIS
+                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+<span class="fc" id="L468">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L469">                    millis = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L470">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+<span class="fc" id="L473">                    TimestampFormatUtils.assertRemaining(pos + 2, hi);</span>
+<span class="fc" id="L474">                    millis = Numbers.parseInt(in, pos, pos += 3);</span>
+<span class="fc" id="L475">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+<span class="fc" id="L478">                    l = Numbers.parseInt000Greedy(in, pos, hi);</span>
+<span class="fc" id="L479">                    millis = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L480">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L481">                    break;</span>
+
+                // SECOND
+                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+<span class="fc" id="L485">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L486">                    second = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L487">                    break;</span>
+
+                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+<span class="fc" id="L490">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L491">                    second = Numbers.parseInt(in, pos, pos += 2);</span>
+<span class="fc" id="L492">                    break;</span>
+
+                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+<span class="fc" id="L495">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L496">                    second = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L497">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L498">                    break;</span>
+
+                // MINUTE
+                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+<span class="fc" id="L502">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L503">                    minute = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L504">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+<span class="fc" id="L507">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L508">                    minute = Numbers.parseInt(in, pos, pos += 2);</span>
+<span class="fc" id="L509">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+<span class="fc" id="L512">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L513">                    minute = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L514">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L515">                    break;</span>
+
+                // HOUR (0-11)
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+<span class="fc" id="L519">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L520">                    hour = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="pc bpc" id="L521" title="1 of 2 branches missed.">                    if (hourType == TimestampFormatUtils.HOUR_24) {</span>
+<span class="fc" id="L522">                        hourType = TimestampFormatUtils.HOUR_AM;</span>
+                    }
+                    break;
+
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+<span class="fc" id="L527">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L528">                    hour = Numbers.parseInt(in, pos, pos += 2);</span>
+<span class="pc bpc" id="L529" title="1 of 2 branches missed.">                    if (hourType == TimestampFormatUtils.HOUR_24) {</span>
+<span class="fc" id="L530">                        hourType = TimestampFormatUtils.HOUR_AM;</span>
+                    }
+                    break;
+
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+<span class="fc" id="L535">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L536">                    hour = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L537">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="pc bpc" id="L538" title="1 of 2 branches missed.">                    if (hourType == TimestampFormatUtils.HOUR_24) {</span>
+<span class="fc" id="L539">                        hourType = TimestampFormatUtils.HOUR_AM;</span>
+                    }
+                    break;
+
+                // HOUR (1-12)
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<span class="fc" id="L545">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L546">                    hour = Numbers.parseInt(in, pos, ++pos) - 1;</span>
+<span class="pc bpc" id="L547" title="1 of 2 branches missed.">                    if (hourType == TimestampFormatUtils.HOUR_24) {</span>
+<span class="fc" id="L548">                        hourType = TimestampFormatUtils.HOUR_AM;</span>
+                    }
+                    break;
+
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L553">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L554">                    hour = Numbers.parseInt(in, pos, pos += 2) - 1;</span>
+<span class="pc bpc" id="L555" title="1 of 2 branches missed.">                    if (hourType == TimestampFormatUtils.HOUR_24) {</span>
+<span class="fc" id="L556">                        hourType = TimestampFormatUtils.HOUR_AM;</span>
+                    }
+                    break;
+
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+<span class="fc" id="L561">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L562">                    hour = Numbers.decodeLowInt(l) - 1;</span>
+<span class="fc" id="L563">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="pc bpc" id="L564" title="1 of 2 branches missed.">                    if (hourType == TimestampFormatUtils.HOUR_24) {</span>
+<span class="fc" id="L565">                        hourType = TimestampFormatUtils.HOUR_AM;</span>
+                    }
+                    break;
+
+                // HOUR (0-23)
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+<span class="fc" id="L571">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L572">                    hour = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L573">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+<span class="fc" id="L576">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L577">                    hour = Numbers.parseInt(in, pos, pos += 2);</span>
+<span class="fc" id="L578">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+<span class="fc" id="L581">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L582">                    hour = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L583">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L584">                    break;</span>
+
+                // HOUR (1 - 24)
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<span class="fc" id="L588">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L589">                    hour = Numbers.parseInt(in, pos, ++pos) - 1;</span>
+<span class="fc" id="L590">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L593">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L594">                    hour = Numbers.parseInt(in, pos, pos += 2) - 1;</span>
+<span class="fc" id="L595">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+<span class="fc" id="L598">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L599">                    hour = Numbers.decodeLowInt(l) - 1;</span>
+<span class="fc" id="L600">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L601">                    break;</span>
+
+                // DAY
+                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+<span class="fc" id="L605">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L606">                    day = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L607">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+<span class="fc" id="L609">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L610">                    day = Numbers.parseInt(in, pos, pos += 2);</span>
+<span class="fc" id="L611">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_GREEDY:
+<span class="fc" id="L613">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L614">                    day = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L615">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L616">                    break;</span>
+
+                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+<span class="fc" id="L620">                    l = locale.matchWeekday(in, pos, hi);</span>
+                    // ignore weekday
+<span class="fc" id="L622">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L623">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+<span class="fc" id="L626">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L627">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L628">                    break;</span>
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+<span class="fc" id="L630">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L631">                    week = Numbers.parseInt(in, pos, pos += 2);</span>
+<span class="fc" id="L632">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+<span class="fc" id="L634">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+                    // ignore weekday
+<span class="fc" id="L636">                    Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L637">                    break;</span>
+
+                // MONTH
+
+                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+<span class="fc" id="L642">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L643">                    month = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L644">                    break;</span>
+                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+<span class="fc" id="L646">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L647">                    month = Numbers.parseInt(in, pos, pos += 2);</span>
+<span class="fc" id="L648">                    break;</span>
+                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+<span class="fc" id="L650">                    l = Numbers.parseIntSafely(in, pos, hi);</span>
+<span class="fc" id="L651">                    month = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L652">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L653">                    break;</span>
+
+                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+<span class="fc" id="L657">                    l = locale.matchMonth(in, pos, hi);</span>
+<span class="fc" id="L658">                    month = Numbers.decodeLowInt(l) + 1;</span>
+<span class="fc" id="L659">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L660">                    break;</span>
+
+                // YEAR
+
+                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+<span class="fc" id="L665">                    TimestampFormatUtils.assertRemaining(pos, hi);</span>
+<span class="fc" id="L666">                    year = Numbers.parseInt(in, pos, ++pos);</span>
+<span class="fc" id="L667">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+<span class="fc" id="L669">                    TimestampFormatUtils.assertRemaining(pos + 1, hi);</span>
+<span class="fc" id="L670">                    year = TimestampFormatUtils.adjustYear(Numbers.parseInt(in, pos, pos += 2));</span>
+<span class="fc" id="L671">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+<span class="fc" id="L673">                    TimestampFormatUtils.assertRemaining(pos + 2, hi);</span>
+<span class="fc" id="L674">                    year = Numbers.parseInt(in, pos, pos += 3);</span>
+<span class="fc" id="L675">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+<span class="pc bpc" id="L678" title="1 of 4 branches missed.">                    if (pos &lt; hi &amp;&amp; in.charAt(pos) == '-') {</span>
+<span class="fc" id="L679">                        TimestampFormatUtils.assertRemaining(pos + 4, hi);</span>
+<span class="fc" id="L680">                        year = -Numbers.parseInt(in, pos + 1, pos += 5);</span>
+                    } else {
+<span class="fc" id="L682">                        TimestampFormatUtils.assertRemaining(pos + 3, hi);</span>
+<span class="fc" id="L683">                        year = Numbers.parseInt(in, pos, pos += 4);</span>
+                    }
+<span class="fc" id="L685">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+<span class="fc" id="L687">                    l = TimestampFormatUtils.parseYearGreedy(in, pos, hi);</span>
+<span class="fc" id="L688">                    year = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L689">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L690">                    break;</span>
+
+                // ERA
+                case TimestampFormatCompiler.OP_ERA:
+<span class="fc" id="L694">                    l = locale.matchEra(in, pos, hi);</span>
+<span class="fc" id="L695">                    era = Numbers.decodeLowInt(l);</span>
+<span class="fc" id="L696">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L697">                    break;</span>
+
+                // TIMEZONE
+                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
+                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
+                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
+
+<span class="fc" id="L708">                    l = Timestamps.parseOffset(in, pos, hi);</span>
+<span class="fc bfc" id="L709" title="All 2 branches covered.">                    if (l == Long.MIN_VALUE) {</span>
+<span class="fc" id="L710">                        l = locale.matchZone(in, pos, hi);</span>
+<span class="fc" id="L711">                        timezone = Numbers.decodeLowInt(l);</span>
+                    } else {
+<span class="fc" id="L713">                        offset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;</span>
+                    }
+<span class="fc" id="L715">                    pos += Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L716">                    break;</span>
+
+                // SEPARATORS
+                default:
+<span class="fc" id="L720">                    String delimiter = delimiters.getQuick(-op - 1);</span>
+<span class="fc" id="L721">                    len = delimiter.length();</span>
+<span class="fc bfc" id="L722" title="All 2 branches covered.">                    if (len == 1) {</span>
+<span class="fc" id="L723">                        TimestampFormatUtils.assertChar(delimiter.charAt(0), in, pos++, hi);</span>
+                    } else {
+<span class="fc" id="L725">                        pos = TimestampFormatUtils.assertString(delimiter, len, in, pos, hi);</span>
+                    }
+                    break;
+            }
+        }
+
+<span class="fc" id="L731">        TimestampFormatUtils.assertNoTail(pos, hi);</span>
+
+<span class="fc" id="L733">        return TimestampFormatUtils.compute(locale, era, year, month, week, day, hour, minute, second, millis, micros, timezone, offset, hourType);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

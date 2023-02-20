@@ -1,0 +1,500 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TxReader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">TxReader.java</span></div><h1>TxReader.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryW;
+import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
+
+import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.TableUtils.*;
+
+<span class="fc" id="L38">public class TxReader implements Closeable, Mutable {</span>
+    public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
+    public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
+    protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
+    protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
+    protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
+    protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
+    protected static final int PARTITION_NAME_TX_OFFSET = 2;
+    // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
+    //
+    // | reserved | read-only | available bits | partition size |
+    // +----------+-----------+----------------+----------------+
+    // |  1 bit   |  1 bit    |  18 bits       |      44 bits   |
+    //
+    // when read-only bit is set, the partition is read only.
+    // we reserve the highest bit to allow negative values to 
+    // have meaning (in future). For instance the table reader uses
+    // a negative size value to mean that the partition is not open.
+    protected static final int PARTITION_TS_OFFSET = 0;
+<span class="fc" id="L57">    protected final LongList attachedPartitions = new LongList();</span>
+<span class="fc" id="L58">    protected final AtomicLong structureVersion = new AtomicLong();</span>
+    private final FilesFacade ff;
+<span class="fc" id="L60">    private final IntList symbolCountSnapshot = new IntList();</span>
+<span class="fc" id="L61">    protected int attachedPartitionsSize = 0;</span>
+    protected long columnVersion;
+    protected long dataVersion;
+    protected long fixedRowCount;
+    protected long maxTimestamp;
+    protected long minTimestamp;
+    protected int partitionBy;
+    protected long partitionTableVersion;
+    protected long seqTxn;
+    protected int symbolColumnCount;
+    protected long transientRowCount;
+    protected long truncateVersion;
+    protected long txn;
+    private int baseOffset;
+    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private int partitionSegmentSize;
+    private MemoryMR roTxMemBase;
+    private long size;
+    private int symbolsSize;
+    private long version;
+
+<span class="fc" id="L82">    public TxReader(FilesFacade ff) {</span>
+<span class="fc" id="L83">        this.ff = ff;</span>
+<span class="fc" id="L84">    }</span>
+
+    public boolean attachedPartitionsContains(long ts) {
+<span class="fc bfc" id="L87" title="All 2 branches covered.">        return findAttachedPartitionIndex(ts) &gt; -1L;</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="fc" id="L92">        clearData();</span>
+<span class="fc" id="L93">        Misc.free(roTxMemBase);</span>
+<span class="fc" id="L94">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L98">        roTxMemBase = Misc.free(roTxMemBase);</span>
+<span class="fc" id="L99">        clear();</span>
+<span class="fc" id="L100">    }</span>
+
+    public void dumpTo(MemoryW mem) {
+<span class="fc" id="L103">        mem.putLong(TX_BASE_OFFSET_VERSION_64, version);</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        boolean isA = (version &amp; 1L) == 0L;</span>
+<span class="fc" id="L105">        final int baseOffset = TX_BASE_HEADER_SIZE;</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        mem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">        mem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);</span>
+
+<span class="fc" id="L110">        mem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);</span>
+<span class="fc" id="L111">        mem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);</span>
+<span class="fc" id="L112">        mem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);</span>
+<span class="fc" id="L113">        mem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);</span>
+<span class="fc" id="L114">        mem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);</span>
+<span class="fc" id="L115">        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());</span>
+<span class="fc" id="L116">        mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);</span>
+<span class="fc" id="L117">        mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);</span>
+<span class="fc" id="L118">        mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);</span>
+<span class="fc" id="L119">        mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);</span>
+<span class="fc" id="L120">        mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);</span>
+<span class="fc" id="L121">        mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);</span>
+
+<span class="fc" id="L123">        int symbolMapCount = symbolCountSnapshot.size();</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        for (int i = 0; i &lt; symbolMapCount; i++) {</span>
+<span class="fc" id="L125">            long offset = TableUtils.getSymbolWriterIndexOffset(i);</span>
+<span class="fc" id="L126">            int symCount = symbolCountSnapshot.getQuick(i);</span>
+<span class="fc" id="L127">            mem.putInt(baseOffset + offset, symCount);</span>
+<span class="fc" id="L128">            offset += Integer.BYTES;</span>
+<span class="fc" id="L129">            mem.putInt(baseOffset + offset, symCount);</span>
+        }
+
+<span class="fc" id="L132">        final int size = attachedPartitions.size();</span>
+<span class="fc" id="L133">        final long partitionTableOffset = TableUtils.getPartitionTableSizeOffset(symbolMapCount);</span>
+<span class="fc" id="L134">        mem.putInt(baseOffset + partitionTableOffset, size * Long.BYTES);</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        for (int i = 0; i &lt; size; i++) {</span>
+<span class="fc" id="L136">            long offset = TableUtils.getPartitionTableIndexOffset(partitionTableOffset, i);</span>
+<span class="fc" id="L137">            mem.putLong(baseOffset + offset, attachedPartitions.getQuick(i));</span>
+        }
+<span class="fc" id="L139">    }</span>
+
+    public int getBaseOffset() {
+<span class="fc" id="L142">        return baseOffset;</span>
+    }
+
+    public long getColumnVersion() {
+<span class="fc" id="L146">        return columnVersion;</span>
+    }
+
+    public long getDataVersion() {
+<span class="fc" id="L150">        return dataVersion;</span>
+    }
+
+    public long getFixedRowCount() {
+<span class="fc" id="L154">        return fixedRowCount;</span>
+    }
+
+    public long getLastPartitionTimestamp() {
+<span class="fc bfc" id="L158" title="All 2 branches covered.">        if (PartitionBy.isPartitioned(partitionBy)) {</span>
+<span class="fc" id="L159">            return getPartitionTimestampLo(maxTimestamp);</span>
+        }
+<span class="fc" id="L161">        return DEFAULT_PARTITION_TIMESTAMP;</span>
+    }
+
+    public long getMaxTimestamp() {
+<span class="fc" id="L165">        return maxTimestamp;</span>
+    }
+
+    public long getMinTimestamp() {
+<span class="fc" id="L169">        return minTimestamp;</span>
+    }
+
+    public long getPartitionColumnVersion(int i) {
+<span class="fc" id="L173">        return getPartitionColumnVersionByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);</span>
+    }
+
+    public long getPartitionColumnVersionByIndex(int index) {
+<span class="fc" id="L177">        return attachedPartitions.getQuick(index + PARTITION_COLUMN_VERSION_OFFSET);</span>
+    }
+
+    public int getPartitionCount() {
+<span class="fc" id="L181">        return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;</span>
+    }
+
+    public int getPartitionIndex(long ts) {
+<span class="fc" id="L185">        int index = findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));</span>
+<span class="fc bfc" id="L186" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L187">            return index / LONGS_PER_TX_ATTACHED_PARTITION;</span>
+        }
+<span class="fc" id="L189">        return -1;</span>
+    }
+
+    public long getPartitionNameTxn(int i) {
+<span class="fc" id="L193">        return getPartitionNameTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);</span>
+    }
+
+    public long getPartitionNameTxnByIndex(int index) {
+<span class="fc" id="L197">        return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);</span>
+    }
+
+    public long getPartitionNameTxnByPartitionTimestamp(long ts) {
+<span class="fc" id="L201">        return getPartitionNameTxnByPartitionTimestamp(ts, -1);</span>
+    }
+
+    public long getPartitionNameTxnByPartitionTimestamp(long ts, long defaultValue) {
+<span class="fc" id="L205">        final int index = findAttachedPartitionIndex(ts);</span>
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L207">            return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);</span>
+        }
+<span class="fc" id="L209">        return defaultValue;</span>
+    }
+
+    public long getPartitionSize(int i) {
+<span class="fc" id="L213">        return getPartitionSizeByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);</span>
+    }
+
+    public long getPartitionSizeByIndex(int index) {
+<span class="fc" id="L217">        return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) &amp; PARTITION_SIZE_MASK;</span>
+    }
+
+    public long getPartitionSizeByPartitionTimestamp(long ts) {
+<span class="fc" id="L221">        final int index = findAttachedPartitionIndex(ts);</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L223">            return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) &amp; PARTITION_SIZE_MASK;</span>
+        }
+<span class="fc" id="L225">        return -1;</span>
+    }
+
+    public long getPartitionTableVersion() {
+<span class="fc" id="L229">        return partitionTableVersion;</span>
+    }
+
+    public long getPartitionTimestamp(int i) {
+<span class="fc" id="L233">        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);</span>
+    }
+
+    public long getRecordSize() {
+<span class="fc" id="L237">        return size;</span>
+    }
+
+    public long getRowCount() {
+<span class="fc" id="L241">        return transientRowCount + fixedRowCount;</span>
+    }
+
+    public long getSeqTxn() {
+<span class="fc" id="L245">        return seqTxn;</span>
+    }
+
+    public long getStructureVersion() {
+<span class="fc" id="L249">        return structureVersion.get();</span>
+    }
+
+    public int getSymbolColumnCount() {
+<span class="fc" id="L253">        return symbolColumnCount;</span>
+    }
+
+    public int getSymbolValueCount(int i) {
+<span class="fc" id="L257">        return symbolCountSnapshot.get(i);</span>
+    }
+
+    public long getTransientRowCount() {
+<span class="fc" id="L261">        return transientRowCount;</span>
+    }
+
+    public long getTruncateVersion() {
+<span class="fc" id="L265">        return truncateVersion;</span>
+    }
+
+    public long getTxn() {
+<span class="fc" id="L269">        return txn;</span>
+    }
+
+    public long getVersion() {
+<span class="fc" id="L273">        return version;</span>
+    }
+
+    public void initRO(MemoryMR txnFile, int partitionBy) {
+<span class="fc" id="L277">        roTxMemBase = txnFile;</span>
+<span class="fc" id="L278">        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);</span>
+<span class="fc" id="L279">        this.partitionBy = partitionBy;</span>
+<span class="fc" id="L280">    }</span>
+
+    public boolean isPartitionReadOnly(int i) {
+<span class="fc" id="L283">        return isPartitionReadOnlyByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);</span>
+    }
+
+    public boolean isPartitionReadOnlyByPartitionTimestamp(long ts) {
+<span class="fc" id="L287">        int index = findAttachedPartitionIndex(ts);</span>
+<span class="fc bfc" id="L288" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L289">            return isPartitionReadOnlyByIndex(index);</span>
+        }
+<span class="fc" id="L291">        return false;</span>
+    }
+
+    public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
+<span class="fc" id="L295">        clear();</span>
+        try {
+<span class="fc" id="L297">            openTxnFile(ff, path);</span>
+<span class="fc" id="L298">            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);</span>
+<span class="fc" id="L299">            this.partitionBy = partitionBy;</span>
+<span class="fc" id="L300">        } catch (Throwable e) {</span>
+<span class="fc" id="L301">            close();</span>
+<span class="fc" id="L302">            throw e;</span>
+<span class="fc" id="L303">        }</span>
+<span class="fc" id="L304">        return this;</span>
+    }
+
+    public boolean unsafeLoadAll() {
+<span class="fc bfc" id="L308" title="All 2 branches covered.">        if (unsafeLoadBaseOffset()) {</span>
+<span class="fc" id="L309">            txn = version;</span>
+<span class="fc bfc" id="L310" title="All 2 branches covered.">            if (txn != getLong(TX_OFFSET_TXN_64)) {</span>
+<span class="fc" id="L311">                return false;</span>
+            }
+
+<span class="fc" id="L314">            transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);</span>
+<span class="fc" id="L315">            fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);</span>
+<span class="fc" id="L316">            minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);</span>
+<span class="fc" id="L317">            maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);</span>
+<span class="fc" id="L318">            dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);</span>
+<span class="fc" id="L319">            structureVersion.set(getLong(TX_OFFSET_STRUCT_VERSION_64));</span>
+<span class="fc" id="L320">            final long prevPartitionTableVersion = partitionTableVersion;</span>
+<span class="fc" id="L321">            partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);</span>
+<span class="fc" id="L322">            final long prevColumnVersion = this.columnVersion;</span>
+<span class="fc" id="L323">            columnVersion = unsafeReadColumnVersion();</span>
+<span class="fc" id="L324">            truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);</span>
+<span class="fc" id="L325">            seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);</span>
+<span class="fc" id="L326">            symbolColumnCount = symbolsSize / Long.BYTES;</span>
+<span class="fc" id="L327">            unsafeLoadSymbolCounts(symbolColumnCount);</span>
+<span class="fc" id="L328">            unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);</span>
+<span class="fc" id="L329">            Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L330" title="All 2 branches covered.">            if (version == unsafeReadVersion()) {</span>
+<span class="fc" id="L331">                return true;</span>
+            }
+        }
+
+<span class="fc" id="L335">        clearData();</span>
+<span class="fc" id="L336">        return false;</span>
+    }
+
+    public boolean unsafeLoadBaseOffset() {
+<span class="fc" id="L340">        version = unsafeReadVersion();</span>
+<span class="fc" id="L341">        Unsafe.getUnsafe().loadFence();</span>
+
+<span class="fc bfc" id="L343" title="All 2 branches covered.">        boolean isA = (version &amp; 1L) == 0L;</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">        baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);</span>
+<span class="fc bfc" id="L345" title="All 2 branches covered.">        symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);</span>
+<span class="fc bfc" id="L346" title="All 2 branches covered.">        partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);</span>
+
+        // Before extending file, check that values read are not dirty
+<span class="fc" id="L349">        Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L350" title="All 2 branches covered.">        if (unsafeReadVersion() != version) {</span>
+<span class="fc" id="L351">            return false;</span>
+        }
+
+<span class="fc" id="L354">        size = calculateTxRecordSize(symbolsSize, partitionSegmentSize);</span>
+<span class="fc bfc" id="L355" title="All 2 branches covered.">        if (size + baseOffset &gt; roTxMemBase.size()) {</span>
+<span class="fc" id="L356">            roTxMemBase.extend(size + baseOffset);</span>
+        }
+<span class="fc" id="L358">        return true;</span>
+    }
+
+    public long unsafeReadColumnVersion() {
+<span class="fc" id="L362">        return getLong(TX_OFFSET_COLUMN_VERSION_64);</span>
+    }
+
+    public int unsafeReadSymbolColumnCount() {
+<span class="fc" id="L366">        return getInt(TX_OFFSET_MAP_WRITER_COUNT_32);</span>
+    }
+
+    public int unsafeReadSymbolCount(int symbolIndex) {
+<span class="fc" id="L370">        return getInt(TableUtils.getSymbolWriterIndexOffset(symbolIndex));</span>
+    }
+
+    public int unsafeReadSymbolTransientCount(int symbolIndex) {
+<span class="fc" id="L374">        return getInt(getSymbolWriterTransientIndexOffset(symbolIndex));</span>
+    }
+
+    public long unsafeReadVersion() {
+<span class="fc" id="L378">        return roTxMemBase.getLong(TX_BASE_OFFSET_VERSION_64);</span>
+    }
+
+    private void clearData() {
+<span class="fc" id="L382">        baseOffset = 0;</span>
+<span class="fc" id="L383">        size = 0L;</span>
+<span class="fc" id="L384">        partitionTableVersion = -1L;</span>
+<span class="fc" id="L385">        attachedPartitionsSize = -1;</span>
+<span class="fc" id="L386">        attachedPartitions.clear();</span>
+<span class="fc" id="L387">        version = -1L;</span>
+<span class="fc" id="L388">        txn = -1L;</span>
+<span class="fc" id="L389">        seqTxn = -1L;</span>
+<span class="fc" id="L390">    }</span>
+
+    private int getInt(long readOffset) {
+<span class="pc bpc" id="L393" title="1 of 2 branches missed.">        assert readOffset + Integer.BYTES &lt;= size : &quot;offset &quot; + readOffset + &quot;, size &quot; + size + &quot;, txn=&quot; + txn;</span>
+<span class="fc" id="L394">        return roTxMemBase.getInt(baseOffset + readOffset);</span>
+    }
+
+    private long getLong(long readOffset) {
+<span class="pc bpc" id="L398" title="1 of 2 branches missed.">        assert readOffset + Long.BYTES &lt;= size : &quot;offset &quot; + readOffset + &quot;, size &quot; + size + &quot;, txn=&quot; + txn;</span>
+<span class="fc" id="L399">        return roTxMemBase.getLong(baseOffset + readOffset);</span>
+    }
+
+    private boolean isPartitionReadOnlyByIndex(int index) {
+<span class="fc" id="L403">        long maskedSize = attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET);</span>
+<span class="fc bfc" id="L404" title="All 2 branches covered.">        return ((maskedSize &gt;&gt;&gt; PARTITION_MASK_READ_ONLY_BIT_OFFSET) &amp; 1) == 1;</span>
+    }
+
+    private void openTxnFile(FilesFacade ff, LPSZ path) {
+<span class="fc bfc" id="L408" title="All 2 branches covered.">        if (ff.exists(path)) {</span>
+<span class="fc bfc" id="L409" title="All 2 branches covered.">            if (roTxMemBase == null) {</span>
+<span class="fc" id="L410">                roTxMemBase = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);</span>
+            } else {
+<span class="fc" id="L412">                roTxMemBase.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.MMAP_DEFAULT);</span>
+            }
+<span class="fc" id="L414">            return;</span>
+        }
+<span class="fc" id="L416">        throw CairoException.critical(ff.errno()).put(&quot;Cannot append. File does not exist: &quot;).put(path);</span>
+    }
+
+    private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {
+<span class="fc bfc" id="L420" title="All 2 branches covered.">        if (PartitionBy.isPartitioned(partitionBy)) {</span>
+<span class="fc" id="L421">            int txAttachedPartitionsSize = partitionTableSize / Long.BYTES;</span>
+<span class="fc bfc" id="L422" title="All 2 branches covered.">            if (txAttachedPartitionsSize &gt; 0) {</span>
+<span class="fc bfc" id="L423" title="All 4 branches covered.">                if (prevPartitionTableVersion != partitionTableVersion || prevColumnVersion != columnVersion) {</span>
+<span class="fc" id="L424">                    attachedPartitions.clear();</span>
+<span class="fc" id="L425">                    unsafeLoadPartitions0(0, txAttachedPartitionsSize);</span>
+                } else {
+<span class="fc bfc" id="L427" title="All 2 branches covered.">                    if (attachedPartitionsSize &lt; txAttachedPartitionsSize) {</span>
+<span class="fc" id="L428">                        unsafeLoadPartitions0(</span>
+<span class="fc" id="L429">                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0),</span>
+                                txAttachedPartitionsSize
+                        );
+                    }
+                }
+<span class="fc" id="L434">                int offset = txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASKED_SIZE_OFFSET;</span>
+<span class="fc" id="L435">                long mask = attachedPartitions.getQuick(offset) &amp; PARTITION_FLAGS_MASK;</span>
+<span class="fc" id="L436">                attachedPartitions.setQuick(offset, mask | (transientRowCount &amp; PARTITION_SIZE_MASK)); // preserve mask</span>
+<span class="fc" id="L437">                attachedPartitions.setPos(txAttachedPartitionsSize);</span>
+<span class="fc" id="L438">            } else {</span>
+<span class="fc" id="L439">                attachedPartitionsSize = 0;</span>
+<span class="fc" id="L440">                attachedPartitions.clear();</span>
+            }
+<span class="fc" id="L442">        } else {</span>
+            // Add transient row count as the only partition in attached partitions list
+<span class="fc" id="L444">            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);</span>
+<span class="fc" id="L445">            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L, columnVersion);</span>
+        }
+<span class="fc" id="L447">    }</span>
+
+    private void unsafeLoadPartitions0(int lo, int hi) {
+<span class="fc" id="L450">        attachedPartitions.setPos(hi);</span>
+<span class="fc" id="L451">        final long baseOffset = getPartitionTableSizeOffset(symbolColumnCount) + Integer.BYTES;</span>
+<span class="fc bfc" id="L452" title="All 2 branches covered.">        for (int i = lo; i &lt; hi; i++) {</span>
+<span class="fc" id="L453">            attachedPartitions.setQuick(i, getLong(baseOffset + 8L * i));</span>
+        }
+<span class="fc" id="L455">        attachedPartitionsSize = hi;</span>
+<span class="fc" id="L456">    }</span>
+
+    private void unsafeLoadSymbolCounts(int symbolMapCount) {
+<span class="fc" id="L459">        symbolCountSnapshot.clear();</span>
+        // No need to call setSize here, file mapped beyond symbol section already
+        // while reading attached partition count
+<span class="fc bfc" id="L462" title="All 2 branches covered.">        for (int i = 0; i &lt; symbolMapCount; i++) {</span>
+<span class="fc" id="L463">            symbolCountSnapshot.add(getInt(TableUtils.getSymbolWriterIndexOffset(i)));</span>
+        }
+<span class="fc" id="L465">    }</span>
+
+    protected int findAttachedPartitionIndex(long ts) {
+<span class="fc" id="L468">        return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));</span>
+    }
+
+    int findAttachedPartitionIndexByLoTimestamp(long ts) {
+        // Start from the end, usually it will be last partition searched / appended
+<span class="fc" id="L473">        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);</span>
+    }
+
+    protected long getPartitionTimestampLo(long timestamp) {
+<span class="fc bfc" id="L477" title="All 4 branches covered.">        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;</span>
+    }
+
+    protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn, long columnVersion) {
+<span class="fc" id="L481">        attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);</span>
+<span class="fc" id="L482">        attachedPartitions.setQuick(index + PARTITION_MASKED_SIZE_OFFSET, partitionSize &amp; PARTITION_SIZE_MASK);</span>
+<span class="fc" id="L483">        attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, partitionNameTxn);</span>
+<span class="fc" id="L484">        attachedPartitions.setQuick(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);</span>
+<span class="fc" id="L485">    }</span>
+
+    protected void switchRecord(int readBaseOffset, long readRecordSize) {
+<span class="fc" id="L488">        baseOffset = readBaseOffset;</span>
+<span class="fc" id="L489">        size = readRecordSize;</span>
+<span class="fc" id="L490">    }</span>
+
+    protected long unsafeReadFixedRowCount() {
+<span class="fc" id="L493">        return getLong(TX_OFFSET_FIXED_ROW_COUNT_64);</span>
+    }
+
+    protected int unsafeReadSymbolWriterIndexOffset(int denseSymbolIndex) {
+<span class="fc" id="L497">        return getInt(TableUtils.getSymbolWriterIndexOffset(denseSymbolIndex));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

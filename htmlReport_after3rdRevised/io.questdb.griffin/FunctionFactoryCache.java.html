@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FunctionFactoryCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">FunctionFactoryCache.java</span></div><h1>FunctionFactoryCache.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
+import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import org.jetbrains.annotations.TestOnly;
+
+public class FunctionFactoryCache {
+
+<span class="fc" id="L38">    static final IntHashSet invalidFunctionNameChars = new IntHashSet();</span>
+<span class="fc" id="L39">    static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();</span>
+<span class="fc" id="L40">    private static final Log LOG = LogFactory.getLog(FunctionFactoryCache.class);</span>
+<span class="fc" id="L41">    private final LowerCaseCharSequenceHashSet cursorFunctionNames = new LowerCaseCharSequenceHashSet();</span>
+<span class="fc" id="L42">    private final LowerCaseCharSequenceObjHashMap&lt;ObjList&lt;FunctionFactoryDescriptor&gt;&gt; factories = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L43">    private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();</span>
+<span class="fc" id="L44">    private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();</span>
+
+<span class="fc" id="L46">    public FunctionFactoryCache(CairoConfiguration configuration, Iterable&lt;FunctionFactory&gt; functionFactories) {</span>
+<span class="fc" id="L47">        boolean enableTestFactories = configuration.enableTestFactories();</span>
+<span class="fc" id="L48">        LOG.info().$(&quot;loading functions [test=&quot;).$(enableTestFactories).$(']').$();</span>
+<span class="fc bfc" id="L49" title="All 2 branches covered.">        for (FunctionFactory factory : functionFactories) {</span>
+<span class="fc bfc" id="L50" title="All 4 branches covered.">            if (!factory.getClass().getName().contains(&quot;test&quot;) || enableTestFactories) {</span>
+                try {
+<span class="fc" id="L52">                    final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);</span>
+<span class="fc" id="L53">                    final String name = descriptor.getName();</span>
+<span class="fc" id="L54">                    addFactoryToList(factories, descriptor);</span>
+
+                    // Add != counterparts to equality function factories
+<span class="fc bfc" id="L57" title="All 2 branches covered.">                    if (factory.isBoolean()) {</span>
+<span class="pc bpc" id="L58" title="1 of 3 branches missed.">                        switch (name) {</span>
+                            case &quot;=&quot;:
+<span class="fc" id="L60">                                addFactoryToList(factories, createNegatingFactory(&quot;!=&quot;, factory));</span>
+<span class="fc" id="L61">                                addFactoryToList(factories, createNegatingFactory(&quot;&lt;&gt;&quot;, factory));</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">                                if (descriptor.getArgTypeMask(0) != descriptor.getArgTypeMask(1)) {</span>
+<span class="fc" id="L63">                                    FunctionFactory swappingFactory = createSwappingFactory(&quot;=&quot;, factory);</span>
+<span class="fc" id="L64">                                    addFactoryToList(factories, swappingFactory);</span>
+<span class="fc" id="L65">                                    addFactoryToList(factories, createNegatingFactory(&quot;!=&quot;, swappingFactory));</span>
+<span class="fc" id="L66">                                    addFactoryToList(factories, createNegatingFactory(&quot;&lt;&gt;&quot;, swappingFactory));</span>
+<span class="fc" id="L67">                                }</span>
+                                break;
+                            case &quot;&lt;&quot;:
+                                // `a &lt; b` == `a &gt;= b`
+<span class="fc" id="L71">                                addFactoryToList(factories, createNegatingFactory(&quot;&gt;=&quot;, factory));</span>
+<span class="fc" id="L72">                                FunctionFactory greaterThan = createSwappingFactory(&quot;&gt;&quot;, factory);</span>
+                                // `a &lt; b` == `b &gt; a`
+<span class="fc" id="L74">                                addFactoryToList(factories, greaterThan);</span>
+                                // `b &gt; a` == !(`b &lt;= a`)
+<span class="fc" id="L76">                                addFactoryToList(factories, createNegatingFactory(&quot;&lt;=&quot;, greaterThan));</span>
+                                break;
+<span class="fc" id="L78">                        }</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">                    } else if (factory.isGroupBy()) {</span>
+<span class="fc" id="L80">                        groupByFunctionNames.add(name);</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">                    } else if (factory.isCursor()) {</span>
+<span class="fc" id="L82">                        cursorFunctionNames.add(name);</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">                    } else if (factory.isRuntimeConstant()) {</span>
+<span class="fc" id="L84">                        runtimeConstantFunctionNames.add(name);</span>
+                    }
+<span class="fc" id="L86">                } catch (SqlException e) {</span>
+<span class="fc" id="L87">                    LOG.error().$((Sinkable) e).$(&quot; [signature=&quot;).$(factory.getSignature()).$(&quot;,class=&quot;).$(factory.getClass().getName()).$(']').$();</span>
+<span class="fc" id="L88">                }</span>
+            }
+<span class="fc" id="L90">        }</span>
+<span class="fc" id="L91">    }</span>
+
+    @TestOnly
+    public LowerCaseCharSequenceObjHashMap&lt;ObjList&lt;FunctionFactoryDescriptor&gt;&gt; getFactories() {
+<span class="fc" id="L95">        return factories;</span>
+    }
+
+    public ObjList&lt;FunctionFactoryDescriptor&gt; getOverloadList(CharSequence token) {
+<span class="fc" id="L99">        return factories.get(token);</span>
+    }
+
+    public boolean isCursor(CharSequence name) {
+<span class="fc bfc" id="L103" title="All 4 branches covered.">        return name != null &amp;&amp; cursorFunctionNames.contains(name);</span>
+    }
+
+    public boolean isGroupBy(CharSequence name) {
+<span class="fc bfc" id="L107" title="All 4 branches covered.">        return name != null &amp;&amp; groupByFunctionNames.contains(name);</span>
+    }
+
+    public boolean isRuntimeConstant(CharSequence name) {
+<span class="pc bpc" id="L111" title="1 of 4 branches missed.">        return name != null &amp;&amp; runtimeConstantFunctionNames.contains(name);</span>
+    }
+
+    public boolean isValidNoArgFunction(ExpressionNode node) {
+<span class="fc" id="L115">        final ObjList&lt;FunctionFactoryDescriptor&gt; overload = getOverloadList(node.token);</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        if (overload == null) {</span>
+<span class="fc" id="L117">            return false;</span>
+        }
+
+<span class="fc bfc" id="L120" title="All 2 branches covered.">        for (int i = 0, n = overload.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L121">            FunctionFactoryDescriptor ffd = overload.getQuick(i);</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">            if (ffd.getSigArgCount() == 0) {</span>
+<span class="fc" id="L123">                return true;</span>
+            }
+        }
+
+<span class="fc" id="L127">        return false;</span>
+    }
+
+    private void addFactoryToList(LowerCaseCharSequenceObjHashMap&lt;ObjList&lt;FunctionFactoryDescriptor&gt;&gt; list, FunctionFactory factory) throws SqlException {
+<span class="fc" id="L131">        addFactoryToList(list, new FunctionFactoryDescriptor(factory));</span>
+<span class="fc" id="L132">    }</span>
+
+    private void addFactoryToList(LowerCaseCharSequenceObjHashMap&lt;ObjList&lt;FunctionFactoryDescriptor&gt;&gt; list, FunctionFactoryDescriptor descriptor) {
+<span class="fc" id="L135">        String name = descriptor.getName();</span>
+<span class="fc" id="L136">        int index = list.keyIndex(name);</span>
+        ObjList&lt;FunctionFactoryDescriptor&gt; overload;
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L139">            overload = list.valueAtQuick(index);</span>
+        } else {
+<span class="fc" id="L141">            overload = new ObjList&lt;&gt;(4);</span>
+<span class="fc" id="L142">            list.putAt(index, name, overload);</span>
+        }
+<span class="fc" id="L144">        overload.add(descriptor);</span>
+<span class="fc" id="L145">    }</span>
+
+    private FunctionFactory createNegatingFactory(String name, FunctionFactory factory) throws SqlException {
+<span class="fc" id="L148">        return new NegatingFunctionFactory(name, factory);</span>
+    }
+
+    private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
+<span class="fc" id="L152">        return new SwappingArgsFunctionFactory(name, factory);</span>
+    }
+
+    int getFunctionCount() {
+<span class="fc" id="L156">        return factories.size();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

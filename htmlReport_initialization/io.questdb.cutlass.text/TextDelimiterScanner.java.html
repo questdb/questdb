@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TextDelimiterScanner.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.text</a> &gt; <span class="el_source">TextDelimiterScanner.java</span></div><h1>TextDelimiterScanner.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.text;
+
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+
+import java.io.Closeable;
+import java.util.Arrays;
+
+public class TextDelimiterScanner implements Closeable {
+    private static final double DOUBLE_TOLERANCE = 0.05d;
+<span class="fc" id="L39">    private static final Log LOG = LogFactory.getLog(TextDelimiterScanner.class);</span>
+<span class="fc" id="L40">    private static final byte[] potentialDelimiterBytes = new byte[256];</span>
+<span class="fc" id="L41">    private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];</span>
+    private final int lineCountLimit;
+    private final long matrix;
+    private final int matrixRowSize;
+    private final int matrixSize;
+    private final double maxRequiredDelimiterStdDev;
+    private final double maxRequiredLineLengthStdDev;
+    private CharSequence tableName;
+
+<span class="fc" id="L50">    public TextDelimiterScanner(TextConfiguration configuration) {</span>
+<span class="fc" id="L51">        this.lineCountLimit = configuration.getTextAnalysisMaxLines();</span>
+<span class="fc" id="L52">        this.matrixRowSize = 256 * Integer.BYTES;</span>
+<span class="fc" id="L53">        this.matrixSize = matrixRowSize * lineCountLimit;</span>
+<span class="fc" id="L54">        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+<span class="fc" id="L55">        this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();</span>
+<span class="fc" id="L56">        this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();</span>
+<span class="fc" id="L57">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L61">        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+<span class="fc" id="L62">    }</span>
+
+    private static void configurePriority(byte value, byte priority) {
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">        assert value &gt; -1;</span>
+<span class="fc" id="L66">        priorities[value] = priority;</span>
+<span class="fc" id="L67">    }</span>
+
+    private static byte getPriority(byte value) {
+<span class="fc" id="L70">        return priorities[value];</span>
+    }
+
+    private void bumpCountAt(int line, byte bytePosition, int increment) {
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        if (bytePosition &gt; 0) {</span>
+<span class="fc" id="L75">            final long pos = matrix + ((long) line * matrixRowSize + bytePosition * Integer.BYTES);</span>
+<span class="fc" id="L76">            Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);</span>
+        }
+<span class="fc" id="L78">    }</span>
+
+    byte scan(long address, long hi) throws TextException {
+<span class="fc" id="L81">        int lineCount = 0;</span>
+<span class="fc" id="L82">        boolean quotes = false;</span>
+<span class="fc" id="L83">        long cursor = address;</span>
+<span class="fc" id="L84">        boolean delayedClosingQuote = false;</span>
+
+        // bit field that has bit set for bytes
+        // that occurred in this text
+<span class="fc" id="L88">        long byteBitFieldLo = 0;</span>
+<span class="fc" id="L89">        long byteBitFieldHi = 0;</span>
+
+<span class="fc" id="L91">        int lineLen = 0;</span>
+
+<span class="fc" id="L93">        Vect.memset(matrix, matrixSize, 0);</span>
+<span class="fc bfc" id="L94" title="All 4 branches covered.">        while (cursor &lt; hi &amp;&amp; lineCount &lt; lineCountLimit) {</span>
+<span class="fc" id="L95">            byte b = Unsafe.getUnsafe().getByte(cursor++);</span>
+
+<span class="fc bfc" id="L97" title="All 2 branches covered.">            if (delayedClosingQuote) {</span>
+<span class="fc" id="L98">                delayedClosingQuote = false;</span>
+                // this is double quote '&quot;&quot;' situation
+<span class="fc bfc" id="L100" title="All 2 branches covered.">                if (b == '&quot;') {</span>
+<span class="fc" id="L101">                    lineLen++;</span>
+<span class="fc" id="L102">                    continue;</span>
+                } else {
+                    // last quote was genuine closing one
+<span class="fc" id="L105">                    quotes = false;</span>
+                }
+            }
+
+            // ignore everything that is in quotes
+<span class="fc bfc" id="L110" title="All 2 branches covered.">            if (quotes) {</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">                if (b == '&quot;') {</span>
+<span class="fc" id="L112">                    delayedClosingQuote = true;</span>
+                }
+<span class="fc" id="L114">                lineLen++;</span>
+<span class="fc" id="L115">                continue;</span>
+            }
+
+<span class="fc bfc" id="L118" title="All 3 branches covered.">            switch (b) {</span>
+                case '\n':
+                case '\r':
+                    // if line doesn't have content we just ignore
+                    // line end, thus skipping empty lines as well
+<span class="fc bfc" id="L123" title="All 2 branches covered.">                    if (lineLen &gt; 0) {</span>
+                        // we are going to be storing this line length in 'A' byte
+                        // we don't collect frequencies on printable characters when trying to determine
+                        // column delimiter, therefore 'A' is free to use.
+<span class="fc" id="L127">                        bumpCountAt(lineCount, (byte) 'A', lineLen);</span>
+<span class="fc" id="L128">                        byteBitFieldHi = byteBitFieldHi | (1L &lt;&lt; (Byte.MAX_VALUE - 'A'));</span>
+<span class="fc" id="L129">                        lineCount++;</span>
+<span class="fc" id="L130">                        lineLen = 0;</span>
+                    }
+                    continue;
+                case '&quot;':
+<span class="fc" id="L134">                    lineLen++;</span>
+<span class="fc" id="L135">                    quotes = true;</span>
+<span class="fc" id="L136">                    continue;</span>
+                default:
+<span class="fc" id="L138">                    lineLen++;</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">                    if (potentialDelimiterBytes[b &amp; 0xff] == 1) {</span>
+                        break;
+                    }
+                    continue;
+            }
+
+<span class="fc" id="L145">            bumpCountAt(lineCount, b, 1);</span>
+
+<span class="fc bfc" id="L147" title="All 2 branches covered.">            if (b &lt; 64) {</span>
+<span class="fc" id="L148">                byteBitFieldLo = byteBitFieldLo | (1L &lt;&lt; b);</span>
+            } else {
+<span class="fc" id="L150">                byteBitFieldHi = byteBitFieldHi | (1L &lt;&lt; (Byte.MAX_VALUE - b));</span>
+            }
+<span class="fc" id="L152">        }</span>
+
+        // calculate standard deviation for every byte in the matrix
+<span class="fc" id="L155">        byte delimiter = Byte.MIN_VALUE;</span>
+
+<span class="fc bfc" id="L157" title="All 2 branches covered.">        if (lineCount &lt; 2) {</span>
+<span class="fc" id="L158">            LOG.info().$(&quot;not enough lines [table=&quot;).$(tableName).$(']').$();</span>
+<span class="fc" id="L159">            throw NotEnoughLinesException.$(&quot;not enough lines [table=&quot;).put(tableName).put(']');</span>
+        }
+
+<span class="fc" id="L162">        double lastDelimiterStdDev = Double.POSITIVE_INFINITY;</span>
+<span class="fc" id="L163">        byte lastDelimiterPriority = Byte.MIN_VALUE;</span>
+<span class="fc" id="L164">        double lastDelimiterMean = 0;</span>
+<span class="fc" id="L165">        double lineLengthStdDev = 0;</span>
+
+<span class="fc bfc" id="L167" title="All 2 branches covered.">        for (int i = 0, n = Byte.MAX_VALUE + 1; i &lt; n; i++) {</span>
+            boolean set;
+
+<span class="fc bfc" id="L170" title="All 2 branches covered.">            if (i &lt; 64) {</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">                set = (byteBitFieldLo &amp; (1L &lt;&lt; i)) != 0;</span>
+            } else {
+<span class="fc bfc" id="L173" title="All 2 branches covered.">                set = (byteBitFieldHi &amp; (1L &lt;&lt; (Byte.MAX_VALUE - i))) != 0;</span>
+            }
+
+<span class="fc bfc" id="L176" title="All 2 branches covered.">            if (set) {</span>
+<span class="fc" id="L177">                long offset = i * 4L;</span>
+
+                // calculate mean
+<span class="fc" id="L180">                long sum = 0;</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">                for (int l = 0; l &lt; lineCount; l++) {</span>
+<span class="fc" id="L182">                    sum += Unsafe.getUnsafe().getInt(matrix + offset);</span>
+<span class="fc" id="L183">                    offset += matrixRowSize;</span>
+                }
+
+<span class="fc" id="L186">                offset = i * 4L;</span>
+<span class="fc" id="L187">                final double mean = (double) sum / lineCount;</span>
+<span class="fc bfc" id="L188" title="All 2 branches covered.">                if (mean &gt; 0) {</span>
+<span class="fc" id="L189">                    double squareSum = 0.0;</span>
+<span class="fc bfc" id="L190" title="All 2 branches covered.">                    for (int l = 0; l &lt; lineCount; l++) {</span>
+<span class="fc" id="L191">                        double x = Unsafe.getUnsafe().getInt(matrix + offset) - mean;</span>
+<span class="fc" id="L192">                        squareSum += x * x;</span>
+<span class="fc" id="L193">                        offset += matrixRowSize;</span>
+                    }
+
+<span class="fc" id="L196">                    final double stdDev = Math.sqrt(squareSum / lineCount);</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">                    if (i == 'A') {</span>
+<span class="fc" id="L198">                        lineLengthStdDev = stdDev;</span>
+<span class="fc" id="L199">                        continue;</span>
+                    }
+
+<span class="fc" id="L202">                    final byte thisPriority = getPriority((byte) i);</span>
+
+                    // when stddev of this is less than last - use this
+                    // when stddev of this is the same as last then
+                    //    choose on priority (higher is better)
+                    //    when priority is the same choose on mean (higher is better)
+<span class="fc bfc" id="L208" title="All 2 branches covered.">                    if (stdDev &lt; lastDelimiterStdDev</span>
+                            || (
+<span class="pc bpc" id="L210" title="1 of 8 branches missed.">                            (Math.abs(stdDev - lastDelimiterStdDev) &lt; DOUBLE_TOLERANCE)</span>
+                                    &amp;&amp;
+                                    (lastDelimiterPriority &lt; thisPriority || lastDelimiterPriority == thisPriority &amp;&amp; lastDelimiterMean &gt; mean)
+                    )) {
+<span class="fc" id="L214">                        lastDelimiterStdDev = stdDev;</span>
+<span class="fc" id="L215">                        lastDelimiterPriority = thisPriority;</span>
+<span class="fc" id="L216">                        lastDelimiterMean = mean;</span>
+<span class="fc" id="L217">                        delimiter = (byte) i;</span>
+                    }
+                }
+            }
+        }
+
+        // exclude '.' as delimiter
+<span class="fc bfc" id="L224" title="All 4 branches covered.">        if (delimiter != '.' &amp;&amp; lastDelimiterStdDev &lt; maxRequiredDelimiterStdDev) {</span>
+<span class="fc" id="L225">            LOG.info()</span>
+<span class="fc" id="L226">                    .$(&quot;scan result [table=`&quot;).$(tableName)</span>
+<span class="fc" id="L227">                    .$(&quot;`, delimiter='&quot;).$((char) delimiter)</span>
+<span class="fc" id="L228">                    .$(&quot;', priority=&quot;).$(lastDelimiterPriority)</span>
+<span class="fc" id="L229">                    .$(&quot;, mean=&quot;).$(lastDelimiterMean)</span>
+<span class="fc" id="L230">                    .$(&quot;, stddev=&quot;).$(lastDelimiterStdDev)</span>
+<span class="fc" id="L231">                    .$(']').$();</span>
+
+<span class="fc" id="L233">            return delimiter;</span>
+        }
+
+        // it appears we could not establish delimiter
+        // we could treat input as single column of data if line length change stays within tolerance
+<span class="fc bfc" id="L238" title="All 2 branches covered.">        if (lineLengthStdDev &lt; maxRequiredLineLengthStdDev) {</span>
+<span class="fc" id="L239">            return ',';</span>
+        }
+
+<span class="fc" id="L242">        LOG.info()</span>
+<span class="fc" id="L243">                .$(&quot;min deviation is too high [delimiterStdDev=&quot;).$(lastDelimiterStdDev)</span>
+<span class="fc" id="L244">                .$(&quot;, delimiterMaxStdDev=&quot;).$(maxRequiredDelimiterStdDev)</span>
+<span class="fc" id="L245">                .$(&quot;, lineLengthStdDev=&quot;).$(lineLengthStdDev)</span>
+<span class="fc" id="L246">                .$(&quot;, lineLengthMaxStdDev=&quot;).$(maxRequiredLineLengthStdDev)</span>
+<span class="fc" id="L247">                .$(&quot;, lineCountLimit=&quot;).$(lineCountLimit)</span>
+<span class="fc" id="L248">                .$(&quot;, lineCount=&quot;).$(lineCount)</span>
+<span class="fc" id="L249">                .$(']').$();</span>
+
+<span class="fc" id="L251">        throw TextException.$(&quot;min deviation is too high [delimiterStdDev=&quot;)</span>
+<span class="fc" id="L252">                .put(lastDelimiterStdDev)</span>
+<span class="fc" id="L253">                .put(&quot;, delimiterMaxStdDev=&quot;).put(maxRequiredDelimiterStdDev)</span>
+<span class="fc" id="L254">                .put(&quot;, lineLengthStdDev=&quot;).put(lineLengthStdDev)</span>
+<span class="fc" id="L255">                .put(&quot;, lineLengthMaxStdDev=&quot;).put(maxRequiredLineLengthStdDev)</span>
+<span class="fc" id="L256">                .put(&quot;, lineCountLimit=&quot;).put(lineCountLimit)</span>
+<span class="fc" id="L257">                .put(&quot;, lineCount=&quot;).put(lineCount)</span>
+<span class="fc" id="L258">                .put(']');</span>
+    }
+
+    void setTableName(CharSequence tableName) {
+<span class="fc" id="L262">        this.tableName = tableName;</span>
+<span class="fc" id="L263">    }</span>
+
+    static {
+<span class="fc" id="L266">        configurePriority((byte) ',', (byte) 10);</span>
+<span class="fc" id="L267">        configurePriority((byte) '\t', (byte) 10);</span>
+<span class="fc" id="L268">        configurePriority((byte) '|', (byte) 10);</span>
+<span class="fc" id="L269">        configurePriority((byte) ':', (byte) 9);</span>
+<span class="fc" id="L270">        configurePriority((byte) ' ', (byte) 8);</span>
+<span class="fc" id="L271">        configurePriority((byte) ';', (byte) 8);</span>
+
+<span class="fc" id="L273">        Arrays.fill(potentialDelimiterBytes, (byte) 0);</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">        for (int i = 1; i &lt; '0'; i++) {</span>
+<span class="fc" id="L275">            potentialDelimiterBytes[i] = 1;</span>
+        }
+<span class="fc bfc" id="L277" title="All 2 branches covered.">        for (int i = '9' + 1; i &lt; 'A'; i++) {</span>
+<span class="fc" id="L278">            potentialDelimiterBytes[i] = 1;</span>
+        }
+
+<span class="fc bfc" id="L281" title="All 2 branches covered.">        for (int i = 'Z'; i &lt; 'a'; i++) {</span>
+<span class="fc" id="L282">            potentialDelimiterBytes[i] = 1;</span>
+        }
+
+<span class="fc bfc" id="L285" title="All 2 branches covered.">        for (int i = 'z' + 1; i &lt; 255; i++) {</span>
+<span class="fc" id="L286">            potentialDelimiterBytes[i] = 1;</span>
+        }
+<span class="fc" id="L288">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

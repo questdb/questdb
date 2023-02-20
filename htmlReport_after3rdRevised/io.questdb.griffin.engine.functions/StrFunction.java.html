@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StrFunction.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions</a> &gt; <span class="el_source">StrFunction.java</span></div><h1>StrFunction.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions;
+
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.str.CharSink;
+
+<span class="fc" id="L38">public abstract class StrFunction implements ScalarFunction {</span>
+    @Override
+    public final BinarySequence getBin(Record rec) {
+<span class="fc" id="L41">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getBinLen(Record rec) {
+<span class="fc" id="L46">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final boolean getBool(Record rec) {
+<span class="fc" id="L51">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final byte getByte(Record rec) {
+<span class="fc" id="L56">        return SqlUtil.implicitCastStrAsByte(getStr(rec));</span>
+    }
+
+    @Override
+    public final char getChar(Record rec) {
+<span class="fc" id="L61">        return SqlUtil.implicitCastStrAsChar(getStr(rec));</span>
+    }
+
+    @Override
+    public final long getDate(Record rec) {
+<span class="fc" id="L66">        return SqlUtil.implicitCastStrAsDate(getStr(rec));</span>
+    }
+
+    @Override
+    public final double getDouble(Record rec) {
+<span class="fc" id="L71">        return SqlUtil.implicitCastStrAsDouble(getStr(rec));</span>
+    }
+
+    @Override
+    public final float getFloat(Record rec) {
+<span class="fc" id="L76">        return SqlUtil.implicitCastStrAsFloat(getStr(rec));</span>
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+<span class="fc" id="L81">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+<span class="fc" id="L86">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+<span class="fc" id="L91">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+<span class="fc" id="L96">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final int getInt(Record rec) {
+<span class="fc" id="L101">        return SqlUtil.implicitCastStrAsInt(getStr(rec));</span>
+    }
+
+    @Override
+    public final long getLong(Record rec) {
+<span class="fc" id="L106">        return SqlUtil.implicitCastStrAsLong(getStr(rec));</span>
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+<span class="nc" id="L111">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+<span class="nc" id="L116">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final void getLong256(Record rec, CharSink sink) {
+<span class="fc" id="L121">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final Long256 getLong256A(Record rec) {
+<span class="fc" id="L126">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final Long256 getLong256B(Record rec) {
+<span class="fc" id="L131">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final RecordCursorFactory getRecordCursorFactory() {
+<span class="fc" id="L136">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final short getShort(Record rec) {
+<span class="fc" id="L141">        return SqlUtil.implicitCastStrAsShort(getStr(rec));</span>
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+<span class="fc" id="L146">        sink.put(getStr(rec));</span>
+<span class="fc" id="L147">    }</span>
+
+    @Override
+    public int getStrLen(Record rec) {
+<span class="fc" id="L151">        final CharSequence str = getStr(rec);</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        return str == null ? TableUtils.NULL_LEN : str.length();</span>
+    }
+
+    @Override
+    public final CharSequence getSymbol(Record rec) {
+<span class="fc" id="L157">        return getStr(rec);</span>
+    }
+
+    @Override
+    public final CharSequence getSymbolB(Record rec) {
+<span class="fc" id="L162">        return getStrB(rec);</span>
+    }
+
+    @Override
+    public final long getTimestamp(Record rec) {
+<span class="fc" id="L167">        return SqlUtil.implicitCastStrAsTimestamp(getStr(rec));</span>
+    }
+
+    @Override
+    public final int getType() {
+<span class="fc" id="L172">        return ColumnType.STRING;</span>
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+<span class="fc" id="L177">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

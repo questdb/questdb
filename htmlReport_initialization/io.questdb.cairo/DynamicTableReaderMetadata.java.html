@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DynamicTableReaderMetadata.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">DynamicTableReaderMetadata.java</span></div><h1>DynamicTableReaderMetadata.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
+
+import java.io.Closeable;
+
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
+public class DynamicTableReaderMetadata extends TableReaderMetadata implements Closeable {
+<span class="fc" id="L40">    private static final Log LOG = LogFactory.getLog(DynamicTableReaderMetadata.class);</span>
+    private final MillisecondClock clock;
+    private final CairoConfiguration configuration;
+    private long rowCount;
+    private TxReader txFile;
+<span class="fc" id="L45">    private long txn = TableUtils.INITIAL_TXN;</span>
+
+    public DynamicTableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
+<span class="fc" id="L48">        super(configuration, tableToken);</span>
+<span class="fc" id="L49">        this.configuration = configuration;</span>
+<span class="fc" id="L50">        this.clock = configuration.getMillisecondClock();</span>
+<span class="fc" id="L51">        try (Path path = new Path()) {</span>
+<span class="fc" id="L52">            path.of(configuration.getRoot()).concat(tableToken);</span>
+<span class="fc" id="L53">            this.txFile = new TxReader(configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(), getPartitionBy());</span>
+<span class="fc" id="L54">            load();</span>
+<span class="fc" id="L55">        } catch (Throwable e) {</span>
+<span class="fc" id="L56">            close();</span>
+<span class="fc" id="L57">            throw e;</span>
+<span class="fc" id="L58">        }</span>
+<span class="fc" id="L59">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L63">        this.txFile = Misc.free(txFile);</span>
+<span class="fc" id="L64">        super.close();</span>
+<span class="fc" id="L65">    }</span>
+
+    public long getMaxTimestamp() {
+<span class="nc" id="L68">        return txFile.getMaxTimestamp();</span>
+    }
+
+    public long getMinTimestamp() {
+<span class="nc" id="L72">        return txFile.getMinTimestamp();</span>
+    }
+
+    public long getTransientRowCount() {
+<span class="nc" id="L76">        return txFile.getTransientRowCount();</span>
+    }
+
+    public long getTxn() {
+<span class="nc" id="L80">        return txn;</span>
+    }
+
+    public long getVersion() {
+<span class="nc" id="L84">        return this.txFile.getStructureVersion();</span>
+    }
+
+    public void reload() {
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        if (acquireTxn()) {</span>
+<span class="fc" id="L89">            return;</span>
+        }
+<span class="fc" id="L91">        reloadSlow();</span>
+        // partition reload will apply truncate if necessary
+        // applyTruncate for non-partitioned tables only
+<span class="fc" id="L94">    }</span>
+
+    public long size() {
+<span class="nc" id="L97">        return rowCount;</span>
+    }
+
+    private boolean acquireTxn() {
+        // txFile can also be reloaded in goPassive-&gt;checkSchedulePurgeO3Partitions
+        // if txFile txn doesn't much reader txn, reader has to be slow reloaded
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        if (txn == txFile.getTxn()) {</span>
+            // We have to be sure last txn is acquired in Scoreboard
+            // otherwise writer can delete partition version files
+            // between reading txn file and acquiring txn in the Scoreboard.
+<span class="fc" id="L107">            Unsafe.getUnsafe().loadFence();</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">            return txFile.getVersion() == txFile.unsafeReadVersion();</span>
+        }
+<span class="fc" id="L110">        return false;</span>
+    }
+
+    private void readTxnSlow(long deadline) {
+<span class="fc" id="L114">        int count = 0;</span>
+
+        while (true) {
+<span class="pc bpc" id="L117" title="1 of 2 branches missed.">            if (txFile.unsafeLoadAll()) {</span>
+                // good, very stable, congrats
+<span class="fc" id="L119">                long txn = txFile.getTxn();</span>
+<span class="fc" id="L120">                this.txn = txn;</span>
+
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">                if (acquireTxn()) {</span>
+<span class="fc" id="L123">                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();</span>
+<span class="fc" id="L124">                    LOG.debug()</span>
+<span class="fc" id="L125">                            .$(&quot;new transaction [txn=&quot;).$(txn)</span>
+<span class="fc" id="L126">                            .$(&quot;, transientRowCount=&quot;).$(txFile.getTransientRowCount())</span>
+<span class="fc" id="L127">                            .$(&quot;, fixedRowCount=&quot;).$(txFile.getFixedRowCount())</span>
+<span class="fc" id="L128">                            .$(&quot;, maxTimestamp=&quot;).$ts(txFile.getMaxTimestamp())</span>
+<span class="fc" id="L129">                            .$(&quot;, attempts=&quot;).$(count)</span>
+<span class="fc" id="L130">                            .$(&quot;, thread=&quot;).$(Thread.currentThread().getName())</span>
+<span class="fc" id="L131">                            .$(']').$();</span>
+<span class="fc" id="L132">                    break;</span>
+                }
+            }
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
+<span class="nc" id="L137">            count++;</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            if (clock.getTicks() &gt; deadline) {</span>
+<span class="nc" id="L139">                LOG.error().$(&quot;tx read timeout [timeout=&quot;).$(configuration.getSpinLockTimeout()).utf8(&quot;ms]&quot;).$();</span>
+<span class="nc" id="L140">                throw CairoException.critical(0).put(&quot;Transaction read timeout&quot;);</span>
+            }
+<span class="nc" id="L142">            Os.pause();</span>
+        }
+<span class="fc" id="L144">    }</span>
+
+    private boolean reloadMetadata(long txnStructureVersion, long deadline) {
+        // create transition index, which will help us reuse already open resources
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        if (txnStructureVersion == getStructureVersion()) {</span>
+<span class="fc" id="L149">            return true;</span>
+        }
+
+        while (true) {
+            long pTransitionIndex;
+            try {
+<span class="fc" id="L155">                pTransitionIndex = createTransitionIndex(txnStructureVersion);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">                if (pTransitionIndex &lt; 0) {</span>
+<span class="pc bpc" id="L157" title="1 of 2 branches missed.">                    if (clock.getTicks() &lt; deadline) {</span>
+<span class="fc" id="L158">                        return false;</span>
+                    }
+<span class="nc" id="L160">                    LOG.error().$(&quot;metadata read timeout [timeout=&quot;).$(configuration.getSpinLockTimeout()).utf8(&quot;ms]&quot;).$();</span>
+<span class="nc" id="L161">                    throw CairoException.critical(0).put(&quot;Metadata read timeout&quot;);</span>
+                }
+<span class="nc" id="L163">            } catch (CairoException ex) {</span>
+                // This is temporary solution until we can get multiple version of metadata not overwriting each other
+<span class="nc" id="L165">                TableUtils.handleMetadataLoadException(getTableToken().getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());</span>
+<span class="nc" id="L166">                continue;</span>
+<span class="fc" id="L167">            }</span>
+
+            try {
+<span class="fc" id="L170">                applyTransitionIndex();</span>
+<span class="fc" id="L171">                return true;</span>
+            } finally {
+<span class="fc" id="L173">                TableUtils.freeTransitionIndex(pTransitionIndex);</span>
+            }
+        }
+    }
+
+    private void reloadSlow() {
+<span class="fc" id="L179">        final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();</span>
+        do {
+            // Reload txn
+<span class="fc" id="L182">            readTxnSlow(deadline);</span>
+            // Reload _meta if structure version updated, reload _cv if column version updated
+            // Start again if _meta with matching structure version cannot be loaded
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        } while (!reloadMetadata(txFile.getStructureVersion(), deadline));</span>
+<span class="fc" id="L186">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

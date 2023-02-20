@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SplitPartCharFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.str</a> &gt; <span class="el_source">SplitPartCharFunctionFactory.java</span></div><h1>SplitPartCharFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.str;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+<span class="fc" id="L43">public class SplitPartCharFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L46">        return &quot;split_part(SAI)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+<span class="fc" id="L51">        final Function strFunc = args.getQuick(0);</span>
+<span class="fc" id="L52">        final Function delimiterFunc = args.getQuick(1);</span>
+<span class="fc" id="L53">        final Function indexFunc = args.getQuick(2);</span>
+<span class="fc" id="L54">        final int indexPosition = argPositions.getQuick(2);</span>
+
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (delimiterFunc.isConstant()) {</span>
+<span class="fc" id="L57">            char delimiter = delimiterFunc.getChar(null);</span>
+<span class="fc bfc" id="L58" title="All 2 branches covered.">            if (delimiter == CharConstant.ZERO.getChar(null)) {</span>
+<span class="fc" id="L59">                return StrConstant.NULL;</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">            } else if (indexFunc.isConstant()) {</span>
+<span class="fc" id="L61">                int index = indexFunc.getInt(null);</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">                if (index == Numbers.INT_NaN) {</span>
+<span class="fc" id="L63">                    return StrConstant.NULL;</span>
+<span class="fc bfc" id="L64" title="All 2 branches covered.">                } else if (index == 0) {</span>
+<span class="fc" id="L65">                    throw SqlException.$(indexPosition, &quot;field position must not be zero&quot;);</span>
+                } else {
+<span class="fc" id="L67">                    return new SplitPartConstDelimiterConstIndexFunction(strFunc, delimiterFunc, indexFunc, indexPosition, delimiter, index);</span>
+                }
+            } else {
+<span class="fc" id="L70">                return new SplitPartConstDelimiterFunction(strFunc, delimiterFunc, indexFunc, indexPosition, delimiter);</span>
+            }
+        }
+<span class="fc bfc" id="L73" title="All 2 branches covered.">        if (indexFunc.isConstant()) {</span>
+<span class="fc" id="L74">            int index = indexFunc.getInt(null);</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">            if (index == Numbers.INT_NaN) {</span>
+<span class="nc" id="L76">                return StrConstant.NULL;</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">            } else if (index == 0) {</span>
+<span class="nc" id="L78">                throw SqlException.$(indexPosition, &quot;field position must not be zero&quot;);</span>
+            } else {
+<span class="fc" id="L80">                return new SplitPartConstIndexFunction(strFunc, delimiterFunc, indexFunc, indexPosition, index);</span>
+            }
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">        } else if (!indexFunc.isRuntimeConstant()) {</span>
+<span class="fc" id="L83">            throw SqlException.$(indexPosition, &quot;index must be a constant or runtime-constant&quot;);</span>
+        }
+<span class="nc" id="L85">        return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);</span>
+    }
+
+    private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
+        protected final Function delimiterFunc;
+        protected final Function indexFunc;
+        protected final Function strFunc;
+        private final int indexPosition;
+<span class="fc" id="L93">        private final StringSink sink = new StringSink();</span>
+<span class="fc" id="L94">        private final StringSink sinkB = new StringSink();</span>
+
+<span class="fc" id="L96">        public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {</span>
+<span class="fc" id="L97">            this.strFunc = strFunc;</span>
+<span class="fc" id="L98">            this.delimiterFunc = delimiterFunc;</span>
+<span class="fc" id="L99">            this.indexFunc = indexFunc;</span>
+<span class="fc" id="L100">            this.indexPosition = indexPosition;</span>
+<span class="fc" id="L101">        }</span>
+
+        @Override
+        public Function getCenter() {
+<span class="fc" id="L105">            return delimiterFunc;</span>
+        }
+
+        @Override
+        public Function getLeft() {
+<span class="fc" id="L110">            return strFunc;</span>
+        }
+
+        @Override
+        public String getName() {
+<span class="fc" id="L115">            return &quot;split_part&quot;;</span>
+        }
+
+        @Override
+        public Function getRight() {
+<span class="fc" id="L120">            return indexFunc;</span>
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+<span class="nc" id="L125">            getStr0(rec, sink, false);</span>
+<span class="nc" id="L126">        }</span>
+
+        @Override
+        public CharSequence getStr(Record rec) {
+<span class="fc" id="L130">            return getStr0(rec, sink, true);</span>
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+<span class="nc" id="L135">            return getStr0(rec, sinkB, true);</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="nc" id="L140">            TernaryFunction.super.init(symbolTableSource, executionContext);</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            if (indexFunc.isRuntimeConstant()) {</span>
+<span class="nc" id="L142">                int index = indexFunc.getInt(null);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">                if (index == 0) {</span>
+<span class="nc" id="L144">                    throw SqlException.$(indexPosition, &quot;field position must not be zero&quot;);</span>
+                }
+            }
+<span class="nc" id="L147">        }</span>
+
+        @Nullable
+        private &lt;S extends CharSink&gt; S getStr0(Record rec, S sink, boolean clearSink) {
+<span class="fc" id="L151">            CharSequence str = strFunc.getStr(rec);</span>
+<span class="fc" id="L152">            char delimiter = getDelimiter(rec);</span>
+<span class="fc" id="L153">            int index = getIndex(rec);</span>
+<span class="pc bpc" id="L154" title="2 of 6 branches missed.">            if (str == null || delimiter == CharConstant.ZERO.getChar(null) || index == Numbers.INT_NaN) {</span>
+<span class="fc" id="L155">                return null;</span>
+            }
+<span class="pc bpc" id="L157" title="1 of 2 branches missed.">            if (index == 0) {</span>
+<span class="nc" id="L158">                return sink;</span>
+            }
+
+            int start;
+            int end;
+<span class="fc bfc" id="L163" title="All 2 branches covered.">            if (index &gt; 0) {</span>
+<span class="pc bpc" id="L164" title="1 of 2 branches missed.">                if (index == 1) {</span>
+<span class="nc" id="L165">                    start = 0;</span>
+                } else {
+<span class="fc" id="L167">                    start = Chars.indexOf(str, 0, str.length(), delimiter, index - 1);</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">                    if (start == -1) {</span>
+<span class="fc" id="L169">                        return sink;</span>
+                    }
+<span class="fc" id="L171">                    start += 1;</span>
+                }
+
+<span class="fc" id="L174">                end = Chars.indexOf(str, start, str.length(), delimiter);</span>
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">                if (end == -1) {</span>
+<span class="nc" id="L176">                    end = str.length();</span>
+                }
+            } else {    // if index is negative, returns index-from-last field
+<span class="pc bpc" id="L179" title="1 of 2 branches missed.">                if (index == -1) {</span>
+<span class="nc" id="L180">                    end = str.length();</span>
+                } else {
+<span class="fc" id="L182">                    end = Chars.indexOf(str, 0, str.length(), delimiter, index + 1);</span>
+<span class="pc bpc" id="L183" title="1 of 2 branches missed.">                    if (end == -1) {</span>
+<span class="nc" id="L184">                        return sink;</span>
+                    }
+                }
+
+<span class="fc" id="L188">                start = Chars.indexOf(str, 0, end, delimiter, -1);</span>
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">                if (start == -1) {</span>
+<span class="nc" id="L190">                    start = 0;</span>
+                } else {
+<span class="fc" id="L192">                    start += 1;</span>
+                }
+            }
+
+<span class="pc bpc" id="L196" title="2 of 4 branches missed.">            if (clearSink &amp;&amp; sink instanceof Mutable) {</span>
+<span class="fc" id="L197">                ((Mutable) sink).clear();</span>
+            }
+<span class="fc" id="L199">            sink.put(str, start, end);</span>
+<span class="fc" id="L200">            return sink;</span>
+        }
+
+        abstract char getDelimiter(Record rec);
+
+        abstract int getIndex(Record rec);
+    }
+
+    private static class SplitPartConstDelimiterConstIndexFunction extends AbstractSplitPartFunction {
+        private final char delimiter;
+        private final int index;
+
+        public SplitPartConstDelimiterConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                                         char delimiter, int index) {
+<span class="fc" id="L214">            super(strFunc, delimiterFunc, indexFunc, indexPosition);</span>
+<span class="fc" id="L215">            this.delimiter = delimiter;</span>
+<span class="fc" id="L216">            this.index = index;</span>
+<span class="fc" id="L217">        }</span>
+
+        @Override
+        char getDelimiter(Record rec) {
+<span class="fc" id="L221">            return delimiter;</span>
+        }
+
+        @Override
+        int getIndex(Record rec) {
+<span class="fc" id="L226">            return index;</span>
+        }
+    }
+
+    private static class SplitPartConstDelimiterFunction extends AbstractSplitPartFunction {
+        private final char delimiter;
+
+        public SplitPartConstDelimiterFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                               char delimiter) {
+<span class="fc" id="L235">            super(strFunc, delimiterFunc, indexFunc, indexPosition);</span>
+<span class="fc" id="L236">            this.delimiter = delimiter;</span>
+<span class="fc" id="L237">        }</span>
+
+        @Override
+        char getDelimiter(Record rec) {
+<span class="nc" id="L241">            return delimiter;</span>
+        }
+
+        @Override
+        int getIndex(Record rec) {
+<span class="nc" id="L246">            return indexFunc.getInt(rec);</span>
+        }
+    }
+
+    private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
+        private final int index;
+
+        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                           int index) {
+<span class="fc" id="L255">            super(strFunc, delimiterFunc, indexFunc, indexPosition);</span>
+<span class="fc" id="L256">            this.index = index;</span>
+<span class="fc" id="L257">        }</span>
+
+        @Override
+        char getDelimiter(Record rec) {
+<span class="nc" id="L261">            return delimiterFunc.getChar(rec);</span>
+        }
+
+        @Override
+        int getIndex(Record rec) {
+<span class="nc" id="L266">            return index;</span>
+        }
+    }
+
+    private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
+        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+<span class="nc" id="L272">            super(strFunc, delimiterFunc, indexFunc, indexPosition);</span>
+<span class="nc" id="L273">        }</span>
+
+        @Override
+        char getDelimiter(Record rec) {
+<span class="nc" id="L277">            return delimiterFunc.getChar(rec);</span>
+        }
+
+        @Override
+        int getIndex(Record rec) {
+<span class="nc" id="L282">            return indexFunc.getInt(rec);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

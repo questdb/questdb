@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UnionRecord.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.union</a> &gt; <span class="el_source">UnionRecord.java</span></div><h1>UnionRecord.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.union;
+
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.str.CharSink;
+
+<span class="fc" id="L31">public class UnionRecord extends AbstractUnionRecord {</span>
+
+    @Override
+    public BinarySequence getBin(int col) {
+<span class="fc bfc" id="L35" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L36">            return recordA.getBin(col);</span>
+        }
+<span class="fc" id="L38">        return recordB.getBin(col);</span>
+    }
+
+    @Override
+    public long getBinLen(int col) {
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L44">            return recordA.getBinLen(col);</span>
+        }
+<span class="fc" id="L46">        return recordB.getBinLen(col);</span>
+    }
+
+    @Override
+    public boolean getBool(int col) {
+<span class="fc bfc" id="L51" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L52">            return recordA.getBool(col);</span>
+        }
+<span class="fc" id="L54">        return recordB.getBool(col);</span>
+    }
+
+    @Override
+    public byte getByte(int col) {
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L60">            return recordA.getByte(col);</span>
+        }
+<span class="fc" id="L62">        return recordB.getByte(col);</span>
+    }
+
+    @Override
+    public char getChar(int col) {
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L68">            return recordA.getChar(col);</span>
+        }
+<span class="fc" id="L70">        return recordB.getChar(col);</span>
+    }
+
+    @Override
+    public long getDate(int col) {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L76">            return recordA.getDate(col);</span>
+        }
+<span class="fc" id="L78">        return recordB.getDate(col);</span>
+    }
+
+    @Override
+    public double getDouble(int col) {
+<span class="fc bfc" id="L83" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L84">            return recordA.getDouble(col);</span>
+        }
+<span class="fc" id="L86">        return recordB.getDouble(col);</span>
+    }
+
+    @Override
+    public float getFloat(int col) {
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L92">            return recordA.getFloat(col);</span>
+        }
+<span class="fc" id="L94">        return recordB.getFloat(col);</span>
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L100">            return recordA.getGeoByte(col);</span>
+        }
+<span class="fc" id="L102">        return recordB.getGeoByte(col);</span>
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L108">            return recordA.getGeoInt(col);</span>
+        }
+<span class="fc" id="L110">        return recordB.getGeoInt(col);</span>
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+<span class="fc bfc" id="L115" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L116">            return recordA.getGeoLong(col);</span>
+        }
+<span class="fc" id="L118">        return recordB.getGeoLong(col);</span>
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L124">            return recordA.getGeoShort(col);</span>
+        }
+<span class="fc" id="L126">        return recordB.getGeoShort(col);</span>
+    }
+
+    // symbol is not supported by set functions
+
+    @Override
+    public int getInt(int col) {
+<span class="fc bfc" id="L133" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L134">            return recordA.getInt(col);</span>
+        }
+<span class="fc" id="L136">        return recordB.getInt(col);</span>
+    }
+
+    @Override
+    public long getLong(int col) {
+<span class="fc bfc" id="L141" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L142">            return recordA.getLong(col);</span>
+        }
+<span class="fc" id="L144">        return recordB.getLong(col);</span>
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L150">            return recordA.getLong128Hi(col);</span>
+        }
+<span class="fc" id="L152">        return recordB.getLong128Hi(col);</span>
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+<span class="fc bfc" id="L157" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L158">            return recordA.getLong128Lo(col);</span>
+        }
+<span class="fc" id="L160">        return recordB.getLong128Lo(col);</span>
+    }
+
+    @Override
+    public void getLong256(int col, CharSink sink) {
+<span class="fc bfc" id="L165" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L166">            recordA.getLong256(col, sink);</span>
+        } else {
+<span class="fc" id="L168">            recordB.getLong256(col, sink);</span>
+        }
+<span class="fc" id="L170">    }</span>
+
+    @Override
+    public Long256 getLong256A(int col) {
+<span class="fc bfc" id="L174" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L175">            return recordA.getLong256A(col);</span>
+        }
+<span class="fc" id="L177">        return recordB.getLong256A(col);</span>
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+<span class="fc bfc" id="L182" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L183">            return recordA.getLong256B(col);</span>
+        }
+<span class="fc" id="L185">        return recordB.getLong256B(col);</span>
+    }
+
+    @Override
+    public short getShort(int col) {
+<span class="fc bfc" id="L190" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L191">            return recordA.getShort(col);</span>
+        }
+<span class="fc" id="L193">        return recordB.getShort(col);</span>
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L199">            return recordA.getStr(col);</span>
+        }
+<span class="fc" id="L201">        return recordB.getStr(col);</span>
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L207">            recordA.getStr(col, sink);</span>
+        } else {
+<span class="fc" id="L209">            recordB.getStr(col, sink);</span>
+        }
+<span class="fc" id="L211">    }</span>
+
+    @Override
+    public CharSequence getStrB(int col) {
+<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L216">            return recordA.getStrB(col);</span>
+        }
+<span class="fc" id="L218">        return recordB.getStrB(col);</span>
+    }
+
+    @Override
+    public int getStrLen(int col) {
+<span class="fc bfc" id="L223" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L224">            return recordA.getStrLen(col);</span>
+        }
+<span class="fc" id="L226">        return recordB.getStrLen(col);</span>
+    }
+
+    @Override
+    public long getTimestamp(int col) {
+<span class="fc bfc" id="L231" title="All 2 branches covered.">        if (useA) {</span>
+<span class="fc" id="L232">            return recordA.getTimestamp(col);</span>
+        }
+<span class="fc" id="L234">        return recordB.getTimestamp(col);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InSymbolCursorFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.bool</a> &gt; <span class="el_source">InSymbolCursorFunctionFactory.java</span></div><h1>InSymbolCursorFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.bool;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.*;
+
+<span class="fc" id="L40">public class InSymbolCursorFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L43">        return &quot;in(KC)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList&lt;Function&gt; args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+<span class="fc" id="L54">        SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);</span>
+<span class="fc" id="L55">        Function cursorFunction = args.getQuick(1);</span>
+
+        // use first column to create list of values (over multiple records)
+        // supported column types are STRING and SYMBOL
+
+<span class="fc" id="L60">        final int zeroColumnType = cursorFunction.getRecordCursorFactory().getMetadata().getColumnType(0);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        if (!ColumnType.isSymbolOrString(zeroColumnType)) {</span>
+<span class="fc" id="L62">            throw SqlException.position(position).put(&quot;supported column types are STRING and SYMBOL, found: &quot;).put(ColumnType.nameOf(zeroColumnType));</span>
+        }
+
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        final Record.CharSequenceFunction func = ColumnType.isString(zeroColumnType) ? Record.GET_STR : Record.GET_SYM;</span>
+
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (symbolFunction.isSymbolTableStatic()) {</span>
+<span class="fc" id="L68">            return new SymbolInCursorFunction(symbolFunction, cursorFunction, func);</span>
+        }
+<span class="fc" id="L70">        return new StrInCursorFunction(symbolFunction, cursorFunction, func);</span>
+    }
+
+    private static class StrInCursorFunction extends BooleanFunction implements BinaryFunction {
+
+        private final Function cursorArg;
+        private final Record.CharSequenceFunction func;
+        private final Function valueArg;
+<span class="fc" id="L78">        private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();</span>
+<span class="fc" id="L79">        private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();</span>
+        private RecordCursor cursor;
+        private CharSequenceHashSet valueSet;
+
+<span class="fc" id="L83">        public StrInCursorFunction(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {</span>
+<span class="fc" id="L84">            this.valueArg = valueArg;</span>
+<span class="fc" id="L85">            this.cursorArg = cursorArg;</span>
+<span class="fc" id="L86">            this.valueSet = valueSetA;</span>
+<span class="fc" id="L87">            this.func = func;</span>
+<span class="fc" id="L88">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L92">            cursor = Misc.free(cursor);</span>
+<span class="fc" id="L93">            BinaryFunction.super.close();</span>
+<span class="fc" id="L94">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L98">            initCursor();</span>
+<span class="fc" id="L99">            return valueSet.contains(valueArg.getSymbol(rec));</span>
+        }
+
+        @Override
+        public Function getLeft() {
+<span class="fc" id="L104">            return valueArg;</span>
+        }
+
+        @Override
+        public Function getRight() {
+<span class="fc" id="L109">            return cursorArg;</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc bfc" id="L114" title="All 2 branches covered.">            if (cursor != null) {</span>
+<span class="fc" id="L115">                cursor = Misc.free(cursor);</span>
+            }
+<span class="fc" id="L117">            valueArg.init(symbolTableSource, executionContext);</span>
+<span class="fc" id="L118">            cursorArg.init(symbolTableSource, executionContext);</span>
+
+            CharSequenceHashSet valueSet;
+<span class="fc bfc" id="L121" title="All 2 branches covered.">            if (this.valueSet == this.valueSetA) {</span>
+<span class="fc" id="L122">                valueSet = this.valueSetB;</span>
+            } else {
+<span class="fc" id="L124">                valueSet = this.valueSetA;</span>
+            }
+
+<span class="fc" id="L127">            valueSet.clear();</span>
+<span class="fc" id="L128">            this.valueSet = valueSet;</span>
+
+<span class="fc" id="L130">            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();</span>
+<span class="fc" id="L131">            cursor = factory.getCursor(executionContext);</span>
+<span class="fc" id="L132">        }</span>
+
+        @Override
+        public void initCursor() {
+<span class="fc bfc" id="L136" title="All 2 branches covered.">            if (cursor != null) {</span>
+<span class="fc" id="L137">                BinaryFunction.super.initCursor();</span>
+<span class="fc" id="L138">                buildValueSet();</span>
+<span class="fc" id="L139">                cursor = Misc.free(cursor);</span>
+            }
+<span class="fc" id="L141">        }</span>
+
+        @Override
+        public boolean isReadThreadSafe() {
+<span class="fc" id="L145">            return false;</span>
+        }
+
+        private void buildValueSet() {
+<span class="fc" id="L149">            final Record record = cursor.getRecord();</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">            while (cursor.hasNext()) {</span>
+<span class="fc" id="L151">                CharSequence value = func.get(record, 0);</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">                if (value == null) {</span>
+<span class="fc" id="L153">                    valueSet.addNull();</span>
+                } else {
+<span class="fc" id="L155">                    int toIndex = valueSet.keyIndex(value);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">                    if (toIndex &gt; -1) {</span>
+<span class="fc" id="L157">                        int index = this.valueSet.keyIndex(value);</span>
+<span class="pc bpc" id="L158" title="1 of 2 branches missed.">                        if (index &lt; 0) {</span>
+<span class="nc" id="L159">                            valueSet.addAt(toIndex, this.valueSet.keyAt(index));</span>
+                        } else {
+<span class="fc" id="L161">                            valueSet.addAt(toIndex, Chars.toString(value));</span>
+                        }
+                    }
+                }
+<span class="fc" id="L165">            }</span>
+<span class="fc" id="L166">        }</span>
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L170">            sink.val(valueArg).val(&quot; in &quot;).val(cursorArg);</span>
+<span class="fc" id="L171">        }</span>
+    }
+
+<span class="fc" id="L174">    private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {</span>
+
+        private final Function cursorArg;
+        private final Record.CharSequenceFunction func;
+<span class="fc" id="L178">        private final IntHashSet symbolKeys = new IntHashSet();</span>
+        private final SymbolFunction valueArg;
+        private RecordCursor cursor;
+
+<span class="fc" id="L182">        public SymbolInCursorFunction(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {</span>
+<span class="fc" id="L183">            this.valueArg = valueArg;</span>
+<span class="fc" id="L184">            this.cursorArg = cursorArg;</span>
+<span class="fc" id="L185">            this.func = func;</span>
+<span class="fc" id="L186">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L190">            cursor = Misc.free(cursor);</span>
+<span class="fc" id="L191">            BinaryFunction.super.close();</span>
+<span class="fc" id="L192">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L196">            initCursor();</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">            return symbolKeys.keyIndex(valueArg.getInt(rec) + 1) &lt; 0;</span>
+        }
+
+        @Override
+        public Function getLeft() {
+<span class="fc" id="L202">            return valueArg;</span>
+        }
+
+        @Override
+        public Function getRight() {
+<span class="fc" id="L207">            return cursorArg;</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc bfc" id="L212" title="All 2 branches covered.">            if (cursor != null) {</span>
+<span class="fc" id="L213">                cursor = Misc.free(cursor);</span>
+            }
+<span class="fc" id="L215">            valueArg.init(symbolTableSource, executionContext);</span>
+<span class="fc" id="L216">            cursorArg.init(symbolTableSource, executionContext);</span>
+
+<span class="fc" id="L218">            symbolKeys.clear();</span>
+
+<span class="fc" id="L220">            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();</span>
+<span class="fc" id="L221">            cursor = factory.getCursor(executionContext);</span>
+<span class="fc" id="L222">        }</span>
+
+        @Override
+        public void initCursor() {
+<span class="fc bfc" id="L226" title="All 2 branches covered.">            if (cursor != null) {</span>
+<span class="fc" id="L227">                BinaryFunction.super.initCursor();</span>
+<span class="fc" id="L228">                buildSymbolKeys();</span>
+<span class="fc" id="L229">                cursor = Misc.free(cursor);</span>
+            }
+<span class="fc" id="L231">        }</span>
+
+        @Override
+        public boolean isReadThreadSafe() {
+<span class="fc" id="L235">            return false;</span>
+        }
+
+        private void buildSymbolKeys() {
+<span class="fc" id="L239">            final StaticSymbolTable symbolTable = valueArg.getStaticSymbolTable();</span>
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">            assert symbolTable != null;</span>
+
+<span class="fc" id="L242">            final Record record = cursor.getRecord();</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">            while (cursor.hasNext()) {</span>
+<span class="fc" id="L244">                int key = symbolTable.keyOf(func.get(record, 0));</span>
+<span class="fc bfc" id="L245" title="All 2 branches covered.">                if (key != SymbolTable.VALUE_NOT_FOUND) {</span>
+<span class="fc" id="L246">                    symbolKeys.add(key + 1);</span>
+                }
+<span class="fc" id="L248">            }</span>
+<span class="fc" id="L249">        }</span>
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L253">            sink.val(valueArg).val(&quot; in &quot;).val(cursorArg);</span>
+<span class="fc" id="L254">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

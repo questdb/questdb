@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SuspendEvent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.network</a> &gt; <span class="el_source">SuspendEvent.java</span></div><h1>SuspendEvent.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.network;
+
+import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+
+/**
+ * Used for generic single-time events that can be used with
+ * {@link IODispatcher}. Such events aren't necessarily network I/O
+ * related, but instead provide an efficient way of suspending a task
+ * done in the IODispatcher's event loop and resume it later when another
+ * thread sends us a notification through the event.
+ * &lt;p&gt;
+ * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
+ */
+<span class="fc" id="L41">public abstract class SuspendEvent implements Closeable {</span>
+
+    private static final long REF_COUNT_OFFSET;
+
+<span class="fc" id="L45">    private long deadline = Long.MAX_VALUE;</span>
+
+    // set by using Unsafe, see REF_COUNT_OFFSET, close().
+<span class="fc" id="L48">    @SuppressWarnings({&quot;FieldCanBeLocal&quot;, &quot;FieldMayBeFinal&quot;})</span>
+    private volatile int refCount = 2;
+
+    public abstract void _close();
+
+    /**
+     * Returns true if the event was triggered.
+     *
+     * @return true if the event was triggered
+     */
+    public abstract boolean checkTriggered();
+
+    /**
+     * Event is assumed to be held and then closed by two parties.
+     * The underlying OS resources are freed on the second close call.
+     */
+    @Override
+    public void close() {
+<span class="fc" id="L66">        final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (prevRefCount == 1) {</span>
+<span class="fc" id="L68">            _close();</span>
+        }
+<span class="fc" id="L70">    }</span>
+
+    /**
+     * Event deadline.
+     *
+     * @return a deadline (epoch millis) for the event or Long.MAX_VALUE if the deadline is not set
+     */
+    public long getDeadline() {
+<span class="fc" id="L78">        return deadline;</span>
+    }
+
+    /**
+     * Returns fd to be used to listen/wait for the event.
+     *
+     * @return fd to be used to listen/wait for the event
+     */
+    public abstract int getFd();
+
+    @TestOnly
+    public boolean isClosedByAtLeastOneSide() {
+<span class="pc bpc" id="L90" title="1 of 2 branches missed.">        return refCount &lt;= 1;</span>
+    }
+
+    /**
+     * Returns true if the deadline was set to an older value than the given timestamp,
+     * false - otherwise.
+     *
+     * @param timestamp timestamp to compare against
+     * @return true if the deadline was set to an older value than the given timestamp
+     */
+    public boolean isDeadlineMet(long timestamp) {
+<span class="nc bnc" id="L101" title="All 4 branches missed.">        return deadline &gt; 0 &amp;&amp; deadline &lt;= timestamp;</span>
+    }
+
+    /**
+     * Sets a deadline (epoch millis) for the event.
+     *
+     * @param deadline deadline (epoch millis) for the event
+     */
+    public void setDeadline(long deadline) {
+<span class="fc" id="L110">        this.deadline = deadline;</span>
+<span class="fc" id="L111">    }</span>
+
+    /**
+     * Sends the event to the receiving side.
+     */
+    public abstract void trigger();
+
+    static {
+<span class="fc" id="L119">        REF_COUNT_OFFSET = Unsafe.getFieldOffset(SuspendEvent.class, &quot;refCount&quot;);</span>
+<span class="fc" id="L120">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

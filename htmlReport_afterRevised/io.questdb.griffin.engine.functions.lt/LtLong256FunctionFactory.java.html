@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LtLong256FunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.lt</a> &gt; <span class="el_source">LtLong256FunctionFactory.java</span></div><h1>LtLong256FunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.lt;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.ObjList;
+
+<span class="fc" id="L40">public class LtLong256FunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L43">        return &quot;&lt;(HH)&quot;;</span>
+    }
+
+    @Override
+    public boolean isBoolean() {
+<span class="fc" id="L48">        return true;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+<span class="fc" id="L53">        return new Func(args.getQuick(0), args.getQuick(1));</span>
+    }
+
+    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+
+<span class="fc" id="L60">        public Func(Function left, Function right) {</span>
+<span class="fc" id="L61">            this.left = left;</span>
+<span class="fc" id="L62">            this.right = right;</span>
+<span class="fc" id="L63">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L67">            final Long256 lv = left.getLong256A(rec);</span>
+<span class="fc" id="L68">            final Long256 rv = right.getLong256B(rec);</span>
+
+<span class="fc bfc" id="L70" title="All 4 branches covered.">            if (lv.equals(Long256Impl.NULL_LONG256) || rv.equals(Long256Impl.NULL_LONG256)) {</span>
+<span class="fc" id="L71">                return false;</span>
+            }
+<span class="fc bfc" id="L73" title="All 2 branches covered.">            if (lv.getLong3() != rv.getLong3()) {</span>
+<span class="pc bpc" id="L74" title="2 of 4 branches missed.">                return negated == (Long.compareUnsigned(lv.getLong3(), rv.getLong3()) &gt;= 0);</span>
+            }
+<span class="fc bfc" id="L76" title="All 2 branches covered.">            if (lv.getLong2() != rv.getLong2()) {</span>
+<span class="pc bpc" id="L77" title="2 of 4 branches missed.">                return negated == (Long.compareUnsigned(lv.getLong2(), rv.getLong2()) &gt;= 0);</span>
+            }
+<span class="fc bfc" id="L79" title="All 2 branches covered.">            if (lv.getLong1() != rv.getLong1()) {</span>
+<span class="pc bpc" id="L80" title="2 of 4 branches missed.">                return negated == (Long.compareUnsigned(lv.getLong1(), rv.getLong1()) &gt;= 0);</span>
+            }
+<span class="fc bfc" id="L82" title="All 4 branches covered.">            return negated == (Long.compareUnsigned(lv.getLong0(), rv.getLong0()) &gt;= 0);</span>
+        }
+
+        @Override
+        public Function getLeft() {
+<span class="fc" id="L87">            return left;</span>
+        }
+
+        @Override
+        public Function getRight() {
+<span class="fc" id="L92">            return right;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L97">            sink.val(left);</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            if (negated) {</span>
+<span class="fc" id="L99">                sink.val(&quot;&gt;=&quot;);</span>
+            } else {
+<span class="fc" id="L101">                sink.val('&lt;');</span>
+            }
+<span class="fc" id="L103">            sink.val(right);</span>
+<span class="fc" id="L104">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

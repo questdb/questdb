@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MemoryCMARWImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.vm</a> &gt; <span class="el_source">MemoryCMARWImpl.java</span></div><h1>MemoryCMARWImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.vm;
+
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+// contiguous mapped appendable readable writable
+public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, MemoryCARW, MemoryMAR {
+<span class="fc" id="L40">    private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);</span>
+<span class="fc" id="L41">    private final Long256Acceptor long256Acceptor = this::putLong256;</span>
+<span class="fc" id="L42">    private long appendAddress = 0;</span>
+    private long extendSegmentMsb;
+<span class="fc" id="L44">    private int madviseOpts = -1;</span>
+<span class="fc" id="L45">    private int memoryTag = MemoryTag.MMAP_DEFAULT;</span>
+<span class="fc" id="L46">    private long minMappedMemorySize = -1;</span>
+
+<span class="fc" id="L48">    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {</span>
+<span class="fc" id="L49">        of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);</span>
+<span class="fc" id="L50">    }</span>
+
+<span class="fc" id="L52">    public MemoryCMARWImpl() {</span>
+<span class="fc" id="L53">    }</span>
+
+    @Override
+    public long appendAddressFor(long bytes) {
+<span class="fc" id="L57">        checkAndExtend(appendAddress + bytes);</span>
+<span class="fc" id="L58">        final long result = appendAddress;</span>
+<span class="fc" id="L59">        appendAddress += bytes;</span>
+<span class="fc" id="L60">        return result;</span>
+    }
+
+    @Override
+    public long appendAddressFor(long offset, long bytes) {
+<span class="fc" id="L65">        checkAndExtend(pageAddress + offset + bytes);</span>
+<span class="fc" id="L66">        return pageAddress + offset;</span>
+    }
+
+    @Override
+    public void close(boolean truncate, byte truncateMode) {
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (pageAddress != 0) {</span>
+            final long truncateSize;
+<span class="fc bfc" id="L73" title="All 2 branches covered.">            if (truncate) {</span>
+<span class="fc" id="L74">                long appendOffset = getAppendOffset();</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">                truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;</span>
+<span class="fc" id="L76">                long sz = Math.min(size, truncateSize);</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">                if (appendOffset &lt; sz) {</span>
+<span class="fc" id="L78">                    Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);</span>
+                }
+<span class="fc" id="L80">            } else {</span>
+<span class="fc" id="L81">                truncateSize = -1L;</span>
+            }
+<span class="fc" id="L83">            ff.munmap(pageAddress, size, memoryTag);</span>
+<span class="fc" id="L84">            this.pageAddress = 0;</span>
+            try {
+<span class="fc" id="L86">                Vm.bestEffortClose(ff, LOG, fd, truncateSize, truncateMode);</span>
+            } finally {
+<span class="fc" id="L88">                fd = -1;</span>
+            }
+        }
+<span class="fc bfc" id="L91" title="All 4 branches covered.">        if (ff != null &amp;&amp; ff.close(fd)) {</span>
+<span class="fc" id="L92">            LOG.debug().$(&quot;closed [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L93">            fd = -1;</span>
+        }
+<span class="fc" id="L95">        size = 0;</span>
+<span class="fc" id="L96">        ff = null;</span>
+<span class="fc" id="L97">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L101">        close(true);</span>
+<span class="fc" id="L102">    }</span>
+
+    @Override
+    public void extend(long newSize) {
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        if (newSize &gt; size) {</span>
+<span class="fc" id="L107">            extend0(newSize);</span>
+        }
+<span class="fc" id="L109">    }</span>
+
+    @Override
+    public long getAppendAddress() {
+<span class="fc" id="L113">        return appendAddress;</span>
+    }
+
+    @Override
+    public long getAppendAddressSize() {
+<span class="nc" id="L118">        return lim - appendAddress;</span>
+    }
+
+    @Override
+    public long getAppendOffset() {
+<span class="fc" id="L123">        return appendAddress - pageAddress;</span>
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+<span class="nc" id="L128">        return extendSegmentMsb;</span>
+    }
+
+    @Override
+    public int getFd() {
+<span class="fc" id="L133">        return fd;</span>
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+<span class="fc" id="L138">        checkAndExtend(pageAddress + offset);</span>
+<span class="fc" id="L139">        appendAddress = pageAddress + offset;</span>
+<span class="pc bpc" id="L140" title="1 of 2 branches missed.">        assert appendAddress &lt;= lim;</span>
+<span class="fc" id="L141">    }</span>
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+<span class="fc" id="L145">        of(ff, name, extendSegmentSize, -1, memoryTag, opts);</span>
+<span class="fc" id="L146">    }</span>
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+<span class="fc" id="L150">        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);</span>
+<span class="fc" id="L151">        this.minMappedMemorySize = extendSegmentSize;</span>
+<span class="fc" id="L152">        this.madviseOpts = madviseOpts;</span>
+<span class="fc" id="L153">        openFile(ff, name, opts);</span>
+<span class="fc" id="L154">        map(ff, name, size, memoryTag);</span>
+<span class="fc" id="L155">    }</span>
+
+    @Override
+    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long size, int memoryTag) {
+<span class="fc" id="L159">        close();</span>
+<span class="pc bpc" id="L160" title="1 of 2 branches missed.">        assert fd &gt; 0;</span>
+<span class="fc" id="L161">        this.ff = ff;</span>
+<span class="fc" id="L162">        this.extendSegmentMsb = ff.getMapPageSize();</span>
+<span class="fc" id="L163">        this.minMappedMemorySize = this.extendSegmentMsb;</span>
+<span class="fc" id="L164">        this.fd = fd;</span>
+<span class="fc" id="L165">        map(ff, name, size, memoryTag);</span>
+<span class="fc" id="L166">    }</span>
+
+    @Override
+    public void of(FilesFacade ff, int fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
+<span class="fc" id="L170">        of(ff, fd, null, size, memoryTag);</span>
+<span class="fc" id="L171">        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);</span>
+<span class="fc" id="L172">    }</span>
+
+    @Override
+    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+<span class="fc" id="L176">        putLong256(hexString, start, end, long256Acceptor);</span>
+<span class="fc" id="L177">    }</span>
+
+    @Override
+    public void setTruncateSize(long size) {
+<span class="fc" id="L181">        jumpTo(size);</span>
+<span class="fc" id="L182">    }</span>
+
+    @Override
+    public void skip(long bytes) {
+<span class="fc" id="L186">        checkAndExtend(appendAddress + bytes);</span>
+<span class="fc" id="L187">        appendAddress += bytes;</span>
+<span class="fc" id="L188">    }</span>
+
+    @Override
+    public void switchTo(int fd, long offset, byte truncateMode) {
+<span class="nc" id="L192">        close(true, truncateMode);</span>
+<span class="nc" id="L193">        this.fd = fd;</span>
+<span class="nc" id="L194">        map(ff, null, offset, memoryTag);</span>
+<span class="nc" id="L195">    }</span>
+
+    public void sync(boolean async) {
+<span class="pc bpc" id="L198" title="2 of 4 branches missed.">        if (pageAddress != 0 &amp;&amp; ff.msync(pageAddress, size, async) == 0) {</span>
+<span class="fc" id="L199">            return;</span>
+        }
+<span class="nc" id="L201">        LOG.error().$(&quot;could not msync [fd=&quot;).$(fd).$(']').$();</span>
+<span class="nc" id="L202">    }</span>
+
+    @Override
+    public void truncate() {
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">        if (pageAddress != 0) {</span>
+            // try to remap to min size
+<span class="fc" id="L208">            final long fileSize = ff.length(fd);</span>
+<span class="fc" id="L209">            long sz = Math.min(fileSize, minMappedMemorySize);</span>
+            try {
+                // we are remapping file to make it smaller, should not need
+                // to allocate space; we already have it
+<span class="fc" id="L213">                this.pageAddress = TableUtils.mremap(</span>
+                        ff,
+                        fd,
+                        this.pageAddress,
+                        this.size,
+                        sz,
+                        Files.MAP_RW,
+                        memoryTag);
+<span class="fc" id="L221">            } catch (Throwable e) {</span>
+<span class="fc" id="L222">                appendAddress = pageAddress;</span>
+<span class="fc" id="L223">                long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">                if (truncatedToSize != 0) {</span>
+<span class="pc bpc" id="L225" title="1 of 2 branches missed.">                    if (truncatedToSize &gt; 0) {</span>
+<span class="nc" id="L226">                        Vect.memset(pageAddress, truncatedToSize, 0);</span>
+<span class="nc" id="L227">                        this.size = sz;</span>
+                    } else {
+<span class="fc" id="L229">                        Vect.memset(pageAddress, size, 0);</span>
+                    }
+<span class="fc" id="L231">                    this.lim = pageAddress + size;</span>
+                }
+<span class="fc" id="L233">                throw e;</span>
+<span class="fc" id="L234">            }</span>
+
+<span class="fc" id="L236">            this.size = sz;</span>
+<span class="fc" id="L237">            this.lim = pageAddress + sz;</span>
+<span class="fc" id="L238">            appendAddress = pageAddress;</span>
+<span class="fc" id="L239">            Vect.memset(pageAddress, sz, 0);</span>
+
+            // try to truncate the file to remove tail data
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">            if (ff.truncate(fd, Files.ceilPageSize(size))) {</span>
+<span class="fc" id="L243">                return;</span>
+            }
+
+            // we could not truncate, this might happen on Windows when area of the same file is mapped
+            // by another process
+
+<span class="nc" id="L249">            long mem = TableUtils.mapRW(ff, fd, ff.length(fd), memoryTag);</span>
+<span class="nc" id="L250">            Vect.memset(mem + sz, fileSize - sz, 0);</span>
+<span class="nc" id="L251">            ff.munmap(mem, fileSize, memoryTag);</span>
+        }
+<span class="nc" id="L253">    }</span>
+
+    @Override
+    public void zero() {
+<span class="fc" id="L257">        long baseLength = lim - pageAddress;</span>
+<span class="fc" id="L258">        Vect.memset(pageAddress, baseLength, 0);</span>
+<span class="fc" id="L259">    }</span>
+
+    private void checkAndExtend(long address) {
+<span class="fc bfc" id="L262" title="All 2 branches covered.">        if (address &lt;= lim) {</span>
+<span class="fc" id="L263">            return;</span>
+        }
+<span class="fc" id="L265">        extend0(address - pageAddress);</span>
+<span class="fc" id="L266">    }</span>
+
+    private void extend0(long newSize) {
+<span class="fc" id="L269">        long nPages = (newSize &gt;&gt;&gt; extendSegmentMsb) + 1;</span>
+<span class="fc" id="L270">        newSize = nPages &lt;&lt; extendSegmentMsb;</span>
+<span class="fc" id="L271">        long offset = appendAddress - pageAddress;</span>
+<span class="fc" id="L272">        long previousSize = size;</span>
+<span class="pc bpc" id="L273" title="1 of 2 branches missed.">        assert size &gt; 0;</span>
+<span class="fc" id="L274">        TableUtils.allocateDiskSpace(ff, fd, newSize);</span>
+        try {
+<span class="fc" id="L276">            this.pageAddress = TableUtils.mremap(</span>
+                    ff,
+                    fd,
+                    this.pageAddress,
+                    previousSize,
+                    newSize,
+                    Files.MAP_RW,
+                    memoryTag
+            );
+<span class="fc" id="L285">            ff.madvise(pageAddress, newSize, madviseOpts);</span>
+<span class="fc" id="L286">        } catch (Throwable e) {</span>
+<span class="fc" id="L287">            appendAddress = pageAddress + previousSize;</span>
+<span class="fc" id="L288">            close(false);</span>
+<span class="fc" id="L289">            throw e;</span>
+<span class="fc" id="L290">        }</span>
+<span class="fc" id="L291">        size = newSize;</span>
+<span class="fc" id="L292">        lim = pageAddress + newSize;</span>
+<span class="fc" id="L293">        appendAddress = pageAddress + offset;</span>
+<span class="fc" id="L294">    }</span>
+
+    private void map0(FilesFacade ff, long size) {
+        try {
+<span class="fc" id="L298">            this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);</span>
+<span class="fc" id="L299">            this.lim = pageAddress + size;</span>
+<span class="fc" id="L300">            ff.madvise(pageAddress, size, madviseOpts);</span>
+<span class="fc" id="L301">        } catch (Throwable e) {</span>
+<span class="fc" id="L302">            close(false);</span>
+<span class="fc" id="L303">            throw e;</span>
+<span class="fc" id="L304">        }</span>
+<span class="fc" id="L305">    }</span>
+
+    private void openFile(FilesFacade ff, LPSZ name, long opts) {
+<span class="fc" id="L308">        close();</span>
+<span class="fc" id="L309">        this.ff = ff;</span>
+<span class="fc" id="L310">        fd = TableUtils.openFileRWOrFail(ff, name, opts);</span>
+<span class="fc" id="L311">    }</span>
+
+    protected void map(FilesFacade ff, @Nullable CharSequence name, long size, int memoryTag) {
+<span class="fc" id="L314">        this.memoryTag = memoryTag;</span>
+        // file either did not exist when length() was called or empty
+<span class="fc bfc" id="L316" title="All 2 branches covered.">        if (size &lt; 1) {</span>
+<span class="fc" id="L317">            this.size = minMappedMemorySize;</span>
+<span class="fc" id="L318">            TableUtils.allocateDiskSpace(ff, fd, this.size);</span>
+<span class="fc" id="L319">            map0(ff, minMappedMemorySize);</span>
+<span class="fc" id="L320">            this.appendAddress = pageAddress;</span>
+        } else {
+<span class="fc" id="L322">            this.size = size;</span>
+<span class="fc" id="L323">            map0(ff, size);</span>
+<span class="fc" id="L324">            this.appendAddress = pageAddress + size;</span>
+        }
+<span class="fc bfc" id="L326" title="All 2 branches covered.">        if (name != null) {</span>
+<span class="fc" id="L327">            LOG.debug().$(&quot;open [file=&quot;).$(name).$(&quot;, fd=&quot;).$(fd).$(&quot;, pageSize=&quot;).$(size).$(&quot;, size=&quot;).$(this.size).$(']').$();</span>
+        } else {
+<span class="fc" id="L329">            LOG.debug().$(&quot;open [fd=&quot;).$(fd).$(&quot;, pageSize=&quot;).$(size).$(&quot;, size=&quot;).$(this.size).$(']').$();</span>
+        }
+<span class="fc" id="L331">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

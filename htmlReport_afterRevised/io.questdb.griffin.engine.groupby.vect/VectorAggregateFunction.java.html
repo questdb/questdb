@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VectorAggregateFunction.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby.vect</a> &gt; <span class="el_source">VectorAggregateFunction.java</span></div><h1>VectorAggregateFunction.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby.vect;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
+import io.questdb.std.Mutable;
+
+public interface VectorAggregateFunction extends Function, Mutable {
+
+    /**
+     * Not-keyed aggregation that doesn't use rosti.
+     * Used either for truly non-keyed aggregation or when key is null in page frame due to column tops.
+     *
+     * @param address        address
+     * @param addressSize    address size
+     * @param columnSizeHint column size hint
+     * @param workerId       worker id
+     */
+    void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
+
+
+    /**
+     * Keyed aggregation that uses rosti.
+     * If valueAddress == 0 it means that value page frame is 'empty' (due to column tops) and contains null values
+     * so only keys should be processed.
+     *
+     * @param pRosti           pointer to rosti
+     * @param keyAddress       key address
+     * @param valueAddress     value address
+     * @param valueAddressSize value address size
+     * @param columnSizeShr    column size
+     * @param workerId         worker id
+     * @return true if processing went fine and false if it failed on memory allocation
+     */
+    boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
+
+    int getColumnIndex();
+
+    // value offset in map
+    int getValueOffset();
+
+    /**
+     * Set initial/default slot values (e.g. 0 for count())
+     *
+     * @param pRosti pointer to rosti
+     */
+    void initRosti(long pRosti);
+
+    /**
+     * Merge rosti instance pointed to by pRostiB into rosti instance pointed to by pRostiA.
+     *
+     * @param pRostiA pointer to rosti that will hold result
+     * @param pRostiB pointer to other rosti to merge
+     * @return true if merge was fine and false if it failed on memory allocation
+     */
+    boolean merge(long pRostiA, long pRostiB);
+
+    void pushValueTypes(ArrayColumnTypes types);
+
+    @Override
+    default void toPlan(PlanSink sink) {
+<span class="fc" id="L86">        sink.val(getName()).val('(').putColumnName(getColumnIndex()).val(')');</span>
+<span class="fc" id="L87">    }</span>
+    
+    /**
+     * Used for keyed aggregates only.
+     * Merges value for null key (empty/null key page frames with rosti) and (optionally) replaces null values with constant in rosti.
+     *
+     * @param pRosti pointer to rosti
+     * @return true if wrapUp was fine and false if it failed on memory allocation
+     */
+    boolean wrapUp(long pRosti);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

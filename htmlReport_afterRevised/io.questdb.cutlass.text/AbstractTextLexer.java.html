@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractTextLexer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.text</a> &gt; <span class="el_source">AbstractTextLexer.java</span></div><h1>AbstractTextLexer.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.text;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
+import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
+
+import java.io.Closeable;
+
+public abstract class AbstractTextLexer implements Closeable, Mutable {
+<span class="fc" id="L36">    private final static Log LOG = LogFactory.getLog(AbstractTextLexer.class);</span>
+    private final ObjectPool&lt;DirectByteCharSequence&gt; csPool;
+<span class="fc" id="L38">    private final ObjList&lt;DirectByteCharSequence&gt; fields = new ObjList&lt;&gt;();</span>
+    private final int lineRollBufLimit;
+    private boolean delayedOutQuote;
+    private boolean eol;
+<span class="fc" id="L42">    private long errorCount = 0;</span>
+    private long fieldHi;
+    private int fieldIndex;
+    private long fieldLo;
+<span class="fc" id="L46">    private int fieldMax = -1;</span>
+    private boolean header;
+    private boolean ignoreEolOnce;
+    private boolean inQuote;
+    private long lastLineStart;
+<span class="fc" id="L51">    private long lastQuotePos = -1;</span>
+    private long lineCount;
+    private int lineCountLimit;
+    private long lineRollBufCur;
+    private long lineRollBufPtr;
+    private int lineRollBufSize;
+<span class="fc" id="L57">    private boolean rollBufferUnusable = false;</span>
+    private boolean skipLinesWithExtraValues;
+    private CharSequence tableName;
+    private Listener textLexerListener;
+<span class="fc" id="L61">    private boolean useLineRollBuf = false;</span>
+
+<span class="fc" id="L63">    public AbstractTextLexer(TextConfiguration textConfiguration) {</span>
+<span class="fc" id="L64">        this.csPool = new ObjectPool&lt;&gt;(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());</span>
+<span class="fc" id="L65">        this.lineRollBufSize = textConfiguration.getRollBufferSize();</span>
+<span class="fc" id="L66">        this.lineRollBufLimit = textConfiguration.getRollBufferLimit();</span>
+<span class="fc" id="L67">        this.lineRollBufPtr = Unsafe.malloc(lineRollBufSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+<span class="fc" id="L68">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L72">        restart(false);</span>
+<span class="fc" id="L73">        this.fields.clear();</span>
+<span class="fc" id="L74">        this.csPool.clear();</span>
+<span class="fc" id="L75">        errorCount = 0;</span>
+<span class="fc" id="L76">        fieldMax = -1;</span>
+<span class="fc" id="L77">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        if (lineRollBufPtr != 0) {</span>
+<span class="fc" id="L82">            Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+<span class="fc" id="L83">            lineRollBufPtr = 0;</span>
+        }
+<span class="fc" id="L85">    }</span>
+
+    public long getErrorCount() {
+<span class="fc" id="L88">        return errorCount;</span>
+    }
+
+    public long getLineCount() {
+<span class="fc" id="L92">        return lineCount;</span>
+    }
+
+    public void parse(long lo, long hi, int lineCountLimit, Listener textLexerListener) {
+<span class="fc" id="L96">        setupLimits(lineCountLimit, textLexerListener);</span>
+<span class="fc" id="L97">        parse(lo, hi);</span>
+<span class="fc" id="L98">    }</span>
+
+    public void parse(long lo, long hi) {
+<span class="fc bfc" id="L101" title="All 2 branches covered.">        this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);</span>
+<span class="fc" id="L102">        parse0(lo, hi);</span>
+<span class="fc" id="L103">    }</span>
+
+    public void parseExactLines(long lo, long hi) {
+<span class="fc" id="L106">        this.fieldHi = this.fieldLo = lo;</span>
+<span class="fc" id="L107">        long ptr = lo;</span>
+
+        try {
+<span class="fc bfc" id="L110" title="All 2 branches covered.">            while (ptr &lt; hi) {</span>
+<span class="fc" id="L111">                final byte c = Unsafe.getUnsafe().getByte(ptr++);</span>
+<span class="fc" id="L112">                this.fieldHi++;</span>
+<span class="pc bpc" id="L113" title="1 of 4 branches missed.">                if (delayedOutQuote &amp;&amp; c != '&quot;') {</span>
+<span class="fc" id="L114">                    inQuote = delayedOutQuote = false;</span>
+                }
+<span class="fc" id="L116">                doSwitch(lo, hi, c);</span>
+<span class="fc" id="L117">            }</span>
+<span class="nc" id="L118">        } catch (LineLimitException ignore) {</span>
+            // loop exit
+<span class="fc" id="L120">        }</span>
+<span class="fc" id="L121">    }</span>
+
+    public void parseLast() {
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        if (useLineRollBuf) {</span>
+<span class="fc bfc" id="L125" title="All 4 branches covered.">            if (inQuote &amp;&amp; lastQuotePos &lt; fieldHi) {</span>
+<span class="fc" id="L126">                errorCount++;</span>
+<span class="fc" id="L127">                LOG.info().$(&quot;quote is missing [table=&quot;).$(tableName).$(']').$();</span>
+            } else {
+<span class="fc" id="L129">                this.fieldHi++;</span>
+<span class="fc" id="L130">                stashField(fieldIndex);</span>
+<span class="fc" id="L131">                triggerLine(0);</span>
+            }
+        }
+<span class="fc" id="L134">    }</span>
+
+    public final void restart(boolean header) {
+<span class="fc" id="L137">        this.fieldLo = 0;</span>
+<span class="fc" id="L138">        this.eol = false;</span>
+<span class="fc" id="L139">        this.fieldIndex = 0;</span>
+<span class="fc" id="L140">        this.fieldMax = -1;</span>
+<span class="fc" id="L141">        this.inQuote = false;</span>
+<span class="fc" id="L142">        this.delayedOutQuote = false;</span>
+<span class="fc" id="L143">        this.lineCount = 0;</span>
+<span class="fc" id="L144">        this.lineRollBufCur = lineRollBufPtr;</span>
+<span class="fc" id="L145">        this.useLineRollBuf = false;</span>
+<span class="fc" id="L146">        this.rollBufferUnusable = false;</span>
+<span class="fc" id="L147">        this.header = header;</span>
+<span class="fc" id="L148">        fields.clear();</span>
+<span class="fc" id="L149">        csPool.clear();</span>
+<span class="fc" id="L150">    }</span>
+
+    public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
+<span class="fc" id="L153">        this.skipLinesWithExtraValues = skipLinesWithExtraValues;</span>
+<span class="fc" id="L154">    }</span>
+
+    public void setupBeforeExactLines(Listener textLexerListener) {
+<span class="fc" id="L157">        this.textLexerListener = textLexerListener;</span>
+<span class="fc" id="L158">        this.lineCountLimit = Integer.MAX_VALUE;</span>
+<span class="fc" id="L159">    }</span>
+
+    public void setupLimits(int lineCountLimit, Listener textLexerListener) {
+<span class="fc" id="L162">        this.lineCountLimit = lineCountLimit;</span>
+<span class="fc" id="L163">        this.textLexerListener = textLexerListener;</span>
+<span class="fc" id="L164">    }</span>
+
+    private void addField() {
+<span class="fc" id="L167">        fields.add(csPool.next());</span>
+<span class="fc" id="L168">        fieldMax++;</span>
+<span class="fc" id="L169">    }</span>
+
+    private boolean checkState(long ptr, byte c) {
+<span class="fc bfc" id="L172" title="All 6 branches covered.">        if (!rollBufferUnusable &amp;&amp; !useLineRollBuf &amp;&amp; !delayedOutQuote) {</span>
+<span class="fc" id="L173">            this.fieldHi++;</span>
+<span class="fc" id="L174">            return true;</span>
+        }
+<span class="fc" id="L176">        return checkStateSlow(ptr, c);</span>
+    }
+
+    private boolean checkStateSlow(long ptr, byte c) {
+<span class="fc bfc" id="L180" title="All 2 branches covered.">        if (rollBufferUnusable) {</span>
+<span class="fc" id="L181">            eol(ptr, c);</span>
+<span class="fc" id="L182">            return false;</span>
+        }
+
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        if (useLineRollBuf) {</span>
+<span class="fc" id="L186">            putToRollBuf(c);</span>
+<span class="fc bfc" id="L187" title="All 2 branches covered.">            if (rollBufferUnusable) {</span>
+<span class="fc" id="L188">                return false;</span>
+            }
+        }
+
+<span class="fc" id="L192">        this.fieldHi++;</span>
+
+<span class="fc bfc" id="L194" title="All 4 branches covered.">        if (delayedOutQuote &amp;&amp; c != '&quot;') {</span>
+<span class="fc" id="L195">            inQuote = delayedOutQuote = false;</span>
+        }
+<span class="fc" id="L197">        return true;</span>
+    }
+
+    private void clearRollBuffer(long ptr) {
+<span class="fc" id="L201">        useLineRollBuf = false;</span>
+<span class="fc" id="L202">        lineRollBufCur = lineRollBufPtr;</span>
+<span class="fc" id="L203">        this.fieldLo = this.fieldHi = ptr;</span>
+<span class="fc" id="L204">    }</span>
+
+    private void eol(long ptr, byte c) {
+<span class="pc bpc" id="L207" title="1 of 4 branches missed.">        if (c == '\n' || c == '\r') {</span>
+<span class="fc" id="L208">            eol = true;</span>
+<span class="fc" id="L209">            rollBufferUnusable = false;</span>
+<span class="fc" id="L210">            clearRollBuffer(ptr);</span>
+<span class="fc" id="L211">            fieldIndex = 0;</span>
+<span class="fc" id="L212">            lineCount++;</span>
+        }
+<span class="fc" id="L214">    }</span>
+
+    private void extraField(int fieldIndex) {
+<span class="fc" id="L217">        LogRecord logRecord = LOG.error()</span>
+<span class="fc" id="L218">                .$(&quot;extra fields [table=&quot;).$(tableName)</span>
+<span class="fc" id="L219">                .$(&quot;, fieldIndex=&quot;).$(fieldIndex)</span>
+<span class="fc" id="L220">                .$(&quot;, fieldMax=&quot;).$(fieldMax)</span>
+<span class="fc" id="L221">                .$(&quot;]\n\t&quot;).$(lineCount)</span>
+<span class="fc" id="L222">                .$(&quot; -&gt; &quot;);</span>
+<span class="fc bfc" id="L223" title="All 2 branches covered.">        for (int i = 0, n = fields.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L224" title="All 2 branches covered.">            if (i &gt; 0) {</span>
+<span class="fc" id="L225">                logRecord.$(',');</span>
+            }
+<span class="fc" id="L227">            logRecord.$(fields.getQuick(i));</span>
+        }
+<span class="fc" id="L229">        logRecord.$(&quot; ...&quot;).$();</span>
+
+<span class="fc bfc" id="L231" title="All 2 branches covered.">        if (skipLinesWithExtraValues) {</span>
+<span class="fc" id="L232">            errorCount++;</span>
+<span class="fc" id="L233">            ignoreEolOnce = true;</span>
+<span class="fc" id="L234">            this.fieldIndex = 0;</span>
+        } else {
+            // prepare for next field
+<span class="fc bfc" id="L237" title="All 2 branches covered.">            if (lastQuotePos &gt; -1) {</span>
+<span class="fc" id="L238">                lastQuotePos = -1;</span>
+            }
+<span class="fc" id="L240">            this.fieldLo = this.fieldHi;</span>
+        }
+<span class="fc" id="L242">    }</span>
+
+    private boolean growRollBuf(int requiredLength, boolean updateFields) {
+<span class="fc bfc" id="L245" title="All 2 branches covered.">        if (requiredLength &gt; lineRollBufLimit) {</span>
+<span class="fc" id="L246">            LOG.info()</span>
+<span class="fc" id="L247">                    .$(&quot;too long [table=&quot;).$(tableName)</span>
+<span class="fc" id="L248">                    .$(&quot;, line=&quot;).$(lineCount)</span>
+<span class="fc" id="L249">                    .$(&quot;, requiredLen=&quot;).$(requiredLength)</span>
+<span class="fc" id="L250">                    .$(&quot;, rollLimit=&quot;).$(lineRollBufLimit)</span>
+<span class="fc" id="L251">                    .$(']').$();</span>
+<span class="fc" id="L252">            errorCount++;</span>
+<span class="fc" id="L253">            rollBufferUnusable = true;</span>
+<span class="fc" id="L254">            return false;</span>
+        }
+
+<span class="fc" id="L257">        final int len = Math.min(lineRollBufLimit, requiredLength &lt;&lt; 1);</span>
+<span class="fc" id="L258">        LOG.info().$(&quot;resizing &quot;).$(lineRollBufSize).$(&quot; -&gt; &quot;).$(len).$(&quot; [table=&quot;).$(tableName).$(']').$();</span>
+<span class="fc" id="L259">        long p = Unsafe.malloc(len, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+<span class="fc" id="L260">        long l = lineRollBufCur - lineRollBufPtr;</span>
+<span class="fc bfc" id="L261" title="All 2 branches covered.">        if (l &gt; 0) {</span>
+<span class="fc" id="L262">            Vect.memcpy(p, lineRollBufPtr, l);</span>
+        }
+<span class="fc" id="L264">        Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (updateFields) {</span>
+<span class="fc" id="L266">            shift(lineRollBufPtr - p);</span>
+        }
+<span class="fc" id="L268">        lineRollBufCur = p + l;</span>
+<span class="fc" id="L269">        lineRollBufPtr = p;</span>
+<span class="fc" id="L270">        lineRollBufSize = len;</span>
+<span class="fc" id="L271">        return true;</span>
+    }
+
+    private void growRollBufAndPut(byte c) {
+<span class="fc bfc" id="L275" title="All 2 branches covered.">        if (growRollBuf(lineRollBufSize + 1, true)) {</span>
+<span class="fc" id="L276">            Unsafe.getUnsafe().putByte(lineRollBufCur++, c);</span>
+        }
+<span class="fc" id="L278">    }</span>
+
+    private void ignoreEolOnce() {
+<span class="fc" id="L281">        eol = true;</span>
+<span class="fc" id="L282">        fieldIndex = 0;</span>
+<span class="fc" id="L283">        ignoreEolOnce = false;</span>
+<span class="fc" id="L284">    }</span>
+
+    private void onColumnDelimiterSlow(long lo) {
+<span class="fc" id="L287">        checkEol(lo);</span>
+
+<span class="fc bfc" id="L289" title="All 4 branches covered.">        if (inQuote || ignoreEolOnce) {</span>
+<span class="fc" id="L290">            return;</span>
+        }
+<span class="fc" id="L292">        stashFieldSlow(fieldIndex++);</span>
+<span class="fc" id="L293">    }</span>
+
+    private void parse0(long lo, long hi) {
+<span class="fc" id="L296">        long ptr = lo;</span>
+
+        try {
+<span class="fc bfc" id="L299" title="All 2 branches covered.">            while (ptr &lt; hi) {</span>
+<span class="fc" id="L300">                final byte c = Unsafe.getUnsafe().getByte(ptr++);</span>
+
+<span class="fc bfc" id="L302" title="All 2 branches covered.">                if (checkState(ptr, c)) {</span>
+<span class="fc" id="L303">                    doSwitch(lo, ptr, c);</span>
+                }
+<span class="fc" id="L305">            }</span>
+<span class="fc" id="L306">        } catch (LineLimitException ignore) {</span>
+            // loop exit
+<span class="fc" id="L308">        }</span>
+
+<span class="fc bfc" id="L310" title="All 2 branches covered.">        if (useLineRollBuf) {</span>
+<span class="fc" id="L311">            return;</span>
+        }
+
+<span class="fc bfc" id="L314" title="All 2 branches covered.">        if (eol) {</span>
+<span class="fc" id="L315">            this.fieldLo = 0;</span>
+        } else {
+<span class="fc" id="L317">            rollLine(lo, hi);</span>
+<span class="fc" id="L318">            useLineRollBuf = true;</span>
+        }
+<span class="fc" id="L320">    }</span>
+
+    private void putToRollBuf(byte c) {
+<span class="fc bfc" id="L323" title="All 2 branches covered.">        if (lineRollBufCur - lineRollBufPtr == lineRollBufSize) {</span>
+<span class="fc" id="L324">            growRollBufAndPut(c);</span>
+        } else {
+<span class="fc" id="L326">            Unsafe.getUnsafe().putByte(lineRollBufCur++, c);</span>
+        }
+<span class="fc" id="L328">    }</span>
+
+    private void rollLine(long lo, long hi) {
+        // lastLineStart is an offset from 'lo'
+        // 'lo' is the address of incoming buffer
+<span class="fc" id="L333">        int l = (int) (hi - lo - lastLineStart);</span>
+<span class="pc bpc" id="L334" title="1 of 4 branches missed.">        if (l &lt; lineRollBufSize || growRollBuf(l, false)) {</span>
+<span class="pc bpc" id="L335" title="1 of 2 branches missed.">            assert lo + lastLineStart + l &lt;= hi;</span>
+<span class="fc" id="L336">            Vect.memcpy(lineRollBufPtr, lo + lastLineStart, l);</span>
+<span class="fc" id="L337">            lineRollBufCur = lineRollBufPtr + l;</span>
+<span class="fc" id="L338">            shift(lo + lastLineStart - lineRollBufPtr);</span>
+        }
+<span class="fc" id="L340">    }</span>
+
+    private void shift(long d) {
+<span class="fc bfc" id="L343" title="All 2 branches covered.">        for (int i = 0; i &lt; fieldIndex; i++) {</span>
+<span class="fc" id="L344">            fields.getQuick(i).shl(d);</span>
+        }
+<span class="fc" id="L346">        this.fieldLo -= d;</span>
+<span class="fc" id="L347">        this.fieldHi -= d;</span>
+<span class="fc bfc" id="L348" title="All 2 branches covered.">        if (lastQuotePos &gt; -1) {</span>
+<span class="fc" id="L349">            this.lastQuotePos -= d;</span>
+        }
+<span class="fc" id="L351">    }</span>
+
+    private void stashField(int fieldIndex) {
+<span class="fc bfc" id="L354" title="All 6 branches covered.">        if (lineCount &gt; 0 &amp;&amp; fieldIndex &lt;= fieldMax &amp;&amp; lastQuotePos &lt; 0) {</span>
+<span class="fc" id="L355">            fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1);</span>
+<span class="fc" id="L356">            this.fieldLo = this.fieldHi;</span>
+        } else {
+<span class="fc" id="L358">            stashFieldSlow(fieldIndex);</span>
+        }
+<span class="fc" id="L360">    }</span>
+
+    private void stashFieldSlow(int fieldIndex) {
+<span class="fc bfc" id="L363" title="All 4 branches covered.">        if (lineCount == 0 &amp;&amp; fieldIndex &gt;= fieldMax) {</span>
+<span class="fc" id="L364">            addField();</span>
+        }
+
+<span class="fc bfc" id="L367" title="All 2 branches covered.">        if (fieldIndex &gt; fieldMax) {</span>
+<span class="fc" id="L368">            extraField(fieldIndex);</span>
+<span class="fc" id="L369">            return;</span>
+        }
+
+<span class="fc bfc" id="L372" title="All 2 branches covered.">        if (lastQuotePos &gt; -1) {</span>
+<span class="fc" id="L373">            fields.getQuick(fieldIndex).of(this.fieldLo, lastQuotePos - 1);</span>
+<span class="fc" id="L374">            lastQuotePos = -1;</span>
+        } else {
+<span class="fc" id="L376">            fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1);</span>
+        }
+
+<span class="fc" id="L379">        this.fieldLo = this.fieldHi;</span>
+<span class="fc" id="L380">    }</span>
+
+    private void triggerLine(long ptr) {
+<span class="fc" id="L383">        eol = true;</span>
+<span class="fc" id="L384">        fieldIndex = 0;</span>
+<span class="fc bfc" id="L385" title="All 2 branches covered.">        if (useLineRollBuf) {</span>
+<span class="fc" id="L386">            clearRollBuffer(ptr);</span>
+        }
+
+<span class="fc bfc" id="L389" title="All 2 branches covered.">        if (header) {</span>
+<span class="fc" id="L390">            header = false;</span>
+<span class="fc" id="L391">            return;</span>
+        }
+
+<span class="fc" id="L394">        textLexerListener.onFields(lineCount++, fields, fieldMax + 1);</span>
+<span class="fc" id="L395">    }</span>
+
+    private void uneol(long lo) {
+<span class="fc" id="L398">        eol = false;</span>
+<span class="fc" id="L399">        this.lastLineStart = this.fieldLo - lo;</span>
+<span class="fc" id="L400">    }</span>
+
+    protected void checkEol(long lo) {
+<span class="fc bfc" id="L403" title="All 2 branches covered.">        if (eol) {</span>
+<span class="fc" id="L404">            uneol(lo);</span>
+        }
+<span class="fc" id="L406">    }</span>
+
+    protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
+
+    protected void onColumnDelimiter(long lo) {
+<span class="fc bfc" id="L411" title="All 12 branches covered.">        if (!eol &amp;&amp; !inQuote &amp;&amp; !ignoreEolOnce &amp;&amp; lineCount &gt; 0 &amp;&amp; fieldIndex &lt; fieldMax &amp;&amp; lastQuotePos &lt; 0) {</span>
+<span class="fc" id="L412">            fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);</span>
+<span class="fc" id="L413">            this.fieldLo = this.fieldHi;</span>
+        } else {
+<span class="fc" id="L415">            onColumnDelimiterSlow(lo);</span>
+        }
+<span class="fc" id="L417">    }</span>
+
+    protected void onLineEnd(long ptr) throws LineLimitException {
+<span class="fc bfc" id="L420" title="All 2 branches covered.">        if (inQuote) {</span>
+<span class="fc" id="L421">            return;</span>
+        }
+
+<span class="fc bfc" id="L424" title="All 2 branches covered.">        if (eol) {</span>
+<span class="fc" id="L425">            this.fieldLo = this.fieldHi;</span>
+<span class="fc" id="L426">            return;</span>
+        }
+
+<span class="fc" id="L429">        stashField(fieldIndex);</span>
+
+<span class="fc bfc" id="L431" title="All 2 branches covered.">        if (ignoreEolOnce) {</span>
+<span class="fc" id="L432">            ignoreEolOnce();</span>
+<span class="fc" id="L433">            return;</span>
+        }
+
+<span class="fc" id="L436">        triggerLine(ptr);</span>
+
+<span class="fc bfc" id="L438" title="All 2 branches covered.">        if (lineCount &gt; lineCountLimit) {</span>
+<span class="fc" id="L439">            throw LineLimitException.INSTANCE;</span>
+        }
+<span class="fc" id="L441">    }</span>
+
+    protected void onQuote() {
+<span class="fc bfc" id="L444" title="All 2 branches covered.">        if (inQuote) {</span>
+<span class="fc bfc" id="L445" title="All 2 branches covered.">            delayedOutQuote = !delayedOutQuote;</span>
+<span class="fc" id="L446">            lastQuotePos = this.fieldHi;</span>
+<span class="fc bfc" id="L447" title="All 2 branches covered.">        } else if (fieldHi - fieldLo == 1) {</span>
+<span class="fc" id="L448">            inQuote = true;</span>
+<span class="fc" id="L449">            this.fieldLo = this.fieldHi;</span>
+        }
+<span class="fc" id="L451">    }</span>
+
+    void setTableName(CharSequence tableName) {
+<span class="fc" id="L454">        this.tableName = tableName;</span>
+<span class="fc" id="L455">    }</span>
+
+    @FunctionalInterface
+    public interface Listener {
+        void onFields(long line, ObjList&lt;DirectByteCharSequence&gt; fields, int hi);
+    }
+
+<span class="fc" id="L462">    protected static final class LineLimitException extends Exception {</span>
+<span class="fc" id="L463">        private static final LineLimitException INSTANCE = new LineLimitException();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

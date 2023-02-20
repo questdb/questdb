@@ -1,0 +1,554 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Bootstrap.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb</a> &gt; <span class="el_source">Bootstrap.java</span></div><h1>Bootstrap.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableUtils;
+import io.questdb.jit.JitUtil;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import sun.misc.Signal;
+
+import java.io.*;
+import java.net.*;
+import java.nio.file.Paths;
+import java.util.Enumeration;
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+public class Bootstrap {
+
+    public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = &quot;--use-default-log-factory-configuration&quot;;
+    private static final String BANNER =
+            &quot;     ___                  _   ____  ____\n&quot; +
+                    &quot;    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n&quot; +
+                    &quot;   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n&quot; +
+                    &quot;   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n&quot; +
+                    &quot;    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n&quot;;
+    private static final String CONFIG_FILE = &quot;/server.conf&quot;;
+    private static final String LOG_NAME = &quot;server-main&quot;;
+    private static final String PUBLIC_VERSION_TXT = &quot;version.txt&quot;;
+    private static final String PUBLIC_ZIP = &quot;/io/questdb/site/public.zip&quot;;
+<span class="fc" id="L66">    private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;</span>
+    private final String banner;
+    private final PropServerConfiguration config;
+    private final Log log;
+    private final Metrics metrics;
+    private final String rootDirectory;
+
+    public Bootstrap(String... args) {
+<span class="fc" id="L74">        this(BANNER, System.getenv(), null, args);</span>
+<span class="fc" id="L75">    }</span>
+
+<span class="fc" id="L77">    public Bootstrap(String banner, @Nullable Map&lt;String, String&gt; env, FilesFacade ffOverride, String... args) {</span>
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (args.length &lt; 2) {</span>
+<span class="fc" id="L79">            throw new BootstrapException(&quot;Root directory name expected (-d &lt;root-path&gt;)&quot;);</span>
+        }
+<span class="fc" id="L81">        this.banner = banner;</span>
+
+        // non /server.conf properties
+<span class="fc" id="L84">        final CharSequenceObjHashMap&lt;String&gt; argsMap = processArgs(args);</span>
+<span class="fc" id="L85">        rootDirectory = argsMap.get(&quot;-d&quot;);</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        if (Chars.isBlank(rootDirectory)) {</span>
+<span class="fc" id="L87">            throw new BootstrapException(&quot;Root directory name expected (-d &lt;root-path&gt;)&quot;);</span>
+        }
+<span class="fc" id="L89">        final File rootPath = new File(rootDirectory);</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (!rootPath.exists()) {</span>
+<span class="fc" id="L91">            throw new BootstrapException(&quot;Root directory does not exist: &quot; + rootDirectory);</span>
+        }
+<span class="pc bpc" id="L93" title="2 of 4 branches missed.">        if (argsMap.get(&quot;-n&quot;) == null &amp;&amp; Os.type != Os.WINDOWS) {</span>
+<span class="pc" id="L94">            Signal.handle(new Signal(&quot;HUP&quot;), signal -&gt; { /* suppress HUP signal */ });</span>
+        }
+
+        // before we set up the logger, we need to copy the conf file
+<span class="fc" id="L98">        final byte[] buffer = new byte[1024 * 1024];</span>
+        try {
+<span class="fc" id="L100">            copyConfResource(rootDirectory, false, buffer, &quot;conf/log.conf&quot;, null);</span>
+<span class="nc" id="L101">        } catch (IOException e) {</span>
+<span class="nc" id="L102">            throw new BootstrapException(&quot;Could not extract log configuration file&quot;);</span>
+<span class="fc" id="L103">        }</span>
+
+        // setup logger
+        // note: this call must be made before any Log init.
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">        if (argsMap.get(SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION) == null) {</span>
+<span class="nc" id="L108">            LogFactory.configureRootDir(rootDirectory);</span>
+        }
+<span class="fc" id="L110">        log = LogFactory.getLog(LOG_NAME);</span>
+
+        // report copyright and architecture
+<span class="fc" id="L113">        log.advisoryW().$(&quot;QuestDB server &quot;).$(buildInformation.getQuestDbVersion()).$(&quot;. Copyright (C) 2014-&quot;).$(Dates.getYear(System.currentTimeMillis())).$(&quot;, all rights reserved.&quot;).$();</span>
+        String archName;
+<span class="fc" id="L115">        boolean isOsSupported = true;</span>
+<span class="pc bpc" id="L116" title="6 of 7 branches missed.">        switch (Os.type) {</span>
+            case Os.WINDOWS:
+<span class="nc" id="L118">                archName = &quot;OS/Arch Windows/amd64&quot;;</span>
+<span class="nc" id="L119">                break;</span>
+            case Os.LINUX_AMD64:
+<span class="nc" id="L121">                archName = &quot;OS/Arch linux/amd64&quot;;</span>
+<span class="nc" id="L122">                break;</span>
+            case Os.OSX_AMD64:
+<span class="nc" id="L124">                archName = &quot;OS/Arch apple/amd64&quot;;</span>
+<span class="nc" id="L125">                break;</span>
+            case Os.OSX_ARM64:
+<span class="fc" id="L127">                archName = &quot;OS/Arch apple/apple-silicon&quot;;</span>
+<span class="fc" id="L128">                break;</span>
+            case Os.LINUX_ARM64:
+<span class="nc" id="L130">                archName = &quot;OS/Arch linux/arm64&quot;;</span>
+<span class="nc" id="L131">                break;</span>
+            case Os.FREEBSD:
+<span class="nc" id="L133">                archName = &quot;OS/ARCH freebsd/amd64&quot;;</span>
+<span class="nc" id="L134">                break;</span>
+            default:
+<span class="nc" id="L136">                isOsSupported = false;</span>
+<span class="nc" id="L137">                archName = &quot;Unsupported OS&quot;;</span>
+                break;
+        }
+<span class="fc" id="L140">        StringBuilder sb = new StringBuilder(Vect.getSupportedInstructionSetName());</span>
+<span class="fc" id="L141">        sb.setLength(sb.length() - 1); // remove ending ']'</span>
+<span class="fc" id="L142">        sb.append(&quot;, &quot;).append(System.getProperty(&quot;sun.arch.data.model&quot;)).append(&quot; bits&quot;);</span>
+<span class="fc" id="L143">        sb.append(&quot;, &quot;).append(Runtime.getRuntime().availableProcessors()).append(&quot; processors&quot;);</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">        if (isOsSupported) {</span>
+<span class="fc" id="L145">            log.advisoryW().$(archName).$(sb).I$();</span>
+        } else {
+<span class="nc" id="L147">            log.criticalW().$(archName).$(sb).I$();</span>
+        }
+
+        try {
+            // site
+<span class="fc" id="L152">            extractSite();</span>
+
+            // /server.conf properties
+<span class="fc" id="L155">            final Properties properties = loadProperties(rootPath);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">            config = ffOverride == null</span>
+<span class="fc" id="L157">                ? new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation)</span>
+<span class="fc" id="L158">                : new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation) {</span>
+                    private CairoConfiguration cairoConf;
+
+                    @Override
+                    public CairoConfiguration getCairoConfiguration() {
+<span class="fc bfc" id="L163" title="All 2 branches covered.">                        if (cairoConf == null) {</span>
+<span class="fc" id="L164">                            cairoConf = new PropCairoConfiguration() {</span>
+                                @Override
+                                public FilesFacade getFilesFacade() {
+<span class="fc" id="L167">                                    return ffOverride;</span>
+                                }
+                            };
+                        }
+<span class="fc" id="L171">                        return cairoConf;</span>
+                    }
+            };
+<span class="fc" id="L174">            reportValidateConfig();</span>
+<span class="fc" id="L175">            reportCrashFiles(config.getCairoConfiguration(), log);</span>
+<span class="nc" id="L176">        } catch (Throwable e) {</span>
+<span class="nc" id="L177">            log.errorW().$(e).$();</span>
+<span class="nc" id="L178">            throw new BootstrapException(e);</span>
+<span class="fc" id="L179">        }</span>
+
+        // metrics
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">        if (config.getMetricsConfiguration().isEnabled()) {</span>
+<span class="nc" id="L183">            metrics = Metrics.enabled();</span>
+        } else {
+<span class="fc" id="L185">            metrics = Metrics.disabled();</span>
+<span class="fc" id="L186">            log.advisoryW().$(&quot;Metrics are disabled, health check endpoint will not consider unhandled errors&quot;).$();</span>
+        }
+<span class="fc" id="L188">    }</span>
+
+    public String getBanner() {
+<span class="fc" id="L191">        return banner;</span>
+    }
+
+    public PropServerConfiguration getConfiguration() {
+<span class="fc" id="L195">        return config;</span>
+    }
+
+    public Log getLog() {
+<span class="fc" id="L199">        return log;</span>
+    }
+
+    public Metrics getMetrics() {
+<span class="fc" id="L203">        return metrics;</span>
+    }
+
+    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
+<span class="fc" id="L207">        File out = new File(dir, res);</span>
+<span class="fc" id="L208">        try (InputStream is = ServerMain.class.getResourceAsStream(&quot;/io/questdb/site/&quot; + res)) {</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">            if (is != null) {</span>
+<span class="fc" id="L210">                copyInputStream(force, buffer, out, is, log);</span>
+            }
+        }
+<span class="fc" id="L213">    }</span>
+
+    private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
+<span class="fc" id="L216">        final boolean exists = out.exists();</span>
+<span class="pc bpc" id="L217" title="1 of 4 branches missed.">        if (force || !exists) {</span>
+<span class="fc" id="L218">            File dir = out.getParentFile();</span>
+<span class="pc bpc" id="L219" title="1 of 4 branches missed.">            if (!dir.exists() &amp;&amp; !dir.mkdirs()) {</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                if (log != null) {</span>
+<span class="nc" id="L221">                    log.errorW().$(&quot;could not create directory [path=&quot;).$(dir).I$();</span>
+                }
+<span class="nc" id="L223">                return;</span>
+            }
+<span class="fc" id="L225">            try (FileOutputStream fos = new FileOutputStream(out)) {</span>
+                int n;
+<span class="fc bfc" id="L227" title="All 2 branches covered.">                while ((n = is.read(buffer, 0, buffer.length)) &gt; 0) {</span>
+<span class="fc" id="L228">                    fos.write(buffer, 0, n);</span>
+                }
+            }
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">            if (log != null) {</span>
+<span class="fc" id="L232">                log.infoW().$(&quot;extracted [path=&quot;).$(out).I$();</span>
+            }
+<span class="fc" id="L234">            return;</span>
+        }
+<span class="fc bfc" id="L236" title="All 2 branches covered.">        if (log != null) {</span>
+<span class="fc" id="L237">            log.debugW().$(&quot;skipped [path=&quot;).$(out).I$();</span>
+        }
+<span class="fc" id="L239">    }</span>
+
+    private static String getPublicVersion(String publicDir) throws IOException {
+<span class="fc" id="L242">        File f = new File(publicDir, PUBLIC_VERSION_TXT);</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">        if (f.exists()) {</span>
+<span class="fc" id="L244">            try (FileInputStream fis = new FileInputStream(f)) {</span>
+<span class="fc" id="L245">                byte[] buf = new byte[128];</span>
+<span class="fc" id="L246">                int len = fis.read(buf);</span>
+<span class="fc" id="L247">                return new String(buf, 0, len);</span>
+            }
+        }
+<span class="fc" id="L250">        return null;</span>
+    }
+
+    private static void setPublicVersion(String publicDir, String version) throws IOException {
+<span class="fc" id="L254">        File f = new File(publicDir, PUBLIC_VERSION_TXT);</span>
+<span class="fc" id="L255">        File publicFolder = f.getParentFile();</span>
+<span class="pc bpc" id="L256" title="1 of 2 branches missed.">        if (!publicFolder.exists()) {</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            if (!publicFolder.mkdirs()) {</span>
+<span class="nc" id="L258">                throw new BootstrapException(&quot;Cannot create folder: &quot; + publicFolder);</span>
+            }
+        }
+<span class="fc" id="L261">        try (FileOutputStream fos = new FileOutputStream(f)) {</span>
+<span class="fc" id="L262">            byte[] buf = version.getBytes();</span>
+<span class="fc" id="L263">            fos.write(buf, 0, buf.length);</span>
+        }
+<span class="fc" id="L265">    }</span>
+
+    private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
+<span class="fc" id="L268">        final FilesFacade ff = cairoConfiguration.getFilesFacade();</span>
+<span class="fc" id="L269">        path.of(cairoConfiguration.getRoot()).concat(&quot;_verify_&quot;).put(cairoConfiguration.getRandom().nextPositiveInt()).put(&quot;.d&quot;).$();</span>
+<span class="fc" id="L270">        int fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());</span>
+        try {
+<span class="pc bpc" id="L272" title="1 of 2 branches missed.">            if (fd &gt; -1) {</span>
+<span class="fc" id="L273">                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);</span>
+                try {
+<span class="fc" id="L275">                    TableUtils.writeLongOrFail(ff, fd, 0, 123456789L, mem, path);</span>
+                } finally {
+<span class="fc" id="L277">                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);</span>
+                }
+            }
+        } finally {
+<span class="fc" id="L281">            ff.close(fd);</span>
+        }
+<span class="fc" id="L283">        ff.remove(path);</span>
+<span class="fc" id="L284">    }</span>
+
+    private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
+<span class="fc" id="L287">        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {</span>
+<span class="pc bpc" id="L288" title="1 of 2 branches missed.">            if (is != null) {</span>
+<span class="fc" id="L289">                try (ZipInputStream zip = new ZipInputStream(is)) {</span>
+                    ZipEntry ze;
+<span class="fc bfc" id="L291" title="All 2 branches covered.">                    while ((ze = zip.getNextEntry()) != null) {</span>
+<span class="fc" id="L292">                        final File dest = new File(publicDir, ze.getName());</span>
+<span class="pc bpc" id="L293" title="1 of 2 branches missed.">                        if (!ze.isDirectory()) {</span>
+<span class="fc" id="L294">                            copyInputStream(true, buffer, dest, zip, log);</span>
+                        }
+<span class="fc" id="L296">                        zip.closeEntry();</span>
+<span class="fc" id="L297">                    }</span>
+                }
+            } else {
+<span class="nc" id="L300">                log.errorW().$(&quot;could not find site [resource=&quot;).$(PUBLIC_ZIP).$(']').$();</span>
+            }
+        }
+<span class="fc" id="L303">        setPublicVersion(publicDir, thisVersion);</span>
+<span class="fc" id="L304">        copyConfResource(rootDirectory, false, buffer, &quot;conf/date.formats&quot;, log);</span>
+        try {
+<span class="fc" id="L306">            copyConfResource(rootDirectory, true, buffer, &quot;conf/mime.types&quot;, log);</span>
+<span class="nc" id="L307">        } catch (IOException exception) {</span>
+            // conf can be read-only, this is not critical
+<span class="nc bnc" id="L309" title="All 6 branches missed.">            if (exception.getMessage() == null || (!exception.getMessage().contains(&quot;Read-only file system&quot;) &amp;&amp; !exception.getMessage().contains(&quot;Permission denied&quot;))) {</span>
+<span class="nc" id="L310">                throw exception;</span>
+            }
+<span class="fc" id="L312">        }</span>
+<span class="fc" id="L313">        copyConfResource(rootDirectory, false, buffer, &quot;conf/server.conf&quot;, log);</span>
+<span class="fc" id="L314">        copyConfResource(rootDirectory, false, buffer, &quot;conf/log.conf&quot;, log);</span>
+<span class="fc" id="L315">    }</span>
+
+    @NotNull
+    private Properties loadProperties(File rootPath) throws IOException {
+<span class="fc" id="L319">        final Properties properties = new Properties();</span>
+<span class="fc" id="L320">        java.nio.file.Path configFile = Paths.get(rootPath.getAbsolutePath(), PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);</span>
+<span class="fc" id="L321">        log.advisoryW().$(&quot;Server config: &quot;).$(configFile).$();</span>
+
+<span class="fc" id="L323">        try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {</span>
+<span class="fc" id="L324">            properties.load(is);</span>
+        }
+<span class="pc bpc" id="L326" title="1 of 2 branches missed.">        return properties;</span>
+    }
+
+    private void reportValidateConfig() {
+<span class="fc" id="L330">        final boolean httpEnabled = config.getHttpServerConfiguration().isEnabled();</span>
+<span class="fc" id="L331">        final boolean httpReadOnly = config.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();</span>
+<span class="pc bpc" id="L332" title="1 of 4 branches missed.">        final String httpReadOnlyHint = httpEnabled &amp;&amp; httpReadOnly ? &quot; [read-only]&quot; : &quot;&quot;;</span>
+<span class="fc" id="L333">        final boolean pgEnabled = config.getPGWireConfiguration().isEnabled();</span>
+<span class="fc" id="L334">        final boolean pgReadOnly = config.getPGWireConfiguration().readOnlySecurityContext();</span>
+<span class="pc bpc" id="L335" title="2 of 4 branches missed.">        final String pgReadOnlyHint = pgEnabled &amp;&amp; pgReadOnly ? &quot; [read-only]&quot; : &quot;&quot;;</span>
+<span class="fc" id="L336">        final CairoConfiguration cairoConfig = config.getCairoConfiguration();</span>
+<span class="fc" id="L337">        log.advisoryW().$(&quot;Config:&quot;).$();</span>
+<span class="fc" id="L338">        log.advisoryW().$(&quot; - http.enabled : &quot;).$(httpEnabled).$(httpReadOnlyHint).$();</span>
+<span class="fc" id="L339">        log.advisoryW().$(&quot; - tcp.enabled  : &quot;).$(config.getLineTcpReceiverConfiguration().isEnabled()).$();</span>
+<span class="fc" id="L340">        log.advisoryW().$(&quot; - pg.enabled   : &quot;).$(pgEnabled).$(pgReadOnlyHint).$();</span>
+<span class="fc" id="L341">        log.advisoryW().$(&quot; - attach partition suffix: &quot;).$(config.getCairoConfiguration().getAttachPartitionSuffix()).$();</span>
+<span class="fc" id="L342">        log.advisoryW().$(&quot; - open database [id=&quot;).$(cairoConfig.getDatabaseIdLo()).$('.').$(cairoConfig.getDatabaseIdHi()).I$();</span>
+<span class="pc bpc" id="L343" title="1 of 2 branches missed.">        if (cairoConfig.isReadOnlyInstance()) {</span>
+<span class="nc" id="L344">            log.advisoryW().$(&quot; - THIS IS READ ONLY INSTANCE&quot;).$();</span>
+        }
+<span class="fc" id="L346">        try (Path path = new Path()) {</span>
+<span class="fc" id="L347">            verifyFileSystem(path, cairoConfig.getRoot(), &quot;db&quot;);</span>
+<span class="fc" id="L348">            verifyFileSystem(path, cairoConfig.getBackupRoot(), &quot;backup&quot;);</span>
+<span class="fc" id="L349">            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), &quot;snapshot&quot;);</span>
+<span class="fc" id="L350">            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), &quot;sql copy input&quot;);</span>
+<span class="fc" id="L351">            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), &quot;sql copy input worker&quot;);</span>
+<span class="fc" id="L352">            verifyFileOpts(path, cairoConfig);</span>
+        }
+<span class="pc bpc" id="L354" title="1 of 2 branches missed.">        if (JitUtil.isJitSupported()) {</span>
+<span class="nc" id="L355">            final int jitMode = cairoConfig.getSqlJitMode();</span>
+<span class="nc bnc" id="L356" title="All 4 branches missed.">            switch (jitMode) {</span>
+                case SqlJitMode.JIT_MODE_ENABLED:
+<span class="nc" id="L358">                    log.advisoryW().$(&quot; - SQL JIT compiler mode: on&quot;).$();</span>
+<span class="nc" id="L359">                    break;</span>
+                case SqlJitMode.JIT_MODE_FORCE_SCALAR:
+<span class="nc" id="L361">                    log.advisoryW().$(&quot; - SQL JIT compiler mode: scalar&quot;).$();</span>
+<span class="nc" id="L362">                    break;</span>
+                case SqlJitMode.JIT_MODE_DISABLED:
+<span class="nc" id="L364">                    log.advisoryW().$(&quot; - SQL JIT compiler mode: off&quot;).$();</span>
+<span class="nc" id="L365">                    break;</span>
+                default:
+<span class="nc" id="L367">                    log.errorW().$(&quot; - Unknown SQL JIT compiler mode: &quot;).$(jitMode).$();</span>
+                    break;
+            }
+        }
+<span class="fc" id="L371">    }</span>
+
+    private void verifyFileSystem(Path path, CharSequence rootDir, String kind) {
+<span class="fc bfc" id="L374" title="All 2 branches covered.">        if (rootDir == null) {</span>
+<span class="fc" id="L375">            log.advisoryW().$(&quot; - &quot;).$(kind).$(&quot; root: NOT SET&quot;).$();</span>
+<span class="fc" id="L376">            return;</span>
+        }
+<span class="fc" id="L378">        path.of(rootDir).$();</span>
+        // path will contain file system name
+<span class="fc" id="L380">        long fsStatus = Files.getFileSystemStatus(path);</span>
+<span class="fc" id="L381">        path.seekZ();</span>
+<span class="fc" id="L382">        LogRecord rec = log.advisoryW().$(&quot; - &quot;).$(kind).$(&quot; root: [path=&quot;).$(rootDir).$(&quot;, magic=0x&quot;);</span>
+<span class="pc bpc" id="L383" title="1 of 2 branches missed.">        if (fsStatus &lt; 0) {</span>
+<span class="nc" id="L384">            rec.$hex(-fsStatus).$(&quot;] -&gt; SUPPORTED&quot;).$();</span>
+        } else {
+<span class="fc" id="L386">            rec.$hex(fsStatus).$(&quot;] -&gt; UNSUPPORTED (SYSTEM COULD BE UNSTABLE)&quot;).$();</span>
+        }
+<span class="fc" id="L388">    }</span>
+
+    static void logWebConsoleUrls(PropServerConfiguration config, Log log, String banner) {
+<span class="fc bfc" id="L391" title="All 2 branches covered.">        if (config.getHttpServerConfiguration().isEnabled()) {</span>
+<span class="fc" id="L392">            final LogRecord r = log.infoW().$('\n')</span>
+<span class="fc" id="L393">                    .$(banner)</span>
+<span class="fc" id="L394">                    .$(&quot;Web Console URL(s):&quot;).$(&quot;\n\n&quot;);</span>
+
+<span class="fc" id="L396">            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration().getDispatcherConfiguration();</span>
+<span class="fc" id="L397">            final int bindIP = httpConf.getBindIPv4Address();</span>
+<span class="fc" id="L398">            final int bindPort = httpConf.getBindPort();</span>
+<span class="pc bpc" id="L399" title="1 of 2 branches missed.">            if (bindIP == 0) {</span>
+                try {
+<span class="fc bfc" id="L401" title="All 2 branches covered.">                    for (Enumeration&lt;NetworkInterface&gt; ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {</span>
+<span class="fc bfc" id="L402" title="All 2 branches covered.">                        for (Enumeration&lt;InetAddress&gt; addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {</span>
+<span class="fc" id="L403">                            InetAddress inetAddress = addr.nextElement();</span>
+<span class="fc bfc" id="L404" title="All 2 branches covered.">                            if (inetAddress instanceof Inet4Address) {</span>
+<span class="fc" id="L405">                                r.$('\t').$(&quot;http://&quot;).$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');</span>
+                            }
+<span class="fc" id="L407">                        }</span>
+                    }
+<span class="nc" id="L409">                } catch (SocketException se) {</span>
+<span class="nc" id="L410">                    throw new Bootstrap.BootstrapException(&quot;Cannot access network interfaces&quot;);</span>
+<span class="fc" id="L411">                }</span>
+<span class="fc" id="L412">                r.$('\n').$();</span>
+            } else {
+<span class="nc" id="L414">                r.$('\t').$(&quot;http://&quot;).$ip(bindIP).$(':').$(bindPort).$('\n').$();</span>
+            }
+        }
+<span class="fc" id="L417">    }</span>
+
+    static CharSequenceObjHashMap&lt;String&gt; processArgs(String... args) {
+<span class="fc" id="L420">        final int n = args.length;</span>
+<span class="fc bfc" id="L421" title="All 2 branches covered.">        if (n == 0) {</span>
+<span class="fc" id="L422">            throw new BootstrapException(&quot;Arguments expected, non provided&quot;);</span>
+        }
+<span class="fc" id="L424">        CharSequenceObjHashMap&lt;String&gt; optHash = new CharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L425" title="All 2 branches covered.">        for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L426">            String arg = args[i];</span>
+<span class="fc bfc" id="L427" title="All 4 branches covered.">            if (arg.length() &gt; 1 &amp;&amp; arg.charAt(0) == '-') {</span>
+<span class="fc bfc" id="L428" title="All 2 branches covered.">                if (i + 1 &lt; n) {</span>
+<span class="fc" id="L429">                    String nextArg = args[i + 1];</span>
+<span class="fc bfc" id="L430" title="All 4 branches covered.">                    if (nextArg.length() &gt; 1 &amp;&amp; nextArg.charAt(0) == '-') {</span>
+<span class="fc" id="L431">                        optHash.put(arg, &quot;&quot;);</span>
+                    } else {
+<span class="fc" id="L433">                        optHash.put(arg, nextArg);</span>
+<span class="fc" id="L434">                        i++;</span>
+                    }
+<span class="fc" id="L436">                } else {</span>
+<span class="fc" id="L437">                    optHash.put(arg, &quot;&quot;);</span>
+                }
+            } else {
+<span class="fc" id="L440">                optHash.put(&quot;$&quot; + i, arg);</span>
+            }
+        }
+<span class="fc" id="L443">        return optHash;</span>
+    }
+
+    static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
+<span class="fc" id="L447">        final CharSequence dbRoot = cairoConfiguration.getRoot();</span>
+<span class="fc" id="L448">        final FilesFacade ff = cairoConfiguration.getFilesFacade();</span>
+<span class="fc" id="L449">        final int maxFiles = cairoConfiguration.getMaxCrashFiles();</span>
+<span class="fc" id="L450">        NativeLPSZ name = new NativeLPSZ();</span>
+        try (
+<span class="fc" id="L452">                Path path = new Path().of(dbRoot).slash$();</span>
+<span class="fc" id="L453">                Path other = new Path().of(dbRoot).slash$()</span>
+        ) {
+<span class="fc" id="L455">            int plen = path.length();</span>
+<span class="fc" id="L456">            AtomicInteger counter = new AtomicInteger(0);</span>
+<span class="fc" id="L457">            FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -&gt; {</span>
+<span class="fc bfc" id="L458" title="All 2 branches covered.">                if (Files.notDots(pUtf8NameZ)) {</span>
+<span class="fc" id="L459">                    name.of(pUtf8NameZ);</span>
+<span class="fc bfc" id="L460" title="All 4 branches covered.">                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) &amp;&amp; type == Files.DT_FILE) {</span>
+<span class="fc" id="L461">                        path.trimTo(plen).concat(pUtf8NameZ).$();</span>
+<span class="fc" id="L462">                        boolean shouldRename = false;</span>
+                        do {
+<span class="fc" id="L464">                            other.trimTo(plen).concat(cairoConfiguration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(&quot;.log&quot;).$();</span>
+<span class="pc bpc" id="L465" title="1 of 2 branches missed.">                            if (!ff.exists(other)) {</span>
+<span class="fc bfc" id="L466" title="All 2 branches covered.">                                shouldRename = counter.get() &lt;= maxFiles;</span>
+<span class="fc" id="L467">                                break;</span>
+                            }
+<span class="nc bnc" id="L469" title="All 2 branches missed.">                        } while (counter.get() &lt; maxFiles);</span>
+<span class="pc bpc" id="L470" title="1 of 4 branches missed.">                        if (shouldRename &amp;&amp; ff.rename(path, other) == 0) {</span>
+<span class="fc" id="L471">                            log.criticalW().$(&quot;found crash file [path=&quot;).$(other).I$();</span>
+                        } else {
+<span class="fc" id="L473">                            log.criticalW().</span>
+<span class="fc" id="L474">                                    $(&quot;could not rename crash file [path=&quot;).$(path)</span>
+<span class="fc" id="L475">                                    .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="fc" id="L476">                                    .$(&quot;, index=&quot;).$(counter.get())</span>
+<span class="fc" id="L477">                                    .$(&quot;, max=&quot;).$(maxFiles)</span>
+<span class="fc" id="L478">                                    .I$();</span>
+                        }
+                    }
+                }
+<span class="fc" id="L482">            });</span>
+        }
+<span class="fc" id="L484">    }</span>
+
+    void extractSite() throws IOException {
+<span class="fc" id="L487">        URL resource = ServerMain.class.getResource(PUBLIC_ZIP);</span>
+<span class="fc" id="L488">        long thisVersion = Long.MIN_VALUE;</span>
+<span class="pc bpc" id="L489" title="1 of 2 branches missed.">        if (resource == null) {</span>
+<span class="nc" id="L490">            log.infoW().$(&quot;Web Console build [&quot;).$(PUBLIC_ZIP).$(&quot;] not found&quot;).$();</span>
+        } else {
+<span class="fc" id="L492">            thisVersion = resource.openConnection().getLastModified();</span>
+        }
+
+<span class="fc" id="L495">        final String publicDir = rootDirectory + Files.SEPARATOR + &quot;public&quot;;</span>
+<span class="fc" id="L496">        final byte[] buffer = new byte[1024 * 1024];</span>
+
+<span class="fc" id="L498">        boolean extracted = false;</span>
+<span class="fc" id="L499">        final String oldVersionStr = getPublicVersion(publicDir);</span>
+<span class="fc" id="L500">        final CharSequence dbVersion = buildInformation.getQuestDbVersion();</span>
+<span class="fc bfc" id="L501" title="All 2 branches covered.">        if (oldVersionStr == null) {</span>
+<span class="pc bpc" id="L502" title="1 of 2 branches missed.">            if (thisVersion != 0) {</span>
+<span class="fc" id="L503">                extractSite0(publicDir, buffer, Long.toString(thisVersion));</span>
+            } else {
+<span class="nc" id="L505">                extractSite0(publicDir, buffer, Chars.toString(dbVersion));</span>
+            }
+<span class="fc" id="L507">            extracted = true;</span>
+        } else {
+            // This is a hack to deal with RT package problem
+            // in this package &quot;thisVersion&quot; is always 0, and we need to fall back
+            // to the database version.
+<span class="pc bpc" id="L512" title="1 of 2 branches missed.">            if (thisVersion == 0) {</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">                if (!Chars.equals(oldVersionStr, dbVersion)) {</span>
+<span class="nc" id="L514">                    extractSite0(publicDir, buffer, Chars.toString(dbVersion));</span>
+<span class="nc" id="L515">                    extracted = true;</span>
+                }
+            } else {
+                // it is possible that old version is the database version
+                // which means user might have switched from RT distribution to no-JVM on the same data dir
+                // in this case we might fail to parse the version string
+                try {
+<span class="fc" id="L522">                    final long oldVersion = Numbers.parseLong(oldVersionStr);</span>
+<span class="pc bpc" id="L523" title="1 of 2 branches missed.">                    if (thisVersion &gt; oldVersion) {</span>
+<span class="nc" id="L524">                        extractSite0(publicDir, buffer, Long.toString(thisVersion));</span>
+<span class="nc" id="L525">                        extracted = true;</span>
+                    }
+<span class="nc" id="L527">                } catch (NumericException e) {</span>
+<span class="nc" id="L528">                    extractSite0(publicDir, buffer, Long.toString(thisVersion));</span>
+<span class="nc" id="L529">                    extracted = true;</span>
+<span class="fc" id="L530">                }</span>
+            }
+        }
+<span class="fc bfc" id="L533" title="All 2 branches covered.">        if (!extracted) {</span>
+<span class="fc" id="L534">            log.infoW().$(&quot;Web Console is up to date&quot;).$();</span>
+        }
+<span class="fc" id="L536">    }</span>
+
+    public static class BootstrapException extends RuntimeException {
+        public BootstrapException(String message) {
+<span class="fc" id="L540">            super(message);</span>
+<span class="fc" id="L541">        }</span>
+
+        public BootstrapException(Throwable thr) {
+<span class="nc" id="L544">            super(thr);</span>
+<span class="nc" id="L545">        }</span>
+    }
+
+    static {
+<span class="pc bpc" id="L549" title="1 of 2 branches missed.">        if (Os.type == Os._32Bit) {</span>
+<span class="nc" id="L550">            throw new Error(&quot;QuestDB requires 64-bit JVM&quot;);</span>
+        }
+<span class="fc" id="L552">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

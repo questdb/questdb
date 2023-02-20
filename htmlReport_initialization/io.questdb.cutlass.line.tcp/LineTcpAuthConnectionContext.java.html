@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineTcpAuthConnectionContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.tcp</a> &gt; <span class="el_source">LineTcpAuthConnectionContext.java</span></div><h1>LineTcpAuthConnectionContext.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.tcp;
+
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectByteCharSequence;
+
+import java.security.*;
+import java.util.Base64;
+
+class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
+    private static final int CHALLENGE_LEN = 512;
+<span class="fc" id="L40">    private static final Log LOG = LogFactory.getLog(LineTcpAuthConnectionContext.class);</span>
+    private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
+<span class="fc" id="L42">    private static final ThreadLocal&lt;Signature&gt; tlSigDER = new ThreadLocal&lt;&gt;(() -&gt; {</span>
+        try {
+<span class="fc" id="L44">            return Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);</span>
+<span class="nc" id="L45">        } catch (NoSuchAlgorithmException ex) {</span>
+<span class="nc" id="L46">            throw new Error(ex);</span>
+        }
+    });
+<span class="fc" id="L49">    private static final ThreadLocal&lt;Signature&gt; tlSigP1363 = new ThreadLocal&lt;&gt;(() -&gt; {</span>
+        try {
+<span class="fc" id="L51">            return Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363);</span>
+<span class="nc" id="L52">        } catch (NoSuchAlgorithmException ex) {</span>
+<span class="nc" id="L53">            throw new Error(ex);</span>
+        }
+    });
+<span class="fc" id="L56">    private static final ThreadLocal&lt;SecureRandom&gt; tlSrand = new ThreadLocal&lt;&gt;(SecureRandom::new);</span>
+    private final AuthDb authDb;
+<span class="fc" id="L58">    private final byte[] challengeBytes = new byte[CHALLENGE_LEN];</span>
+<span class="fc" id="L59">    private final DirectByteCharSequence charSeq = new DirectByteCharSequence();</span>
+    private AuthState authState;
+    private boolean authenticated;
+    private PublicKey pubKey;
+
+    LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+<span class="fc" id="L65">        super(configuration, scheduler, metrics);</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (configuration.getNetMsgBufferSize() &lt; MIN_BUF_SIZE) {</span>
+<span class="fc" id="L67">            throw CairoException.critical(0).put(&quot;Minimum buffer length is &quot;).put(MIN_BUF_SIZE);</span>
+        }
+<span class="fc" id="L69">        this.authDb = authDb;</span>
+<span class="fc" id="L70">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L74">        authenticated = false;</span>
+<span class="fc" id="L75">        authState = AuthState.WAITING_FOR_KEY_ID;</span>
+<span class="fc" id="L76">        pubKey = null;</span>
+<span class="fc" id="L77">        super.clear();</span>
+<span class="fc" id="L78">    }</span>
+
+    private boolean checkAllZeros(byte[] signatureRaw) {
+<span class="fc" id="L81">        int n = signatureRaw.length;</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">        for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">            if (signatureRaw[i] != 0) {</span>
+<span class="fc" id="L84">                return false;</span>
+            }
+        }
+<span class="fc" id="L87">        return true;</span>
+    }
+
+    private int findLineEnd() {
+<span class="fc" id="L91">        read();</span>
+<span class="fc" id="L92">        int len = (int) (recvBufPos - recvBufStart);</span>
+<span class="fc" id="L93">        int n = 0;</span>
+<span class="fc" id="L94">        int lineEnd = -1;</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        while (n &lt; len) {</span>
+<span class="fc" id="L96">            byte b = Unsafe.getUnsafe().getByte(recvBufStart + n);</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">            if (b == (byte) '\n') {</span>
+<span class="fc" id="L98">                lineEnd = n;</span>
+<span class="fc" id="L99">                break;</span>
+            }
+<span class="fc" id="L101">            n++;</span>
+<span class="fc" id="L102">        }</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        if (lineEnd != -1) {</span>
+<span class="fc" id="L104">            return lineEnd;</span>
+        }
+
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (recvBufPos == recvBufEnd) {</span>
+<span class="fc" id="L108">            LOG.info().$('[').$(fd).$(&quot;] authentication token is too long&quot;).$();</span>
+<span class="fc" id="L109">            authState = AuthState.FAILED;</span>
+<span class="fc" id="L110">            return -1;</span>
+        }
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        if (peerDisconnected) {</span>
+<span class="fc" id="L113">            LOG.info().$('[').$(fd).$(&quot;] authentication disconnected by peer when reading token&quot;).$();</span>
+<span class="fc" id="L114">            authState = AuthState.FAILED;</span>
+<span class="fc" id="L115">            return -1;</span>
+        }
+<span class="fc" id="L117">        return -1;</span>
+    }
+
+    private IOContextResult handleAuth(NetworkIOJob netIoJob) {
+<span class="fc bfc" id="L121" title="All 4 branches covered.">        switch (authState) {</span>
+            case WAITING_FOR_KEY_ID:
+<span class="fc" id="L123">                readKeyId();</span>
+<span class="fc" id="L124">                break;</span>
+            case SENDING_CHALLENGE:
+<span class="fc" id="L126">                sendChallenge();</span>
+<span class="fc" id="L127">                break;</span>
+            case WAITING_FOR_RESPONSE:
+<span class="fc" id="L129">                waitForResponse();</span>
+<span class="fc bfc" id="L130" title="All 4 branches covered.">                if (authenticated &amp;&amp; recvBufPos &gt; recvBufStart) {</span>
+                    // if authentication is completed and there are still bytes remaining in the buffer
+                    // we have to parse them
+<span class="fc" id="L133">                    return parseMeasurements(netIoJob);</span>
+                }
+                break;
+            default:
+                break;
+        }
+<span class="fc" id="L139">        return authState.ioContextResult;</span>
+    }
+
+    private void readKeyId() {
+<span class="fc" id="L143">        int lineEnd = findLineEnd();</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (lineEnd != -1) {</span>
+<span class="fc" id="L145">            charSeq.of(recvBufStart, recvBufStart + lineEnd);</span>
+<span class="fc" id="L146">            LOG.info().$('[').$(fd).$(&quot;] authentication read key id [keyId=&quot;).$(charSeq).$(']').$();</span>
+<span class="fc" id="L147">            pubKey = authDb.getPublicKey(charSeq);</span>
+
+<span class="fc" id="L149">            recvBufPos = recvBufStart;</span>
+            // Generate a challenge with printable ASCII characters 0x20 to 0x7e
+<span class="fc" id="L151">            int n = 0;</span>
+<span class="fc" id="L152">            SecureRandom srand = tlSrand.get();</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">            while (n &lt; CHALLENGE_LEN) {</span>
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">                assert recvBufStart + n &lt; recvBufEnd;</span>
+<span class="fc" id="L155">                int r = (int) (srand.nextDouble() * 0x5f) + 0x20;</span>
+<span class="fc" id="L156">                Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) r);</span>
+<span class="fc" id="L157">                challengeBytes[n] = (byte) r;</span>
+<span class="fc" id="L158">                n++;</span>
+<span class="fc" id="L159">            }</span>
+<span class="fc" id="L160">            Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) '\n');</span>
+<span class="fc" id="L161">            authState = AuthState.SENDING_CHALLENGE;</span>
+        }
+<span class="fc" id="L163">    }</span>
+
+    private void sendChallenge() {
+<span class="fc" id="L166">        int n = CHALLENGE_LEN + 1 - (int) (recvBufPos - recvBufStart);</span>
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">        assert n &gt; 0;</span>
+        while (true) {
+<span class="fc" id="L169">            int nWritten = nf.send(fd, recvBufPos, n);</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">            if (nWritten &gt; 0) {</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">                if (n == nWritten) {</span>
+<span class="fc" id="L172">                    recvBufPos = recvBufStart;</span>
+<span class="fc" id="L173">                    authState = AuthState.WAITING_FOR_RESPONSE;</span>
+<span class="fc" id="L174">                    return;</span>
+                }
+<span class="fc" id="L176">                recvBufPos += nWritten;</span>
+<span class="fc" id="L177">                continue;</span>
+            }
+
+<span class="fc bfc" id="L180" title="All 2 branches covered.">            if (nWritten == 0) {</span>
+<span class="fc" id="L181">                return;</span>
+            }
+
+            break;
+        }
+<span class="fc" id="L186">        LOG.info().$('[').$(fd).$(&quot;] authentication peer disconnected when challenge was being sent&quot;).$();</span>
+<span class="fc" id="L187">        authState = AuthState.FAILED;</span>
+<span class="fc" id="L188">    }</span>
+
+    private void waitForResponse() {
+<span class="fc" id="L191">        int lineEnd = findLineEnd();</span>
+<span class="fc bfc" id="L192" title="All 2 branches covered.">        if (lineEnd != -1) {</span>
+            // Verify signature
+<span class="fc bfc" id="L194" title="All 2 branches covered.">            if (null == pubKey) {</span>
+<span class="fc" id="L195">                LOG.info().$('[').$(fd).$(&quot;] authentication failed, unknown key id&quot;).$();</span>
+<span class="fc" id="L196">                authState = AuthState.FAILED;</span>
+<span class="fc" id="L197">                return;</span>
+            }
+
+<span class="fc" id="L200">            byte[] signature = new byte[lineEnd];</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">            for (int n = 0; n &lt; lineEnd; n++) {</span>
+<span class="fc" id="L202">                signature[n] = Unsafe.getUnsafe().getByte(recvBufStart + n);</span>
+            }
+<span class="fc" id="L204">            authState = AuthState.FAILED;</span>
+
+<span class="fc" id="L206">            byte[] signatureRaw = Base64.getDecoder().decode(signature);</span>
+<span class="fc bfc" id="L207" title="All 2 branches covered.">            Signature sig = signatureRaw.length == 64 ? tlSigP1363.get() : tlSigDER.get();</span>
+            boolean verified;
+            try {
+                // On some out of date JDKs zeros can be valid signature because of a bug in the JDK code
+                // Check that it's not the case.
+<span class="fc bfc" id="L212" title="All 2 branches covered.">                if (checkAllZeros(signatureRaw)) {</span>
+<span class="fc" id="L213">                    LOG.info().$('[').$(fd).$(&quot;] invalid signature, can be cyber attack!&quot;).$();</span>
+<span class="fc" id="L214">                    authState = AuthState.FAILED;</span>
+<span class="fc" id="L215">                    return;</span>
+                }
+<span class="fc" id="L217">                sig.initVerify(pubKey);</span>
+<span class="fc" id="L218">                sig.update(challengeBytes);</span>
+<span class="fc" id="L219">                verified = sig.verify(signatureRaw);</span>
+<span class="fc" id="L220">            } catch (InvalidKeyException | SignatureException ex) {</span>
+<span class="fc" id="L221">                LOG.info().$('[').$(fd).$(&quot;] authentication exception &quot;).$(ex).$();</span>
+<span class="fc" id="L222">                verified = false;</span>
+<span class="fc" id="L223">            }</span>
+
+<span class="fc bfc" id="L225" title="All 2 branches covered.">            if (!verified) {</span>
+<span class="fc" id="L226">                LOG.info().$('[').$(fd).$(&quot;] authentication failed, signature was not verified&quot;).$();</span>
+<span class="fc" id="L227">                authState = AuthState.FAILED;</span>
+<span class="fc" id="L228">                return;</span>
+            }
+
+<span class="fc" id="L231">            authenticated = true;</span>
+<span class="fc" id="L232">            authState = AuthState.COMPLETE;</span>
+<span class="fc" id="L233">            compactBuffer(recvBufStart + lineEnd + 1);</span>
+            // we must reset start of measurement address
+<span class="fc" id="L235">            resetParser();</span>
+<span class="fc" id="L236">            LOG.info().$('[').$(fd).$(&quot;] authentication success&quot;).$();</span>
+        }
+<span class="fc" id="L238">    }</span>
+
+    @Override
+    IOContextResult handleIO(NetworkIOJob netIoJob) {
+<span class="fc bfc" id="L242" title="All 2 branches covered.">        if (authenticated) {</span>
+<span class="fc" id="L243">            return super.handleIO(netIoJob);</span>
+        }
+<span class="fc" id="L245">        return handleAuth(netIoJob);</span>
+    }
+
+<span class="fc" id="L248">    private enum AuthState {</span>
+<span class="fc" id="L249">        WAITING_FOR_KEY_ID(IOContextResult.NEEDS_READ), SENDING_CHALLENGE(IOContextResult.NEEDS_WRITE), WAITING_FOR_RESPONSE(IOContextResult.NEEDS_READ),</span>
+<span class="fc" id="L250">        COMPLETE(IOContextResult.NEEDS_READ), FAILED(IOContextResult.NEEDS_DISCONNECT);</span>
+
+        private final IOContextResult ioContextResult;
+
+<span class="fc" id="L254">        AuthState(IOContextResult ioContextResult) {</span>
+<span class="fc" id="L255">            this.ioContextResult = ioContextResult;</span>
+<span class="fc" id="L256">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

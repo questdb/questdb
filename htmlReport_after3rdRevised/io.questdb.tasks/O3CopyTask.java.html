@@ -1,0 +1,389 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>O3CopyTask.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.tasks</a> &gt; <span class="el_source">O3CopyTask.java</span></div><h1>O3CopyTask.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.tasks;
+
+import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.TableWriter;
+import io.questdb.std.AbstractLockable;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
+<span class="fc" id="L33">public class O3CopyTask extends AbstractLockable {</span>
+    private int blockType;
+    private AtomicInteger columnCounter;
+    private int columnType;
+    private long dstFixAddr;
+    private int dstFixFd;
+    private long dstFixFileOffset;
+    private long dstFixOffset;
+    private long dstFixSize;
+    private long dstIndexAdjust;
+    private long dstIndexOffset;
+    private int dstKFd;
+    private int dstVFd;
+    private long dstVarAddr;
+    private long dstVarAdjust;
+    private int dstVarFd;
+    private long dstVarOffset;
+    private long dstVarOffsetEnd;
+    private long dstVarSize;
+    private int indexBlockCapacity;
+    private BitmapIndexWriter indexWriter;
+    private AtomicInteger partCounter;
+    private boolean partitionMutates;
+    private long partitionTimestamp;
+    private long srcDataFixAddr;
+    private int srcDataFixFd;
+    private long srcDataFixOffset;
+    private long srcDataFixSize;
+    private long srcDataHi;
+    private long srcDataLo;
+    private long srcDataMax;
+    private long srcDataTop;
+    private long srcDataVarAddr;
+    private int srcDataVarFd;
+    private long srcDataVarOffset;
+    private long srcDataVarSize;
+    private long srcOooFixAddr;
+    private long srcOooHi;
+    private long srcOooLo;
+    private long srcOooMax;
+    private long srcOooPartitionHi;
+    private long srcOooPartitionLo;
+    private long srcOooVarAddr;
+    private long srcTimestampAddr;
+    private int srcTimestampFd;
+    private long srcTimestampSize;
+    private TableWriter tableWriter;
+    private long timestampMax;
+    private long timestampMergeIndexAddr;
+    private long timestampMergeIndexSize;
+    private long timestampMin;
+
+    public int getBlockType() {
+<span class="fc" id="L86">        return blockType;</span>
+    }
+
+    public AtomicInteger getColumnCounter() {
+<span class="fc" id="L90">        return columnCounter;</span>
+    }
+
+    public int getColumnType() {
+<span class="fc" id="L94">        return columnType;</span>
+    }
+
+    public long getDstFixAddr() {
+<span class="fc" id="L98">        return dstFixAddr;</span>
+    }
+
+    public int getDstFixFd() {
+<span class="fc" id="L102">        return dstFixFd;</span>
+    }
+
+    public long getDstFixFileOffset() {
+<span class="fc" id="L106">        return dstFixFileOffset;</span>
+    }
+
+    public long getDstFixOffset() {
+<span class="fc" id="L110">        return dstFixOffset;</span>
+    }
+
+    public long getDstFixSize() {
+<span class="fc" id="L114">        return dstFixSize;</span>
+    }
+
+    public long getDstIndexAdjust() {
+<span class="fc" id="L118">        return dstIndexAdjust;</span>
+    }
+
+    public long getDstIndexOffset() {
+<span class="fc" id="L122">        return dstIndexOffset;</span>
+    }
+
+    public int getDstKFd() {
+<span class="fc" id="L126">        return dstKFd;</span>
+    }
+
+    public int getDstVFd() {
+<span class="fc" id="L130">        return dstVFd;</span>
+    }
+
+    public long getDstVarAddr() {
+<span class="fc" id="L134">        return dstVarAddr;</span>
+    }
+
+    public long getDstVarAdjust() {
+<span class="fc" id="L138">        return dstVarAdjust;</span>
+    }
+
+    public int getDstVarFd() {
+<span class="fc" id="L142">        return dstVarFd;</span>
+    }
+
+    public long getDstVarOffset() {
+<span class="fc" id="L146">        return dstVarOffset;</span>
+    }
+
+    public long getDstVarOffsetEnd() {
+<span class="fc" id="L150">        return dstVarOffsetEnd;</span>
+    }
+
+    public long getDstVarSize() {
+<span class="fc" id="L154">        return dstVarSize;</span>
+    }
+
+    public int getIndexBlockCapacity() {
+<span class="fc" id="L158">        return indexBlockCapacity;</span>
+    }
+
+    public BitmapIndexWriter getIndexWriter() {
+<span class="fc" id="L162">        return indexWriter;</span>
+    }
+
+    public AtomicInteger getPartCounter() {
+<span class="fc" id="L166">        return partCounter;</span>
+    }
+
+    public long getPartitionTimestamp() {
+<span class="fc" id="L170">        return partitionTimestamp;</span>
+    }
+
+    public long getSrcDataFixAddr() {
+<span class="fc" id="L174">        return srcDataFixAddr;</span>
+    }
+
+    public int getSrcDataFixFd() {
+<span class="fc" id="L178">        return srcDataFixFd;</span>
+    }
+
+    public long getSrcDataFixOffset() {
+<span class="fc" id="L182">        return srcDataFixOffset;</span>
+    }
+
+    public long getSrcDataFixSize() {
+<span class="fc" id="L186">        return srcDataFixSize;</span>
+    }
+
+    public long getSrcDataHi() {
+<span class="fc" id="L190">        return srcDataHi;</span>
+    }
+
+    public long getSrcDataLo() {
+<span class="fc" id="L194">        return srcDataLo;</span>
+    }
+
+    public long getSrcDataMax() {
+<span class="fc" id="L198">        return srcDataMax;</span>
+    }
+
+    public long getSrcDataTop() {
+<span class="fc" id="L202">        return srcDataTop;</span>
+    }
+
+    public long getSrcDataVarAddr() {
+<span class="fc" id="L206">        return srcDataVarAddr;</span>
+    }
+
+    public int getSrcDataVarFd() {
+<span class="fc" id="L210">        return srcDataVarFd;</span>
+    }
+
+    public long getSrcDataVarOffset() {
+<span class="fc" id="L214">        return srcDataVarOffset;</span>
+    }
+
+    public long getSrcDataVarSize() {
+<span class="fc" id="L218">        return srcDataVarSize;</span>
+    }
+
+    public long getSrcOooFixAddr() {
+<span class="fc" id="L222">        return srcOooFixAddr;</span>
+    }
+
+    public long getSrcOooHi() {
+<span class="fc" id="L226">        return srcOooHi;</span>
+    }
+
+    public long getSrcOooLo() {
+<span class="fc" id="L230">        return srcOooLo;</span>
+    }
+
+    public long getSrcOooMax() {
+<span class="fc" id="L234">        return srcOooMax;</span>
+    }
+
+    public long getSrcOooPartitionHi() {
+<span class="fc" id="L238">        return srcOooPartitionHi;</span>
+    }
+
+    public long getSrcOooPartitionLo() {
+<span class="fc" id="L242">        return srcOooPartitionLo;</span>
+    }
+
+    public long getSrcOooVarAddr() {
+<span class="fc" id="L246">        return srcOooVarAddr;</span>
+    }
+
+    public long getSrcTimestampAddr() {
+<span class="fc" id="L250">        return srcTimestampAddr;</span>
+    }
+
+    public int getSrcTimestampFd() {
+<span class="fc" id="L254">        return srcTimestampFd;</span>
+    }
+
+    public long getSrcTimestampSize() {
+<span class="fc" id="L258">        return srcTimestampSize;</span>
+    }
+
+    public TableWriter getTableWriter() {
+<span class="fc" id="L262">        return tableWriter;</span>
+    }
+
+    public long getTimestampMax() {
+<span class="fc" id="L266">        return timestampMax;</span>
+    }
+
+    public long getTimestampMergeIndexAddr() {
+<span class="fc" id="L270">        return timestampMergeIndexAddr;</span>
+    }
+
+    public long getTimestampMergeIndexSize() {
+<span class="fc" id="L274">        return timestampMergeIndexSize;</span>
+    }
+
+    public long getTimestampMin() {
+<span class="fc" id="L278">        return timestampMin;</span>
+    }
+
+    public boolean isPartitionMutates() {
+<span class="fc" id="L282">        return partitionMutates;</span>
+    }
+
+    public void of(
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            int blockType,
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
+            int srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixOffset,
+            long srcDataFixSize,
+            int srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarOffset,
+            long srcDataVarSize,
+            long srcDataLo,
+            long srcDataHi,
+            long srcDataTop,
+            long srcDataMax,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            long timestampMin,
+            long timestampMax,
+            long oooTimestampHi,
+            int dstFixFd,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstFixFileOffset,
+            long dstFixSize,
+            int dstVarFd,
+            long dstVarAddr,
+            long dstVarOffset,
+            long dstVarOffsetEnd,
+            long dstVarAdjust,
+            long dstVarSize,
+            int dstKFd,
+            int dstVFd,
+            long dstIndexOffset,
+            long dstIndexAdjust,
+            int indexBlockCapacity,
+            int srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            boolean partitionMutates,
+            TableWriter tableWriter,
+            BitmapIndexWriter indexWriter
+    ) {
+<span class="fc" id="L337">        this.columnCounter = columnCounter;</span>
+<span class="fc" id="L338">        this.partCounter = partCounter;</span>
+<span class="fc" id="L339">        this.columnType = columnType;</span>
+<span class="fc" id="L340">        this.blockType = blockType;</span>
+<span class="fc" id="L341">        this.timestampMergeIndexAddr = timestampMergeIndexAddr;</span>
+<span class="fc" id="L342">        this.timestampMergeIndexSize = timestampMergeIndexSize;</span>
+<span class="fc" id="L343">        this.srcDataFixFd = srcDataFixFd;</span>
+<span class="fc" id="L344">        this.srcDataFixAddr = srcDataFixAddr;</span>
+<span class="fc" id="L345">        this.srcDataFixOffset = srcDataFixOffset;</span>
+<span class="fc" id="L346">        this.srcDataFixSize = srcDataFixSize;</span>
+<span class="fc" id="L347">        this.srcDataVarFd = srcDataVarFd;</span>
+<span class="fc" id="L348">        this.srcDataVarAddr = srcDataVarAddr;</span>
+<span class="fc" id="L349">        this.srcDataVarOffset = srcDataVarOffset;</span>
+<span class="fc" id="L350">        this.srcDataVarSize = srcDataVarSize;</span>
+<span class="fc" id="L351">        this.srcDataTop = srcDataTop;</span>
+<span class="fc" id="L352">        this.srcDataLo = srcDataLo;</span>
+<span class="fc" id="L353">        this.srcDataHi = srcDataHi;</span>
+<span class="fc" id="L354">        this.srcDataMax = srcDataMax;</span>
+<span class="fc" id="L355">        this.srcOooFixAddr = srcOooFixAddr;</span>
+<span class="fc" id="L356">        this.srcOooVarAddr = srcOooVarAddr;</span>
+<span class="fc" id="L357">        this.srcOooLo = srcOooLo;</span>
+<span class="fc" id="L358">        this.srcOooHi = srcOooHi;</span>
+<span class="fc" id="L359">        this.srcOooMax = srcOooMax;</span>
+<span class="fc" id="L360">        this.srcOooPartitionLo = srcOooPartitionLo;</span>
+<span class="fc" id="L361">        this.srcOooPartitionHi = srcOooPartitionHi;</span>
+<span class="fc" id="L362">        this.timestampMin = timestampMin;</span>
+<span class="fc" id="L363">        this.timestampMax = timestampMax;</span>
+<span class="fc" id="L364">        this.partitionTimestamp = oooTimestampHi;</span>
+<span class="fc" id="L365">        this.dstFixFd = dstFixFd;</span>
+<span class="fc" id="L366">        this.dstFixAddr = dstFixAddr;</span>
+<span class="fc" id="L367">        this.dstFixOffset = dstFixOffset;</span>
+<span class="fc" id="L368">        this.dstFixFileOffset = dstFixFileOffset;</span>
+<span class="fc" id="L369">        this.dstFixSize = dstFixSize;</span>
+<span class="fc" id="L370">        this.dstVarFd = dstVarFd;</span>
+<span class="fc" id="L371">        this.dstVarAddr = dstVarAddr;</span>
+<span class="fc" id="L372">        this.dstVarOffset = dstVarOffset;</span>
+<span class="fc" id="L373">        this.dstVarOffsetEnd = dstVarOffsetEnd;</span>
+<span class="fc" id="L374">        this.dstVarAdjust = dstVarAdjust;</span>
+<span class="fc" id="L375">        this.dstVarSize = dstVarSize;</span>
+<span class="fc" id="L376">        this.dstKFd = dstKFd;</span>
+<span class="fc" id="L377">        this.dstVFd = dstVFd;</span>
+<span class="fc" id="L378">        this.dstIndexOffset = dstIndexOffset;</span>
+<span class="fc" id="L379">        this.dstIndexAdjust = dstIndexAdjust;</span>
+<span class="fc" id="L380">        this.indexBlockCapacity = indexBlockCapacity;</span>
+<span class="fc" id="L381">        this.srcTimestampFd = srcTimestampFd;</span>
+<span class="fc" id="L382">        this.srcTimestampAddr = srcTimestampAddr;</span>
+<span class="fc" id="L383">        this.srcTimestampSize = srcTimestampSize;</span>
+<span class="fc" id="L384">        this.partitionMutates = partitionMutates;</span>
+<span class="fc" id="L385">        this.tableWriter = tableWriter;</span>
+<span class="fc" id="L386">        this.indexWriter = indexWriter;</span>
+<span class="fc" id="L387">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

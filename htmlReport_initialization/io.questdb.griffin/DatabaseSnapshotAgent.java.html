@@ -1,0 +1,454 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DatabaseSnapshotAgent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">DatabaseSnapshotAgent.java</span></div><h1>DatabaseSnapshotAgent.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriterMetadata;
+import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
+
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME_META_INX;
+import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
+
+public class DatabaseSnapshotAgent implements Closeable {
+
+<span class="fc" id="L56">    private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);</span>
+<span class="fc" id="L57">    private final AtomicBoolean activePrepareFlag = new AtomicBoolean();</span>
+    private final CairoConfiguration configuration;
+    private final CairoEngine engine;
+    private final FilesFacade ff;
+<span class="fc" id="L61">    private final ReentrantLock lock = new ReentrantLock(); // protects below fields</span>
+    private final WalWriterMetadata metadata;
+<span class="fc" id="L63">    private final Path path = new Path();</span>
+    // List of readers kept around to lock partitions while a database snapshot is being made.
+<span class="fc" id="L65">    private final ObjList&lt;TableReader&gt; snapshotReaders = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L66">    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob</span>
+
+<span class="fc" id="L68">    public DatabaseSnapshotAgent(CairoEngine engine) {</span>
+<span class="fc" id="L69">        this.engine = engine;</span>
+<span class="fc" id="L70">        this.configuration = engine.getConfiguration();</span>
+<span class="fc" id="L71">        this.ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L72">        this.metadata = new WalWriterMetadata(ff);</span>
+<span class="fc" id="L73">    }</span>
+
+    public static void recoverSnapshot(CairoEngine engine) {
+<span class="fc" id="L76">        final CairoConfiguration configuration = engine.getConfiguration();</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        if (!configuration.isSnapshotRecoveryEnabled()) {</span>
+<span class="fc" id="L78">            return;</span>
+        }
+
+<span class="fc" id="L81">        final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L82">        final CharSequence root = configuration.getRoot();</span>
+<span class="fc" id="L83">        final CharSequence snapshotRoot = configuration.getSnapshotRoot();</span>
+
+<span class="fc" id="L85">        try (Path srcPath = new Path(); Path dstPath = new Path(); MemoryCMARW memFile = Vm.getCMARWInstance()) {</span>
+<span class="fc" id="L86">            srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());</span>
+<span class="fc" id="L87">            final int snapshotRootLen = srcPath.length();</span>
+<span class="fc" id="L88">            dstPath.of(root);</span>
+<span class="fc" id="L89">            final int rootLen = dstPath.length();</span>
+
+            // Check if the snapshot dir exists.
+<span class="fc bfc" id="L92" title="All 2 branches covered.">            if (!ff.exists(srcPath.slash$())) {</span>
+<span class="fc" id="L93">                return;</span>
+            }
+
+            // Check if the snapshot metadata file exists.
+<span class="fc" id="L97">            srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">            if (!ff.exists(srcPath)) {</span>
+<span class="nc" id="L99">                return;</span>
+            }
+
+            // Check if the snapshot instance id is different from what's in the snapshot.
+<span class="fc" id="L103">            memFile.smallFile(ff, srcPath, MemoryTag.MMAP_DEFAULT);</span>
+
+<span class="fc" id="L105">            final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();</span>
+<span class="fc" id="L106">            final CharSequence snapshotInstanceId = memFile.getStr(0);</span>
+<span class="fc bfc" id="L107" title="All 6 branches covered.">            if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {</span>
+<span class="fc" id="L108">                return;</span>
+            }
+
+<span class="fc" id="L111">            LOG.info()</span>
+<span class="fc" id="L112">                    .$(&quot;starting snapshot recovery [currentId=`&quot;).$(currentInstanceId)</span>
+<span class="fc" id="L113">                    .$(&quot;`, previousId=`&quot;).$(snapshotInstanceId)</span>
+<span class="fc" id="L114">                    .$(&quot;`]&quot;).$();</span>
+
+            // OK, we need to recover from the snapshot.
+<span class="fc" id="L117">            AtomicInteger recoveredMetaFiles = new AtomicInteger();</span>
+<span class="fc" id="L118">            AtomicInteger recoveredTxnFiles = new AtomicInteger();</span>
+<span class="fc" id="L119">            AtomicInteger recoveredCVFiles = new AtomicInteger();</span>
+<span class="fc" id="L120">            AtomicInteger recoveredWalFiles = new AtomicInteger();</span>
+<span class="fc" id="L121">            srcPath.trimTo(snapshotRootLen).$();</span>
+<span class="fc" id="L122">            final int snapshotDbLen = srcPath.length();</span>
+<span class="fc" id="L123">            ff.iterateDir(srcPath, (pUtf8NameZ, type) -&gt; {</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">                if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {</span>
+<span class="fc" id="L125">                    dstPath.trimTo(rootLen).concat(pUtf8NameZ);</span>
+<span class="fc" id="L126">                    int srcPathLen = srcPath.length();</span>
+<span class="fc" id="L127">                    int dstPathLen = dstPath.length();</span>
+
+<span class="fc" id="L129">                    srcPath.concat(TableUtils.META_FILE_NAME).$();</span>
+<span class="fc" id="L130">                    dstPath.concat(TableUtils.META_FILE_NAME).$();</span>
+<span class="pc bpc" id="L131" title="2 of 4 branches missed.">                    if (ff.exists(srcPath) &amp;&amp; ff.exists(dstPath)) {</span>
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">                        if (ff.copy(srcPath, dstPath) &lt; 0) {</span>
+<span class="nc" id="L133">                            LOG.error()</span>
+<span class="nc" id="L134">                                    .$(&quot;could not copy _meta file [src=&quot;).utf8(srcPath)</span>
+<span class="nc" id="L135">                                    .$(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="nc" id="L136">                                    .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="nc" id="L137">                                    .$(']').$();</span>
+                        } else {
+<span class="fc" id="L139">                            recoveredMetaFiles.incrementAndGet();</span>
+<span class="fc" id="L140">                            LOG.info()</span>
+<span class="fc" id="L141">                                    .$(&quot;recovered _meta file [src=&quot;).utf8(srcPath)</span>
+<span class="fc" id="L142">                                    .$(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="fc" id="L143">                                    .$(']').$();</span>
+                        }
+                    }
+
+<span class="fc" id="L147">                    srcPath.trimTo(srcPathLen).concat(TableUtils.TXN_FILE_NAME).$();</span>
+<span class="fc" id="L148">                    dstPath.trimTo(dstPathLen).concat(TableUtils.TXN_FILE_NAME).$();</span>
+<span class="pc bpc" id="L149" title="2 of 4 branches missed.">                    if (ff.exists(srcPath) &amp;&amp; ff.exists(dstPath)) {</span>
+<span class="pc bpc" id="L150" title="1 of 2 branches missed.">                        if (ff.copy(srcPath, dstPath) &lt; 0) {</span>
+<span class="nc" id="L151">                            LOG.error()</span>
+<span class="nc" id="L152">                                    .$(&quot;could not copy _txn file [src=&quot;).utf8(srcPath)</span>
+<span class="nc" id="L153">                                    .$(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="nc" id="L154">                                    .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="nc" id="L155">                                    .$(']').$();</span>
+                        } else {
+<span class="fc" id="L157">                            recoveredTxnFiles.incrementAndGet();</span>
+<span class="fc" id="L158">                            LOG.info()</span>
+<span class="fc" id="L159">                                    .$(&quot;recovered _txn file [src=&quot;).utf8(srcPath)</span>
+<span class="fc" id="L160">                                    .$(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="fc" id="L161">                                    .$(']').$();</span>
+                        }
+                    }
+
+<span class="fc" id="L165">                    srcPath.trimTo(srcPathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();</span>
+<span class="fc" id="L166">                    dstPath.trimTo(dstPathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();</span>
+<span class="pc bpc" id="L167" title="2 of 4 branches missed.">                    if (ff.exists(srcPath) &amp;&amp; ff.exists(dstPath)) {</span>
+<span class="pc bpc" id="L168" title="1 of 2 branches missed.">                        if (ff.copy(srcPath, dstPath) &lt; 0) {</span>
+<span class="nc" id="L169">                            LOG.error()</span>
+<span class="nc" id="L170">                                    .$(&quot;could not copy _cv file [src=&quot;).utf8(srcPath)</span>
+<span class="nc" id="L171">                                    .$(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="nc" id="L172">                                    .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="nc" id="L173">                                    .$(']').$();</span>
+                        } else {
+<span class="fc" id="L175">                            recoveredCVFiles.incrementAndGet();</span>
+<span class="fc" id="L176">                            LOG.info()</span>
+<span class="fc" id="L177">                                    .$(&quot;recovered _cv file [src=&quot;).utf8(srcPath)</span>
+<span class="fc" id="L178">                                    .$(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="fc" id="L179">                                    .$(']').$();</span>
+                        }
+                    }
+
+                    // Go inside SEQ_DIR
+<span class="fc" id="L184">                    srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);</span>
+<span class="fc" id="L185">                    srcPathLen = srcPath.length();</span>
+<span class="fc" id="L186">                    srcPath.concat(TableUtils.META_FILE_NAME).$();</span>
+
+<span class="fc" id="L188">                    dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);</span>
+<span class="fc" id="L189">                    dstPathLen = dstPath.length();</span>
+<span class="fc" id="L190">                    dstPath.concat(TableUtils.META_FILE_NAME).$();</span>
+
+<span class="pc bpc" id="L192" title="1 of 4 branches missed.">                    if (ff.exists(srcPath) &amp;&amp; ff.exists(dstPath)) {</span>
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">                        if (ff.copy(srcPath, dstPath) &lt; 0) {</span>
+<span class="nc" id="L194">                            LOG.critical()</span>
+<span class="nc" id="L195">                                    .$(&quot;could not copy &quot;).$(TableUtils.META_FILE_NAME).$(&quot; file [src=&quot;).utf8(srcPath)</span>
+<span class="nc" id="L196">                                    .utf8(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="nc" id="L197">                                    .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="nc" id="L198">                                    .$(']').$();</span>
+                        } else {
+                            try {
+<span class="fc" id="L201">                                srcPath.trimTo(srcPathLen);</span>
+<span class="fc" id="L202">                                openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);</span>
+<span class="fc" id="L203">                                long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn</span>
+
+<span class="fc" id="L205">                                memFile.smallFile(ff, dstPath, MemoryTag.MMAP_SEQUENCER_METADATA);</span>
+<span class="fc" id="L206">                                dstPath.trimTo(dstPathLen);</span>
+<span class="fc" id="L207">                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);</span>
+
+<span class="pc bpc" id="L209" title="1 of 2 branches missed.">                                if (newMaxTxn &gt;= 0) {</span>
+<span class="fc" id="L210">                                    dstPath.trimTo(dstPathLen);</span>
+<span class="fc" id="L211">                                    openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);</span>
+                                    // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
+<span class="fc" id="L213">                                    long oldMaxTxn = memFile.getLong(MAX_TXN_OFFSET);</span>
+<span class="pc bpc" id="L214" title="1 of 2 branches missed.">                                    if (newMaxTxn &lt; oldMaxTxn) {</span>
+                                        // update header of dbRoot/tableName/txn_seq/_txnlog with new values
+<span class="fc" id="L216">                                        memFile.putLong(MAX_TXN_OFFSET, newMaxTxn);</span>
+<span class="fc" id="L217">                                        LOG.info()</span>
+<span class="fc" id="L218">                                                .$(&quot;updated &quot;).$(TXNLOG_FILE_NAME).$(&quot; file [path=&quot;).utf8(dstPath)</span>
+<span class="fc" id="L219">                                                .$(&quot;, oldMaxTxn=&quot;).$(oldMaxTxn)</span>
+<span class="fc" id="L220">                                                .$(&quot;, newMaxTxn=&quot;).$(newMaxTxn)</span>
+<span class="fc" id="L221">                                                .$(']').$();</span>
+                                    }
+                                }
+<span class="nc" id="L224">                            } catch (CairoException ex) {</span>
+<span class="nc" id="L225">                                LOG.critical()</span>
+<span class="nc" id="L226">                                        .$(&quot;could not update file [src=&quot;).utf8(dstPath)</span>
+<span class="nc" id="L227">                                        .$(&quot;`, ex=&quot;).$(ex.getFlyweightMessage())</span>
+<span class="nc" id="L228">                                        .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="nc" id="L229">                                        .$(']').$();</span>
+<span class="fc" id="L230">                            }</span>
+
+<span class="fc" id="L232">                            recoveredWalFiles.incrementAndGet();</span>
+<span class="fc" id="L233">                            LOG.info()</span>
+<span class="fc" id="L234">                                    .$(&quot;recovered &quot;).$(TableUtils.META_FILE_NAME).$(&quot; file [src=&quot;).utf8(srcPath)</span>
+<span class="fc" id="L235">                                    .$(&quot;, dst=&quot;).utf8(dstPath)</span>
+<span class="fc" id="L236">                                    .$(']').$();</span>
+                        }
+                    }
+                }
+<span class="fc" id="L240">            });</span>
+<span class="fc" id="L241">            LOG.info()</span>
+<span class="fc" id="L242">                    .$(&quot;snapshot recovery finished [metaFilesCount=&quot;).$(recoveredMetaFiles.get())</span>
+<span class="fc" id="L243">                    .$(&quot;, txnFilesCount=&quot;).$(recoveredTxnFiles.get())</span>
+<span class="fc" id="L244">                    .$(&quot;, cvFilesCount=&quot;).$(recoveredCVFiles.get())</span>
+<span class="fc" id="L245">                    .$(&quot;, walFilesCount=&quot;).$(recoveredWalFiles.get())</span>
+<span class="fc" id="L246">                    .$(']').$();</span>
+
+            // Delete snapshot directory to avoid recovery on next restart.
+<span class="fc" id="L249">            srcPath.trimTo(snapshotRootLen).$();</span>
+<span class="fc" id="L250">            memFile.close();</span>
+<span class="pc bpc" id="L251" title="1 of 2 branches missed.">            if (ff.rmdir(srcPath) != 0) {</span>
+<span class="nc" id="L252">                throw CairoException.critical(ff.errno())</span>
+<span class="nc" id="L253">                        .put(&quot;could not remove snapshot dir [dir=&quot;).put(srcPath)</span>
+<span class="nc" id="L254">                        .put(&quot;, errno=&quot;).put(ff.errno())</span>
+<span class="nc" id="L255">                        .put(']');</span>
+            }
+<span class="pc bpc" id="L257" title="4 of 6 branches missed.">        }</span>
+<span class="fc" id="L258">    }</span>
+
+    @TestOnly
+    public void clear() {
+<span class="fc" id="L262">        lock.lock();</span>
+        try {
+<span class="fc" id="L264">            unsafeReleaseReaders();</span>
+<span class="fc" id="L265">            metadata.clear();</span>
+        } finally {
+<span class="fc" id="L267">            lock.unlock();</span>
+        }
+<span class="fc" id="L269">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L273">        lock.lock();</span>
+        try {
+<span class="fc" id="L275">            Misc.free(path);</span>
+<span class="fc" id="L276">            unsafeReleaseReaders();</span>
+<span class="fc" id="L277">            metadata.close();</span>
+        } finally {
+<span class="fc" id="L279">            lock.unlock();</span>
+        }
+<span class="fc" id="L281">    }</span>
+
+    public void completeSnapshot() throws SqlException {
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">        if (!lock.tryLock()) {</span>
+<span class="nc" id="L285">            throw SqlException.position(0).put(&quot;Another snapshot command in progress&quot;);</span>
+        }
+        try {
+<span class="fc" id="L288">            activePrepareFlag.set(false); // reset snapshot prepare flag</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">            if (snapshotReaders.size() == 0) {</span>
+<span class="fc" id="L290">                LOG.info().$(&quot;Snapshot has no tables, SNAPSHOT COMPLETE is ignored.&quot;).$();</span>
+            }
+
+            // Delete snapshot/db directory.
+<span class="fc" id="L294">            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();</span>
+<span class="fc" id="L295">            ff.rmdir(path); // it's fine to ignore errors here</span>
+
+            // Release locked readers if any.
+<span class="fc" id="L298">            unsafeReleaseReaders();</span>
+            // Resume the WalPurgeJob
+<span class="fc bfc" id="L300" title="All 2 branches covered.">            if (walPurgeJobRunLock != null) {</span>
+                try {
+<span class="fc" id="L302">                    walPurgeJobRunLock.unlock();</span>
+<span class="fc" id="L303">                } catch (IllegalStateException ignore) {</span>
+                    // not an error here
+                    // completeSnapshot can be called several time in a row.
+<span class="fc" id="L306">                }</span>
+            }
+        } finally {
+<span class="fc" id="L309">            lock.unlock();</span>
+        }
+<span class="fc" id="L311">    }</span>
+
+    public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+        // Windows doesn't support sync() system call.
+<span class="pc bpc" id="L315" title="1 of 2 branches missed.">        if (Os.isWindows()) {</span>
+<span class="nc" id="L316">            throw SqlException.position(0).put(&quot;Snapshots are not supported on Windows&quot;);</span>
+        }
+
+<span class="pc bpc" id="L319" title="1 of 2 branches missed.">        if (!lock.tryLock()) {</span>
+<span class="nc" id="L320">            throw SqlException.position(0).put(&quot;Another snapshot command in progress&quot;);</span>
+        }
+        try {
+            // activePrepareFlag is used to detect active snapshot prepare called on an empty DB
+<span class="fc bfc" id="L324" title="All 2 branches covered.">            if (activePrepareFlag.get()) {</span>
+<span class="fc" id="L325">                throw SqlException.position(0).put(&quot;Waiting for SNAPSHOT COMPLETE to be called&quot;);</span>
+            }
+
+<span class="fc" id="L328">            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());</span>
+<span class="fc" id="L329">            int snapshotLen = path.length();</span>
+            // Delete all contents of the snapshot/db dir.
+<span class="fc bfc" id="L331" title="All 2 branches covered.">            if (ff.exists(path.slash$())) {</span>
+<span class="fc" id="L332">                path.trimTo(snapshotLen).$();</span>
+<span class="pc bpc" id="L333" title="1 of 2 branches missed.">                if (ff.rmdir(path) != 0) {</span>
+<span class="nc" id="L334">                    throw CairoException.critical(ff.errno()).put(&quot;Could not remove snapshot dir [dir=&quot;).put(path).put(']');</span>
+                }
+            }
+            // Recreate the snapshot/db dir.
+<span class="fc" id="L338">            path.trimTo(snapshotLen).slash$();</span>
+<span class="pc bpc" id="L339" title="1 of 2 branches missed.">            if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {</span>
+<span class="nc" id="L340">                throw CairoException.critical(ff.errno()).put(&quot;Could not create [dir=&quot;).put(path).put(']');</span>
+            }
+
+<span class="fc" id="L343">            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {</span>
+<span class="fc" id="L344">                final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);</span>
+<span class="fc" id="L345">                try (RecordCursor cursor = factory.getCursor(executionContext)) {</span>
+<span class="fc" id="L346">                    final Record record = cursor.getRecord();</span>
+
+                    // Suspend the WalPurgeJob
+<span class="fc bfc" id="L349" title="All 2 branches covered.">                    if (walPurgeJobRunLock != null) {</span>
+<span class="fc" id="L350">                        final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();</span>
+<span class="fc bfc" id="L351" title="All 2 branches covered.">                        while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {</span>
+<span class="nc" id="L352">                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();</span>
+                        }
+                    }
+
+<span class="fc" id="L356">                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {</span>
+                        // Copy metadata files for all tables.
+<span class="fc bfc" id="L358" title="All 2 branches covered.">                        while (cursor.hasNext()) {</span>
+<span class="fc" id="L359">                            CharSequence tableName = record.getStr(tableNameIndex);</span>
+<span class="fc" id="L360">                            path.of(configuration.getRoot());</span>
+<span class="fc" id="L361">                            TableToken tableToken = engine.getTableToken(tableName);</span>
+<span class="fc" id="L362">                            if (</span>
+<span class="pc bpc" id="L363" title="1 of 2 branches missed.">                                    TableUtils.isValidTableName(tableName, tableName.length())</span>
+<span class="pc bpc" id="L364" title="1 of 2 branches missed.">                                            &amp;&amp; ff.exists(path.concat(tableToken).concat(TableUtils.META_FILE_NAME).$())</span>
+                            ) {
+<span class="fc" id="L366">                                boolean isWalTable = engine.isWalTable(tableToken);</span>
+<span class="fc" id="L367">                                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());</span>
+<span class="fc" id="L368">                                LOG.info().$(&quot;preparing for snapshot [table=&quot;).$(tableName).I$();</span>
+
+<span class="fc" id="L370">                                TableReader reader = engine.getReaderWithRepair(executionContext.getCairoSecurityContext(), tableToken);</span>
+<span class="fc" id="L371">                                snapshotReaders.add(reader);</span>
+
+<span class="fc" id="L373">                                path.trimTo(snapshotLen).concat(tableToken);</span>
+<span class="fc" id="L374">                                int rootLen = path.length();</span>
+
+<span class="fc bfc" id="L376" title="All 2 branches covered.">                                if (isWalTable) {</span>
+<span class="fc" id="L377">                                    path.concat(WalUtils.SEQ_DIR);</span>
+                                }
+<span class="pc bpc" id="L379" title="1 of 2 branches missed.">                                if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {</span>
+<span class="nc" id="L380">                                    throw CairoException.critical(ff.errno()).put(&quot;Could not create [dir=&quot;).put(path).put(']');</span>
+                                }
+
+                                // Copy _meta file.
+<span class="fc" id="L384">                                path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();</span>
+<span class="fc" id="L385">                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L386">                                reader.getMetadata().dumpTo(mem);</span>
+<span class="fc" id="L387">                                mem.close(false);</span>
+                                // Copy _txn file.
+<span class="fc" id="L389">                                path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();</span>
+<span class="fc" id="L390">                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L391">                                reader.getTxFile().dumpTo(mem);</span>
+<span class="fc" id="L392">                                mem.close(false);</span>
+                                // Copy _cv file.
+<span class="fc" id="L394">                                path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();</span>
+<span class="fc" id="L395">                                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L396">                                reader.getColumnVersionReader().dumpTo(mem);</span>
+<span class="fc" id="L397">                                mem.close(false);</span>
+
+<span class="fc bfc" id="L399" title="All 2 branches covered.">                                if (isWalTable) {</span>
+<span class="fc" id="L400">                                    metadata.clear();</span>
+<span class="fc" id="L401">                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);</span>
+<span class="fc" id="L402">                                    path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);</span>
+<span class="fc" id="L403">                                    metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta</span>
+<span class="fc" id="L404">                                    metadata.close(Vm.TRUNCATE_TO_POINTER);</span>
+
+<span class="fc" id="L406">                                    mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L407">                                    mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn</span>
+<span class="fc" id="L408">                                    mem.close(true, Vm.TRUNCATE_TO_POINTER);</span>
+                                }
+<span class="fc" id="L410">                            } else {</span>
+<span class="nc" id="L411">                                LOG.error().$(&quot;skipping, invalid table name or missing metadata [table=&quot;).$(tableName).I$();</span>
+                            }
+<span class="fc" id="L413">                        }</span>
+
+<span class="fc" id="L415">                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();</span>
+<span class="fc" id="L416">                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L417">                        mem.putStr(configuration.getSnapshotInstanceId());</span>
+<span class="fc" id="L418">                        mem.close();</span>
+
+                        // Flush dirty pages and filesystem metadata to disk
+<span class="fc bfc" id="L421" title="All 2 branches covered.">                        if (ff.sync() != 0) {</span>
+<span class="fc" id="L422">                            throw CairoException.critical(ff.errno()).put(&quot;Could not sync&quot;);</span>
+                        }
+
+<span class="fc" id="L425">                        activePrepareFlag.set(true);</span>
+<span class="fc" id="L426">                        LOG.info().$(&quot;snapshot copying finished&quot;).$();</span>
+<span class="fc" id="L427">                    } catch (Throwable e) {</span>
+                        // Resume the WalPurgeJob
+<span class="pc bpc" id="L429" title="1 of 2 branches missed.">                        if (walPurgeJobRunLock != null) {</span>
+<span class="nc" id="L430">                            walPurgeJobRunLock.unlock();</span>
+                        }
+<span class="fc" id="L432">                        unsafeReleaseReaders();</span>
+<span class="fc" id="L433">                        LOG.error()</span>
+<span class="fc" id="L434">                                .$(&quot;snapshot error [e=&quot;).$(e)</span>
+<span class="fc" id="L435">                                .I$();</span>
+<span class="fc" id="L436">                        throw e;</span>
+<span class="fc" id="L437">                    }</span>
+                }
+            }
+        } finally {
+<span class="fc" id="L441">            lock.unlock();</span>
+        }
+<span class="fc" id="L443">    }</span>
+
+    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
+<span class="fc" id="L446">        this.walPurgeJobRunLock = walPurgeJobRunLock;</span>
+<span class="fc" id="L447">    }</span>
+
+    private void unsafeReleaseReaders() {
+<span class="fc" id="L450">        Misc.freeObjList(snapshotReaders);</span>
+<span class="fc" id="L451">        snapshotReaders.clear();</span>
+<span class="fc" id="L452">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

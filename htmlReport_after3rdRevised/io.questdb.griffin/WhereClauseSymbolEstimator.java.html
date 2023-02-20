@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WhereClauseSymbolEstimator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">WhereClauseSymbolEstimator.java</span></div><h1>WhereClauseSymbolEstimator.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.AliasTranslator;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
+
+import java.util.ArrayDeque;
+
+import static io.questdb.griffin.SqlKeywords.*;
+
+<span class="fc" id="L39">final class WhereClauseSymbolEstimator implements Mutable {</span>
+
+    private static final int OP_EQUAL = 1;
+    private static final int OP_IN = 2;
+    private static final int OP_NOT = 3;
+    private static final int OP_NOT_EQ = 4;
+
+<span class="fc" id="L46">    private static final CharSequenceIntHashMap ops = new CharSequenceIntHashMap();</span>
+<span class="fc" id="L47">    private final IntIntHashMap columnIndexesToListIndexes = new IntIntHashMap();</span>
+<span class="fc" id="L48">    private final ArrayDeque&lt;ExpressionNode&gt; stack = new ArrayDeque&lt;&gt;();</span>
+    private boolean gaveUp;
+    private IntList symbolCounts;
+
+    @Override
+    public void clear() {
+<span class="fc" id="L54">        this.stack.clear();</span>
+<span class="fc" id="L55">        this.columnIndexesToListIndexes.clear();</span>
+<span class="fc" id="L56">        this.symbolCounts = null;</span>
+<span class="fc" id="L57">        this.gaveUp = false;</span>
+<span class="fc" id="L58">    }</span>
+
+    private boolean analyze(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata
+    ) throws SqlException {
+<span class="fc bfc" id="L65" title="All 5 branches covered.">        switch (ops.get(node.token)) {</span>
+            case OP_IN:
+<span class="fc" id="L67">                analyzeIn(translator, node, metadata);</span>
+<span class="fc" id="L68">                return true;</span>
+            case OP_EQUAL:
+<span class="fc" id="L70">                analyzeEquals(translator, node, metadata);</span>
+<span class="fc" id="L71">                return true;</span>
+            case OP_NOT_EQ:
+<span class="fc" id="L73">                analyzeNotEquals(translator, node, metadata);</span>
+<span class="fc" id="L74">                return true;</span>
+            case OP_NOT:
+<span class="fc bfc" id="L76" title="All 2 branches covered.">                if (isInKeyword(node.rhs.token)) {</span>
+<span class="fc" id="L77">                    analyzeNotIn(translator, node.rhs, metadata);</span>
+                } else {
+<span class="fc" id="L79">                    giveUp();</span>
+                }
+<span class="fc" id="L81">                return true;</span>
+            default:
+<span class="fc" id="L83">                return false;</span>
+        }
+    }
+
+    private void analyzeEquals(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata
+    ) throws SqlException {
+<span class="fc" id="L92">        estimateEquals0(translator, node.lhs, node.rhs, metadata); // left == right</span>
+<span class="fc" id="L93">        estimateEquals0(translator, node.rhs, node.lhs, metadata); // right == left</span>
+<span class="fc" id="L94">    }</span>
+
+    private void analyzeIn(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata
+    ) throws SqlException {
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">        if (node.paramCount &lt; 2) {</span>
+<span class="nc" id="L102">            return;</span>
+        }
+
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        ExpressionNode col = node.paramCount &lt; 3 ? node.lhs : node.args.getLast();</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        if (col.type != ExpressionNode.LITERAL) {</span>
+<span class="fc" id="L107">            return;</span>
+        }
+
+<span class="fc" id="L110">        CharSequence column = translator.translateAlias(col.token);</span>
+<span class="fc" id="L111">        int columnIndex = metadata.getColumnIndexQuiet(column);</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        if (columnIndex == -1) {</span>
+<span class="fc" id="L113">            throw SqlException.invalidColumn(node.position, node.token);</span>
+        }
+
+<span class="fc" id="L116">        int keyIndex = columnIndexesToListIndexes.keyIndex(columnIndex);</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        if (keyIndex &gt; -1) {</span>
+<span class="fc" id="L118">            return;</span>
+        }
+
+<span class="fc bfc" id="L121" title="All 4 branches covered.">        if (node.rhs != null &amp;&amp; node.rhs.type == ExpressionNode.QUERY) {</span>
+            // give up in sym in (select ...) case
+<span class="fc" id="L123">            giveUp();</span>
+<span class="fc" id="L124">            return;</span>
+        }
+
+<span class="fc" id="L127">        int listIndex = columnIndexesToListIndexes.valueAt(keyIndex);</span>
+<span class="fc" id="L128">        symbolCounts.increment(listIndex, node.paramCount - 1);</span>
+<span class="fc" id="L129">    }</span>
+
+    private void analyzeNotEquals(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata
+    ) throws SqlException {
+<span class="fc" id="L136">        estimateNotEquals0(translator, node.lhs, metadata); // left == right</span>
+<span class="fc" id="L137">        estimateNotEquals0(translator, node.rhs, metadata); // right == left</span>
+<span class="fc" id="L138">    }</span>
+
+    private void analyzeNotIn(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata
+    ) throws SqlException {
+<span class="pc bpc" id="L145" title="1 of 2 branches missed.">        if (node.paramCount &lt; 2) {</span>
+<span class="nc" id="L146">            return;</span>
+        }
+
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        ExpressionNode col = node.paramCount &lt; 3 ? node.lhs : node.args.getLast();</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        if (col.type != ExpressionNode.LITERAL) {</span>
+<span class="fc" id="L151">            return;</span>
+        }
+
+<span class="fc" id="L154">        CharSequence column = translator.translateAlias(col.token);</span>
+<span class="fc" id="L155">        int columnIndex = metadata.getColumnIndexQuiet(column);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">        if (columnIndex == -1) {</span>
+<span class="fc" id="L157">            throw SqlException.invalidColumn(node.position, node.token);</span>
+        }
+
+<span class="fc" id="L160">        int keyIndex = columnIndexesToListIndexes.keyIndex(columnIndex);</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        if (keyIndex &gt; -1) {</span>
+<span class="fc" id="L162">            return;</span>
+        }
+
+        // give up in not sym not in ('a','b','c') case
+<span class="fc" id="L166">        giveUp();</span>
+<span class="fc" id="L167">    }</span>
+
+    private void estimateEquals0(
+            AliasTranslator translator,
+            ExpressionNode a,
+            ExpressionNode b,
+            RecordMetadata metadata
+    ) throws SqlException {
+<span class="pc bpc" id="L175" title="1 of 4 branches missed.">        if (a == null || a.type != ExpressionNode.LITERAL) {</span>
+<span class="fc" id="L176">            return;</span>
+        }
+
+<span class="fc" id="L179">        CharSequence column = translator.translateAlias(a.token);</span>
+<span class="fc" id="L180">        int columnIndex = metadata.getColumnIndexQuiet(column);</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        if (columnIndex == -1) {</span>
+<span class="fc" id="L182">            throw SqlException.invalidColumn(a.position, a.token);</span>
+        }
+
+<span class="fc" id="L185">        int keyIndex = columnIndexesToListIndexes.keyIndex(columnIndex);</span>
+<span class="fc bfc" id="L186" title="All 2 branches covered.">        if (keyIndex &gt; -1) {</span>
+<span class="fc" id="L187">            return;</span>
+        }
+
+<span class="pc bpc" id="L190" title="1 of 4 branches missed.">        if (b.type != ExpressionNode.CONSTANT &amp;&amp; b.type != ExpressionNode.BIND_VARIABLE) {</span>
+            // give up in cases such as s1 = s2
+<span class="fc" id="L192">            giveUp();</span>
+<span class="fc" id="L193">            return;</span>
+        }
+
+<span class="fc" id="L196">        int listIndex = columnIndexesToListIndexes.valueAt(keyIndex);</span>
+<span class="fc" id="L197">        symbolCounts.increment(listIndex);</span>
+<span class="fc" id="L198">    }</span>
+
+    private void estimateNotEquals0(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata
+    ) throws SqlException {
+<span class="pc bpc" id="L205" title="1 of 4 branches missed.">        if (node == null || node.type != ExpressionNode.LITERAL) {</span>
+<span class="fc" id="L206">            return;</span>
+        }
+
+<span class="fc" id="L209">        CharSequence column = translator.translateAlias(node.token);</span>
+<span class="fc" id="L210">        int columnIndex = metadata.getColumnIndexQuiet(column);</span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">        if (columnIndex == -1) {</span>
+<span class="fc" id="L212">            throw SqlException.invalidColumn(node.position, node.token);</span>
+        }
+
+<span class="fc" id="L215">        int keyIndex = columnIndexesToListIndexes.keyIndex(columnIndex);</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">        if (keyIndex &gt; -1) {</span>
+<span class="fc" id="L217">            return;</span>
+        }
+
+        // give up in sym != 'a' case
+<span class="fc" id="L221">        giveUp();</span>
+<span class="fc" id="L222">    }</span>
+
+    private void giveUp() {
+<span class="fc" id="L225">        gaveUp = true;</span>
+<span class="fc" id="L226">        symbolCounts.setAll(symbolCounts.size(), Integer.MAX_VALUE);</span>
+<span class="fc" id="L227">    }</span>
+
+    /**
+     * Estimates symbol counts for simple filters like the following one:
+     * &lt;code&gt;
+     * sym1 in ('a','b','c') and sym2 = 'd'
+     * &lt;/code&gt;
+     * &lt;p&gt;
+     * For more complex filters the estimates are guaranteed to be equal
+     * or great than the actual count of filtered symbol values.
+     */
+    IntList estimate(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata,
+            IntList columnIndexes
+    ) throws SqlException {
+<span class="fc bfc" id="L244" title="All 2 branches covered.">        if (node == null) {</span>
+<span class="fc" id="L245">            return null;</span>
+        }
+
+<span class="fc" id="L248">        clear();</span>
+
+<span class="fc bfc" id="L250" title="All 2 branches covered.">        for (int i = 0, n = columnIndexes.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L251">            columnIndexesToListIndexes.put(columnIndexes.getQuick(i), i);</span>
+        }
+
+<span class="fc" id="L254">        symbolCounts = new IntList(columnIndexes.size());</span>
+<span class="fc" id="L255">        symbolCounts.setAll(columnIndexes.size(), 0);</span>
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (!analyze(translator, node, metadata)) {</span>
+<span class="fc bfc" id="L261" title="All 4 branches covered.">            while (!stack.isEmpty() || node != null) {</span>
+<span class="fc bfc" id="L262" title="All 2 branches covered.">                if (node != null) {</span>
+<span class="fc bfc" id="L263" title="All 2 branches covered.">                    if (isAndKeyword(node.token)) {</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">                        if (!analyze(translator, node.rhs, metadata)) {</span>
+<span class="fc" id="L265">                            stack.push(node.rhs);</span>
+                        }
+<span class="fc bfc" id="L267" title="All 2 branches covered.">                        if (gaveUp) {</span>
+<span class="fc" id="L268">                            break;</span>
+                        }
+<span class="fc bfc" id="L270" title="All 2 branches covered.">                        node = analyze(translator, node.lhs, metadata) ? null : node.lhs;</span>
+<span class="fc bfc" id="L271" title="All 2 branches covered.">                        if (gaveUp) {</span>
+<span class="fc" id="L272">                            break;</span>
+                        }
+<span class="fc bfc" id="L274" title="All 2 branches covered.">                    } else if (isOrKeyword(node.token)) {</span>
+<span class="fc" id="L275">                        giveUp();</span>
+<span class="fc" id="L276">                        break;</span>
+                    } else {
+<span class="fc" id="L278">                        node = stack.poll();</span>
+                    }
+                } else {
+<span class="fc" id="L281">                    node = stack.poll();</span>
+                }
+            }
+        }
+
+<span class="fc bfc" id="L286" title="All 2 branches covered.">        for (int i = 0, n = symbolCounts.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L287" title="All 2 branches covered.">            if (symbolCounts.getQuick(i) == 0) {</span>
+<span class="fc" id="L288">                symbolCounts.setQuick(i, Integer.MAX_VALUE);</span>
+            }
+        }
+<span class="fc" id="L291">        return symbolCounts;</span>
+    }
+
+    static {
+<span class="fc" id="L295">        ops.put(&quot;=&quot;, OP_EQUAL);</span>
+<span class="fc" id="L296">        ops.put(&quot;in&quot;, OP_IN);</span>
+<span class="fc" id="L297">        ops.put(&quot;not&quot;, OP_NOT);</span>
+<span class="fc" id="L298">        ops.put(&quot;!=&quot;, OP_NOT_EQ);</span>
+<span class="fc" id="L299">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

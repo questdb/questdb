@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DirectCharSink.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std.str</a> &gt; <span class="el_source">DirectCharSink.java</span></div><h1>DirectCharSink.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std.str;
+
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+
+public class DirectCharSink extends AbstractCharSink implements MutableCharSink, Closeable {
+    private final long initialCapacity;
+    private long capacity;
+    private long hi;
+    private long lo;
+    private long ptr;
+    private FloatingCharSequence subSequence;
+
+<span class="fc" id="L42">    public DirectCharSink(long capacity) {</span>
+<span class="fc" id="L43">        ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);</span>
+<span class="fc" id="L44">        this.capacity = capacity;</span>
+<span class="fc" id="L45">        this.initialCapacity = capacity;</span>
+<span class="fc" id="L46">        this.lo = ptr;</span>
+<span class="fc" id="L47">        this.hi = ptr + capacity;</span>
+<span class="fc" id="L48">    }</span>
+
+    @Override
+    public char charAt(int index) {
+<span class="fc" id="L52">        return Unsafe.getUnsafe().getChar(ptr + index * 2L);</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="fc" id="L57">        lo = ptr;</span>
+<span class="fc" id="L58">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L62">        Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);</span>
+<span class="fc" id="L63">    }</span>
+
+    @Override
+    public int length() {
+<span class="fc" id="L67">        return (int) (lo - ptr) / 2;</span>
+    }
+
+    @Override
+    public CharSink put(CharSequence cs) {
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        if (cs != null) {</span>
+<span class="fc" id="L73">            int l = cs.length();</span>
+<span class="fc" id="L74">            int l2 = l * 2;</span>
+
+<span class="fc bfc" id="L76" title="All 2 branches covered.">            if (lo + l2 &gt;= hi) {</span>
+<span class="fc" id="L77">                resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));</span>
+            }
+
+<span class="fc bfc" id="L80" title="All 2 branches covered.">            for (int i = 0; i &lt; l; i++) {</span>
+<span class="fc" id="L81">                Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));</span>
+            }
+<span class="fc" id="L83">            this.lo += l2;</span>
+        }
+<span class="fc" id="L85">        return this;</span>
+    }
+
+    @Override
+    public CharSink put(char c) {
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (lo == hi) {</span>
+<span class="fc" id="L91">            resize(this.capacity * 2);</span>
+        }
+<span class="fc" id="L93">        Unsafe.getUnsafe().putChar(lo, c);</span>
+<span class="fc" id="L94">        lo += 2;</span>
+<span class="fc" id="L95">        return this;</span>
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+<span class="nc" id="L100">        int l2 = len * 2;</span>
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (lo + l2 &gt;= hi) {</span>
+<span class="nc" id="L103">            resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));</span>
+        }
+
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="nc" id="L107">            Unsafe.getUnsafe().putChar(lo + i * 2L, chars[i + start]);</span>
+        }
+
+<span class="nc" id="L110">        this.lo += l2;</span>
+<span class="nc" id="L111">        return this;</span>
+    }
+
+    public void resetCapacity() {
+<span class="fc" id="L115">        resize(initialCapacity);</span>
+<span class="fc" id="L116">        clear();</span>
+<span class="fc" id="L117">    }</span>
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        if (subSequence == null) {</span>
+<span class="fc" id="L122">            subSequence = new FloatingCharSequence();</span>
+        }
+<span class="fc" id="L124">        return subSequence.of(start, end - start);</span>
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">        return AbstractCharSequence.getString(this);</span>
+    }
+
+    private void resize(long cap) {
+<span class="fc" id="L134">        long temp = Unsafe.realloc(ptr, capacity, cap, MemoryTag.NATIVE_DIRECT_CHAR_SINK);</span>
+<span class="fc" id="L135">        int len = (int) (lo - ptr);</span>
+<span class="fc" id="L136">        this.ptr = temp;</span>
+<span class="fc" id="L137">        this.capacity = cap;</span>
+<span class="fc" id="L138">        this.lo = ptr + len;</span>
+<span class="fc" id="L139">        this.hi = ptr + cap;</span>
+<span class="fc" id="L140">    }</span>
+
+    @TestOnly
+    long getCapacity() {
+<span class="fc" id="L144">        return capacity;</span>
+    }
+
+<span class="fc" id="L147">    private class FloatingCharSequence extends AbstractCharSequence {</span>
+
+        private int len;
+        private int startIndex;
+
+        @Override
+        public char charAt(int index) {
+<span class="fc" id="L154">            return Unsafe.getUnsafe().getChar(ptr + (startIndex + index) * 2L);</span>
+        }
+
+        @Override
+        public int length() {
+<span class="fc" id="L159">            return len;</span>
+        }
+
+        CharSequence of(int startIndex, int len) {
+<span class="fc" id="L163">            this.startIndex = startIndex;</span>
+<span class="fc" id="L164">            this.len = len;</span>
+<span class="fc" id="L165">            return this;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

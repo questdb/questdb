@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpServer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.http</a> &gt; <span class="el_source">HttpServer.java</span></div><h1>HttpServer.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http;
+
+import io.questdb.MessageBus;
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.MutableIOContextFactory;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+
+public class HttpServer implements Closeable {
+
+<span class="fc" id="L52">    private static final Log LOG = LogFactory.getLog(HttpServer.class);</span>
+    private final IODispatcher&lt;HttpConnectionContext&gt; dispatcher;
+    private final HttpContextFactory httpContextFactory;
+    private final WaitProcessor rescheduleContext;
+    private final ObjList&lt;HttpRequestProcessorSelectorImpl&gt; selectors;
+    private final int workerCount;
+
+<span class="fc" id="L59">    public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool) {</span>
+<span class="fc" id="L60">        this.workerCount = pool.getWorkerCount();</span>
+<span class="fc" id="L61">        this.selectors = new ObjList&lt;&gt;(workerCount);</span>
+
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L64">            selectors.add(new HttpRequestProcessorSelectorImpl());</span>
+        }
+
+<span class="fc" id="L67">        this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration(), metrics);</span>
+<span class="fc" id="L68">        this.dispatcher = IODispatchers.create(</span>
+<span class="fc" id="L69">                configuration.getDispatcherConfiguration(),</span>
+                httpContextFactory
+        );
+<span class="fc" id="L72">        pool.assign(dispatcher);</span>
+<span class="fc" id="L73">        this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());</span>
+<span class="fc" id="L74">        pool.assign(this.rescheduleContext);</span>
+
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L77">            final int index = i;</span>
+
+<span class="fc" id="L79">            final SCSequence queryCacheEventSubSeq = new SCSequence();</span>
+<span class="fc" id="L80">            final FanOut queryCacheEventFanOut = messageBus.getQueryCacheEventFanOut();</span>
+<span class="fc" id="L81">            queryCacheEventFanOut.and(queryCacheEventSubSeq);</span>
+
+<span class="fc" id="L83">            pool.assign(i, new Job() {</span>
+<span class="fc" id="L84">                private final HttpRequestProcessorSelector selector = selectors.getQuick(index);</span>
+<span class="fc" id="L85">                private final IORequestProcessor&lt;HttpConnectionContext&gt; processor =</span>
+<span class="fc" id="L86">                        (operation, context) -&gt; context.handleClientOperation(operation, selector, rescheduleContext);</span>
+
+                @Override
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
+<span class="fc" id="L90">                    long seq = queryCacheEventSubSeq.next();</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">                    if (seq &gt; -1) {</span>
+                        // Queue is not empty, so flush query cache.
+<span class="fc" id="L93">                        LOG.info().$(&quot;flushing HTTP server query cache [worker=&quot;).$(workerId).$(']').$();</span>
+<span class="fc" id="L94">                        QueryCache queryCache = QueryCache.getWeakThreadLocalInstance();</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">                        if (queryCache != null) {</span>
+<span class="fc" id="L96">                            queryCache.clear();</span>
+                        }
+<span class="fc" id="L98">                        queryCacheEventSubSeq.done(seq);</span>
+                    }
+
+<span class="fc" id="L101">                    boolean useful = dispatcher.processIOQueue(processor);</span>
+<span class="fc" id="L102">                    useful |= rescheduleContext.runReruns(selector);</span>
+
+<span class="fc" id="L104">                    return useful;</span>
+                }
+            });
+
+            // http context factory has thread local pools
+            // therefore we need each thread to clean their thread locals individually
+<span class="fc" id="L110">            pool.assignThreadLocalCleaner(i, () -&gt; {</span>
+<span class="fc" id="L111">                httpContextFactory.freeThreadLocal();</span>
+<span class="fc" id="L112">                Misc.free(QueryCache.getWeakThreadLocalInstance());</span>
+<span class="fc" id="L113">            });</span>
+
+<span class="fc" id="L115">            pool.freeOnExit(() -&gt; {</span>
+<span class="fc" id="L116">                messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);</span>
+<span class="fc" id="L117">                queryCacheEventSubSeq.clear();</span>
+<span class="fc" id="L118">            });</span>
+        }
+<span class="fc" id="L120">    }</span>
+
+    public static void addDefaultEndpoints(
+            HttpServer server,
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            int sharedWorkerCount,
+            HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+    ) {
+<span class="fc" id="L132">        server.bind(new HttpRequestProcessorFactory() {</span>
+            @Override
+            public String getUrl() {
+<span class="fc" id="L135">                return &quot;/exec&quot;;</span>
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+<span class="fc" id="L140">                return jsonQueryProcessorBuilder.newInstance();</span>
+            }
+        });
+
+<span class="fc" id="L144">        server.bind(new HttpRequestProcessorFactory() {</span>
+            @Override
+            public String getUrl() {
+<span class="fc" id="L147">                return &quot;/imp&quot;;</span>
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+<span class="fc" id="L152">                return new TextImportProcessor(cairoEngine);</span>
+            }
+        });
+
+<span class="fc" id="L156">        server.bind(new HttpRequestProcessorFactory() {</span>
+            @Override
+            public String getUrl() {
+<span class="fc" id="L159">                return &quot;/exp&quot;;</span>
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+<span class="fc" id="L164">                return new TextQueryProcessor(</span>
+<span class="fc" id="L165">                        configuration.getJsonQueryProcessorConfiguration(),</span>
+                        cairoEngine,
+<span class="fc" id="L167">                        workerPool.getWorkerCount(),</span>
+                        sharedWorkerCount,
+                        functionFactoryCache,
+                        snapshotAgent
+                );
+            }
+        });
+
+<span class="fc" id="L175">        server.bind(new HttpRequestProcessorFactory() {</span>
+            @Override
+            public String getUrl() {
+<span class="fc" id="L178">                return &quot;/chk&quot;;</span>
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+<span class="fc" id="L183">                return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());</span>
+            }
+        });
+
+<span class="fc" id="L187">        server.bind(new HttpRequestProcessorFactory() {</span>
+            @Override
+            public String getUrl() {
+<span class="fc" id="L190">                return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;</span>
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+<span class="fc" id="L195">                return new StaticContentProcessor(configuration);</span>
+            }
+        });
+<span class="fc" id="L198">    }</span>
+
+    public void bind(HttpRequestProcessorFactory factory) {
+<span class="fc" id="L201">        bind(factory, false);</span>
+<span class="fc" id="L202">    }</span>
+
+    public void bind(HttpRequestProcessorFactory factory, boolean useAsDefault) {
+<span class="fc" id="L205">        final String url = factory.getUrl();</span>
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">        assert url != null;</span>
+<span class="fc bfc" id="L207" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L208">            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {</span>
+<span class="fc" id="L210">                selector.defaultRequestProcessor = factory.newInstance();</span>
+            } else {
+<span class="fc" id="L212">                final HttpRequestProcessor processor = factory.newInstance();</span>
+<span class="fc" id="L213">                selector.processorMap.put(url, processor);</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">                if (useAsDefault) {</span>
+<span class="fc" id="L215">                    selector.defaultRequestProcessor = processor;</span>
+                }
+            }
+        }
+<span class="fc" id="L219">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L223">        Misc.free(dispatcher);</span>
+<span class="fc" id="L224">        Misc.free(rescheduleContext);</span>
+<span class="fc" id="L225">        Misc.freeObjListAndClear(selectors);</span>
+<span class="fc" id="L226">        Misc.free(httpContextFactory);</span>
+<span class="fc" id="L227">    }</span>
+
+    @FunctionalInterface
+    public interface HttpRequestProcessorBuilder {
+        HttpRequestProcessor newInstance();
+    }
+
+    private static class HttpContextFactory extends MutableIOContextFactory&lt;HttpConnectionContext&gt; {
+        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
+<span class="fc" id="L236">            super(() -&gt; new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());</span>
+<span class="fc" id="L237">        }</span>
+    }
+
+<span class="fc" id="L240">    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {</span>
+
+<span class="fc" id="L242">        private final CharSequenceObjHashMap&lt;HttpRequestProcessor&gt; processorMap = new CharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L243">        private HttpRequestProcessor defaultRequestProcessor = null;</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L247">            Misc.freeIfCloseable(defaultRequestProcessor);</span>
+<span class="fc" id="L248">            ObjList&lt;CharSequence&gt; processorKeys = processorMap.keys();</span>
+<span class="fc bfc" id="L249" title="All 2 branches covered.">            for (int i = 0, n = processorKeys.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L250">                Misc.freeIfCloseable(processorMap.get(processorKeys.getQuick(i)));</span>
+            }
+<span class="fc" id="L252">        }</span>
+
+        @Override
+        public HttpRequestProcessor getDefaultProcessor() {
+<span class="fc" id="L256">            return defaultRequestProcessor;</span>
+        }
+
+        @Override
+        public HttpRequestProcessor select(CharSequence url) {
+<span class="fc" id="L261">            return processorMap.get(url);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

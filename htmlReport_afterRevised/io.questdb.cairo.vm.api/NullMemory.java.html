@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NullMemory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.vm.api</a> &gt; <span class="el_source">NullMemory.java</span></div><h1>NullMemory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.vm.api;
+
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.NotNull;
+
+<span class="fc" id="L34">public class NullMemory implements MemoryMAR, MemoryCARW {</span>
+
+<span class="fc" id="L36">    public static final NullMemory INSTANCE = new NullMemory();</span>
+
+    @Override
+    public long addressOf(long offset) {
+<span class="nc" id="L40">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long appendAddressFor(long bytes) {
+<span class="nc" id="L45">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long appendAddressFor(long offset, long bytes) {
+<span class="nc" id="L50">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void close(boolean truncate, byte truncateMode) {
+<span class="fc" id="L55">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L59">    }</span>
+
+    @Override
+    public void extend(long size) {
+<span class="nc" id="L63">    }</span>
+
+    @Override
+    public long getAppendOffset() {
+<span class="nc" id="L67">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public BinarySequence getBin(long offset) {
+<span class="nc" id="L72">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+<span class="nc" id="L77">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public int getFd() {
+<span class="nc" id="L82">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+<span class="nc" id="L87">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public Long256 getLong256A(long offset) {
+<span class="nc" id="L92">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public Long256 getLong256B(long offset) {
+<span class="nc" id="L97">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getPageAddress(int pageIndex) {
+<span class="nc" id="L102">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public int getPageCount() {
+<span class="nc" id="L107">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public CharSequence getStr(long offset) {
+<span class="nc" id="L112">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public CharSequence getStr2(long offset) {
+<span class="nc" id="L117">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public boolean isMapped(long offset, long len) {
+<span class="nc" id="L122">        return false;</span>
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+<span class="nc" id="L127">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+<span class="nc" id="L132">    }</span>
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+<span class="nc" id="L136">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+<span class="nc" id="L141">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long offsetInPage(long offset) {
+<span class="nc" id="L146">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public int pageIndex(long offset) {
+<span class="nc" id="L151">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long putBin(BinarySequence value) {
+<span class="nc" id="L156">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long putBin(long from, long len) {
+<span class="nc" id="L161">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putBlockOfBytes(long from, long len) {
+<span class="nc" id="L166">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putBool(boolean value) {
+<span class="nc" id="L171">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putBool(long offset, boolean value) {
+<span class="nc" id="L176">    }</span>
+
+    @Override
+    public void putByte(byte value) {
+<span class="nc" id="L180">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putByte(long offset, byte value) {
+<span class="nc" id="L185">    }</span>
+
+    @Override
+    public void putChar(char value) {
+<span class="nc" id="L189">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putChar(long offset, char value) {
+<span class="nc" id="L194">    }</span>
+
+    @Override
+    public void putDouble(double value) {
+<span class="nc" id="L198">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putDouble(long offset, double value) {
+<span class="nc" id="L203">    }</span>
+
+    @Override
+    public void putFloat(float value) {
+<span class="nc" id="L207">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putFloat(long offset, float value) {
+<span class="nc" id="L212">    }</span>
+
+    @Override
+    public void putInt(int value) {
+<span class="nc" id="L216">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putInt(long offset, int value) {
+<span class="nc" id="L221">    }</span>
+
+    @Override
+    public void putLong(long value) {
+<span class="nc" id="L225">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putLong(long offset, long value) {
+<span class="nc" id="L230">    }</span>
+
+    @Override
+    public void putLong128(long lo, long hi) {
+<span class="nc" id="L234">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putLong256(long l0, long l1, long l2, long l3) {
+<span class="nc" id="L239">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putLong256(Long256 value) {
+<span class="nc" id="L244">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putLong256(CharSequence hexString) {
+<span class="nc" id="L249">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+<span class="nc" id="L254">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putLong256(long offset, Long256 value) {
+<span class="nc" id="L259">    }</span>
+
+    @Override
+    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
+<span class="nc" id="L263">    }</span>
+
+    @Override
+    public void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
+<span class="nc" id="L267">    }</span>
+
+    @Override
+    public void putLong256Null() {
+<span class="nc" id="L271">    }</span>
+
+    @Override
+    public long putNullBin() {
+<span class="nc" id="L275">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long putNullStr() {
+<span class="nc" id="L280">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putNullStr(long offset) {
+<span class="nc" id="L285">    }</span>
+
+    @Override
+    public void putShort(short value) {
+<span class="nc" id="L289">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putShort(long offset, short value) {
+<span class="nc" id="L294">    }</span>
+
+    @Override
+    public long putStr(CharSequence value) {
+<span class="nc" id="L298">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long putStr(char value) {
+<span class="nc" id="L303">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long putStr(CharSequence value, int pos, int len) {
+<span class="nc" id="L308">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void putStr(long offset, CharSequence value) {
+<span class="nc" id="L313">    }</span>
+
+    @Override
+    public void putStr(long offset, CharSequence value, int pos, int len) {
+<span class="nc" id="L317">    }</span>
+
+    @Override
+    public long putStrUnsafe(CharSequence value, int pos, int len) {
+<span class="nc" id="L321">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long resize(long size) {
+<span class="nc" id="L326">        return 0;</span>
+    }
+
+    @Override
+    public long size() {
+<span class="nc" id="L331">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void skip(long bytes) {
+<span class="nc" id="L336">    }</span>
+
+    @Override
+    public void switchTo(int fd, long offset, byte truncateMode) {
+<span class="nc" id="L340">    }</span>
+
+    @Override
+    public void sync(boolean async) {
+<span class="nc" id="L344">    }</span>
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L348">    }</span>
+
+    @Override
+    public void zero() {
+<span class="nc" id="L352">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

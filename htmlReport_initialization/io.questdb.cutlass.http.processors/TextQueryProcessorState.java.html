@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TextQueryProcessorState.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.http.processors</a> &gt; <span class="el_source">TextQueryProcessorState.java</span></div><h1>TextQueryProcessorState.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http.processors;
+
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
+
+import java.io.Closeable;
+
+public class TextQueryProcessorState implements Mutable, Closeable {
+<span class="fc" id="L40">    final StringSink query = new StringSink();</span>
+    private final HttpConnectionContext httpConnectionContext;
+    int columnIndex;
+    long count;
+<span class="fc" id="L44">    boolean countRows = false;</span>
+    RecordCursor cursor;
+<span class="fc" id="L46">    char delimiter = ',';</span>
+    String fileName;
+    RecordMetadata metadata;
+<span class="fc" id="L49">    boolean noMeta = false;</span>
+<span class="fc" id="L50">    boolean pausedQuery = false;</span>
+<span class="fc" id="L51">    int queryState = JsonQueryProcessorState.QUERY_PREFIX;</span>
+    Record record;
+    RecordCursorFactory recordCursorFactory;
+    Rnd rnd;
+    long skip;
+    long stop;
+<span class="fc" id="L57">    private boolean queryCacheable = false;</span>
+
+<span class="fc" id="L59">    public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {</span>
+<span class="fc" id="L60">        this.httpConnectionContext = httpConnectionContext;</span>
+<span class="fc" id="L61">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L65">        delimiter = ',';</span>
+<span class="fc" id="L66">        fileName = null;</span>
+<span class="fc" id="L67">        metadata = null;</span>
+<span class="fc" id="L68">        rnd = null;</span>
+<span class="fc" id="L69">        record = null;</span>
+<span class="fc" id="L70">        cursor = Misc.free(cursor);</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (null != recordCursorFactory) {</span>
+<span class="fc bfc" id="L72" title="All 2 branches covered.">            if (queryCacheable) {</span>
+<span class="fc" id="L73">                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);</span>
+            } else {
+<span class="fc" id="L75">                recordCursorFactory.close();</span>
+            }
+<span class="fc" id="L77">            recordCursorFactory = null;</span>
+        }
+<span class="fc" id="L79">        queryCacheable = false;</span>
+<span class="fc" id="L80">        query.clear();</span>
+<span class="fc" id="L81">        queryState = JsonQueryProcessorState.QUERY_PREFIX;</span>
+<span class="fc" id="L82">        columnIndex = 0;</span>
+<span class="fc" id="L83">        skip = 0;</span>
+<span class="fc" id="L84">        stop = 0;</span>
+<span class="fc" id="L85">        count = 0;</span>
+<span class="fc" id="L86">        noMeta = false;</span>
+<span class="fc" id="L87">        countRows = false;</span>
+<span class="fc" id="L88">        pausedQuery = false;</span>
+<span class="fc" id="L89">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L93">        cursor = Misc.free(cursor);</span>
+<span class="fc" id="L94">        recordCursorFactory = Misc.free(recordCursorFactory);</span>
+<span class="fc" id="L95">    }</span>
+
+    public int getFd() {
+<span class="fc" id="L98">        return httpConnectionContext.getFd();</span>
+    }
+
+    void setQueryCacheable(boolean queryCacheable) {
+<span class="fc" id="L102">        this.queryCacheable = queryCacheable;</span>
+<span class="fc" id="L103">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

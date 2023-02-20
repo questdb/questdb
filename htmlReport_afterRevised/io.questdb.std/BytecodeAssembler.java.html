@@ -1,0 +1,849 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BytecodeAssembler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">BytecodeAssembler.java</span></div><h1>BytecodeAssembler.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.ex.BytecodeException;
+import io.questdb.std.str.AbstractCharSink;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+public class BytecodeAssembler {
+
+    private static final int ACC_PRIVATE = 0x02;
+    private static final int ACC_PUBLIC = 0x01;
+<span class="fc" id="L42">    private static final Log LOG = LogFactory.getLog(BytecodeAssembler.class);</span>
+    private static final int O_POOL_COUNT = 8;
+    private static final int aload = 0x19;
+    private static final int aload_0 = 0x2a;
+    private static final int aload_1 = 0x2b;
+    private static final int aload_2 = 0x2c;
+    private static final int aload_3 = 0x2d;
+    private static final int bipush = 0x10;
+    private static final int iconst_0 = 3;
+    private static final int iconst_m1 = 2;
+    private static final int iinc = 0x84;
+    private static final int iload = 0x15;
+    private static final int iload_0 = 0x1a;
+    private static final int iload_1 = 0x1b;
+    private static final int iload_2 = 0x1c;
+    private static final int iload_3 = 0x1d;
+    private static final int invokespecial = 183;
+    private static final int istore = 0x36;
+    private static final int istore_0 = 0x3b;
+    private static final int istore_1 = 0x3c;
+    private static final int istore_2 = 0x3d;
+    private static final int istore_3 = 0x3e;
+    private static final int lload = 0x16;
+    private static final int lload_0 = 0x1e;
+    private static final int lload_1 = 0x1f;
+    private static final int lload_2 = 0x20;
+    private static final int lload_3 = 0x21;
+    private static final int lstore = 0x37;
+    private static final int lstore_0 = 0x3f;
+    private static final int lstore_1 = 0x40;
+    private static final int lstore_2 = 0x41;
+    private static final int lstore_3 = 0x42;
+    private static final int sipush = 0x11;
+<span class="fc" id="L75">    private final ObjIntHashMap&lt;Class&lt;?&gt;&gt; classCache = new ObjIntHashMap&lt;&gt;();</span>
+<span class="fc" id="L76">    private final Utf8Appender utf8Appender = new Utf8Appender();</span>
+<span class="fc" id="L77">    private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();</span>
+    private ByteBuffer buf;
+    private int codeAttributeIndex;
+    private int codeAttributeStart;
+    private int codeStart;
+    private int defaultConstructorDescIndex;
+    private int defaultConstructorMethodIndex;
+    private int defaultConstructorNameIndex;
+    private Class&lt;?&gt; host;
+    private int objectClassIndex;
+    private int poolCount;
+    private int stackMapTableCut;
+
+<span class="fc" id="L90">    public BytecodeAssembler() {</span>
+<span class="fc" id="L91">        this.buf = ByteBuffer.allocate(1024 * 1024).order(ByteOrder.BIG_ENDIAN);</span>
+<span class="fc" id="L92">        this.poolCount = 1;</span>
+<span class="fc" id="L93">    }</span>
+
+    public void aload(int value) {
+<span class="fc" id="L96">        optimisedIO(aload_0, aload_1, aload_2, aload_3, aload, value);</span>
+<span class="fc" id="L97">    }</span>
+
+    public void append_frame(int itemCount, int offset) {
+<span class="fc" id="L100">        putByte(0xfc + itemCount - 1);</span>
+<span class="fc" id="L101">        putShort(offset);</span>
+<span class="fc" id="L102">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public void athrow() {
+<span class="nc" id="L106">        putByte(0xbf);</span>
+<span class="nc" id="L107">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public void d2f() {
+<span class="nc" id="L111">        putShort(0x90);</span>
+<span class="nc" id="L112">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public void d2i() {
+<span class="nc" id="L116">        putShort(0x8E);</span>
+<span class="nc" id="L117">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public void d2l() {
+<span class="nc" id="L121">        putShort(0x8F);</span>
+<span class="nc" id="L122">    }</span>
+
+    public void dcmpg() {
+<span class="nc" id="L125">        putByte(0x98);</span>
+<span class="nc" id="L126">    }</span>
+
+    public void defineClass(int thisClassIndex) {
+<span class="fc" id="L129">        defineClass(thisClassIndex, objectClassIndex);</span>
+<span class="fc" id="L130">    }</span>
+
+    public void defineClass(int thisClassIndex, int superclassIndex) {
+        // access flags
+<span class="fc" id="L134">        putShort(ACC_PUBLIC);</span>
+        // this class index
+<span class="fc" id="L136">        putShort(thisClassIndex);</span>
+        // super class
+<span class="fc" id="L138">        putShort(superclassIndex);</span>
+<span class="fc" id="L139">    }</span>
+
+    public void defineDefaultConstructor() {
+<span class="fc" id="L142">        defineDefaultConstructor(defaultConstructorMethodIndex);</span>
+<span class="fc" id="L143">    }</span>
+
+    public void defineDefaultConstructor(int superIndex) {
+        // constructor method entry
+<span class="fc" id="L147">        startMethod(defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);</span>
+        // code
+<span class="fc" id="L149">        aload(0);</span>
+<span class="fc" id="L150">        putByte(invokespecial);</span>
+<span class="fc" id="L151">        putShort(superIndex);</span>
+<span class="fc" id="L152">        return_();</span>
+<span class="fc" id="L153">        endMethodCode();</span>
+        // exceptions
+<span class="fc" id="L155">        putShort(0);</span>
+        // attribute count
+<span class="fc" id="L157">        putShort(0);</span>
+<span class="fc" id="L158">        endMethod();</span>
+<span class="fc" id="L159">    }</span>
+
+    public void defineField(int nameIndex, int typeIndex) {
+<span class="fc" id="L162">        putShort(ACC_PRIVATE);</span>
+<span class="fc" id="L163">        putShort(nameIndex);</span>
+<span class="fc" id="L164">        putShort(typeIndex);</span>
+        // attribute count
+<span class="fc" id="L166">        putShort(0);</span>
+<span class="fc" id="L167">    }</span>
+
+    public void dump(String path) {
+<span class="nc" id="L170">        try (FileOutputStream fos = new FileOutputStream(path)) {</span>
+<span class="nc" id="L171">            int p = buf.position();</span>
+<span class="nc" id="L172">            int l = buf.limit();</span>
+<span class="nc" id="L173">            buf.flip();</span>
+<span class="nc" id="L174">            fos.getChannel().write(buf);</span>
+<span class="nc" id="L175">            buf.limit(l);</span>
+<span class="nc" id="L176">            buf.position(p);</span>
+<span class="nc" id="L177">        } catch (Exception e) {</span>
+<span class="nc" id="L178">            e.printStackTrace();</span>
+<span class="nc" id="L179">        }</span>
+<span class="nc" id="L180">    }</span>
+
+    public void dup() {
+<span class="nc" id="L183">        putByte(0x59);</span>
+<span class="nc" id="L184">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public void dup2() {
+<span class="nc" id="L188">        putByte(0x5c);</span>
+<span class="nc" id="L189">    }</span>
+
+    public void endMethod() {
+<span class="fc" id="L192">        putInt(codeAttributeStart - 4, position() - codeAttributeStart);</span>
+<span class="fc" id="L193">    }</span>
+
+    public void endMethodCode() {
+<span class="fc" id="L196">        int len = position() - codeStart;</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        if (len &gt; 64 * 1024) {</span>
+<span class="fc" id="L198">            LOG.error().$(&quot;Too much input to generate &quot;).$(host.getName()).$(&quot;. Bytecode is too long&quot;).$();</span>
+<span class="fc" id="L199">            throw BytecodeException.INSTANCE;</span>
+        }
+<span class="fc" id="L201">        putInt(codeStart - 4, position() - codeStart);</span>
+<span class="fc" id="L202">    }</span>
+
+    public void endStackMapTables() {
+<span class="fc" id="L205">        putInt(stackMapTableCut, position() - stackMapTableCut - 4);</span>
+<span class="fc" id="L206">    }</span>
+
+    public void f2d() {
+<span class="fc" id="L209">        putShort(0x8D);</span>
+<span class="fc" id="L210">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public void f2i() {
+<span class="nc" id="L214">        putShort(0x8B);</span>
+<span class="nc" id="L215">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public void f2l() {
+<span class="nc" id="L219">        putShort(0x8C);</span>
+<span class="nc" id="L220">    }</span>
+
+    public void fieldCount(int count) {
+<span class="fc" id="L223">        putShort(count);</span>
+<span class="fc" id="L224">    }</span>
+
+    public void finishPool() {
+<span class="fc" id="L227">        putShort(O_POOL_COUNT, poolCount);</span>
+<span class="fc" id="L228">    }</span>
+
+    public void full_frame(int offset) {
+<span class="fc" id="L231">        putByte(0xff);</span>
+<span class="fc" id="L232">        putShort(offset);</span>
+<span class="fc" id="L233">    }</span>
+
+    public int getCodeStart() {
+<span class="fc" id="L236">        return codeStart;</span>
+    }
+
+    public int getPoolCount() {
+<span class="fc" id="L240">        return poolCount;</span>
+    }
+
+    public void getfield(int index) {
+<span class="fc" id="L244">        putByte(0xb4);</span>
+<span class="fc" id="L245">        putShort(index);</span>
+<span class="fc" id="L246">    }</span>
+
+    public int goto_() {
+<span class="fc" id="L249">        return genericGoto(0xa7);</span>
+    }
+
+    public void i2b() {
+<span class="fc" id="L253">        putShort(0x91);</span>
+<span class="fc" id="L254">    }</span>
+
+    public void i2d() {
+<span class="fc" id="L257">        putShort(0x87);</span>
+<span class="fc" id="L258">    }</span>
+
+    public void i2f() {
+<span class="fc" id="L261">        putShort(0x86);</span>
+<span class="fc" id="L262">    }</span>
+
+    public void i2l() {
+<span class="fc" id="L265">        putShort(0x85);</span>
+<span class="fc" id="L266">    }</span>
+
+    public void i2s() {
+<span class="fc" id="L269">        putShort(0x93);</span>
+<span class="fc" id="L270">    }</span>
+
+    public void iadd() {
+<span class="fc" id="L273">        putByte(0x60);</span>
+<span class="fc" id="L274">    }</span>
+
+    public void iconst(int v) {
+<span class="fc bfc" id="L277" title="All 2 branches covered.">        if (v == -1) {</span>
+<span class="fc" id="L278">            putByte(iconst_m1);</span>
+<span class="pc bpc" id="L279" title="1 of 4 branches missed.">        } else if (v &gt; -1 &amp;&amp; v &lt; 6) {</span>
+<span class="fc" id="L280">            putByte(iconst_0 + v);</span>
+<span class="pc bpc" id="L281" title="3 of 4 branches missed.">        } else if (v &lt; 0 &amp;&amp; v &gt;= Short.MIN_VALUE) {</span>
+<span class="nc" id="L282">            putByte(sipush);</span>
+<span class="nc" id="L283">            putShort(v);</span>
+<span class="pc bpc" id="L284" title="1 of 4 branches missed.">        } else if (v &lt; 128 &amp;&amp; v &gt;= Short.MIN_VALUE) {</span>
+<span class="fc" id="L285">            putByte(bipush);</span>
+<span class="fc" id="L286">            putByte(v);</span>
+        } else {
+<span class="fc" id="L288">            putByte(sipush);</span>
+<span class="pc bpc" id="L289" title="2 of 4 branches missed.">            assert v &gt;= Short.MIN_VALUE &amp;&amp; v &lt;= Short.MAX_VALUE;</span>
+<span class="fc" id="L290">            putShort(v);</span>
+        }
+<span class="fc" id="L292">    }</span>
+
+    public int if_icmpge() {
+<span class="fc" id="L295">        return genericGoto(0xa2);</span>
+    }
+
+    public int if_icmpne() {
+<span class="fc" id="L299">        return genericGoto(0xa0);</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    public int ifle() {
+<span class="nc" id="L304">        return genericGoto(0x9e);</span>
+    }
+
+    public int iflt() {
+<span class="nc" id="L308">        return genericGoto(0x9b);</span>
+    }
+
+    public int ifne() {
+<span class="fc" id="L312">        return genericGoto(0x9a);</span>
+    }
+
+    public void iinc(int index, int inc) {
+<span class="fc" id="L316">        putByte(iinc);</span>
+<span class="fc" id="L317">        putByte(index);</span>
+<span class="fc" id="L318">        putByte(inc);</span>
+<span class="fc" id="L319">    }</span>
+
+    public void iload(int value) {
+<span class="fc" id="L322">        optimisedIO(iload_0, iload_1, iload_2, iload_3, iload, value);</span>
+<span class="fc" id="L323">    }</span>
+
+    public void ineg() {
+<span class="fc" id="L326">        putByte(0x74);</span>
+<span class="fc" id="L327">    }</span>
+
+    public void init(Class&lt;?&gt; host) {
+<span class="fc" id="L330">        this.host = host;</span>
+<span class="fc" id="L331">        this.buf.clear();</span>
+<span class="fc" id="L332">        this.poolCount = 1;</span>
+<span class="fc" id="L333">        this.utf8Cache.clear();</span>
+<span class="fc" id="L334">        this.classCache.clear();</span>
+<span class="fc" id="L335">    }</span>
+
+    public void interfaceCount(int count) {
+<span class="fc" id="L338">        putShort(count);</span>
+<span class="fc" id="L339">    }</span>
+
+    // The count operand of the invokeinterface instruction records a measure of the number of
+    // argument values, where an argument value of type long or type double contributes two
+    // units to the count value and an argument of any other type contributes one unit. This
+    // information can also be derived from the descriptor of the selected method. The redundancy is
+    // historical
+    public void invokeInterface(int interfaceIndex, int argCount) {
+<span class="fc" id="L347">        putByte(185);</span>
+<span class="fc" id="L348">        putShort(interfaceIndex);</span>
+<span class="fc" id="L349">        putByte(argCount + 1);</span>
+<span class="fc" id="L350">        putByte(0);</span>
+<span class="fc" id="L351">    }</span>
+
+    public void invokeInterface(int interfaceIndex) {
+<span class="fc" id="L354">        invokeInterface(interfaceIndex, 1);</span>
+<span class="fc" id="L355">    }</span>
+
+    public void invokeStatic(int index) {
+<span class="fc" id="L358">        putByte(184);</span>
+<span class="fc" id="L359">        putShort(index);</span>
+<span class="fc" id="L360">    }</span>
+
+    public void invokeVirtual(int index) {
+<span class="fc" id="L363">        putByte(182);</span>
+<span class="fc" id="L364">        putShort(index);</span>
+<span class="fc" id="L365">    }</span>
+
+    public void irem() {
+<span class="fc" id="L368">        putByte(0x70);</span>
+<span class="fc" id="L369">    }</span>
+
+    public void ireturn() {
+<span class="fc" id="L372">        putByte(0xac);</span>
+<span class="fc" id="L373">    }</span>
+
+    public void istore(int value) {
+<span class="fc" id="L376">        optimisedIO(istore_0, istore_1, istore_2, istore_3, istore, value);</span>
+<span class="fc" id="L377">    }</span>
+
+    public void isub() {
+<span class="fc" id="L380">        putByte(0x64);</span>
+<span class="fc" id="L381">    }</span>
+
+    public void l2d() {
+<span class="fc" id="L384">        putShort(0x8A);</span>
+<span class="fc" id="L385">    }</span>
+
+    public void l2f() {
+<span class="fc" id="L388">        putShort(0x89);</span>
+<span class="fc" id="L389">    }</span>
+
+    public void l2i() {
+<span class="fc" id="L392">        putShort(0x88);</span>
+<span class="fc" id="L393">    }</span>
+
+    public void lcmp() {
+<span class="fc" id="L396">        putByte(0x94);</span>
+<span class="fc" id="L397">    }</span>
+
+    public void lconst_0() {
+<span class="fc" id="L400">        putByte(0x09);</span>
+<span class="fc" id="L401">    }</span>
+
+    public void ldc(int index) {
+<span class="fc bfc" id="L404" title="All 2 branches covered.">        if (index &lt; 256) {</span>
+<span class="fc" id="L405">            putByte(0x12);</span>
+<span class="fc" id="L406">            putByte(index);</span>
+        } else {
+<span class="fc" id="L408">            ldc_w(index);</span>
+        }
+<span class="fc" id="L410">    }</span>
+
+    public void ldc2_w(int index) {
+<span class="fc" id="L413">        putByte(0x14);</span>
+<span class="fc" id="L414">        putShort(index);</span>
+<span class="fc" id="L415">    }</span>
+
+    public void ldc_w(int index) {
+<span class="fc" id="L418">        putByte(0x13);</span>
+<span class="fc" id="L419">        putShort(index);</span>
+<span class="fc" id="L420">    }</span>
+
+    public void lload(int value) {
+<span class="fc" id="L423">        optimisedIO(lload_0, lload_1, lload_2, lload_3, lload, value);</span>
+<span class="fc" id="L424">    }</span>
+
+    public void lmul() {
+<span class="fc" id="L427">        putByte(0x69);</span>
+<span class="fc" id="L428">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Nullable
+    public &lt;T&gt; Class&lt;T&gt; loadClass(Class&lt;?&gt; host) {
+<span class="fc" id="L433">        byte[] b = new byte[position()];</span>
+<span class="fc" id="L434">        System.arraycopy(buf.array(), 0, b, 0, b.length);</span>
+<span class="fc" id="L435">        return (Class&lt;T&gt;) Unsafe.defineAnonymousClass(host, b);</span>
+    }
+
+    public void lreturn() {
+<span class="fc" id="L439">        putByte(0xad);</span>
+<span class="fc" id="L440">    }</span>
+
+    public void lstore(int value) {
+<span class="fc" id="L443">        optimisedIO(lstore_0, lstore_1, lstore_2, lstore_3, lstore, value);</span>
+<span class="fc" id="L444">    }</span>
+
+    public void methodCount(int count) {
+<span class="fc" id="L447">        putShort(count);</span>
+<span class="fc" id="L448">    }</span>
+
+    public &lt;T&gt; T newInstance() {
+<span class="fc" id="L451">        Class&lt;T&gt; x = loadClass(host);</span>
+<span class="pc bpc" id="L452" title="1 of 2 branches missed.">        assert x != null;</span>
+        try {
+<span class="fc" id="L454">            return x.getDeclaredConstructor().newInstance();</span>
+<span class="nc" id="L455">        } catch (Exception e) {</span>
+<span class="nc" id="L456">            LOG.critical().$(&quot;could not create an instance of &quot;).$(host.getName()).$(&quot;, cause: &quot;).$(e).$();</span>
+<span class="nc" id="L457">            throw BytecodeException.INSTANCE;</span>
+        }
+    }
+
+    public int poolClass(int classIndex) {
+<span class="fc" id="L462">        putByte(0x07);</span>
+<span class="fc" id="L463">        putShort(classIndex);</span>
+<span class="fc" id="L464">        return poolCount++;</span>
+    }
+
+    public int poolClass(Class&lt;?&gt; clazz) {
+<span class="fc" id="L468">        int index = classCache.keyIndex(clazz);</span>
+<span class="fc bfc" id="L469" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L470">            String name = clazz.getName();</span>
+<span class="fc" id="L471">            putByte(0x01);</span>
+            int n;
+<span class="fc" id="L473">            putShort(n = name.length());</span>
+<span class="fc bfc" id="L474" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L475">                char c = name.charAt(i);</span>
+<span class="fc bfc" id="L476" title="All 2 branches covered.">                if (c == '.') {</span>
+<span class="fc" id="L477">                    putByte('/');</span>
+                } else {
+<span class="fc" id="L479">                    putByte(c);</span>
+                }
+            }
+<span class="fc" id="L482">            int result = poolClass(this.poolCount++);</span>
+<span class="fc" id="L483">            classCache.putAt(index, clazz, result);</span>
+<span class="fc" id="L484">            return result;</span>
+        }
+<span class="fc" id="L486">        return classCache.valueAt(index);</span>
+    }
+
+    public int poolDoubleConst(double value) {
+<span class="nc" id="L490">        putByte(0x06);</span>
+<span class="nc" id="L491">        putDouble(value);</span>
+<span class="nc" id="L492">        int index = poolCount;</span>
+<span class="nc" id="L493">        poolCount += 2;</span>
+<span class="nc" id="L494">        return index;</span>
+    }
+
+    public int poolField(int classIndex, int nameAndTypeIndex) {
+<span class="fc" id="L498">        return poolRef(0x09, classIndex, nameAndTypeIndex);</span>
+    }
+
+    public void poolIntConst(int value) {
+<span class="fc" id="L502">        putByte(0x03);</span>
+<span class="fc" id="L503">        putInt(value);</span>
+<span class="fc" id="L504">        poolCount += 1;</span>
+<span class="fc" id="L505">    }</span>
+
+    public int poolInterfaceMethod(Class&lt;?&gt; clazz, String name, String sig) {
+<span class="fc" id="L508">        return poolInterfaceMethod(poolClass(clazz), poolNameAndType(poolUtf8(name), poolUtf8(sig)));</span>
+    }
+
+    public int poolInterfaceMethod(int classIndex, String name, String sig) {
+<span class="fc" id="L512">        return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));</span>
+    }
+
+    public int poolInterfaceMethod(int classIndex, int nameAndTypeIndex) {
+<span class="fc" id="L516">        return poolRef(0x0B, classIndex, nameAndTypeIndex);</span>
+    }
+
+    public int poolLongConst(long value) {
+<span class="fc" id="L520">        putByte(0x05);</span>
+<span class="fc" id="L521">        putLong(value);</span>
+<span class="fc" id="L522">        int index = poolCount;</span>
+<span class="fc" id="L523">        poolCount += 2;</span>
+<span class="fc" id="L524">        return index;</span>
+    }
+
+    public int poolMethod(int classIndex, int nameAndTypeIndex) {
+<span class="fc" id="L528">        return poolRef(0x0A, classIndex, nameAndTypeIndex);</span>
+    }
+
+    public int poolMethod(int classIndex, CharSequence methodName, CharSequence signature) {
+<span class="fc" id="L532">        return poolMethod(classIndex, poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));</span>
+    }
+
+    public int poolMethod(Class&lt;?&gt; clazz, CharSequence methodName, CharSequence signature) {
+<span class="fc" id="L536">        return poolMethod(poolClass(clazz), poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));</span>
+    }
+
+    public int poolNameAndType(int nameIndex, int typeIndex) {
+<span class="fc" id="L540">        return poolRef(0x0C, nameIndex, typeIndex);</span>
+    }
+
+    public int poolStringConst(int utf8Index) {
+<span class="fc" id="L544">        putByte(0x8);</span>
+<span class="fc" id="L545">        putShort(utf8Index);</span>
+<span class="fc" id="L546">        return poolCount++;</span>
+    }
+
+    public Utf8Appender poolUtf8() {
+<span class="fc" id="L550">        putByte(0x01);</span>
+<span class="fc" id="L551">        utf8Appender.lenpos = position();</span>
+<span class="fc" id="L552">        utf8Appender.utf8len = 0;</span>
+<span class="fc" id="L553">        putShort(0);</span>
+<span class="fc" id="L554">        return utf8Appender;</span>
+    }
+
+    public int poolUtf8(CharSequence cs) {
+<span class="fc" id="L558">        int index = utf8Cache.keyIndex(cs);</span>
+<span class="fc bfc" id="L559" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L560">            putByte(0x01);</span>
+<span class="fc" id="L561">            int n = cs.length();</span>
+<span class="fc" id="L562">            int pos = buf.position();</span>
+<span class="fc" id="L563">            putShort(0);</span>
+<span class="fc bfc" id="L564" title="All 2 branches covered.">            for (int i = 0; i &lt; n; ) {</span>
+<span class="fc" id="L565">                final char c = cs.charAt(i++);</span>
+<span class="fc bfc" id="L566" title="All 2 branches covered.">                if (c &lt; 128) {</span>
+<span class="fc" id="L567">                    putByte(c);</span>
+                } else {
+<span class="pc bpc" id="L569" title="1 of 2 branches missed.">                    if (c &lt; 2048) {</span>
+<span class="fc" id="L570">                        putByte((char) (192 | c &gt;&gt; 6));</span>
+<span class="fc" id="L571">                        putByte((char) (128 | c &amp; 63));</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">                    } else if (Character.isSurrogate(c)) {</span>
+<span class="nc" id="L573">                        i = encodeSurrogate(c, cs, i, n);</span>
+                    } else {
+<span class="nc" id="L575">                        putByte((char) (224 | c &gt;&gt; 12));</span>
+<span class="nc" id="L576">                        putByte((char) (128 | c &gt;&gt; 6 &amp; 63));</span>
+<span class="nc" id="L577">                        putByte((char) (128 | c &amp; 63));</span>
+                    }
+                }
+<span class="fc" id="L580">            }</span>
+<span class="fc" id="L581">            buf.putShort(pos, (short) (buf.position() - pos - 2));</span>
+<span class="fc" id="L582">            utf8Cache.putAt(index, cs, poolCount);</span>
+<span class="fc" id="L583">            return this.poolCount++;</span>
+        }
+
+<span class="fc" id="L586">        return utf8Cache.valueAt(index);</span>
+    }
+
+    public void pop() {
+<span class="fc" id="L590">        putByte(0x57);</span>
+<span class="fc" id="L591">    }</span>
+
+    public int position() {
+<span class="fc" id="L594">        return buf.position();</span>
+    }
+
+    public void putByte(int b) {
+<span class="pc bpc" id="L598" title="1 of 2 branches missed.">        if (buf.remaining() == 0) {</span>
+<span class="nc" id="L599">            resize();</span>
+        }
+<span class="fc" id="L601">        buf.put((byte) b);</span>
+<span class="fc" id="L602">    }</span>
+
+    public void putDouble(double value) {
+<span class="nc bnc" id="L605" title="All 2 branches missed.">        if (buf.remaining() &lt; 4) {</span>
+<span class="nc" id="L606">            resize();</span>
+        }
+<span class="nc" id="L608">        buf.putDouble(value);</span>
+<span class="nc" id="L609">    }</span>
+
+    public void putITEM_Integer() {
+<span class="fc" id="L612">        putByte(0x01);</span>
+<span class="fc" id="L613">    }</span>
+
+    public void putITEM_Long() {
+<span class="fc" id="L616">        putByte(0x04);</span>
+<span class="fc" id="L617">    }</span>
+
+    public void putITEM_Object(int classIndex) {
+<span class="fc" id="L620">        putByte(0x07);</span>
+<span class="fc" id="L621">        putShort(classIndex);</span>
+<span class="fc" id="L622">    }</span>
+
+    public void putITEM_Top() {
+<span class="fc" id="L625">        putByte(0);</span>
+<span class="fc" id="L626">    }</span>
+
+    public void putLong(long value) {
+<span class="pc bpc" id="L629" title="1 of 2 branches missed.">        if (buf.remaining() &lt; 4) {</span>
+<span class="nc" id="L630">            resize();</span>
+        }
+<span class="fc" id="L632">        buf.putLong(value);</span>
+<span class="fc" id="L633">    }</span>
+
+    public void putShort(int v) {
+<span class="fc" id="L636">        putShort((short) v);</span>
+<span class="fc" id="L637">    }</span>
+
+    public void putShort(int pos, int v) {
+<span class="fc" id="L640">        buf.putShort(pos, (short) v);</span>
+<span class="fc" id="L641">    }</span>
+
+    public void putfield(int index) {
+<span class="fc" id="L644">        putByte(181);</span>
+<span class="fc" id="L645">        putShort(index);</span>
+<span class="fc" id="L646">    }</span>
+
+    public void return_() {
+<span class="fc" id="L649">        putByte(0xb1);</span>
+<span class="fc" id="L650">    }</span>
+
+    public void same_frame(int offset) {
+<span class="pc bpc" id="L653" title="1 of 2 branches missed.">        if (offset &lt; 64) {</span>
+<span class="fc" id="L654">            putByte(offset);</span>
+        } else {
+<span class="nc" id="L656">            putByte(251);</span>
+<span class="nc" id="L657">            putShort(offset);</span>
+        }
+<span class="fc" id="L659">    }</span>
+
+    public void setJmp(int branch, int target) {
+<span class="fc" id="L662">        putShort(branch, target - branch + 1);</span>
+<span class="fc" id="L663">    }</span>
+
+    public void setupPool() {
+        // magic
+<span class="fc" id="L667">        putInt(0xCAFEBABE);</span>
+        // version
+<span class="fc" id="L669">        putInt(0x33);</span>
+        // skip pool count, write later when we know the value
+<span class="fc" id="L671">        putShort(0);</span>
+
+        // add standard stuff
+<span class="fc" id="L674">        objectClassIndex = poolClass(Object.class);</span>
+<span class="fc" id="L675">        defaultConstructorMethodIndex = poolMethod(objectClassIndex, poolNameAndType(</span>
+<span class="fc" id="L676">                defaultConstructorNameIndex = poolUtf8(&quot;&lt;init&gt;&quot;),</span>
+<span class="fc" id="L677">                defaultConstructorDescIndex = poolUtf8(&quot;()V&quot;))</span>
+        );
+<span class="fc" id="L679">        codeAttributeIndex = poolUtf8(&quot;Code&quot;);</span>
+<span class="fc" id="L680">    }</span>
+
+    public void startMethod(int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
+        // access flags
+<span class="fc" id="L684">        putShort(ACC_PUBLIC);</span>
+        // name index
+<span class="fc" id="L686">        putShort(nameIndex);</span>
+        // descriptor index
+<span class="fc" id="L688">        putShort(descriptorIndex);</span>
+        // attribute count
+<span class="fc" id="L690">        putShort(1);</span>
+
+        // code
+<span class="fc" id="L693">        putShort(codeAttributeIndex);</span>
+
+        // attribute len
+<span class="fc" id="L696">        putInt(0);</span>
+        // come back to this later
+<span class="fc" id="L698">        this.codeAttributeStart = position();</span>
+        // max stack
+<span class="fc" id="L700">        putShort(maxStack);</span>
+        // max locals
+<span class="fc" id="L702">        putShort(maxLocal);</span>
+
+        // code len
+<span class="fc" id="L705">        putInt(0);</span>
+<span class="fc" id="L706">        this.codeStart = position();</span>
+<span class="fc" id="L707">    }</span>
+
+    public void startStackMapTables(int attributeNameIndex, int frameCount) {
+<span class="fc" id="L710">        putShort(attributeNameIndex);</span>
+<span class="fc" id="L711">        this.stackMapTableCut = position();</span>
+        // length - we will come back here
+<span class="fc" id="L713">        putInt(0);</span>
+        // number of entries
+<span class="fc" id="L715">        putShort(frameCount);</span>
+<span class="fc" id="L716">    }</span>
+
+    private int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+        int dword;
+<span class="nc bnc" id="L720" title="All 2 branches missed.">        if (Character.isHighSurrogate(c)) {</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">            if (hi - pos &lt; 1) {</span>
+<span class="nc" id="L722">                putByte('?');</span>
+<span class="nc" id="L723">                return pos;</span>
+            } else {
+<span class="nc" id="L725">                char c2 = in.charAt(pos++);</span>
+<span class="nc bnc" id="L726" title="All 2 branches missed.">                if (Character.isLowSurrogate(c2)) {</span>
+<span class="nc" id="L727">                    dword = Character.toCodePoint(c, c2);</span>
+                } else {
+<span class="nc" id="L729">                    putByte('?');</span>
+<span class="nc" id="L730">                    return pos;</span>
+                }
+<span class="nc" id="L732">            }</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">        } else if (Character.isLowSurrogate(c)) {</span>
+<span class="nc" id="L734">            putByte('?');</span>
+<span class="nc" id="L735">            return pos;</span>
+        } else {
+<span class="nc" id="L737">            dword = c;</span>
+        }
+<span class="nc" id="L739">        putByte((char) (240 | dword &gt;&gt; 18));</span>
+<span class="nc" id="L740">        putByte((char) (128 | dword &gt;&gt; 12 &amp; 63));</span>
+<span class="nc" id="L741">        putByte((char) (128 | dword &gt;&gt; 6 &amp; 63));</span>
+<span class="nc" id="L742">        putByte((char) (128 | dword &amp; 63));</span>
+
+<span class="nc" id="L744">        return pos;</span>
+    }
+
+    private int genericGoto(int cmd) {
+<span class="fc" id="L748">        putByte(cmd);</span>
+<span class="fc" id="L749">        int pos = position();</span>
+<span class="fc" id="L750">        putShort(0);</span>
+<span class="fc" id="L751">        return pos;</span>
+    }
+
+    private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {
+<span class="fc bfc" id="L755" title="All 5 branches covered.">        switch (value) {</span>
+            case 0:
+<span class="fc" id="L757">                putByte(code0);</span>
+<span class="fc" id="L758">                break;</span>
+            case 1:
+<span class="fc" id="L760">                putByte(code1);</span>
+<span class="fc" id="L761">                break;</span>
+            case 2:
+<span class="fc" id="L763">                putByte(code2);</span>
+<span class="fc" id="L764">                break;</span>
+            case 3:
+<span class="fc" id="L766">                putByte(code3);</span>
+<span class="fc" id="L767">                break;</span>
+            default:
+<span class="fc" id="L769">                putByte(code);</span>
+<span class="fc" id="L770">                putByte(value);</span>
+                break;
+        }
+<span class="fc" id="L773">    }</span>
+
+    private int poolRef(int op, int name, int type) {
+<span class="fc" id="L776">        putByte(op);</span>
+<span class="fc" id="L777">        putShort(name);</span>
+<span class="fc" id="L778">        putShort(type);</span>
+<span class="fc" id="L779">        return poolCount++;</span>
+    }
+
+    private void putInt(int pos, int v) {
+<span class="fc" id="L783">        buf.putInt(pos, v);</span>
+<span class="fc" id="L784">    }</span>
+
+    private void putInt(int v) {
+<span class="pc bpc" id="L787" title="1 of 2 branches missed.">        if (buf.remaining() &lt; 4) {</span>
+<span class="nc" id="L788">            resize();</span>
+        }
+<span class="fc" id="L790">        buf.putInt(v);</span>
+<span class="fc" id="L791">    }</span>
+
+    private void putShort(short v) {
+<span class="pc bpc" id="L794" title="1 of 2 branches missed.">        if (buf.remaining() &lt; 2) {</span>
+<span class="nc" id="L795">            resize();</span>
+        }
+<span class="fc" id="L797">        buf.putShort(v);</span>
+<span class="fc" id="L798">    }</span>
+
+    private void resize() {
+<span class="nc" id="L801">        ByteBuffer b = ByteBuffer.allocate(buf.capacity() * 2).order(ByteOrder.BIG_ENDIAN);</span>
+<span class="nc" id="L802">        System.arraycopy(buf.array(), 0, b.array(), 0, buf.capacity());</span>
+<span class="nc" id="L803">        b.position(buf.position());</span>
+<span class="nc" id="L804">        buf = b;</span>
+<span class="nc" id="L805">    }</span>
+
+<span class="fc" id="L807">    public class Utf8Appender extends AbstractCharSink implements CharSink {</span>
+        private int lenpos;
+<span class="fc" id="L809">        private int utf8len = 0;</span>
+
+        public int $() {
+<span class="fc" id="L812">            putShort(lenpos, utf8len);</span>
+<span class="fc" id="L813">            return poolCount++;</span>
+        }
+
+        @Override
+        public Utf8Appender put(CharSequence cs) {
+<span class="fc" id="L818">            int n = cs.length();</span>
+<span class="fc bfc" id="L819" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L820">                BytecodeAssembler.this.putByte(cs.charAt(i));</span>
+            }
+<span class="fc" id="L822">            utf8len += n;</span>
+<span class="fc" id="L823">            return this;</span>
+        }
+
+        @Override
+        public Utf8Appender put(char c) {
+<span class="fc" id="L828">            BytecodeAssembler.this.putByte(c);</span>
+<span class="fc" id="L829">            utf8len++;</span>
+<span class="fc" id="L830">            return this;</span>
+        }
+
+        @Override
+        public Utf8Appender put(int value) {
+<span class="fc" id="L835">            super.put(value);</span>
+<span class="fc" id="L836">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+<span class="nc bnc" id="L841" title="All 2 branches missed.">            for (int i = 0; i &lt; len; i++) {</span>
+<span class="nc" id="L842">                BytecodeAssembler.this.putByte(chars[i + start]);</span>
+            }
+<span class="nc" id="L844">            utf8len += len;</span>
+<span class="nc" id="L845">            return this;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

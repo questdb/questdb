@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OperationFutureImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.ops</a> &gt; <span class="el_source">OperationFutureImpl.java</span></div><h1>OperationFutureImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.ops;
+
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlTimeoutException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.tasks.TableWriterTask;
+
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.OK;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.READER_OUT_OF_DATE;
+import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
+import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
+
+class OperationFutureImpl extends AbstractSelfReturningObject&lt;OperationFutureImpl&gt; implements OperationFuture {
+<span class="fc" id="L53">    private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);</span>
+    private final long busyWaitTimeout;
+    private final CairoEngine engine;
+    private long affectedRowsCount;
+    private AsyncWriterCommand asyncWriterCommand;
+    private boolean closing;
+    private long correlationId;
+    private SCSequence eventSubSeq;
+    private QueryFutureUpdateListener queryFutureUpdateListener;
+    private int status;
+    private int tableNamePositionInSql;
+    private TableToken tableToken;
+
+    OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool&lt;OperationFutureImpl&gt; pool) {
+<span class="fc" id="L67">        super(pool);</span>
+<span class="fc" id="L68">        this.engine = engine;</span>
+<span class="fc" id="L69">        this.busyWaitTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();</span>
+<span class="fc" id="L70">    }</span>
+
+    @Override
+    public void await() throws SqlException {
+<span class="fc" id="L74">        await(busyWaitTimeout);</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (status == QUERY_STARTED) {</span>
+<span class="fc" id="L76">            await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - busyWaitTimeout);</span>
+        }
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (status != QUERY_COMPLETE) {</span>
+<span class="fc" id="L79">            throw SqlTimeoutException.timeout(&quot;Timeout expired on waiting for the async command execution result [instance=&quot;).put(correlationId).put(']');</span>
+        }
+<span class="fc" id="L81">    }</span>
+
+    @Override
+    public int await(long timeout) throws SqlException {
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        return await0(timeout &gt; 0 ? timeout : busyWaitTimeout);</span>
+    }
+
+    @Override
+    public void close() {
+<span class="pc bpc" id="L90" title="1 of 2 branches missed.">        if (eventSubSeq != null) {</span>
+<span class="fc" id="L91">            engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);</span>
+<span class="fc" id="L92">            eventSubSeq.clear();</span>
+<span class="fc" id="L93">            eventSubSeq = null;</span>
+<span class="fc" id="L94">            correlationId = -1;</span>
+<span class="fc" id="L95">            tableToken = null;</span>
+        }
+<span class="fc" id="L97">        asyncWriterCommand = Misc.free(asyncWriterCommand);</span>
+
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        if (!closing) {</span>
+<span class="fc" id="L100">            closing = true;</span>
+<span class="fc" id="L101">            super.close();</span>
+<span class="fc" id="L102">            closing = false;</span>
+        }
+<span class="fc" id="L104">    }</span>
+
+    @Override
+    public long getAffectedRowsCount() {
+<span class="fc" id="L108">        return affectedRowsCount;</span>
+    }
+
+    @Override
+    public long getInstanceId() {
+<span class="nc" id="L113">        return correlationId;</span>
+    }
+
+    @Override
+    public int getStatus() {
+<span class="fc" id="L118">        return status;</span>
+    }
+
+    /***
+     * Initializes instance of OperationFuture with the parameters to wait for the new command
+     * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
+     */
+    public void of(
+            AsyncWriterCommand asyncWriterCommand,
+            SqlExecutionContext executionContext,
+            SCSequence eventSubSeq,
+            int tableNamePositionInSql,
+            boolean closeOnDone
+    ) throws AlterTableContextException {
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">        assert eventSubSeq != null : &quot;event subscriber sequence must be provided&quot;;</span>
+<span class="fc" id="L133">        this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();</span>
+<span class="fc" id="L134">        this.tableNamePositionInSql = tableNamePositionInSql;</span>
+        // Set up execution wait sequence to listen to async writer events
+<span class="fc" id="L136">        final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();</span>
+<span class="fc" id="L137">        writerEventFanOut.and(eventSubSeq);</span>
+<span class="fc" id="L138">        this.eventSubSeq = eventSubSeq;</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        this.asyncWriterCommand = closeOnDone ? asyncWriterCommand : null;</span>
+
+        try {
+            // Publish new command and get published command correlation id.
+<span class="fc" id="L143">            final CharSequence cmdName = asyncWriterCommand.getCommandName();</span>
+<span class="fc" id="L144">            tableToken = asyncWriterCommand.getTableToken();</span>
+<span class="fc" id="L145">            correlationId = engine.getCommandCorrelationId();</span>
+<span class="fc" id="L146">            asyncWriterCommand.setCommandCorrelationId(correlationId);</span>
+
+<span class="fc" id="L148">            try (TableWriter writer = engine.getWriterOrPublishCommand(</span>
+<span class="fc" id="L149">                    executionContext.getCairoSecurityContext(),</span>
+<span class="fc" id="L150">                    asyncWriterCommand.getTableToken(),</span>
+                    asyncWriterCommand
+            )) {
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">                if (writer != null) {</span>
+<span class="nc" id="L154">                    LOG.info()</span>
+<span class="nc" id="L155">                            .$(&quot;published SYNC writer command [name=&quot;).$(cmdName)</span>
+<span class="nc" id="L156">                            .$(&quot;,tableName=&quot;).$(tableToken)</span>
+<span class="nc" id="L157">                            .$(&quot;,instance=&quot;).$(correlationId)</span>
+<span class="nc" id="L158">                            .I$();</span>
+<span class="nc" id="L159">                    affectedRowsCount = asyncWriterCommand.apply(writer, true);</span>
+<span class="nc" id="L160">                    status = QUERY_COMPLETE;</span>
+                } else {
+<span class="fc" id="L162">                    LOG.info()</span>
+<span class="fc" id="L163">                            .$(&quot;published ASYNC writer command [name=&quot;).$(cmdName)</span>
+<span class="fc" id="L164">                            .$(&quot;,tableName=&quot;).$(tableToken)</span>
+<span class="fc" id="L165">                            .$(&quot;,instance=&quot;).$(correlationId)</span>
+<span class="fc" id="L166">                            .I$();</span>
+                    // No need to call asyncWriterCommand.startAsync() method here since
+                    // it's done when publishing to the writer queue.
+<span class="fc" id="L169">                    affectedRowsCount = 0;</span>
+<span class="fc" id="L170">                    status = QUERY_NO_RESPONSE;</span>
+                }
+            }
+
+<span class="fc" id="L174">            queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableToken(), correlationId);</span>
+<span class="fc" id="L175">        } catch (Throwable ex) {</span>
+<span class="fc" id="L176">            close();</span>
+<span class="fc" id="L177">            throw ex;</span>
+<span class="fc" id="L178">        }</span>
+<span class="fc" id="L179">    }</span>
+
+    private int await0(long timeout) throws SqlException {
+<span class="pc bpc" id="L182" title="1 of 2 branches missed.">        if (status == QUERY_COMPLETE) {</span>
+<span class="nc" id="L183">            return status;</span>
+        }
+<span class="fc" id="L185">        status = Math.max(status, awaitWriterEvent(timeout));</span>
+<span class="fc" id="L186">        return status;</span>
+    }
+
+    private int awaitWriterEvent(long timeout) throws SqlException {
+<span class="pc bpc" id="L190" title="1 of 2 branches missed.">        assert eventSubSeq != null : &quot;No sequence to wait on&quot;;</span>
+<span class="pc bpc" id="L191" title="1 of 2 branches missed.">        assert correlationId &gt; -1 : &quot;No command id to wait for&quot;;</span>
+<span class="pc bpc" id="L192" title="1 of 2 branches missed.">        assert timeout &gt; 0;</span>
+
+<span class="fc" id="L194">        final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();</span>
+<span class="fc" id="L195">        final long start = clock.getTicks();</span>
+<span class="fc" id="L196">        final RingQueue&lt;TableWriterTask&gt; tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();</span>
+
+<span class="fc" id="L198">        int status = this.status;</span>
+        while (true) {
+<span class="fc" id="L200">            long seq = eventSubSeq.next();</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">            if (seq &lt; 0) {</span>
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">                if (seq == -1) {</span>
+                    // Queue is empty, check if the execution blocked for too long.
+<span class="fc bfc" id="L204" title="All 2 branches covered.">                    if (clock.getTicks() - start &gt; timeout) {</span>
+<span class="fc" id="L205">                        queryFutureUpdateListener.reportBusyWaitExpired(tableToken, correlationId);</span>
+<span class="fc" id="L206">                        return status;</span>
+                    }
+                } else {
+<span class="nc" id="L209">                    Os.pause();</span>
+                }
+<span class="nc" id="L211">                continue;</span>
+            }
+
+            try {
+<span class="fc" id="L215">                TableWriterTask event = tableWriterEventQueue.get(seq);</span>
+<span class="fc" id="L216">                int type = event.getType();</span>
+<span class="pc bpc" id="L217" title="1 of 6 branches missed.">                if (event.getInstance() != correlationId || (type != TSK_BEGIN &amp;&amp; type != TSK_COMPLETE)) {</span>
+<span class="fc" id="L218">                    LOG.info()</span>
+<span class="fc" id="L219">                            .$(&quot;writer command response received and ignored [instance=&quot;).$(event.getInstance())</span>
+<span class="fc" id="L220">                            .$(&quot;, type=&quot;).$(type)</span>
+<span class="fc" id="L221">                            .$(&quot;, expectedInstance=&quot;).$(correlationId)</span>
+<span class="fc" id="L222">                            .I$();</span>
+<span class="fc" id="L223">                    Os.pause();</span>
+<span class="fc bfc" id="L224" title="All 2 branches covered.">                } else if (type == TSK_COMPLETE) {</span>
+<span class="fc" id="L225">                    LOG.info().$(&quot;writer command response received [instance=&quot;).$(correlationId).I$();</span>
+<span class="fc" id="L226">                    final int code = Unsafe.getUnsafe().getInt(event.getData());</span>
+<span class="fc bfc" id="L227" title="All 3 branches covered.">                    switch (code) {</span>
+                        case OK:
+<span class="fc" id="L229">                            affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);</span>
+<span class="fc" id="L230">                            queryFutureUpdateListener.reportProgress(correlationId, QUERY_COMPLETE);</span>
+<span class="fc" id="L231">                            return QUERY_COMPLETE;</span>
+                        case READER_OUT_OF_DATE:
+<span class="fc" id="L233">                            throw TableReferenceOutOfDateException.of(tableToken);</span>
+                        default:
+<span class="fc" id="L235">                            LOG.error().$(&quot;error writer command response [instance=&quot;).$(correlationId)</span>
+<span class="fc" id="L236">                                    .$(&quot;, errorCode=&quot;).$(code).I$();</span>
+<span class="fc" id="L237">                            final int strLen = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);</span>
+<span class="fc" id="L238">                            final long strLo = event.getData() + 2L * Integer.BYTES;</span>
+<span class="pc bpc" id="L239" title="1 of 2 branches missed.">                            if (strLen == 0) {</span>
+<span class="nc" id="L240">                                throw SqlException.$(tableNamePositionInSql, &quot;statement execution failed&quot;);</span>
+                            } else {
+<span class="fc" id="L242">                                throw SqlException.$(tableNamePositionInSql, strLo, strLo + 2L * strLen);</span>
+                            }
+                    }
+                } else {
+<span class="fc" id="L246">                    status = QUERY_STARTED;</span>
+<span class="fc" id="L247">                    queryFutureUpdateListener.reportProgress(correlationId, QUERY_STARTED);</span>
+<span class="fc" id="L248">                    LOG.info().$(&quot;writer command QUERY_STARTED response received [instance=&quot;).$(correlationId).I$();</span>
+                }
+            } finally {
+<span class="fc" id="L251">                eventSubSeq.done(seq);</span>
+            }
+<span class="fc" id="L253">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

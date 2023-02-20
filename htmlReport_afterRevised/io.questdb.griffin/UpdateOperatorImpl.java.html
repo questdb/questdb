@@ -1,0 +1,691 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UpdateOperatorImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">UpdateOperatorImpl.java</span></div><h1>UpdateOperatorImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCM;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+
+import static io.questdb.cairo.ColumnType.isVariableLength;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.iFile;
+
+public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseable, UpdateOperator {
+<span class="fc" id="L46">    private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);</span>
+    private final long dataAppendPageSize;
+<span class="fc" id="L48">    private final ObjList&lt;MemoryCMARW&gt; dstColumns = new ObjList&lt;&gt;();</span>
+    private final long fileOpenOpts;
+<span class="fc" id="L50">    private final ObjList&lt;MemoryCMR&gt; srcColumns = new ObjList&lt;&gt;();</span>
+    private IndexBuilder indexBuilder;
+
+    public UpdateOperatorImpl(
+            CairoConfiguration configuration,
+            MessageBus messageBus,
+            TableWriter tableWriter,
+            Path path,
+            int rootLen
+    ) {
+<span class="fc" id="L60">        super(LOG, configuration, messageBus, tableWriter, path, rootLen);</span>
+<span class="fc" id="L61">        this.indexBuilder = new IndexBuilder();</span>
+<span class="fc" id="L62">        this.dataAppendPageSize = configuration.getDataAppendPageSize();</span>
+<span class="fc" id="L63">        this.fileOpenOpts = configuration.getWriterFileOpenOpts();</span>
+<span class="fc" id="L64">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L68">        indexBuilder = Misc.free(indexBuilder);</span>
+<span class="fc" id="L69">    }</span>
+
+    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws TableReferenceOutOfDateException {
+
+<span class="fc" id="L73">        TableToken tableToken = tableWriter.getTableToken();</span>
+<span class="fc" id="L74">        LOG.info().$(&quot;updating [table=&quot;).$(tableToken).$(&quot; instance=&quot;).$(op.getCorrelationId()).I$();</span>
+
+        try {
+<span class="fc" id="L77">            final int tableId = op.getTableId();</span>
+<span class="fc" id="L78">            final long tableVersion = op.getTableVersion();</span>
+<span class="fc" id="L79">            final RecordCursorFactory factory = op.getFactory();</span>
+
+<span class="fc" id="L81">            cleanupColumnVersions.clear();</span>
+
+<span class="fc bfc" id="L83" title="All 2 branches covered.">            if (tableWriter.inTransaction()) {</span>
+<span class="fc" id="L84">                LOG.info().$(&quot;committing current transaction before UPDATE execution [table=&quot;).$(tableToken).$(&quot; instance=&quot;).$(op.getCorrelationId()).I$();</span>
+<span class="fc" id="L85">                tableWriter.commit();</span>
+            }
+
+<span class="fc" id="L88">            final TableRecordMetadata tableMetadata = tableWriter.getMetadata();</span>
+
+            // Check that table structure hasn't changed between planning and executing the UPDATE
+<span class="pc bpc" id="L91" title="1 of 4 branches missed.">            if (tableMetadata.getTableId() != tableId || tableWriter.getStructureVersion() != tableVersion) {</span>
+<span class="fc" id="L92">                throw TableReferenceOutOfDateException.of(tableToken, tableId, tableMetadata.getTableId(),</span>
+<span class="fc" id="L93">                        tableVersion, tableWriter.getStructureVersion());</span>
+            }
+
+            // Select the rows to be updated
+<span class="fc" id="L97">            final RecordMetadata updateMetadata = factory.getMetadata();</span>
+<span class="fc" id="L98">            final int affectedColumnCount = updateMetadata.getColumnCount();</span>
+
+            // Build index column map from table to update to values returned from the update statement row cursors
+<span class="fc" id="L101">            updateColumnIndexes.clear();</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">            for (int i = 0; i &lt; affectedColumnCount; i++) {</span>
+<span class="fc" id="L103">                CharSequence columnName = updateMetadata.getColumnName(i);</span>
+<span class="fc" id="L104">                int tableColumnIndex = tableMetadata.getColumnIndex(columnName);</span>
+<span class="pc bpc" id="L105" title="1 of 2 branches missed.">                assert tableColumnIndex &gt;= 0;</span>
+<span class="fc" id="L106">                updateColumnIndexes.add(tableColumnIndex);</span>
+            }
+
+            // Create update memory list of all columns to be updated
+<span class="fc" id="L110">            configureColumns(tableMetadata, affectedColumnCount);</span>
+
+            // Start execution frame by frame
+            // Partition to update
+<span class="fc" id="L114">            int partitionIndex = -1;</span>
+<span class="fc" id="L115">            long rowsUpdated = 0;</span>
+
+            // Update may be queued and requester already disconnected, force check someone still waits for it
+<span class="fc" id="L118">            op.forceTestTimeout();</span>
+            // Row by row updates for now
+            // This should happen parallel per file (partition and column)
+<span class="fc" id="L121">            try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {</span>
+<span class="fc" id="L122">                Record masterRecord = recordCursor.getRecord();</span>
+
+<span class="fc" id="L124">                long prevRow = 0;</span>
+<span class="fc" id="L125">                long minRow = -1L;</span>
+<span class="fc" id="L126">                long lastRowId = Long.MIN_VALUE;</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">                while (recordCursor.hasNext()) {</span>
+<span class="fc" id="L128">                    long rowId = masterRecord.getUpdateRowId();</span>
+
+                    // Some joins expand results set and returns same row multiple times
+<span class="fc bfc" id="L131" title="All 2 branches covered.">                    if (rowId == lastRowId) {</span>
+<span class="fc" id="L132">                        continue;</span>
+                    }
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">                    if (rowId &lt; lastRowId) {</span>
+                        // We're assuming, but not enforcing the fact that
+                        // factory produces rows in incrementing order.
+<span class="nc" id="L137">                        throw CairoException.critical(0).put(&quot;Update statement generated invalid query plan. Rows are not returned in order.&quot;);</span>
+                    }
+<span class="fc" id="L139">                    lastRowId = rowId;</span>
+
+<span class="fc" id="L141">                    final int rowPartitionIndex = Rows.toPartitionIndex(rowId);</span>
+<span class="fc" id="L142">                    final long currentRow = Rows.toLocalRowID(rowId);</span>
+
+<span class="fc bfc" id="L144" title="All 2 branches covered.">                    if (rowPartitionIndex != partitionIndex) {</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">                        if (tableWriter.isPartitionReadOnly(rowPartitionIndex)) {</span>
+<span class="fc" id="L146">                            throw CairoException.critical(0)</span>
+<span class="fc" id="L147">                                    .put(&quot;cannot update read-only partition [table=&quot;).put(tableToken.getTableName())</span>
+<span class="fc" id="L148">                                    .put(&quot;, partitionTimestamp=&quot;).ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))</span>
+<span class="fc" id="L149">                                    .put(']');</span>
+                        }
+<span class="fc bfc" id="L151" title="All 2 branches covered.">                        if (partitionIndex &gt; -1) {</span>
+<span class="fc" id="L152">                            LOG.info()</span>
+<span class="fc" id="L153">                                    .$(&quot;updating partition [partitionIndex=&quot;).$(partitionIndex)</span>
+<span class="fc" id="L154">                                    .$(&quot;, rowPartitionIndex=&quot;).$(rowPartitionIndex)</span>
+<span class="fc" id="L155">                                    .$(&quot;, rowPartitionTs=&quot;).$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))</span>
+<span class="fc" id="L156">                                    .$(&quot;, affectedColumnCount=&quot;).$(affectedColumnCount)</span>
+<span class="fc" id="L157">                                    .$(&quot;, prevRow=&quot;).$(prevRow)</span>
+<span class="fc" id="L158">                                    .$(&quot;, minRow=&quot;).$(minRow)</span>
+<span class="fc" id="L159">                                    .I$();</span>
+
+<span class="fc" id="L161">                            copyColumns(</span>
+                                    partitionIndex,
+                                    affectedColumnCount,
+                                    prevRow,
+                                    minRow
+                            );
+
+<span class="fc" id="L168">                            updateEffectiveColumnTops(</span>
+                                    tableWriter,
+                                    partitionIndex,
+                                    updateColumnIndexes,
+                                    affectedColumnCount,
+                                    minRow
+                            );
+
+<span class="fc" id="L176">                            rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);</span>
+                        }
+
+<span class="fc" id="L179">                        openColumns(srcColumns, rowPartitionIndex, false);</span>
+<span class="fc" id="L180">                        openColumns(dstColumns, rowPartitionIndex, true);</span>
+
+<span class="fc" id="L182">                        partitionIndex = rowPartitionIndex;</span>
+<span class="fc" id="L183">                        prevRow = 0;</span>
+<span class="fc" id="L184">                        minRow = currentRow;</span>
+                    }
+
+<span class="fc" id="L187">                    appendRowUpdate(</span>
+                            rowPartitionIndex,
+                            affectedColumnCount,
+                            prevRow,
+                            currentRow,
+                            masterRecord,
+                            minRow
+                    );
+
+<span class="fc" id="L196">                    prevRow = currentRow + 1;</span>
+<span class="fc" id="L197">                    rowsUpdated++;</span>
+
+<span class="fc" id="L199">                    op.testTimeout();</span>
+<span class="fc" id="L200">                }</span>
+
+<span class="fc bfc" id="L202" title="All 2 branches covered.">                if (partitionIndex &gt; -1) {</span>
+<span class="fc" id="L203">                    copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);</span>
+
+<span class="fc" id="L205">                    updateEffectiveColumnTops(</span>
+                            tableWriter,
+                            partitionIndex,
+                            updateColumnIndexes,
+                            affectedColumnCount,
+                            minRow
+                    );
+
+<span class="fc" id="L213">                    rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);</span>
+                }
+            } finally {
+<span class="fc" id="L216">                Misc.freeObjList(srcColumns);</span>
+<span class="fc" id="L217">                Misc.freeObjList(dstColumns);</span>
+                // todo: we are opening columns incrementally, e.g. if we don't have enough objects
+                //   but here we're always clearing columns, making incremental &quot;open&quot; pointless
+                //   perhaps we should keep N column object max to kick around ?
+<span class="fc" id="L221">                srcColumns.clear();</span>
+<span class="fc" id="L222">                dstColumns.clear();</span>
+            }
+
+<span class="fc bfc" id="L225" title="All 2 branches covered.">            if (partitionIndex &gt; -1) {</span>
+<span class="fc" id="L226">                op.forceTestTimeout();</span>
+<span class="fc" id="L227">                tableWriter.commit();</span>
+<span class="fc" id="L228">                tableWriter.openLastPartition();</span>
+<span class="fc" id="L229">                purgeOldColumnVersions();</span>
+            }
+
+<span class="fc" id="L232">            LOG.info().$(&quot;update finished [table=&quot;).$(tableToken)</span>
+<span class="fc" id="L233">                    .$(&quot;, instance=&quot;).$(op.getCorrelationId())</span>
+<span class="fc" id="L234">                    .$(&quot;, updated=&quot;).$(rowsUpdated)</span>
+<span class="fc" id="L235">                    .$(&quot;, txn=&quot;).$(tableWriter.getTxn())</span>
+<span class="fc" id="L236">                    .I$();</span>
+
+<span class="fc" id="L238">            return rowsUpdated;</span>
+<span class="fc" id="L239">        } catch (TableReferenceOutOfDateException e) {</span>
+<span class="fc" id="L240">            throw e;</span>
+<span class="nc" id="L241">        } catch (SqlException e) {</span>
+<span class="nc" id="L242">            throw CairoException.critical(0).put(&quot;could not apply update on SPI side [e=&quot;).put((CharSequence) e).put(']');</span>
+<span class="fc" id="L243">        } catch (Throwable th) {</span>
+<span class="fc" id="L244">            LOG.error().$(&quot;could not update&quot;).$(th).$();</span>
+<span class="fc" id="L245">            throw th;</span>
+        } finally {
+<span class="fc" id="L247">            op.closeWriter();</span>
+        }
+    }
+
+    private static long calculatedEffectiveColumnTop(long firstUpdatedPartitionRowId, long columnTop) {
+<span class="fc bfc" id="L252" title="All 2 branches covered.">        if (columnTop &gt; -1L) {</span>
+<span class="fc" id="L253">            return Math.min(firstUpdatedPartitionRowId, columnTop);</span>
+        }
+<span class="fc" id="L255">        return firstUpdatedPartitionRowId;</span>
+    }
+
+    private static void fillUpdatesGapWithNull(
+            int columnType,
+            long fromRow, // inclusive
+            long toRow, // exclusive
+            MemoryCMARW dstFixMem,
+            MemoryCMARW dstVarMem,
+            int shl
+    ) {
+<span class="fc" id="L266">        final short columnTag = ColumnType.tagOf(columnType);</span>
+<span class="fc bfc" id="L267" title="All 3 branches covered.">        switch (columnTag) {</span>
+            case ColumnType.STRING:
+<span class="fc bfc" id="L269" title="All 2 branches covered.">                for (long row = fromRow; row &lt; toRow; row++) {</span>
+<span class="fc" id="L270">                    dstFixMem.putLong(dstVarMem.putNullStr());</span>
+                }
+<span class="fc" id="L272">                break;</span>
+            case ColumnType.BINARY:
+<span class="fc bfc" id="L274" title="All 2 branches covered.">                for (long row = fromRow; row &lt; toRow; row++) {</span>
+<span class="fc" id="L275">                    dstFixMem.putLong(dstVarMem.putNullBin());</span>
+                }
+<span class="fc" id="L277">                break;</span>
+            default:
+<span class="fc" id="L279">                final long rowCount = toRow - fromRow;</span>
+<span class="fc" id="L280">                TableUtils.setNull(</span>
+                        columnType,
+<span class="fc" id="L282">                        dstFixMem.appendAddressFor(rowCount &lt;&lt; shl),</span>
+                        rowCount
+                );
+                break;
+        }
+<span class="fc" id="L287">    }</span>
+
+    private static int getFixedColumnSize(int columnType) {
+<span class="fc bfc" id="L290" title="All 2 branches covered.">        if (isVariableLength(columnType)) {</span>
+<span class="fc" id="L291">            return 3;</span>
+        }
+<span class="fc" id="L293">        return ColumnType.pow2SizeOf(columnType);</span>
+    }
+
+    private static void updateEffectiveColumnTops(
+            TableWriter tableWriter,
+            int partitionIndex,
+            IntList updateColumnIndexes,
+            int columnCount,
+            long firstUpdatedPartitionRowId
+    ) {
+<span class="fc" id="L303">        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);</span>
+
+<span class="fc bfc" id="L305" title="All 2 branches covered.">        for (int columnIndex = 0; columnIndex &lt; columnCount; columnIndex++) {</span>
+<span class="fc" id="L306">            final int updateColumnIndex = updateColumnIndexes.get(columnIndex);</span>
+<span class="fc" id="L307">            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);</span>
+<span class="fc" id="L308">            long effectiveColumnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, columnTop);</span>
+<span class="pc bpc" id="L309" title="1 of 2 branches missed.">            if (effectiveColumnTop &gt; -1L) {</span>
+<span class="fc" id="L310">                tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndex, effectiveColumnTop);</span>
+            }
+        }
+<span class="fc" id="L313">    }</span>
+
+    private void appendRowUpdate(
+            int rowPartitionIndex,
+            int affectedColumnCount,
+            long prevRow,
+            long currentRow,
+            Record masterRecord,
+            long firstUpdatedRowId
+    ) {
+<span class="fc" id="L323">        final TableRecordMetadata tableMetadata = tableWriter.getMetadata();</span>
+<span class="fc" id="L324">        final long partitionTimestamp = tableWriter.getPartitionTimestamp(rowPartitionIndex);</span>
+<span class="fc bfc" id="L325" title="All 2 branches covered.">        for (int i = 0; i &lt; affectedColumnCount; i++) {</span>
+<span class="fc" id="L326">            MemoryCMR srcFixMem = srcColumns.get(2 * i);</span>
+<span class="fc" id="L327">            MemoryCMARW dstFixMem = dstColumns.get(2 * i);</span>
+<span class="fc" id="L328">            MemoryCMR srcVarMem = srcColumns.get(2 * i + 1);</span>
+<span class="fc" id="L329">            MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);</span>
+
+<span class="fc" id="L331">            final int columnIndex = updateColumnIndexes.get(i);</span>
+<span class="fc" id="L332">            final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);</span>
+<span class="fc" id="L333">            final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);</span>
+<span class="fc" id="L334">            final int columnType = tableMetadata.getColumnType(columnIndex);</span>
+
+<span class="fc bfc" id="L336" title="All 2 branches covered.">            if (currentRow &gt; prevRow) {</span>
+<span class="fc" id="L337">                copyColumn(</span>
+                        prevRow,
+                        currentRow,
+                        srcFixMem,
+                        srcVarMem,
+                        dstFixMem,
+                        dstVarMem,
+                        newColumnTop,
+                        oldColumnTop,
+                        columnType
+                );
+            }
+<span class="pc bpc" id="L349" title="1 of 19 branches missed.">            switch (ColumnType.tagOf(columnType)) {</span>
+                case ColumnType.INT:
+<span class="fc" id="L351">                    dstFixMem.putInt(masterRecord.getInt(i));</span>
+<span class="fc" id="L352">                    break;</span>
+                case ColumnType.FLOAT:
+<span class="fc" id="L354">                    dstFixMem.putFloat(masterRecord.getFloat(i));</span>
+<span class="fc" id="L355">                    break;</span>
+                case ColumnType.LONG:
+<span class="fc" id="L357">                    dstFixMem.putLong(masterRecord.getLong(i));</span>
+<span class="fc" id="L358">                    break;</span>
+                case ColumnType.TIMESTAMP:
+<span class="fc" id="L360">                    dstFixMem.putLong(masterRecord.getTimestamp(i));</span>
+<span class="fc" id="L361">                    break;</span>
+                case ColumnType.DATE:
+<span class="fc" id="L363">                    dstFixMem.putLong(masterRecord.getDate(i));</span>
+<span class="fc" id="L364">                    break;</span>
+                case ColumnType.DOUBLE:
+<span class="fc" id="L366">                    dstFixMem.putDouble(masterRecord.getDouble(i));</span>
+<span class="fc" id="L367">                    break;</span>
+                case ColumnType.SHORT:
+<span class="fc" id="L369">                    dstFixMem.putShort(masterRecord.getShort(i));</span>
+<span class="fc" id="L370">                    break;</span>
+                case ColumnType.CHAR:
+<span class="fc" id="L372">                    dstFixMem.putChar(masterRecord.getChar(i));</span>
+<span class="fc" id="L373">                    break;</span>
+                case ColumnType.BYTE:
+<span class="fc" id="L375">                    dstFixMem.putByte(masterRecord.getByte(i));</span>
+<span class="fc" id="L376">                    break;</span>
+                case ColumnType.BOOLEAN:
+<span class="fc" id="L378">                    dstFixMem.putBool(masterRecord.getBool(i));</span>
+<span class="fc" id="L379">                    break;</span>
+                case ColumnType.GEOBYTE:
+<span class="fc" id="L381">                    dstFixMem.putByte(masterRecord.getGeoByte(i));</span>
+<span class="fc" id="L382">                    break;</span>
+                case ColumnType.GEOSHORT:
+<span class="fc" id="L384">                    dstFixMem.putShort(masterRecord.getGeoShort(i));</span>
+<span class="fc" id="L385">                    break;</span>
+                case ColumnType.GEOINT:
+<span class="fc" id="L387">                    dstFixMem.putInt(masterRecord.getGeoInt(i));</span>
+<span class="fc" id="L388">                    break;</span>
+                case ColumnType.GEOLONG:
+<span class="fc" id="L390">                    dstFixMem.putLong(masterRecord.getGeoLong(i));</span>
+<span class="fc" id="L391">                    break;</span>
+                case ColumnType.SYMBOL:
+                    // Use special method to write new symbol values
+                    // which does not update _txn file transient symbol counts
+                    // so that if update fails and rolled back ILP will not use &quot;dirty&quot; symbol indexes
+                    // pre-looked up during update run to insert rows
+<span class="fc" id="L397">                    dstFixMem.putInt(</span>
+<span class="fc" id="L398">                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSym(i))</span>
+                    );
+<span class="fc" id="L400">                    break;</span>
+                case ColumnType.STRING:
+<span class="fc" id="L402">                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStr(i)));</span>
+<span class="fc" id="L403">                    break;</span>
+                case ColumnType.BINARY:
+<span class="fc" id="L405">                    dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));</span>
+<span class="fc" id="L406">                    break;</span>
+                case ColumnType.LONG128:
+                    // fall-through
+                case ColumnType.UUID:
+<span class="fc" id="L410">                    dstFixMem.putLong(masterRecord.getLong128Lo(i));</span>
+<span class="fc" id="L411">                    dstFixMem.putLong(masterRecord.getLong128Hi(i));</span>
+<span class="fc" id="L412">                    break;</span>
+                default:
+<span class="nc" id="L414">                    throw CairoException.nonCritical()</span>
+<span class="nc" id="L415">                            .put(&quot;Column type &quot;).put(ColumnType.nameOf(columnType))</span>
+<span class="nc" id="L416">                            .put(&quot; not supported for updates&quot;);</span>
+            }
+        }
+<span class="fc" id="L419">    }</span>
+
+    private void configureColumns(RecordMetadata metadata, int columnCount) {
+<span class="fc bfc" id="L422" title="All 2 branches covered.">        for (int i = dstColumns.size(); i &lt; columnCount; i++) {</span>
+<span class="fc" id="L423">            int columnType = metadata.getColumnType(updateColumnIndexes.get(i));</span>
+<span class="fc bfc" id="L424" title="All 2 branches covered.">            switch (columnType) {</span>
+                default:
+<span class="fc" id="L426">                    srcColumns.add(Vm.getCMRInstance());</span>
+<span class="fc" id="L427">                    srcColumns.add(null);</span>
+<span class="fc" id="L428">                    dstColumns.add(Vm.getCMARWInstance());</span>
+<span class="fc" id="L429">                    dstColumns.add(null);</span>
+<span class="fc" id="L430">                    break;</span>
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    // Primary and secondary
+<span class="fc" id="L434">                    srcColumns.add(Vm.getCMRInstance());</span>
+<span class="fc" id="L435">                    srcColumns.add(Vm.getCMRInstance());</span>
+<span class="fc" id="L436">                    dstColumns.add(Vm.getCMARWInstance());</span>
+<span class="fc" id="L437">                    dstColumns.add(Vm.getCMARWInstance());</span>
+                    break;
+            }
+        }
+<span class="fc" id="L441">    }</span>
+
+    private void copyColumn(
+            long prevRow,
+            long maxRow,
+            MemoryCMR srcFixMem,
+            MemoryCMR srcVarMem,
+            MemoryCMARW dstFixMem,
+            MemoryCMARW dstVarMem,
+            long newColumnTop,
+            long oldColumnTop,
+            int columnType
+    ) {
+<span class="pc bpc" id="L454" title="1 of 4 branches missed.">        assert newColumnTop &lt;= oldColumnTop || oldColumnTop &lt; 0;</span>
+
+<span class="fc" id="L456">        final int shl = getFixedColumnSize(columnType);</span>
+
+<span class="fc bfc" id="L458" title="All 4 branches covered.">        if (oldColumnTop == -1 &amp;&amp; prevRow &gt; 0) {</span>
+            // Column did not exist at the partition
+<span class="fc" id="L460">            fillUpdatesGapWithNull(columnType, prevRow, maxRow, dstFixMem, dstVarMem, shl);</span>
+        }
+
+<span class="fc bfc" id="L463" title="All 2 branches covered.">        if (oldColumnTop == 0) {</span>
+            // Column fully exists in the partition
+<span class="fc" id="L465">            copyValues(</span>
+                    prevRow,
+                    maxRow,
+                    srcFixMem,
+                    srcVarMem,
+                    dstFixMem,
+                    dstVarMem,
+                    columnType,
+                    shl
+            );
+        }
+
+<span class="fc bfc" id="L477" title="All 2 branches covered.">        if (oldColumnTop &gt; 0) {</span>
+<span class="fc bfc" id="L478" title="All 2 branches covered.">            if (prevRow &gt;= oldColumnTop) {</span>
+<span class="fc" id="L479">                copyValues(</span>
+                        prevRow - oldColumnTop,
+                        maxRow - oldColumnTop,
+                        srcFixMem,
+                        srcVarMem, dstFixMem,
+                        dstVarMem,
+                        columnType,
+                        shl
+                );
+            } else {
+                // prevRow &lt; oldColumnTop
+<span class="fc bfc" id="L490" title="All 2 branches covered.">                if (maxRow &lt;= oldColumnTop) {</span>
+<span class="fc bfc" id="L491" title="All 2 branches covered.">                    if (prevRow &gt; 0) {</span>
+<span class="fc" id="L492">                        fillUpdatesGapWithNull(</span>
+                                columnType,
+                                prevRow,
+                                maxRow,
+                                dstFixMem,
+                                dstVarMem,
+                                shl
+                        );
+                    }
+                } else {
+                    // prevRow &lt; oldColumnTop &amp;&amp;  oldColumnTop &lt; maxRow
+<span class="fc bfc" id="L503" title="All 2 branches covered.">                    if (prevRow &gt; newColumnTop) {</span>
+<span class="fc" id="L504">                        fillUpdatesGapWithNull(</span>
+                                columnType,
+                                prevRow,
+                                oldColumnTop,
+                                dstFixMem,
+                                dstVarMem,
+                                shl
+                        );
+                    }
+<span class="fc" id="L513">                    copyValues(</span>
+                            0,
+                            maxRow - oldColumnTop,
+                            srcFixMem,
+                            srcVarMem,
+                            dstFixMem,
+                            dstVarMem,
+                            columnType,
+                            shl
+                    );
+                }
+            }
+        }
+<span class="fc" id="L526">    }</span>
+
+    private void copyColumns(int partitionIndex, int affectedColumnCount, long prevRow, long minRow) {
+<span class="fc" id="L529">        final TableRecordMetadata tableMetadata = tableWriter.getMetadata();</span>
+<span class="fc" id="L530">        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);</span>
+<span class="fc" id="L531">        final long maxRow = tableWriter.getPartitionSize(partitionIndex);</span>
+<span class="fc bfc" id="L532" title="All 2 branches covered.">        for (int i = 0; i &lt; affectedColumnCount; i++) {</span>
+<span class="fc" id="L533">            MemoryCMR srcFixMem = srcColumns.get(2 * i);</span>
+<span class="fc" id="L534">            MemoryCMR srcVarMem = srcColumns.get(2 * i + 1);</span>
+<span class="fc" id="L535">            MemoryCMARW dstFixMem = dstColumns.get(2 * i);</span>
+<span class="fc" id="L536">            MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);</span>
+
+<span class="fc" id="L538">            final int columnIndex = updateColumnIndexes.getQuick(i);</span>
+<span class="fc" id="L539">            final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);</span>
+<span class="fc" id="L540">            final long newColumnTop = calculatedEffectiveColumnTop(minRow, oldColumnTop);</span>
+<span class="fc" id="L541">            final int columnType = tableMetadata.getColumnType(columnIndex);</span>
+
+<span class="fc bfc" id="L543" title="All 2 branches covered.">            if (maxRow &gt; prevRow) {</span>
+<span class="fc" id="L544">                copyColumn(</span>
+                        prevRow,
+                        maxRow,
+                        srcFixMem,
+                        srcVarMem,
+                        dstFixMem,
+                        dstVarMem,
+                        newColumnTop,
+                        oldColumnTop,
+                        columnType
+                );
+            }
+        }
+<span class="fc" id="L557">    }</span>
+
+    private void copyValues(
+            long fromRowId,
+            long toRowId,
+            MemoryCMR srcFixMem,
+            MemoryCMR srcVarMem,
+            MemoryCMARW dstFixMem,
+            MemoryCMARW dstVarMem,
+            int columnType,
+            int shl
+    ) {
+<span class="fc" id="L569">        long address = srcFixMem.addressOf(fromRowId &lt;&lt; shl);</span>
+<span class="fc bfc" id="L570" title="All 2 branches covered.">        switch (ColumnType.tagOf(columnType)) {</span>
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+<span class="fc" id="L573">                long varStartOffset = srcFixMem.getLong(fromRowId * Long.BYTES);</span>
+<span class="fc" id="L574">                long varEndOffset = srcFixMem.getLong((toRowId) * Long.BYTES);</span>
+<span class="fc" id="L575">                long varAddress = srcVarMem.addressOf(varStartOffset);</span>
+<span class="fc" id="L576">                long copyToOffset = dstVarMem.getAppendOffset();</span>
+<span class="fc" id="L577">                dstVarMem.putBlockOfBytes(varAddress, varEndOffset - varStartOffset);</span>
+<span class="fc" id="L578">                dstFixMem.extend((toRowId + 1) &lt;&lt; shl);</span>
+<span class="fc" id="L579">                Vect.shiftCopyFixedSizeColumnData(</span>
+                        varStartOffset - copyToOffset,
+                        address + Long.BYTES,
+                        0,
+                        toRowId - fromRowId - 1,
+<span class="fc" id="L584">                        dstFixMem.getAppendAddress()</span>
+                );
+<span class="fc" id="L586">                dstFixMem.jumpTo((toRowId + 1) &lt;&lt; shl);</span>
+<span class="fc" id="L587">                break;</span>
+            default:
+<span class="fc" id="L589">                dstFixMem.putBlockOfBytes(address, (toRowId - fromRowId) &lt;&lt; shl);</span>
+                break;
+        }
+<span class="fc" id="L592">    }</span>
+
+    private void openColumns(ObjList&lt;? extends MemoryCM&gt; columns, int partitionIndex, boolean forWrite) {
+<span class="fc" id="L595">        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);</span>
+<span class="fc" id="L596">        long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);</span>
+<span class="fc" id="L597">        RecordMetadata metadata = tableWriter.getMetadata();</span>
+        try {
+<span class="fc" id="L599">            path.trimTo(rootLen);</span>
+<span class="fc" id="L600">            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);</span>
+<span class="fc" id="L601">            TableUtils.txnPartitionConditionally(path, partitionNameTxn);</span>
+<span class="fc" id="L602">            int pathTrimToLen = path.length();</span>
+<span class="fc bfc" id="L603" title="All 2 branches covered.">            for (int i = 0, n = updateColumnIndexes.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L604">                int columnIndex = updateColumnIndexes.get(i);</span>
+<span class="fc" id="L605">                CharSequence name = metadata.getColumnName(columnIndex);</span>
+<span class="fc" id="L606">                int columnType = metadata.getColumnType(columnIndex);</span>
+
+<span class="fc" id="L608">                final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);</span>
+
+<span class="fc bfc" id="L610" title="All 2 branches covered.">                if (forWrite) {</span>
+<span class="fc" id="L611">                    long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);</span>
+<span class="fc" id="L612">                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);</span>
+<span class="fc bfc" id="L613" title="All 2 branches covered.">                    if (columnTop &gt; -1) {</span>
+                        // columnTop == -1 means column did not exist at the partition
+<span class="fc" id="L615">                        cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);</span>
+                    }
+                }
+
+<span class="fc" id="L619">                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);</span>
+<span class="fc bfc" id="L620" title="All 2 branches covered.">                if (isVariableLength(columnType)) {</span>
+<span class="fc" id="L621">                    MemoryCMR colMemIndex = (MemoryCMR) columns.get(2 * i);</span>
+<span class="fc" id="L622">                    colMemIndex.close();</span>
+<span class="pc bpc" id="L623" title="1 of 2 branches missed.">                    assert !colMemIndex.isOpen();</span>
+<span class="fc" id="L624">                    MemoryCMR colMemVar = (MemoryCMR) columns.get(2 * i + 1);</span>
+<span class="fc" id="L625">                    colMemVar.close();</span>
+<span class="pc bpc" id="L626" title="1 of 2 branches missed.">                    assert !colMemVar.isOpen();</span>
+
+<span class="fc bfc" id="L628" title="All 4 branches covered.">                    if (forWrite || columnTop != -1) {</span>
+<span class="fc" id="L629">                        colMemIndex.of(</span>
+                                ff,
+<span class="fc" id="L631">                                iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),</span>
+                                dataAppendPageSize,
+                                -1,
+                                MemoryTag.MMAP_UPDATE,
+                                fileOpenOpts
+                        );
+<span class="fc" id="L637">                        colMemVar.of(</span>
+                                ff,
+<span class="fc" id="L639">                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),</span>
+                                dataAppendPageSize,
+                                -1,
+                                MemoryTag.MMAP_UPDATE,
+                                fileOpenOpts
+                        );
+                    }
+<span class="fc" id="L646">                } else {</span>
+<span class="fc" id="L647">                    MemoryCMR colMem = (MemoryCMR) columns.get(2 * i);</span>
+<span class="fc" id="L648">                    colMem.close();</span>
+<span class="pc bpc" id="L649" title="1 of 2 branches missed.">                    assert !colMem.isOpen();</span>
+
+<span class="fc bfc" id="L651" title="All 4 branches covered.">                    if (forWrite || columnTop != -1) {</span>
+<span class="fc" id="L652">                        colMem.of(</span>
+                                ff,
+<span class="fc" id="L654">                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),</span>
+                                dataAppendPageSize,
+                                -1,
+                                MemoryTag.MMAP_UPDATE,
+                                fileOpenOpts
+                        );
+                    }
+                }
+<span class="fc bfc" id="L662" title="All 2 branches covered.">                if (forWrite) {</span>
+<span class="fc bfc" id="L663" title="All 2 branches covered.">                    if (isVariableLength(columnType)) {</span>
+<span class="fc" id="L664">                        ((MemoryCMARW) columns.get(2 * i)).putLong(0);</span>
+                    }
+                }
+            }
+        } finally {
+<span class="fc" id="L669">            path.trimTo(rootLen);</span>
+        }
+<span class="fc" id="L671">    }</span>
+
+    private void rebuildIndexes(
+            long partitionTimestamp,
+            TableRecordMetadata tableMetadata,
+            TableWriter tableWriter
+    ) {
+<span class="fc" id="L678">        int pathTrimToLen = path.length();</span>
+<span class="fc" id="L679">        indexBuilder.of(path.trimTo(rootLen), configuration);</span>
+<span class="fc bfc" id="L680" title="All 2 branches covered.">        for (int i = 0, n = updateColumnIndexes.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L681">            int columnIndex = updateColumnIndexes.get(i);</span>
+<span class="fc bfc" id="L682" title="All 2 branches covered.">            if (tableMetadata.isColumnIndexed(columnIndex)) {</span>
+<span class="fc" id="L683">                CharSequence colName = tableMetadata.getColumnName(columnIndex);</span>
+<span class="fc" id="L684">                indexBuilder.reindexAfterUpdate(partitionTimestamp, colName, tableWriter);</span>
+            }
+        }
+<span class="fc" id="L687">        indexBuilder.clear();</span>
+<span class="fc" id="L688">        path.trimTo(pathTrimToLen);</span>
+<span class="fc" id="L689">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

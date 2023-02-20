@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VirtualRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">VirtualRecordCursorFactory.java</span></div><h1>VirtualRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+
+public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final RecordCursorFactory baseFactory;
+    private final VirtualFunctionDirectSymbolRecordCursor cursor;
+    private final ObjList&lt;Function&gt; functions;
+    private final boolean supportsRandomAccess;
+
+    public VirtualRecordCursorFactory(
+            RecordMetadata metadata,
+            ObjList&lt;Function&gt; functions,
+            RecordCursorFactory baseFactory) {
+<span class="fc" id="L49">        super(metadata);</span>
+<span class="fc" id="L50">        this.functions = functions;</span>
+<span class="fc" id="L51">        boolean supportsRandomAccess = baseFactory.recordCursorSupportsRandomAccess();</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        for (int i = 0, n = functions.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">            if (!functions.getQuick(i).supportsRandomAccess()) {</span>
+<span class="fc" id="L54">                supportsRandomAccess = false;</span>
+<span class="fc" id="L55">                break;</span>
+            }
+        }
+<span class="fc" id="L58">        this.supportsRandomAccess = supportsRandomAccess;</span>
+<span class="fc" id="L59">        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, supportsRandomAccess);</span>
+<span class="fc" id="L60">        this.baseFactory = baseFactory;</span>
+<span class="fc" id="L61">    }</span>
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+<span class="fc" id="L65">        return baseFactory;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L70">        RecordCursor cursor = baseFactory.getCursor(executionContext);</span>
+        try {
+<span class="fc" id="L72">            Function.init(functions, cursor, executionContext);</span>
+<span class="fc" id="L73">            this.cursor.of(cursor);</span>
+<span class="fc" id="L74">            return this.cursor;</span>
+<span class="fc" id="L75">        } catch (Throwable th) {</span>
+<span class="fc" id="L76">            cursor.close();</span>
+<span class="fc" id="L77">            throw th;</span>
+        }
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+<span class="fc" id="L83">        return baseFactory.hasDescendingOrder();</span>
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L88">        return supportsRandomAccess;</span>
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+<span class="fc" id="L93">        return baseFactory.supportsUpdateRowId(tableToken);</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L98">        sink.type(&quot;VirtualRecord&quot;);</span>
+<span class="fc" id="L99">        sink.optAttr(&quot;functions&quot;, functions, true);</span>
+<span class="fc" id="L100">        sink.child(baseFactory);</span>
+<span class="fc" id="L101">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="fc" id="L105">        return baseFactory.usesCompiledFilter();</span>
+    }
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L110">        Misc.freeObjList(functions);</span>
+<span class="fc" id="L111">        Misc.free(baseFactory);</span>
+<span class="fc" id="L112">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

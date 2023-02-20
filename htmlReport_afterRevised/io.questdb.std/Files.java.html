@@ -1,0 +1,547 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Files.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">Files.java</span></div><h1>Files.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.File;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public final class Files {
+
+    public static final int DT_DIR = 4;
+    public static final int DT_FILE = 8;
+    public static final int DT_LNK = 10; // soft link
+    public static final int DT_UNKNOWN = 0;
+    public static final int FILES_RENAME_ERR_EXDEV = 1;
+    public static final int FILES_RENAME_ERR_OTHER = 2;
+    public static final int FILES_RENAME_OK = 0;
+    public static final int MAP_RO = 1;
+    public static final int MAP_RW = 2;
+    public static final long PAGE_SIZE;
+    public static final int POSIX_FADV_RANDOM;
+    public static final int POSIX_FADV_SEQUENTIAL;
+    // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
+    // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
+    // wasted disk read ops.
+    public static final int POSIX_MADV_RANDOM;
+    public static final int POSIX_MADV_SEQUENTIAL;
+    public static final char SEPARATOR;
+    public static final Charset UTF_8;
+    public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
+<span class="fc" id="L60">    private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();</span>
+    static IntHashSet openFds;
+
+    private Files() {
+        // Prevent construction.
+    }
+
+    public native static boolean allocate(int fd, long size);
+
+    public native static long append(int fd, long address, long len);
+
+    public static synchronized boolean auditClose(int fd) {
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        if (fd &lt; 0) {</span>
+<span class="nc" id="L73">            throw new IllegalStateException(&quot;Invalid fd &quot; + fd);</span>
+        }
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">        if (openFds.remove(fd) == -1) {</span>
+<span class="nc" id="L76">            throw new IllegalStateException(&quot;fd &quot; + fd + &quot; is already closed!&quot;);</span>
+        }
+<span class="fc" id="L78">        return true;</span>
+    }
+
+    public static synchronized boolean auditOpen(int fd) {
+<span class="fc bfc" id="L82" title="All 2 branches covered.">        if (openFds == null) {</span>
+<span class="fc" id="L83">            openFds = new IntHashSet();</span>
+        }
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">        if (fd &lt; 0) {</span>
+<span class="nc" id="L86">            throw new IllegalStateException(&quot;Invalid fd &quot; + fd);</span>
+        }
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">        if (openFds.contains(fd)) {</span>
+<span class="nc" id="L89">            throw new IllegalStateException(&quot;fd &quot; + fd + &quot; is already open&quot;);</span>
+        }
+<span class="fc" id="L91">        openFds.add(fd);</span>
+<span class="fc" id="L92">        return true;</span>
+    }
+
+    public static int bumpFileCount(int fd) {
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        if (fd != -1) {</span>
+            //noinspection AssertWithSideEffects
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">            assert auditOpen(fd);</span>
+<span class="fc" id="L99">            OPEN_FILE_COUNT.incrementAndGet();</span>
+        }
+<span class="fc" id="L101">        return fd;</span>
+    }
+
+    public static long ceilPageSize(long size) {
+<span class="fc" id="L105">        return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;</span>
+    }
+
+    public static int close(int fd) {
+        // do not close `stdin` and `stdout`
+<span class="fc bfc" id="L110" title="All 2 branches covered.">        if (fd &gt; 1) {</span>
+<span class="pc bpc" id="L111" title="1 of 2 branches missed.">            assert auditClose(fd);</span>
+<span class="fc" id="L112">            int res = close0(fd);</span>
+<span class="fc bfc" id="L113" title="All 2 branches covered.">            if (res == 0) {</span>
+<span class="fc" id="L114">                OPEN_FILE_COUNT.decrementAndGet();</span>
+            }
+<span class="fc" id="L116">            return res;</span>
+        }
+        // failed to close
+<span class="fc" id="L119">        return -1;</span>
+    }
+
+    public static native int copy(long from, long to);
+
+    public static int copy(LPSZ from, LPSZ to) {
+<span class="fc" id="L125">        return copy(from.address(), to.address());</span>
+    }
+
+    public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
+
+    /**
+     * close(fd) should be used instead of this method in most cases
+     * unless you don't need close sys call to happen.
+     *
+     * @param fd file descriptor
+     */
+    public static void decrementFileCount(int fd) {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        assert auditClose(fd);</span>
+<span class="nc" id="L138">        OPEN_FILE_COUNT.decrementAndGet();</span>
+<span class="nc" id="L139">    }</span>
+
+    public static native boolean exists(int fd);
+
+    public static boolean exists(LPSZ lpsz) {
+<span class="pc bpc" id="L144" title="1 of 4 branches missed.">        return lpsz != null &amp;&amp; exists0(lpsz.address());</span>
+    }
+
+    public static void fadvise(int fd, long offset, long len, int advise) {
+<span class="nc bnc" id="L148" title="All 4 branches missed.">        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {</span>
+<span class="nc" id="L149">            fadvise0(fd, offset, len, advise);</span>
+        }
+<span class="nc" id="L151">    }</span>
+
+    public static native void fadvise0(int fd, long offset, long len, int advise);
+
+    public native static void findClose(long findPtr);
+
+    public static long findFirst(LPSZ lpsz) {
+<span class="fc" id="L158">        return findFirst(lpsz.address());</span>
+    }
+
+    public native static long findName(long findPtr);
+
+    public native static int findNext(long findPtr);
+
+    public native static int findType(long findPtr);
+
+    public static long floorPageSize(long size) {
+<span class="fc" id="L168">        return size - size % PAGE_SIZE;</span>
+    }
+
+    public static native int fsync(int fd);
+
+    public static long getDiskSize(LPSZ path) {
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        if (path != null) {</span>
+<span class="nc" id="L175">            return getDiskSize(path.address());</span>
+        }
+        // current directory
+<span class="nc" id="L178">        return getDiskSize(0);</span>
+    }
+
+    /**
+     * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
+     * can be presented to user even if file system is not supported.
+     *
+     * @param lpszName existing path on the file system. The name of the filesystem is written to this
+     *                 address, therefore name should have at least 128 byte capacity
+     * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
+     * positive number is magic that is not supported.
+     */
+    public static int getFileSystemStatus(LPSZ lpszName) {
+<span class="pc bpc" id="L191" title="1 of 2 branches missed.">        assert lpszName.capacity() &gt; 127;</span>
+<span class="fc" id="L192">        return getFileSystemStatus(lpszName.address());</span>
+    }
+
+    public static long getLastModified(LPSZ lpsz) {
+<span class="fc" id="L196">        return getLastModified(lpsz.address());</span>
+    }
+
+    public static String getOpenFdDebugInfo() {
+<span class="pc bpc" id="L200" title="1 of 2 branches missed.">        if (openFds != null) {</span>
+<span class="fc" id="L201">            return openFds.toString();</span>
+        }
+<span class="nc" id="L203">        return null;</span>
+    }
+
+    public static long getOpenFileCount() {
+<span class="fc" id="L207">        return OPEN_FILE_COUNT.get();</span>
+    }
+
+    public native static int getStdOutFd();
+
+    public static native int hardLink(long lpszSrc, long lpszHardLink);
+
+    public static int hardLink(LPSZ src, LPSZ hardLink) {
+<span class="fc" id="L215">        return hardLink(src.address(), hardLink.address());</span>
+    }
+
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
+<span class="fc bfc" id="L219" title="All 2 branches covered.">        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, null);</span>
+    }
+
+    public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @NotNull StringSink nameSink) {
+<span class="fc bfc" id="L223" title="All 2 branches covered.">        return DT_UNKNOWN != typeDirOrSoftLinkDirNoDots(path, rootLen, pUtf8NameZ, type, nameSink);</span>
+    }
+
+    public static boolean isDots(CharSequence name) {
+<span class="fc bfc" id="L227" title="All 4 branches covered.">        return Chars.equals(name, '.') || Chars.equals(name, &quot;..&quot;);</span>
+    }
+
+    public native static boolean isSoftLink(long lpszPath);
+
+    public static boolean isSoftLink(LPSZ path) {
+<span class="fc" id="L233">        return isSoftLink(path.address());</span>
+    }
+
+    public static long length(LPSZ lpsz) {
+<span class="fc" id="L237">        return length0(lpsz.address());</span>
+    }
+
+    public native static long length(int fd);
+
+    public static native int lock(int fd);
+
+    public static void madvise(long address, long len, int advise) {
+<span class="nc bnc" id="L245" title="All 4 branches missed.">        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {</span>
+<span class="nc" id="L246">            madvise0(address, len, advise);</span>
+        }
+<span class="nc" id="L248">    }</span>
+
+    public static native void madvise0(long address, long len, int advise);
+
+    public static int mkdir(Path path, int mode) {
+<span class="fc" id="L253">        return mkdir(path.address(), mode);</span>
+    }
+
+    public static int mkdirs(Path path, int mode) {
+<span class="fc bfc" id="L257" title="All 2 branches covered.">        for (int i = 0, n = path.length(); i &lt; n; i++) {</span>
+<span class="fc" id="L258">            char c = path.charAt(i);</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">            if (c == Files.SEPARATOR) {</span>
+                // do not attempt to create '/' on linux or 'C:\' on Windows
+<span class="pc bpc" id="L261" title="6 of 10 branches missed.">                if ((i == 0 &amp;&amp; Os.isPosix()) || (i == 2 &amp;&amp; Os.isWindows() &amp;&amp; path.charAt(1) == ':')) {</span>
+<span class="nc" id="L262">                    continue;</span>
+                }
+
+                // replace separator we just found with \0
+                // temporarily truncate path to the directory we need to create
+<span class="fc" id="L267">                path.$at(i);</span>
+<span class="pc bpc" id="L268" title="1 of 4 branches missed.">                if (path.length() &gt; 0 &amp;&amp; !Files.exists(path)) {</span>
+<span class="fc" id="L269">                    int r = Files.mkdir(path, mode);</span>
+<span class="pc bpc" id="L270" title="1 of 2 branches missed.">                    if (r != 0) {</span>
+<span class="nc" id="L271">                        path.put(i, Files.SEPARATOR);</span>
+<span class="nc" id="L272">                        return r;</span>
+                    }
+                }
+<span class="fc" id="L275">                path.put(i, Files.SEPARATOR);</span>
+            }
+        }
+<span class="fc" id="L278">        return 0;</span>
+    }
+
+    public static long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+<span class="fc" id="L282">        long address = mmap0(fd, len, offset, flags, 0);</span>
+<span class="pc bpc" id="L283" title="1 of 2 branches missed.">        if (address != -1) {</span>
+<span class="fc" id="L284">            Unsafe.recordMemAlloc(len, memoryTag);</span>
+        }
+<span class="fc" id="L286">        return address;</span>
+    }
+
+    public static long mremap(int fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+<span class="fc" id="L290">        Unsafe.recordMemAlloc(-previousSize, memoryTag);</span>
+<span class="fc" id="L291">        address = mremap0(fd, address, previousSize, newSize, offset, flags);</span>
+<span class="pc bpc" id="L292" title="1 of 2 branches missed.">        if (address != -1) {</span>
+<span class="fc" id="L293">            Unsafe.recordMemAlloc(newSize, memoryTag);</span>
+        }
+<span class="fc" id="L295">        return address;</span>
+    }
+
+    public static native int msync(long addr, long len, boolean async);
+
+    public static void munmap(long address, long len, int memoryTag) {
+<span class="pc bpc" id="L301" title="1 of 4 branches missed.">        if (address != 0 &amp;&amp; munmap0(address, len) != -1) {</span>
+<span class="fc" id="L302">            Unsafe.recordMemAlloc(-len, memoryTag);</span>
+        }
+<span class="fc" id="L304">    }</span>
+
+    public static native long noop();
+
+    public static boolean notDots(CharSequence value) {
+<span class="fc" id="L309">        final int len = value.length();</span>
+<span class="pc bpc" id="L310" title="1 of 2 branches missed.">        if (len &gt; 2) {</span>
+<span class="fc" id="L311">            return true;</span>
+        }
+<span class="nc bnc" id="L313" title="All 2 branches missed.">        if (value.charAt(0) != '.') {</span>
+<span class="nc" id="L314">            return true;</span>
+        }
+<span class="nc bnc" id="L316" title="All 4 branches missed.">        return len == 2 &amp;&amp; value.charAt(1) != '.';</span>
+    }
+
+    public static boolean notDots(long pUtf8NameZ) {
+<span class="fc" id="L320">        final byte b0 = Unsafe.getUnsafe().getByte(pUtf8NameZ);</span>
+
+<span class="fc bfc" id="L322" title="All 2 branches covered.">        if (b0 != '.') {</span>
+<span class="fc" id="L323">            return true;</span>
+        }
+
+<span class="fc" id="L326">        final byte b1 = Unsafe.getUnsafe().getByte(pUtf8NameZ + 1);</span>
+<span class="pc bpc" id="L327" title="2 of 6 branches missed.">        return b1 != 0 &amp;&amp; (b1 != '.' || Unsafe.getUnsafe().getByte(pUtf8NameZ + 2) != 0);</span>
+    }
+
+    public static int openAppend(LPSZ lpsz) {
+<span class="fc" id="L331">        return bumpFileCount(openAppend(lpsz.address()));</span>
+    }
+
+    public static int openCleanRW(LPSZ lpsz, long size) {
+<span class="fc" id="L335">        return bumpFileCount(openCleanRW(lpsz.address(), size));</span>
+    }
+
+    public native static int openCleanRW(long lpszName, long size);
+
+    public static int openRO(LPSZ lpsz) {
+<span class="fc" id="L341">        return bumpFileCount(openRO(lpsz.address()));</span>
+    }
+
+    public static int openRW(LPSZ lpsz) {
+<span class="fc" id="L345">        return bumpFileCount(openRW(lpsz.address()));</span>
+    }
+
+    public static int openRW(LPSZ lpsz, long opts) {
+<span class="fc" id="L349">        return bumpFileCount(openRWOpts(lpsz.address(), opts));</span>
+    }
+
+    public native static long read(int fd, long address, long len, long offset);
+
+    public native static byte readNonNegativeByte(int fd, long offset);
+
+    public native static int readNonNegativeInt(int fd, long offset);
+
+    public native static long readNonNegativeLong(int fd, long offset);
+
+    public native static short readNonNegativeShort(int fd, long offset);
+
+    public static boolean remove(LPSZ lpsz) {
+<span class="fc" id="L363">        return remove(lpsz.address());</span>
+    }
+
+    public static int rename(LPSZ oldName, LPSZ newName) {
+<span class="fc" id="L367">        return rename(oldName.address(), newName.address());</span>
+    }
+
+    public static int rmdir(Path path) {
+<span class="fc" id="L371">        long p = findFirst(path.address());</span>
+<span class="fc" id="L372">        int len = path.length();</span>
+<span class="fc" id="L373">        int errno = -1;</span>
+<span class="fc bfc" id="L374" title="All 2 branches covered.">        if (p &gt; 0) {</span>
+            try {
+                do {
+<span class="fc" id="L377">                    long lpszName = findName(p);</span>
+<span class="fc" id="L378">                    path.trimTo(len).concat(lpszName).$();</span>
+<span class="fc bfc" id="L379" title="All 2 branches covered.">                    if (findType(p) == DT_DIR) {</span>
+<span class="fc bfc" id="L380" title="All 4 branches covered.">                        if (strcmp(lpszName, &quot;..&quot;) || strcmp(lpszName, &quot;.&quot;)) {</span>
+<span class="fc" id="L381">                            continue;</span>
+                        }
+
+<span class="pc bpc" id="L384" title="1 of 2 branches missed.">                        if ((errno = rmdir(path)) == 0) {</span>
+<span class="fc" id="L385">                            continue;</span>
+                        }
+
+                    } else {
+<span class="pc bpc" id="L389" title="1 of 2 branches missed.">                        if ((remove(path.address()))) {</span>
+<span class="fc" id="L390">                            continue;</span>
+                        }
+<span class="nc" id="L392">                        errno = Os.errno();</span>
+                    }
+<span class="nc" id="L394">                    return errno;</span>
+<span class="fc bfc" id="L395" title="All 2 branches covered.">                } while (findNext(p) &gt; 0);</span>
+            } finally {
+<span class="fc" id="L397">                findClose(p);</span>
+            }
+<span class="pc bpc" id="L399" title="1 of 2 branches missed.">            if (rmdir(path.trimTo(len).$().address())) {</span>
+<span class="fc" id="L400">                return 0;</span>
+            }
+<span class="nc" id="L402">            return Os.errno();</span>
+        }
+
+<span class="fc" id="L405">        return errno;</span>
+    }
+
+    public static boolean setLastModified(LPSZ lpsz, long millis) {
+<span class="fc" id="L409">        return setLastModified(lpsz.address(), millis);</span>
+    }
+
+    public static native int softLink(long lpszSrc, long lpszSoftLink);
+
+    public static int softLink(LPSZ src, LPSZ softLink) {
+<span class="fc" id="L415">        return softLink(src.address(), softLink.address());</span>
+    }
+
+    public static native int sync();
+
+    public static boolean touch(LPSZ lpsz) {
+<span class="fc" id="L421">        int fd = openRW(lpsz);</span>
+<span class="pc bpc" id="L422" title="1 of 2 branches missed.">        boolean result = fd &gt; 0;</span>
+<span class="pc bpc" id="L423" title="1 of 2 branches missed.">        if (result) {</span>
+<span class="fc" id="L424">            close(fd);</span>
+        }
+<span class="fc" id="L426">        return result;</span>
+    }
+
+    public native static boolean truncate(int fd, long size);
+
+    public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable StringSink nameSink) {
+<span class="fc bfc" id="L432" title="All 2 branches covered.">        if (!notDots(pUtf8NameZ)) {</span>
+<span class="fc" id="L433">            return DT_UNKNOWN;</span>
+        }
+
+<span class="fc bfc" id="L436" title="All 2 branches covered.">        if (type == DT_DIR) {</span>
+<span class="fc bfc" id="L437" title="All 2 branches covered.">            if (nameSink != null) {</span>
+<span class="fc" id="L438">                nameSink.clear();</span>
+<span class="fc" id="L439">                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);</span>
+            }
+<span class="fc" id="L441">            path.trimTo(rootLen).concat(pUtf8NameZ).$();</span>
+<span class="fc" id="L442">            return DT_DIR;</span>
+        }
+
+<span class="fc bfc" id="L445" title="All 2 branches covered.">        if (type == DT_LNK) {</span>
+<span class="pc bpc" id="L446" title="1 of 2 branches missed.">            if (nameSink != null) {</span>
+<span class="fc" id="L447">                nameSink.clear();</span>
+<span class="fc" id="L448">                Chars.utf8DecodeZ(pUtf8NameZ, nameSink);</span>
+            }
+<span class="fc" id="L450">            path.trimTo(rootLen).concat(pUtf8NameZ).$();</span>
+<span class="pc bpc" id="L451" title="1 of 2 branches missed.">            if (isDir(path.address())) {</span>
+<span class="fc" id="L452">                return DT_LNK;</span>
+            }
+        }
+
+<span class="fc" id="L456">        return DT_UNKNOWN;</span>
+    }
+
+    public native static int unlink(long lpszSoftLink);
+
+    public static int unlink(LPSZ softLink) {
+<span class="fc" id="L462">        return unlink(softLink.address());</span>
+    }
+
+    public native static long write(int fd, long address, long len, long offset);
+
+    private native static int close0(int fd);
+
+    private static native boolean exists0(long lpsz);
+
+    private static native long getDiskSize(long lpszPath);
+
+    private static native int getFileSystemStatus(long lpszName);
+
+    private native static long getLastModified(long lpszName);
+
+    private native static long getPageSize();
+
+    private native static int getPosixFadvRandom();
+
+    private native static int getPosixFadvSequential();
+
+    private native static int getPosixMadvRandom();
+
+    private native static int getPosixMadvSequential();
+
+    private native static boolean isDir(long pUtf8PathZ);
+
+    private native static long length0(long lpszName);
+
+    private native static int mkdir(long lpszPath, int mode);
+
+    private static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
+
+    private static native long mremap0(int fd, long address, long previousSize, long newSize, long offset, int flags);
+
+    private static native int munmap0(long address, long len);
+
+    private native static int openAppend(long lpszName);
+
+    private native static int openRO(long lpszName);
+
+    private native static int openRW(long lpszName);
+
+    private native static int openRWOpts(long lpszName, long opts);
+
+    private native static boolean remove(long lpsz);
+
+    private static native int rename(long lpszOld, long lpszNew);
+
+    private native static boolean rmdir(long lpsz);
+
+    private native static boolean setLastModified(long lpszName, long millis);
+
+    //caller must call findClose to free allocated struct
+    native static long findFirst(long lpszName);
+
+    static boolean strcmp(long lpsz, CharSequence s) {
+<span class="fc" id="L519">        int len = s.length();</span>
+<span class="fc bfc" id="L520" title="All 2 branches covered.">        for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L521">            byte b = Unsafe.getUnsafe().getByte(lpsz + i);</span>
+<span class="fc bfc" id="L522" title="All 4 branches covered.">            if (b == 0 || b != (byte) s.charAt(i)) {</span>
+<span class="fc" id="L523">                return false;</span>
+            }
+        }
+<span class="pc bpc" id="L526" title="1 of 2 branches missed.">        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;</span>
+    }
+
+    static {
+<span class="fc" id="L530">        Os.init();</span>
+<span class="fc" id="L531">        UTF_8 = StandardCharsets.UTF_8;</span>
+<span class="fc" id="L532">        PAGE_SIZE = getPageSize();</span>
+<span class="fc" id="L533">        SEPARATOR = File.separatorChar;</span>
+<span class="pc bpc" id="L534" title="2 of 4 branches missed.">        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {</span>
+<span class="nc" id="L535">            POSIX_FADV_RANDOM = getPosixFadvRandom();</span>
+<span class="nc" id="L536">            POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();</span>
+<span class="nc" id="L537">            POSIX_MADV_RANDOM = getPosixMadvRandom();</span>
+<span class="nc" id="L538">            POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();</span>
+        } else {
+<span class="fc" id="L540">            POSIX_FADV_SEQUENTIAL = -1;</span>
+<span class="fc" id="L541">            POSIX_FADV_RANDOM = -1;</span>
+<span class="fc" id="L542">            POSIX_MADV_SEQUENTIAL = -1;</span>
+<span class="fc" id="L543">            POSIX_MADV_RANDOM = -1;</span>
+        }
+<span class="fc" id="L545">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

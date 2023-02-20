@@ -1,0 +1,398 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AsyncJitFilteredRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">AsyncJitFilteredRecordCursorFactory.java</span></div><h1>AsyncJitFilteredRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameReducer;
+import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.jit.CompiledFilter;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+
+public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
+
+<span class="nc" id="L52">    private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;</span>
+
+    private final RecordCursorFactory base;
+<span class="nc" id="L55">    private final SCSequence collectSubSeq = new SCSequence();</span>
+    private final AsyncFilteredRecordCursor cursor;
+    private final AsyncJitFilterAtom filterAtom;
+    private final PageFrameSequence&lt;AsyncJitFilterAtom&gt; frameSequence;
+    private final Function limitLoFunction;
+    private final int limitLoPos;
+    private final int maxNegativeLimit;
+    private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
+    private final int workerCount;
+    private DirectLongList negativeLimitRows;
+
+    public AsyncJitFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull MessageBus messageBus,
+            @NotNull RecordCursorFactory base,
+            @NotNull ObjList&lt;Function&gt; bindVarFunctions,
+            @NotNull Function filter,
+            @Nullable ObjList&lt;Function&gt; perWorkerFilters,
+            @NotNull CompiledFilter compiledFilter,
+            @NotNull @Transient WeakClosableObjectPool&lt;PageFrameReduceTask&gt; localTaskPool,
+            @Nullable Function limitLoFunction,
+            int limitLoPos,
+            boolean preTouchColumns,
+            int workerCount
+    ) {
+<span class="nc" id="L80">        super(base.getMetadata());</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        assert !(base instanceof FilteredRecordCursorFactory);</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        assert !(base instanceof AsyncJitFilteredRecordCursorFactory);</span>
+<span class="nc" id="L83">        this.base = base;</span>
+<span class="nc" id="L84">        this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());</span>
+<span class="nc" id="L85">        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();</span>
+<span class="nc" id="L86">        MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),</span>
+<span class="nc" id="L87">                configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);</span>
+<span class="nc" id="L88">        IntList preTouchColumnTypes = null;</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (preTouchColumns) {</span>
+<span class="nc" id="L90">            preTouchColumnTypes = new IntList();</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">            for (int i = 0, n = base.getMetadata().getColumnCount(); i &lt; n; i++) {</span>
+<span class="nc" id="L92">                int columnType = base.getMetadata().getColumnType(i);</span>
+<span class="nc" id="L93">                preTouchColumnTypes.add(columnType);</span>
+            }
+        }
+<span class="nc" id="L96">        this.filterAtom = new AsyncJitFilterAtom(</span>
+                configuration,
+                filter,
+                perWorkerFilters,
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                preTouchColumnTypes
+        );
+<span class="nc" id="L105">        this.frameSequence = new PageFrameSequence&lt;&gt;(configuration, messageBus, REDUCER, localTaskPool);</span>
+<span class="nc" id="L106">        this.limitLoFunction = limitLoFunction;</span>
+<span class="nc" id="L107">        this.limitLoPos = limitLoPos;</span>
+<span class="nc" id="L108">        this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();</span>
+<span class="nc" id="L109">        this.workerCount = workerCount;</span>
+<span class="nc" id="L110">    }</span>
+
+    @Override
+    public PageFrameSequence&lt;AsyncJitFilterAtom&gt; execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+<span class="nc" id="L114">        return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);</span>
+    }
+
+    @Override
+    public boolean followedLimitAdvice() {
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        return limitLoFunction != null;</span>
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+<span class="nc" id="L124">        return base;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        long rowsRemaining;
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;</span>
+        final int order;
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if (limitLoFunction != null) {</span>
+<span class="nc" id="L133">            limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);</span>
+<span class="nc" id="L134">            rowsRemaining = limitLoFunction.getLong(null);</span>
+            // on negative limit we will be looking for positive number of rows
+            // while scanning table from the highest timestamp to the lowest
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (rowsRemaining &gt; -1) {</span>
+<span class="nc" id="L138">                order = baseOrder;</span>
+            } else {
+<span class="nc" id="L140">                order = reverse(baseOrder);</span>
+<span class="nc" id="L141">                rowsRemaining = -rowsRemaining;</span>
+            }
+        } else {
+<span class="nc" id="L144">            rowsRemaining = Long.MAX_VALUE;</span>
+<span class="nc" id="L145">            order = baseOrder;</span>
+        }
+
+<span class="nc bnc" id="L148" title="All 4 branches missed.">        if (order == ORDER_DESC &amp;&amp; rowsRemaining != Long.MAX_VALUE) {</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if (rowsRemaining &gt; maxNegativeLimit) {</span>
+<span class="nc" id="L150">                throw SqlException.position(limitLoPos).put(&quot;absolute LIMIT value is too large, maximum allowed value: &quot;).put(maxNegativeLimit);</span>
+            }
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            if (negativeLimitRows == null) {</span>
+<span class="nc" id="L153">                negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);</span>
+            }
+<span class="nc" id="L155">            negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);</span>
+<span class="nc" id="L156">            return negativeLimitCursor;</span>
+        }
+
+<span class="nc" id="L159">        cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);</span>
+<span class="nc" id="L160">        return cursor;</span>
+    }
+
+    public boolean hasDescendingOrder() {
+<span class="nc" id="L164">        return base.hasDescendingOrder();</span>
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="nc" id="L169">        return true;</span>
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(TableToken tableToken) {
+<span class="nc" id="L174">        return base.supportsUpdateRowId(tableToken);</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="nc" id="L179">        sink.type(&quot;Async JIT Filter&quot;);</span>
+        //calc order and limit if possible 
+        long rowsRemaining;
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        int baseOrder = base.hasDescendingOrder() ? ORDER_DESC : ORDER_ASC;</span>
+        int order;
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (limitLoFunction != null) {</span>
+            try {
+<span class="nc" id="L186">                limitLoFunction.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());</span>
+<span class="nc" id="L187">                rowsRemaining = limitLoFunction.getLong(null);</span>
+<span class="nc" id="L188">            } catch (Exception e) {</span>
+<span class="nc" id="L189">                rowsRemaining = Long.MAX_VALUE;</span>
+<span class="nc" id="L190">            }</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">            if (rowsRemaining &gt; -1) {</span>
+<span class="nc" id="L192">                order = baseOrder;</span>
+            } else {
+<span class="nc" id="L194">                order = reverse(baseOrder);</span>
+<span class="nc" id="L195">                rowsRemaining = -rowsRemaining;</span>
+            }
+        } else {
+<span class="nc" id="L198">            rowsRemaining = Long.MAX_VALUE;</span>
+<span class="nc" id="L199">            order = baseOrder;</span>
+        }
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (rowsRemaining != Long.MAX_VALUE) {</span>
+<span class="nc" id="L202">            sink.attr(&quot;limit&quot;).val(rowsRemaining);</span>
+        }
+<span class="nc" id="L204">        sink.attr(&quot;filter&quot;).val(filterAtom);</span>
+<span class="nc" id="L205">        sink.attr(&quot;workers&quot;).val(workerCount);</span>
+<span class="nc" id="L206">        sink.child(base, order);</span>
+<span class="nc" id="L207">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="nc" id="L211">        return true;</span>
+    }
+
+    private static void filter(
+            int workerId,
+            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence&lt;?&gt; stealingFrameSequence
+    ) {
+<span class="nc" id="L221">        final DirectLongList rows = task.getRows();</span>
+<span class="nc" id="L222">        final DirectLongList columns = task.getColumns();</span>
+<span class="nc" id="L223">        final long frameRowCount = task.getFrameRowCount();</span>
+<span class="nc" id="L224">        final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();</span>
+<span class="nc" id="L225">        final PageAddressCache pageAddressCache = task.getPageAddressCache();</span>
+
+<span class="nc" id="L227">        rows.clear();</span>
+
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (pageAddressCache.hasColumnTops(task.getFrameIndex())) {</span>
+            // Use Java-based filter in case of a page frame with column tops.
+<span class="nc bnc" id="L231" title="All 4 branches missed.">            final boolean owner = stealingFrameSequence != null &amp;&amp; stealingFrameSequence == task.getFrameSequence();</span>
+<span class="nc" id="L232">            final int filterId = atom.acquireFilter(workerId, owner, circuitBreaker);</span>
+<span class="nc" id="L233">            final Function filter = atom.getFilter(filterId);</span>
+            try {
+<span class="nc bnc" id="L235" title="All 2 branches missed.">                for (long r = 0; r &lt; frameRowCount; r++) {</span>
+<span class="nc" id="L236">                    record.setRowIndex(r);</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                    if (filter.getBool(record)) {</span>
+<span class="nc" id="L238">                        rows.add(r);</span>
+                    }
+                }
+<span class="nc" id="L241">                return;</span>
+            } finally {
+<span class="nc" id="L243">                atom.releaseFilter(filterId);</span>
+            }
+        }
+
+        // Use JIT-compiled filter.
+
+<span class="nc" id="L249">        final long columnCount = pageAddressCache.getColumnCount();</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        if (columns.getCapacity() &lt; columnCount) {</span>
+<span class="nc" id="L251">            columns.setCapacity(columnCount);</span>
+        }
+<span class="nc" id="L253">        columns.clear();</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        for (int columnIndex = 0; columnIndex &lt; columnCount; columnIndex++) {</span>
+<span class="nc" id="L255">            columns.add(pageAddressCache.getPageAddress(task.getFrameIndex(), columnIndex));</span>
+        }
+
+<span class="nc" id="L258">        final long rowCount = task.getFrameRowCount();</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        if (rows.getCapacity() &lt; rowCount) {</span>
+<span class="nc" id="L260">            rows.setCapacity(rowCount);</span>
+        }
+
+<span class="nc" id="L263">        long hi = atom.compiledFilter.call(</span>
+<span class="nc" id="L264">                columns.getAddress(),</span>
+<span class="nc" id="L265">                columns.size(),</span>
+<span class="nc" id="L266">                atom.bindVarMemory.getAddress(),</span>
+<span class="nc" id="L267">                atom.bindVarFunctions.size(),</span>
+<span class="nc" id="L268">                rows.getAddress(),</span>
+                rowCount,
+                0
+        );
+<span class="nc" id="L272">        rows.setPos(hi);</span>
+
+        // Pre-touch fixed-size columns, if asked.
+<span class="nc" id="L275">        atom.preTouchColumns(record, rows);</span>
+<span class="nc" id="L276">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="nc" id="L280">        Misc.free(base);</span>
+<span class="nc" id="L281">        Misc.free(filterAtom);</span>
+<span class="nc" id="L282">        Misc.free(frameSequence);</span>
+<span class="nc" id="L283">        Misc.free(negativeLimitRows);</span>
+<span class="nc" id="L284">        cursor.freeRecords();</span>
+<span class="nc" id="L285">        negativeLimitCursor.freeRecords();</span>
+<span class="nc" id="L286">    }</span>
+
+<span class="nc" id="L288">    private static class AsyncJitFilterAtom extends AsyncFilterAtom {</span>
+
+        final ObjList&lt;Function&gt; bindVarFunctions;
+        final MemoryCARW bindVarMemory;
+        final CompiledFilter compiledFilter;
+
+        public AsyncJitFilterAtom(
+                CairoConfiguration configuration,
+                Function filter,
+                ObjList&lt;Function&gt; perWorkerFilters,
+                CompiledFilter compiledFilter,
+                MemoryCARW bindVarMemory,
+                ObjList&lt;Function&gt; bindVarFunctions,
+                @Nullable IntList preTouchColumnTypes
+        ) {
+<span class="nc" id="L303">            super(configuration, filter, perWorkerFilters, preTouchColumnTypes);</span>
+<span class="nc" id="L304">            this.compiledFilter = compiledFilter;</span>
+<span class="nc" id="L305">            this.bindVarMemory = bindVarMemory;</span>
+<span class="nc" id="L306">            this.bindVarFunctions = bindVarFunctions;</span>
+<span class="nc" id="L307">        }</span>
+
+        @Override
+        public void close() {
+<span class="nc" id="L311">            super.close();</span>
+<span class="nc" id="L312">            Misc.free(compiledFilter);</span>
+<span class="nc" id="L313">            Misc.free(bindVarMemory);</span>
+<span class="nc" id="L314">            Misc.freeObjList(bindVarFunctions);</span>
+<span class="nc" id="L315">        }</span>
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="nc" id="L319">            super.init(symbolTableSource, executionContext);</span>
+<span class="nc" id="L320">            Function.init(bindVarFunctions, symbolTableSource, executionContext);</span>
+<span class="nc" id="L321">            prepareBindVarMemory(symbolTableSource, executionContext);</span>
+<span class="nc" id="L322">        }</span>
+
+        private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            //don't trigger memory allocation if there are no variables 
+<span class="nc bnc" id="L326" title="All 2 branches missed.">            if (bindVarFunctions.size() &gt; 0) {</span>
+<span class="nc" id="L327">                bindVarMemory.truncate();</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">                for (int i = 0, n = bindVarFunctions.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L329">                    Function function = bindVarFunctions.getQuick(i);</span>
+<span class="nc" id="L330">                    writeBindVarFunction(function, symbolTableSource, executionContext);</span>
+                }
+            }
+<span class="nc" id="L333">        }</span>
+
+        private void writeBindVarFunction(
+                Function function,
+                SymbolTableSource symbolTableSource,
+                SqlExecutionContext executionContext
+        ) throws SqlException {
+<span class="nc" id="L340">            final int columnType = function.getType();</span>
+<span class="nc" id="L341">            final int columnTypeTag = ColumnType.tagOf(columnType);</span>
+<span class="nc bnc" id="L342" title="All 16 branches missed.">            switch (columnTypeTag) {</span>
+                case ColumnType.BOOLEAN:
+<span class="nc bnc" id="L344" title="All 2 branches missed.">                    bindVarMemory.putLong(function.getBool(null) ? 1 : 0);</span>
+<span class="nc" id="L345">                    return;</span>
+                case ColumnType.BYTE:
+<span class="nc" id="L347">                    bindVarMemory.putLong(function.getByte(null));</span>
+<span class="nc" id="L348">                    return;</span>
+                case ColumnType.GEOBYTE:
+<span class="nc" id="L350">                    bindVarMemory.putLong(function.getGeoByte(null));</span>
+<span class="nc" id="L351">                    return;</span>
+                case ColumnType.SHORT:
+<span class="nc" id="L353">                    bindVarMemory.putLong(function.getShort(null));</span>
+<span class="nc" id="L354">                    return;</span>
+                case ColumnType.GEOSHORT:
+<span class="nc" id="L356">                    bindVarMemory.putLong(function.getGeoShort(null));</span>
+<span class="nc" id="L357">                    return;</span>
+                case ColumnType.CHAR:
+<span class="nc" id="L359">                    bindVarMemory.putLong(function.getChar(null));</span>
+<span class="nc" id="L360">                    return;</span>
+                case ColumnType.INT:
+<span class="nc" id="L362">                    bindVarMemory.putLong(function.getInt(null));</span>
+<span class="nc" id="L363">                    return;</span>
+                case ColumnType.GEOINT:
+<span class="nc" id="L365">                    bindVarMemory.putLong(function.getGeoInt(null));</span>
+<span class="nc" id="L366">                    return;</span>
+                case ColumnType.SYMBOL:
+<span class="nc bnc" id="L368" title="All 2 branches missed.">                    assert function instanceof CompiledFilterSymbolBindVariable;</span>
+<span class="nc" id="L369">                    function.init(symbolTableSource, executionContext);</span>
+<span class="nc" id="L370">                    bindVarMemory.putLong(function.getInt(null));</span>
+<span class="nc" id="L371">                    return;</span>
+                case ColumnType.FLOAT:
+                    // compiled filter function will read only the first word
+<span class="nc" id="L374">                    bindVarMemory.putFloat(function.getFloat(null));</span>
+<span class="nc" id="L375">                    bindVarMemory.putFloat(Float.NaN);</span>
+<span class="nc" id="L376">                    return;</span>
+                case ColumnType.LONG:
+<span class="nc" id="L378">                    bindVarMemory.putLong(function.getLong(null));</span>
+<span class="nc" id="L379">                    return;</span>
+                case ColumnType.GEOLONG:
+<span class="nc" id="L381">                    bindVarMemory.putLong(function.getGeoLong(null));</span>
+<span class="nc" id="L382">                    return;</span>
+                case ColumnType.DATE:
+<span class="nc" id="L384">                    bindVarMemory.putLong(function.getDate(null));</span>
+<span class="nc" id="L385">                    return;</span>
+                case ColumnType.TIMESTAMP:
+<span class="nc" id="L387">                    bindVarMemory.putLong(function.getTimestamp(null));</span>
+<span class="nc" id="L388">                    return;</span>
+                case ColumnType.DOUBLE:
+<span class="nc" id="L390">                    bindVarMemory.putDouble(function.getDouble(null));</span>
+<span class="nc" id="L391">                    return;</span>
+                default:
+<span class="nc" id="L393">                    throw SqlException.position(0).put(&quot;unsupported bind variable type: &quot;).put(ColumnType.nameOf(columnTypeTag));</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Mig609.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.mig</a> &gt; <span class="el_source">Mig609.java</span></div><h1>Mig609.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.mig;
+
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.str.Path;
+
+import static io.questdb.cairo.TableUtils.*;
+
+<span class="nc" id="L38">final class Mig609 {</span>
+<span class="fc" id="L39">    private static final Log LOG = LogFactory.getLog(EngineMigration.class);</span>
+    private static final long TX_OFFSET_FIXED_ROW_COUNT_505 = 16;
+    private static final long TX_OFFSET_MAP_WRITER_COUNT_608 = 128;
+
+    static void migrate(MigrationContext migrationContext) {
+<span class="fc" id="L44">        final FilesFacade ff = migrationContext.getFf();</span>
+<span class="fc" id="L45">        final Path path = migrationContext.getTablePath();</span>
+<span class="fc" id="L46">        final int plen = path.length();</span>
+
+<span class="fc" id="L48">        path.trimTo(plen).concat(META_FILE_NAME).$();</span>
+<span class="fc" id="L49">        try (MemoryMARW metaMem = migrationContext.getRwMemory()) {</span>
+<span class="fc" id="L50">            metaMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);</span>
+
+            // we require partition by value to avoid processing non-partitioned tables
+<span class="fc" id="L53">            final int partitionBy = metaMem.getInt(4);</span>
+
+<span class="fc" id="L55">            try (MemoryMARW txMem = new MemoryCMARWImpl(</span>
+                    ff,
+<span class="fc" id="L57">                    path.trimTo(plen).concat(TXN_FILE_NAME).$(),</span>
+<span class="fc" id="L58">                    ff.getPageSize(),</span>
+<span class="fc" id="L59">                    ff.length(path),</span>
+                    MemoryTag.NATIVE_MIG_MMAP,
+<span class="fc" id="L61">                    migrationContext.getConfiguration().getWriterFileOpenOpts()</span>
+            )
+            ) {
+                // this is a variable length file; we need to count of symbol maps before we get to the partition
+                // table data
+<span class="fc" id="L66">                final int symbolMapCount = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT_608);</span>
+<span class="fc" id="L67">                final long partitionCountOffset = TX_OFFSET_MAP_WRITER_COUNT_608 + 4 + symbolMapCount * 8L;</span>
+
+                // walk only non-active partition to extract sizes
+<span class="fc" id="L70">                final int partitionCount = txMem.getInt(partitionCountOffset) / Long.BYTES / LONGS_PER_TX_ATTACHED_PARTITION - 1;</span>
+
+
+<span class="fc bfc" id="L73" title="All 2 branches covered.">                if (PartitionBy.isPartitioned(partitionBy)) {</span>
+<span class="fc" id="L74">                    long calculatedFixedRowCount = 0;</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">                    for (int partitionIndex = 0; partitionIndex &lt; partitionCount; partitionIndex++) {</span>
+<span class="fc" id="L76">                        final long partitionDataOffset = partitionCountOffset + Integer.BYTES + partitionIndex * 8L * LONGS_PER_TX_ATTACHED_PARTITION;</span>
+                        // the row count may not be stored in _txn file for the last partition
+                        // we need to use transient row count instead
+<span class="fc" id="L79">                        calculatedFixedRowCount += txMem.getLong(partitionDataOffset + Long.BYTES);</span>
+                    }
+<span class="fc" id="L81">                    long currentFixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT_505);</span>
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">                    if (currentFixedRowCount != calculatedFixedRowCount) {</span>
+<span class="nc" id="L83">                        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT_505, calculatedFixedRowCount);</span>
+<span class="nc" id="L84">                        LOG.info()</span>
+<span class="nc" id="L85">                                .$(&quot;fixed row count is out [table=&quot;).$(path.trimTo(plen).$())</span>
+<span class="nc" id="L86">                                .$(&quot;, currentFixedRowCount=&quot;).$(currentFixedRowCount)</span>
+<span class="nc" id="L87">                                .$(&quot;, calculatedFixedRowCount=&quot;).$(calculatedFixedRowCount)</span>
+<span class="nc" id="L88">                                .I$();</span>
+                    }
+                }
+            }
+        }
+<span class="fc" id="L93">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

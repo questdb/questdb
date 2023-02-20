@@ -1,0 +1,646 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TextQueryProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.http.processors</a> &gt; <span class="el_source">TextQueryProcessor.java</span></div><h1>TextQueryProcessor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http.processors;
+
+import io.questdb.Metrics;
+import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.text.TextUtil;
+import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.griffin.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
+import io.questdb.network.*;
+import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+
+public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
+
+<span class="fc" id="L52">    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);</span>
+    // Factory cache is thread local due to possibility of factory being
+    // closed by another thread. Peer disconnect is a typical example of this.
+    // Being asynchronous we may need to be able to return factory to the cache
+    // by the same thread that executes the dispatcher.
+<span class="fc" id="L57">    private static final LocalValue&lt;TextQueryProcessorState&gt; LV = new LocalValue&lt;&gt;();</span>
+    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final MillisecondClock clock;
+    private final SqlCompiler compiler;
+    private final JsonQueryProcessorConfiguration configuration;
+    private final int doubleScale;
+    private final int floatScale;
+    private final Metrics metrics;
+    private final SqlExecutionContextImpl sqlExecutionContext;
+
+    @TestOnly
+    public TextQueryProcessor(
+            JsonQueryProcessorConfiguration configuration,
+            CairoEngine engine,
+            int workerCount
+    ) {
+<span class="fc" id="L73">        this(configuration, engine, workerCount, workerCount, null, null);</span>
+<span class="fc" id="L74">    }</span>
+
+    public TextQueryProcessor(
+            JsonQueryProcessorConfiguration configuration,
+            CairoEngine engine,
+            int workerCount,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent
+<span class="fc" id="L83">    ) {</span>
+<span class="fc" id="L84">        this.configuration = configuration;</span>
+<span class="fc" id="L85">        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);</span>
+<span class="fc" id="L86">        this.floatScale = configuration.getFloatScale();</span>
+<span class="fc" id="L87">        this.clock = configuration.getClock();</span>
+<span class="fc" id="L88">        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);</span>
+<span class="fc" id="L89">        this.doubleScale = configuration.getDoubleScale();</span>
+<span class="fc" id="L90">        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);</span>
+<span class="fc" id="L91">        this.metrics = engine.getMetrics();</span>
+<span class="fc" id="L92">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L96">        Misc.free(compiler);</span>
+<span class="fc" id="L97">        Misc.free(circuitBreaker);</span>
+<span class="fc" id="L98">    }</span>
+
+    public void execute(
+            HttpConnectionContext context,
+            TextQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        try {
+<span class="fc" id="L105">            boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());</span>
+
+<span class="fc" id="L107">            circuitBreaker.resetTimer();</span>
+<span class="fc" id="L108">            state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);</span>
+<span class="fc" id="L109">            state.setQueryCacheable(true);</span>
+<span class="fc" id="L110">            sqlExecutionContext.with(</span>
+<span class="fc" id="L111">                    context.getCairoSecurityContext(),</span>
+                    null,
+                    null,
+<span class="fc" id="L114">                    context.getFd(),</span>
+<span class="fc" id="L115">                    circuitBreaker.of(context.getFd())</span>
+            );
+<span class="fc bfc" id="L117" title="All 2 branches covered.">            if (state.recordCursorFactory == null) {</span>
+<span class="fc" id="L118">                final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);</span>
+<span class="fc bfc" id="L119" title="All 2 branches covered.">                if (cc.getType() == CompiledQuery.SELECT) {</span>
+<span class="fc" id="L120">                    state.recordCursorFactory = cc.getRecordCursorFactory();</span>
+<span class="pc bpc" id="L121" title="1 of 2 branches missed.">                } else if (isExpRequest) {</span>
+<span class="fc" id="L122">                    throw SqlException.$(0, &quot;/exp endpoint only accepts SELECT&quot;);</span>
+                }
+<span class="fc" id="L124">                info(state).$(&quot;execute-new [q=`&quot;).utf8(state.query)</span>
+<span class="fc" id="L125">                        .$(&quot;`, skip: &quot;).$(state.skip)</span>
+<span class="fc" id="L126">                        .$(&quot;, stop: &quot;).$(state.stop)</span>
+<span class="fc" id="L127">                        .I$();</span>
+<span class="fc" id="L128">                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);</span>
+<span class="fc" id="L129">            } else {</span>
+<span class="fc" id="L130">                info(state).$(&quot;execute-cached [q=`&quot;).utf8(state.query)</span>
+<span class="fc" id="L131">                        .$(&quot;`, skip: &quot;).$(state.skip)</span>
+<span class="fc" id="L132">                        .$(&quot;, stop: &quot;).$(state.stop)</span>
+<span class="fc" id="L133">                        .I$();</span>
+<span class="fc" id="L134">                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);</span>
+            }
+
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">            if (state.recordCursorFactory != null) {</span>
+                try {
+<span class="fc" id="L139">                    boolean runQuery = true;</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">                    for (int retries = 0; runQuery; retries++) {</span>
+                        try {
+<span class="fc" id="L142">                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);</span>
+<span class="fc" id="L143">                            runQuery = false;</span>
+<span class="fc" id="L144">                        } catch (TableReferenceOutOfDateException e) {</span>
+<span class="pc bpc" id="L145" title="1 of 2 branches missed.">                            if (retries == TableReferenceOutOfDateException.MAX_RETRY_ATTEMPS) {</span>
+<span class="nc" id="L146">                                throw e;</span>
+                            }
+<span class="fc" id="L148">                            info(state).$(e.getFlyweightMessage()).$();</span>
+<span class="fc" id="L149">                            state.recordCursorFactory = Misc.free(state.recordCursorFactory);</span>
+<span class="fc" id="L150">                            final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);</span>
+<span class="pc bpc" id="L151" title="3 of 4 branches missed.">                            if (cc.getType() != CompiledQuery.SELECT &amp;&amp; isExpRequest) {</span>
+<span class="nc" id="L152">                                throw SqlException.$(0, &quot;/exp endpoint only accepts SELECT&quot;);</span>
+                            }
+
+<span class="fc" id="L155">                            state.recordCursorFactory = cc.getRecordCursorFactory();</span>
+<span class="fc" id="L156">                        }</span>
+                    }
+<span class="fc" id="L158">                    state.metadata = state.recordCursorFactory.getMetadata();</span>
+<span class="fc" id="L159">                    header(context.getChunkedResponseSocket(), state, 200);</span>
+<span class="fc" id="L160">                    doResumeSend(context);</span>
+<span class="fc" id="L161">                } catch (CairoException e) {</span>
+<span class="fc" id="L162">                    state.setQueryCacheable(e.isCacheable());</span>
+<span class="nc" id="L163">                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);</span>
+<span class="nc" id="L164">                } catch (CairoError e) {</span>
+<span class="nc" id="L165">                    internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);</span>
+<span class="pc" id="L166">                }</span>
+            } else {
+<span class="nc" id="L168">                headerNoContentDisposition(context.getChunkedResponseSocket());</span>
+<span class="nc" id="L169">                sendConfirmation(context.getChunkedResponseSocket());</span>
+<span class="nc" id="L170">                readyForNextRequest(context);</span>
+            }
+<span class="fc" id="L172">        } catch (SqlException | ImplicitCastException e) {</span>
+<span class="fc" id="L173">            syntaxError(context.getChunkedResponseSocket(), state, e);</span>
+<span class="fc" id="L174">            readyForNextRequest(context);</span>
+<span class="nc" id="L175">        } catch (CairoException | CairoError e) {</span>
+<span class="nc" id="L176">            internalError(context.getChunkedResponseSocket(), context.getLastRequestBytesSent(), e, state);</span>
+<span class="nc" id="L177">            readyForNextRequest(context);</span>
+<span class="fc" id="L178">        }</span>
+<span class="fc" id="L179">    }</span>
+
+    @Override
+    public void onRequestComplete(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+<span class="fc" id="L185">        TextQueryProcessorState state = LV.get(context);</span>
+<span class="fc bfc" id="L186" title="All 2 branches covered.">        if (state == null) {</span>
+<span class="fc" id="L187">            LV.set(context, state = new TextQueryProcessorState(context));</span>
+        }
+        // new request clears random
+<span class="fc" id="L190">        state.rnd = null;</span>
+
+<span class="fc" id="L192">        HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();</span>
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">        if (parseUrl(socket, context.getRequestHeader(), state)) {</span>
+<span class="fc" id="L194">            execute(context, state);</span>
+        } else {
+<span class="nc" id="L196">            readyForNextRequest(context);</span>
+        }
+<span class="fc" id="L198">    }</span>
+
+    @Override
+    public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
+<span class="fc" id="L202">        TextQueryProcessorState state = LV.get(context);</span>
+<span class="pc bpc" id="L203" title="1 of 2 branches missed.">        if (state != null) {</span>
+<span class="fc" id="L204">            state.pausedQuery = pausedQuery;</span>
+<span class="fc" id="L205">            state.rnd = sqlExecutionContext.getRandom();</span>
+        }
+<span class="fc" id="L207">    }</span>
+
+    @Override
+    public void resumeSend(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+        try {
+<span class="fc" id="L214">            doResumeSend(context);</span>
+<span class="fc" id="L215">        } catch (CairoError | CairoException e) {</span>
+            // this is something we didn't expect
+            // log the exception and disconnect
+<span class="fc" id="L218">            TextQueryProcessorState state = LV.get(context);</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">            if (state != null) {</span>
+<span class="fc" id="L220">                logInternalError(e, state);</span>
+            }
+<span class="fc" id="L222">            throw ServerDisconnectException.INSTANCE;</span>
+<span class="fc" id="L223">        }</span>
+<span class="fc" id="L224">    }</span>
+
+    private static boolean isExpUrl(CharSequence tok) {
+<span class="pc bpc" id="L227" title="1 of 2 branches missed.">        if (tok.length() != 4) {</span>
+<span class="nc" id="L228">            return false;</span>
+        }
+
+<span class="fc" id="L231">        int i = 0;</span>
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">        return (tok.charAt(i++) | 32) == '/'</span>
+<span class="pc bpc" id="L233" title="1 of 2 branches missed.">                &amp;&amp; (tok.charAt(i++) | 32) == 'e'</span>
+<span class="pc bpc" id="L234" title="1 of 2 branches missed.">                &amp;&amp; (tok.charAt(i++) | 32) == 'x'</span>
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">                &amp;&amp; (tok.charAt(i) | 32) == 'p';</span>
+    }
+
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
+<span class="fc bfc" id="L239" title="All 2 branches covered.">        if (value == GeoHashes.NULL) {</span>
+<span class="fc" id="L240">            socket.put(&quot;null&quot;);</span>
+        } else {
+<span class="fc" id="L242">            int bitFlags = GeoHashes.getBitFlags(type);</span>
+<span class="fc" id="L243">            socket.put('\&quot;');</span>
+<span class="fc bfc" id="L244" title="All 2 branches covered.">            if (bitFlags &lt; 0) {</span>
+<span class="fc" id="L245">                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);</span>
+            } else {
+<span class="fc" id="L247">                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);</span>
+            }
+<span class="fc" id="L249">            socket.put('\&quot;');</span>
+        }
+<span class="fc" id="L251">    }</span>
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+<span class="fc bfc" id="L254" title="All 2 branches covered.">        if (str != null) {</span>
+<span class="fc" id="L255">            r.encodeUtf8AndQuote(str);</span>
+        }
+<span class="fc" id="L257">    }</span>
+
+    private static void putUuidOrNull(HttpChunkedResponseSocket socket, long lo, long hi) {
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (Uuid.isNull(lo, hi)) {</span>
+<span class="fc" id="L261">            return;</span>
+        }
+<span class="fc" id="L263">        Numbers.appendUuid(lo, hi, socket);</span>
+<span class="fc" id="L264">    }</span>
+
+    private static void readyForNextRequest(HttpConnectionContext context) {
+<span class="fc" id="L267">        LOG.info().$(&quot;all sent [fd=&quot;).$(context.getFd())</span>
+<span class="fc" id="L268">                .$(&quot;, lastRequestBytesSent=&quot;).$(context.getLastRequestBytesSent())</span>
+<span class="fc" id="L269">                .$(&quot;, nCompletedRequests=&quot;).$(context.getNCompletedRequests() + 1)</span>
+<span class="fc" id="L270">                .$(&quot;, totalBytesSent=&quot;).$(context.getTotalBytesSent()).I$();</span>
+<span class="fc" id="L271">    }</span>
+
+    private LogRecord critical(TextQueryProcessorState state) {
+<span class="fc" id="L274">        return LOG.critical().$('[').$(state.getFd()).$(&quot;] &quot;);</span>
+    }
+
+    private void doResumeSend(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+<span class="fc" id="L280">        TextQueryProcessorState state = LV.get(context);</span>
+<span class="pc bpc" id="L281" title="2 of 4 branches missed.">        if (state == null || state.cursor == null) {</span>
+<span class="nc" id="L282">            return;</span>
+        }
+
+        // copy random during query resume
+<span class="fc" id="L286">        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));</span>
+<span class="fc" id="L287">        LOG.debug().$(&quot;resume [fd=&quot;).$(context.getFd()).I$();</span>
+
+<span class="fc bfc" id="L289" title="All 2 branches covered.">        if (!state.pausedQuery) {</span>
+<span class="fc" id="L290">            context.resumeResponseSend();</span>
+        } else {
+<span class="fc" id="L292">            state.pausedQuery = false;</span>
+        }
+
+<span class="fc" id="L295">        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();</span>
+<span class="fc" id="L296">        final int columnCount = state.metadata.getColumnCount();</span>
+
+        OUT:
+        while (true) {
+            try {
+                SWITCH:
+<span class="pc bpc" id="L302" title="2 of 6 branches missed.">                switch (state.queryState) {</span>
+                    case JsonQueryProcessorState.QUERY_PREFIX:
+                    case JsonQueryProcessorState.QUERY_METADATA:
+<span class="fc" id="L305">                        state.columnIndex = 0;</span>
+<span class="fc" id="L306">                        state.queryState = JsonQueryProcessorState.QUERY_METADATA;</span>
+<span class="fc bfc" id="L307" title="All 2 branches covered.">                        while (state.columnIndex &lt; columnCount) {</span>
+<span class="fc bfc" id="L308" title="All 2 branches covered.">                            if (state.columnIndex &gt; 0) {</span>
+<span class="fc" id="L309">                                socket.put(state.delimiter);</span>
+                            }
+<span class="fc" id="L311">                            socket.putQuoted(state.metadata.getColumnName(state.columnIndex));</span>
+<span class="fc" id="L312">                            state.columnIndex++;</span>
+<span class="fc" id="L313">                            socket.bookmark();</span>
+                        }
+<span class="fc" id="L315">                        socket.put(Misc.EOL);</span>
+<span class="fc" id="L316">                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;</span>
+<span class="fc" id="L317">                        socket.bookmark();</span>
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_RECORD_START:
+<span class="pc bpc" id="L320" title="1 of 2 branches missed.">                        if (state.record == null) {</span>
+                            // check if cursor has any records
+<span class="fc" id="L322">                            Record record = state.cursor.getRecord();</span>
+                            while (true) {
+<span class="fc bfc" id="L324" title="All 2 branches covered.">                                if (state.cursor.hasNext()) {</span>
+<span class="fc" id="L325">                                    state.count++;</span>
+
+<span class="fc bfc" id="L327" title="All 4 branches covered.">                                    if (state.countRows &amp;&amp; state.count &gt; state.stop) {</span>
+<span class="fc" id="L328">                                        continue;</span>
+                                    }
+
+<span class="pc bpc" id="L331" title="1 of 2 branches missed.">                                    if (state.count &gt; state.skip) {</span>
+<span class="fc" id="L332">                                        state.record = record;</span>
+<span class="fc" id="L333">                                        break;</span>
+                                    }
+                                } else {
+<span class="fc" id="L336">                                    state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;</span>
+<span class="fc" id="L337">                                    break SWITCH;</span>
+                                }
+                            }
+                        }
+
+<span class="pc bpc" id="L342" title="1 of 2 branches missed.">                        if (state.count &gt; state.stop) {</span>
+<span class="nc" id="L343">                            state.queryState = JsonQueryProcessorState.QUERY_SUFFIX;</span>
+<span class="nc" id="L344">                            break;</span>
+                        }
+
+<span class="fc" id="L347">                        state.queryState = JsonQueryProcessorState.QUERY_RECORD;</span>
+<span class="fc" id="L348">                        state.columnIndex = 0;</span>
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_RECORD:
+<span class="fc bfc" id="L351" title="All 2 branches covered.">                        while (state.columnIndex &lt; columnCount) {</span>
+<span class="fc bfc" id="L352" title="All 2 branches covered.">                            if (state.columnIndex &gt; 0) {</span>
+<span class="fc" id="L353">                                socket.put(state.delimiter);</span>
+                            }
+<span class="fc" id="L355">                            putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);</span>
+<span class="fc" id="L356">                            state.columnIndex++;</span>
+<span class="fc" id="L357">                            socket.bookmark();</span>
+                        }
+
+<span class="fc" id="L360">                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;</span>
+                        // fall through
+                    case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
+<span class="fc" id="L363">                        socket.put(Misc.EOL);</span>
+<span class="fc" id="L364">                        state.record = null;</span>
+<span class="fc" id="L365">                        state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;</span>
+<span class="fc" id="L366">                        socket.bookmark();</span>
+<span class="fc" id="L367">                        break;</span>
+                    case JsonQueryProcessorState.QUERY_SUFFIX:
+<span class="fc" id="L369">                        sendDone(socket, state);</span>
+<span class="fc" id="L370">                        break OUT;</span>
+                    default:
+<span class="nc" id="L372">                        break OUT;</span>
+                }
+<span class="fc" id="L374">            } catch (DataUnavailableException e) {</span>
+<span class="fc" id="L375">                socket.resetToBookmark();</span>
+<span class="fc" id="L376">                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());</span>
+<span class="fc" id="L377">            } catch (NoSpaceLeftInResponseBufferException ignored) {</span>
+<span class="pc bpc" id="L378" title="1 of 2 branches missed.">                if (socket.resetToBookmark()) {</span>
+<span class="fc" id="L379">                    socket.sendChunk(false);</span>
+                } else {
+                    // what we have here is out unit of data, column value or query
+                    // is larger that response content buffer
+                    // all we can do in this scenario is to log appropriately
+                    // and disconnect socket
+<span class="nc" id="L385">                    info(state).$(&quot;Response buffer is too small, state=&quot;).$(state.queryState).$();</span>
+<span class="nc" id="L386">                    throw PeerDisconnectedException.INSTANCE;</span>
+                }
+<span class="fc" id="L388">            }</span>
+        }
+        // reached the end naturally?
+<span class="fc" id="L391">        readyForNextRequest(context);</span>
+<span class="fc" id="L392">    }</span>
+
+    private LogRecord info(TextQueryProcessorState state) {
+<span class="fc" id="L395">        return LOG.info().$('[').$(state.getFd()).$(&quot;] &quot;);</span>
+    }
+
+    private void internalError(
+            HttpChunkedResponseSocket socket,
+            long bytesSent,
+            Throwable e,
+            TextQueryProcessorState state
+    ) throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L404">        logInternalError(e, state);</span>
+<span class="pc bpc" id="L405" title="1 of 2 branches missed.">        if (bytesSent &gt; 0) {</span>
+            // We already sent a partial response to the client.
+            // Give up and close the connection.
+<span class="fc" id="L408">            throw ServerDisconnectException.INSTANCE;</span>
+        }
+<span class="nc" id="L410">        sendException(socket, 0, e.getMessage(), state);</span>
+<span class="nc" id="L411">    }</span>
+
+    private void logInternalError(Throwable e, TextQueryProcessorState state) {
+<span class="fc" id="L414">        critical(state).$(&quot;Server error executing query &quot;).utf8(state.query).$(e).$();</span>
+        // This is a critical error, so we treat it as an unhandled one.
+<span class="fc" id="L416">        metrics.health().incrementUnhandledErrors();</span>
+<span class="fc" id="L417">    }</span>
+
+    private boolean parseUrl(
+            HttpChunkedResponseSocket socket,
+            HttpRequestHeader request,
+            TextQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // Query text.
+<span class="fc" id="L425">        final DirectByteCharSequence query = request.getUrlParam(&quot;query&quot;);</span>
+<span class="pc bpc" id="L426" title="2 of 4 branches missed.">        if (query == null || query.length() == 0) {</span>
+<span class="nc" id="L427">            info(state).$(&quot;Empty query request received. Sending empty reply.&quot;).$();</span>
+<span class="nc" id="L428">            sendException(socket, 0, &quot;No query text&quot;, state);</span>
+<span class="nc" id="L429">            return false;</span>
+        }
+
+        // URL params.
+<span class="fc" id="L433">        long skip = 0;</span>
+<span class="fc" id="L434">        long stop = Long.MAX_VALUE;</span>
+
+<span class="fc" id="L436">        CharSequence limit = request.getUrlParam(&quot;limit&quot;);</span>
+<span class="fc bfc" id="L437" title="All 2 branches covered.">        if (limit != null) {</span>
+<span class="fc" id="L438">            int sepPos = Chars.indexOf(limit, ',');</span>
+            try {
+<span class="fc bfc" id="L440" title="All 2 branches covered.">                if (sepPos &gt; 0) {</span>
+<span class="fc" id="L441">                    skip = Numbers.parseLong(limit, 0, sepPos);</span>
+<span class="pc bpc" id="L442" title="1 of 2 branches missed.">                    if (sepPos + 1 &lt; limit.length()) {</span>
+<span class="fc" id="L443">                        stop = Numbers.parseLong(limit, sepPos + 1, limit.length());</span>
+                    }
+                } else {
+<span class="fc" id="L446">                    stop = Numbers.parseLong(limit);</span>
+                }
+<span class="nc" id="L448">            } catch (NumericException ex) {</span>
+                // Skip or stop will have default value.
+<span class="fc" id="L450">            }</span>
+        }
+<span class="pc bpc" id="L452" title="1 of 2 branches missed.">        if (stop &lt; 0) {</span>
+<span class="nc" id="L453">            stop = 0;</span>
+        }
+
+<span class="pc bpc" id="L456" title="1 of 2 branches missed.">        if (skip &lt; 0) {</span>
+<span class="nc" id="L457">            skip = 0;</span>
+        }
+
+<span class="fc bfc" id="L460" title="All 2 branches covered.">        if ((stop - skip) &gt; configuration.getMaxQueryResponseRowLimit()) {</span>
+<span class="fc" id="L461">            stop = skip + configuration.getMaxQueryResponseRowLimit();</span>
+        }
+
+<span class="fc" id="L464">        state.query.clear();</span>
+        try {
+<span class="fc" id="L466">            TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);</span>
+<span class="nc" id="L467">        } catch (Utf8Exception e) {</span>
+<span class="nc" id="L468">            info(state).$(&quot;Bad UTF8 encoding&quot;).$();</span>
+<span class="nc" id="L469">            sendException(socket, 0, &quot;Bad UTF8 encoding in query text&quot;, state);</span>
+<span class="nc" id="L470">            return false;</span>
+<span class="fc" id="L471">        }</span>
+<span class="fc" id="L472">        CharSequence fileName = request.getUrlParam(&quot;filename&quot;);</span>
+<span class="fc" id="L473">        state.fileName = null;</span>
+<span class="pc bpc" id="L474" title="3 of 4 branches missed.">        if (fileName != null &amp;&amp; fileName.length() &gt; 0) {</span>
+<span class="nc" id="L475">            state.fileName = fileName.toString();</span>
+        }
+
+<span class="fc" id="L478">        DirectByteCharSequence delimiter = request.getUrlParam(&quot;delimiter&quot;);</span>
+<span class="fc" id="L479">        state.delimiter = ',';</span>
+
+<span class="pc bpc" id="L481" title="1 of 4 branches missed.">        if (delimiter != null &amp;&amp; delimiter.length() == 1) {</span>
+<span class="fc" id="L482">            state.delimiter = delimiter.charAt(0);</span>
+        }
+
+<span class="fc" id="L485">        state.skip = skip;</span>
+<span class="fc" id="L486">        state.count = 0L;</span>
+<span class="fc" id="L487">        state.stop = stop;</span>
+<span class="fc" id="L488">        state.noMeta = Chars.equalsNc(&quot;true&quot;, request.getUrlParam(&quot;nm&quot;));</span>
+<span class="fc" id="L489">        state.countRows = Chars.equalsNc(&quot;true&quot;, request.getUrlParam(&quot;count&quot;));</span>
+<span class="fc" id="L490">        return true;</span>
+    }
+
+    private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
+<span class="pc bpc" id="L494" title="2 of 21 branches missed.">        switch (ColumnType.tagOf(type)) {</span>
+            case ColumnType.BOOLEAN:
+<span class="fc" id="L496">                socket.put(rec.getBool(col));</span>
+<span class="fc" id="L497">                break;</span>
+            case ColumnType.BYTE:
+<span class="fc" id="L499">                socket.put(rec.getByte(col));</span>
+<span class="fc" id="L500">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L502">                double d = rec.getDouble(col);</span>
+<span class="fc bfc" id="L503" title="All 2 branches covered.">                if (d == d) {</span>
+<span class="fc" id="L504">                    socket.put(d, doubleScale);</span>
+                }
+                break;
+            case ColumnType.FLOAT:
+<span class="fc" id="L508">                float f = rec.getFloat(col);</span>
+<span class="fc bfc" id="L509" title="All 2 branches covered.">                if (f == f) {</span>
+<span class="fc" id="L510">                    socket.put(f, floatScale);</span>
+                }
+                break;
+            case ColumnType.INT:
+<span class="fc" id="L514">                final int i = rec.getInt(col);</span>
+<span class="fc bfc" id="L515" title="All 2 branches covered.">                if (i &gt; Integer.MIN_VALUE) {</span>
+<span class="fc" id="L516">                    Numbers.append(socket, i);</span>
+                }
+                break;
+            case ColumnType.LONG:
+<span class="fc" id="L520">                long l = rec.getLong(col);</span>
+<span class="fc bfc" id="L521" title="All 2 branches covered.">                if (l &gt; Long.MIN_VALUE) {</span>
+<span class="fc" id="L522">                    socket.put(l);</span>
+                }
+                break;
+            case ColumnType.DATE:
+<span class="fc" id="L526">                l = rec.getDate(col);</span>
+<span class="fc bfc" id="L527" title="All 2 branches covered.">                if (l &gt; Long.MIN_VALUE) {</span>
+<span class="fc" id="L528">                    socket.put('&quot;').putISODateMillis(l).put('&quot;');</span>
+                }
+                break;
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L532">                l = rec.getTimestamp(col);</span>
+<span class="fc bfc" id="L533" title="All 2 branches covered.">                if (l &gt; Long.MIN_VALUE) {</span>
+<span class="fc" id="L534">                    socket.put('&quot;').putISODate(l).put('&quot;');</span>
+                }
+                break;
+            case ColumnType.SHORT:
+<span class="fc" id="L538">                socket.put(rec.getShort(col));</span>
+<span class="fc" id="L539">                break;</span>
+            case ColumnType.CHAR:
+<span class="fc" id="L541">                char c = rec.getChar(col);</span>
+<span class="pc bpc" id="L542" title="1 of 2 branches missed.">                if (c &gt; 0) {</span>
+<span class="fc" id="L543">                    socket.put(c);</span>
+                }
+                break;
+            case ColumnType.NULL:
+            case ColumnType.BINARY:
+            case ColumnType.RECORD:
+<span class="fc" id="L549">                break;</span>
+            case ColumnType.STRING:
+<span class="fc" id="L551">                putStringOrNull(socket, rec.getStr(col));</span>
+<span class="fc" id="L552">                break;</span>
+            case ColumnType.SYMBOL:
+<span class="fc" id="L554">                putStringOrNull(socket, rec.getSym(col));</span>
+<span class="fc" id="L555">                break;</span>
+            case ColumnType.LONG256:
+<span class="fc" id="L557">                rec.getLong256(col, socket);</span>
+<span class="fc" id="L558">                break;</span>
+            case ColumnType.GEOBYTE:
+<span class="fc" id="L560">                putGeoHashStringValue(socket, rec.getGeoByte(col), type);</span>
+<span class="fc" id="L561">                break;</span>
+            case ColumnType.GEOSHORT:
+<span class="fc" id="L563">                putGeoHashStringValue(socket, rec.getGeoShort(col), type);</span>
+<span class="fc" id="L564">                break;</span>
+            case ColumnType.GEOINT:
+<span class="fc" id="L566">                putGeoHashStringValue(socket, rec.getGeoInt(col), type);</span>
+<span class="fc" id="L567">                break;</span>
+            case ColumnType.GEOLONG:
+<span class="fc" id="L569">                putGeoHashStringValue(socket, rec.getGeoLong(col), type);</span>
+<span class="fc" id="L570">                break;</span>
+            case ColumnType.UUID:
+<span class="fc" id="L572">                putUuidOrNull(socket, rec.getLong128Lo(col), rec.getLong128Hi(col));</span>
+<span class="fc" id="L573">                break;</span>
+            case ColumnType.LONG128:
+<span class="nc" id="L575">                throw new UnsupportedOperationException();</span>
+            default:
+<span class="nc" id="L577">                assert false;</span>
+        }
+<span class="fc" id="L579">    }</span>
+
+    private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="nc" id="L582">        socket.put(&quot;DDL Success\n&quot;);</span>
+<span class="nc" id="L583">        socket.sendChunk(true);</span>
+<span class="nc" id="L584">    }</span>
+
+    private void sendDone(
+            HttpChunkedResponseSocket socket,
+            TextQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="pc bpc" id="L590" title="1 of 2 branches missed.">        if (state.count &gt; -1) {</span>
+<span class="fc" id="L591">            state.count = -1;</span>
+<span class="fc" id="L592">            socket.sendChunk(true);</span>
+<span class="fc" id="L593">            return;</span>
+        }
+<span class="nc" id="L595">        socket.done();</span>
+<span class="nc" id="L596">    }</span>
+
+    private void sendException(
+            HttpChunkedResponseSocket socket,
+            int position,
+            CharSequence message,
+            TextQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L604">        headerJsonError(socket);</span>
+<span class="fc" id="L605">        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, state.query);</span>
+<span class="fc" id="L606">    }</span>
+
+    private void syntaxError(
+            HttpChunkedResponseSocket socket,
+            TextQueryProcessorState state,
+            FlyweightMessageContainer container
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L613">        info(state).$(&quot;syntax-error [q=`&quot;).utf8(state.query)</span>
+<span class="fc" id="L614">                .$(&quot;`, at=&quot;).$(container.getPosition())</span>
+<span class="fc" id="L615">                .$(&quot;, message=`&quot;).$(container.getFlyweightMessage()).$('`').I$();</span>
+<span class="fc" id="L616">        sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);</span>
+<span class="fc" id="L617">    }</span>
+
+    protected void header(
+            HttpChunkedResponseSocket socket,
+            TextQueryProcessorState state,
+            int statusCode
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L624">        socket.status(statusCode, &quot;text/csv; charset=utf-8&quot;);</span>
+<span class="pc bpc" id="L625" title="3 of 4 branches missed.">        if (state.fileName != null &amp;&amp; state.fileName.length() &gt; 0) {</span>
+<span class="nc" id="L626">            socket.headers().put(&quot;Content-Disposition: attachment; filename=\&quot;&quot;).put(state.fileName).put(&quot;.csv\&quot;&quot;).put(Misc.EOL);</span>
+        } else {
+<span class="fc" id="L628">            socket.headers().put(&quot;Content-Disposition: attachment; filename=\&quot;questdb-query-&quot;).put(clock.getTicks()).put(&quot;.csv\&quot;&quot;).put(Misc.EOL);</span>
+        }
+<span class="fc" id="L630">        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());</span>
+<span class="fc" id="L631">        socket.sendHeader();</span>
+<span class="fc" id="L632">    }</span>
+
+    protected void headerJsonError(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L635">        socket.status(400, &quot;application/json; charset=utf-8&quot;);</span>
+<span class="fc" id="L636">        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());</span>
+<span class="fc" id="L637">        socket.sendHeader();</span>
+<span class="fc" id="L638">    }</span>
+
+    protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="nc" id="L641">        socket.status(200, &quot;text/csv; charset=utf-8&quot;);</span>
+<span class="nc" id="L642">        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());</span>
+<span class="nc" id="L643">        socket.sendHeader();</span>
+<span class="nc" id="L644">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

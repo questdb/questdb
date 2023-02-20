@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FunctionFactoryDescriptor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">FunctionFactoryDescriptor.java</span></div><h1>FunctionFactoryDescriptor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
+
+public class FunctionFactoryDescriptor {
+    private static final int ARRAY_MASK = 1 &lt;&lt; 31;
+    private static final int CONST_MASK = 1 &lt;&lt; 30;
+    private static final int TYPE_MASK = ~(ARRAY_MASK | CONST_MASK);
+    private final long[] argTypes;
+    private final FunctionFactory factory;
+    private final int openBraceIndex;
+    private final int sigArgCount;
+
+<span class="fc" id="L40">    public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {</span>
+<span class="fc" id="L41">        this.factory = factory;</span>
+
+<span class="fc" id="L43">        final String sig = factory.getSignature();</span>
+<span class="fc" id="L44">        this.openBraceIndex = validateSignatureAndGetNameSeparator(sig);</span>
+        // validate data types
+<span class="fc" id="L46">        int typeCount = 0;</span>
+        for (
+<span class="fc" id="L48">                int i = openBraceIndex + 1, n = sig.length() - 1;</span>
+<span class="fc bfc" id="L49" title="All 2 branches covered.">                i &lt; n; typeCount++</span>
+        ) {
+<span class="fc" id="L51">            char cc = sig.charAt(i);</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">            if (FunctionFactoryDescriptor.getArgType(cc) == -1) {</span>
+<span class="fc" id="L53">                throw SqlException.position(0).put(&quot;illegal argument type: &quot;).put('`').put(cc).put('`');</span>
+            }
+            // check if this is an array
+<span class="fc" id="L56">            i++;</span>
+<span class="fc bfc" id="L57" title="All 4 branches covered.">            if (i &lt; n &amp;&amp; sig.charAt(i) == '[') {</span>
+<span class="fc" id="L58">                i++;</span>
+<span class="pc bpc" id="L59" title="2 of 4 branches missed.">                if (i &gt;= n || sig.charAt(i) != ']') {</span>
+<span class="nc" id="L60">                    throw SqlException.position(0).put(&quot;invalid array declaration&quot;);</span>
+                }
+<span class="fc" id="L62">                i++;</span>
+            }
+        }
+
+        // second loop, less paranoid
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        long[] types = new long[typeCount % 2 == 0 ? typeCount / 2 : typeCount / 2 + 1];</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        for (int i = openBraceIndex + 1, n = sig.length() - 1, typeIndex = 0; i &lt; n; ) {</span>
+<span class="fc" id="L69">            final char c = sig.charAt(i);</span>
+<span class="fc" id="L70">            int type = FunctionFactoryDescriptor.getArgType(c);</span>
+<span class="fc" id="L71">            final int arrayIndex = typeIndex / 2;</span>
+<span class="fc" id="L72">            final int arrayValueOffset = (typeIndex % 2) * 32;</span>
+            // check if this is an array
+<span class="fc" id="L74">            i++;</span>
+
+            // array bit
+<span class="fc bfc" id="L77" title="All 4 branches covered.">            if (i &lt; n &amp;&amp; sig.charAt(i) == '[') {</span>
+<span class="fc" id="L78">                type |= (1 &lt;&lt; 31);</span>
+<span class="fc" id="L79">                i += 2;</span>
+            }
+            // constant bit
+<span class="fc bfc" id="L82" title="All 2 branches covered.">            if ((c | 32) == c) {</span>
+<span class="fc" id="L83">                type |= (1 &lt;&lt; 30);</span>
+            }
+<span class="fc" id="L85">            types[arrayIndex] |= (toUnsignedLong(type) &lt;&lt; (32 - arrayValueOffset));</span>
+<span class="fc" id="L86">            typeIndex++;</span>
+<span class="fc" id="L87">        }</span>
+<span class="fc" id="L88">        this.argTypes = types;</span>
+<span class="fc" id="L89">        this.sigArgCount = typeCount;</span>
+<span class="fc" id="L90">    }</span>
+
+    public static int getArgType(char c) {
+        int sigArgType;
+<span class="fc bfc" id="L94" title="All 25 branches covered.">        switch (c | 32) {</span>
+            case 'd':
+<span class="fc" id="L96">                sigArgType = ColumnType.DOUBLE;</span>
+<span class="fc" id="L97">                break;</span>
+            case 'b':
+<span class="fc" id="L99">                sigArgType = ColumnType.BYTE;</span>
+<span class="fc" id="L100">                break;</span>
+            case 'e':
+<span class="fc" id="L102">                sigArgType = ColumnType.SHORT;</span>
+<span class="fc" id="L103">                break;</span>
+            case 'a':
+<span class="fc" id="L105">                sigArgType = ColumnType.CHAR;</span>
+<span class="fc" id="L106">                break;</span>
+            case 'f':
+<span class="fc" id="L108">                sigArgType = ColumnType.FLOAT;</span>
+<span class="fc" id="L109">                break;</span>
+            case 'i':
+<span class="fc" id="L111">                sigArgType = ColumnType.INT;</span>
+<span class="fc" id="L112">                break;</span>
+            case 'l':
+<span class="fc" id="L114">                sigArgType = ColumnType.LONG;</span>
+<span class="fc" id="L115">                break;</span>
+            case 's':
+<span class="fc" id="L117">                sigArgType = ColumnType.STRING;</span>
+<span class="fc" id="L118">                break;</span>
+            case 't':
+<span class="fc" id="L120">                sigArgType = ColumnType.BOOLEAN;</span>
+<span class="fc" id="L121">                break;</span>
+            case 'k':
+<span class="fc" id="L123">                sigArgType = ColumnType.SYMBOL;</span>
+<span class="fc" id="L124">                break;</span>
+            case 'm':
+<span class="fc" id="L126">                sigArgType = ColumnType.DATE;</span>
+<span class="fc" id="L127">                break;</span>
+            case 'n':
+<span class="fc" id="L129">                sigArgType = ColumnType.TIMESTAMP;</span>
+<span class="fc" id="L130">                break;</span>
+            case 'u':
+<span class="fc" id="L132">                sigArgType = ColumnType.BINARY;</span>
+<span class="fc" id="L133">                break;</span>
+            case 'v':
+<span class="fc" id="L135">                sigArgType = ColumnType.VAR_ARG;</span>
+<span class="fc" id="L136">                break;</span>
+            case 'c':
+<span class="fc" id="L138">                sigArgType = ColumnType.CURSOR;</span>
+<span class="fc" id="L139">                break;</span>
+            case 'r':
+<span class="fc" id="L141">                sigArgType = ColumnType.RECORD;</span>
+<span class="fc" id="L142">                break;</span>
+            case 'h':
+<span class="fc" id="L144">                sigArgType = ColumnType.LONG256;</span>
+<span class="fc" id="L145">                break;</span>
+            case 'g':
+<span class="fc" id="L147">                sigArgType = ColumnType.GEOHASH;</span>
+<span class="fc" id="L148">                break;</span>
+            case 'o':
+<span class="fc" id="L150">                sigArgType = ColumnType.NULL;</span>
+<span class="fc" id="L151">                break;</span>
+            case 'p':
+<span class="fc" id="L153">                sigArgType = ColumnType.REGCLASS;</span>
+<span class="fc" id="L154">                break;</span>
+            case 'q':
+<span class="fc" id="L156">                sigArgType = ColumnType.REGPROCEDURE;</span>
+<span class="fc" id="L157">                break;</span>
+            case 'w':
+<span class="fc" id="L159">                sigArgType = ColumnType.ARRAY_STRING;</span>
+<span class="fc" id="L160">                break;</span>
+            case 'j':
+<span class="fc" id="L162">                sigArgType = ColumnType.LONG128;</span>
+<span class="fc" id="L163">                break;</span>
+            case 'z':
+<span class="fc" id="L165">                sigArgType = ColumnType.UUID;</span>
+<span class="fc" id="L166">                break;</span>
+            default:
+<span class="fc" id="L168">                sigArgType = -1;</span>
+                break;
+        }
+<span class="fc" id="L171">        return sigArgType;</span>
+    }
+
+    public static boolean isArray(int mask) {
+<span class="fc bfc" id="L175" title="All 2 branches covered.">        return (mask &amp; ARRAY_MASK) != 0;</span>
+    }
+
+    public static boolean isConstant(int mask) {
+<span class="fc bfc" id="L179" title="All 2 branches covered.">        return (mask &amp; CONST_MASK) != 0;</span>
+    }
+
+    public static String replaceSignatureName(String name, String signature) throws SqlException {
+<span class="fc" id="L183">        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);</span>
+<span class="fc" id="L184">        StringSink signatureBuilder = Misc.getThreadLocalBuilder();</span>
+<span class="fc" id="L185">        signatureBuilder.put(name);</span>
+<span class="fc" id="L186">        signatureBuilder.put(signature, openBraceIndex, signature.length());</span>
+<span class="fc" id="L187">        return signatureBuilder.toString();</span>
+    }
+
+    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
+<span class="fc" id="L191">        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);</span>
+<span class="fc" id="L192">        StringSink signatureBuilder = Misc.getThreadLocalBuilder();</span>
+<span class="fc" id="L193">        signatureBuilder.put(name);</span>
+<span class="fc" id="L194">        signatureBuilder.put('(');</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">        for (int i = signature.length() - 2; i &gt; openBraceIndex; i--) {</span>
+<span class="fc" id="L196">            char curr = signature.charAt(i);</span>
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">            if (curr == '[') {</span>
+<span class="nc" id="L198">                signatureBuilder.put(&quot;[]&quot;);</span>
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">            } else if (curr != ']') {</span>
+<span class="fc" id="L200">                signatureBuilder.put(curr);</span>
+            }
+        }
+<span class="fc" id="L203">        signatureBuilder.put(')');</span>
+<span class="fc" id="L204">        return signatureBuilder.toString();</span>
+    }
+
+    public static short toType(int mask) {
+<span class="fc" id="L208">        return (short) (mask &amp; TYPE_MASK);</span>
+    }
+
+    public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
+<span class="fc bfc" id="L212" title="All 2 branches covered.">        if (sig == null) {</span>
+<span class="fc" id="L213">            throw SqlException.$(0, &quot;NULL signature&quot;);</span>
+        }
+
+<span class="fc" id="L216">        int openBraceIndex = sig.indexOf('(');</span>
+<span class="fc bfc" id="L217" title="All 2 branches covered.">        if (openBraceIndex == -1) {</span>
+<span class="fc" id="L218">            throw SqlException.$(0, &quot;open brace expected&quot;);</span>
+        }
+
+<span class="fc bfc" id="L221" title="All 2 branches covered.">        if (openBraceIndex == 0) {</span>
+<span class="fc" id="L222">            throw SqlException.$(0, &quot;empty function name&quot;);</span>
+        }
+
+<span class="fc bfc" id="L225" title="All 2 branches covered.">        if (sig.charAt(sig.length() - 1) != ')') {</span>
+<span class="fc" id="L226">            throw SqlException.$(0, &quot;close brace expected&quot;);</span>
+        }
+
+<span class="fc" id="L229">        int c = sig.charAt(0);</span>
+<span class="fc bfc" id="L230" title="All 4 branches covered.">        if (c &gt;= '0' &amp;&amp; c &lt;= '9') {</span>
+<span class="fc" id="L231">            throw SqlException.$(0, &quot;name must not start with digit&quot;);</span>
+        }
+
+<span class="fc bfc" id="L234" title="All 2 branches covered.">        for (int i = 0; i &lt; openBraceIndex; i++) {</span>
+<span class="fc" id="L235">            char cc = sig.charAt(i);</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            if (FunctionFactoryCache.invalidFunctionNameChars.contains(cc)) {</span>
+<span class="fc" id="L237">                throw SqlException.position(0).put(&quot;invalid character: &quot;).put(cc);</span>
+            }
+        }
+
+<span class="fc bfc" id="L241" title="All 2 branches covered.">        if (FunctionFactoryCache.invalidFunctionNames.keyIndex(sig, 0, openBraceIndex) &lt; 0) {</span>
+<span class="fc" id="L242">            throw SqlException.position(0).put(&quot;invalid function name character: &quot;).put(sig);</span>
+        }
+<span class="fc" id="L244">        return openBraceIndex;</span>
+    }
+
+    public int getArgTypeMask(int index) {
+<span class="fc" id="L248">        int arrayIndex = index / 2;</span>
+<span class="fc" id="L249">        long mask = argTypes[arrayIndex];</span>
+<span class="fc" id="L250">        return (int) (mask &gt;&gt;&gt; (32 - (index % 2) * 32));</span>
+    }
+
+    public FunctionFactory getFactory() {
+<span class="fc" id="L254">        return factory;</span>
+    }
+
+    public String getName() {
+<span class="fc" id="L258">        return factory.getSignature().substring(0, openBraceIndex);</span>
+    }
+
+    public int getSigArgCount() {
+<span class="fc" id="L262">        return sigArgCount;</span>
+    }
+
+    private static long toUnsignedLong(int type) {
+<span class="fc" id="L266">        return ((long) type) &amp; 0xffffffffL;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

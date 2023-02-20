@@ -1,0 +1,517 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AlterOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.ops</a> &gt; <span class="el_source">AlterOperation.java</span></div><h1>AlterOperation.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.ops;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.MetadataService;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectCharSequence;
+import io.questdb.tasks.TableWriterTask;
+
+public class AlterOperation extends AbstractOperation implements Mutable {
+    public final static short ADD_COLUMN = 1;
+    public final static short ADD_INDEX = 4;
+    public final static short ADD_SYMBOL_CACHE = 6;
+    public final static short ATTACH_PARTITION = 3;
+    public final static String CMD_NAME = &quot;ALTER TABLE&quot;;
+    public final static short DETACH_PARTITION = 12;
+    public final static short DO_NOTHING = 0;
+    public final static short DROP_COLUMN = 8;
+    public final static short DROP_INDEX = 5;
+    public final static short DROP_PARTITION = 2;
+    public final static short REMOVE_SYMBOL_CACHE = 7;
+    public final static short RENAME_COLUMN = 9;
+    public final static short SET_PARAM_COMMIT_LAG = 11;
+    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
+<span class="fc" id="L56">    private final static Log LOG = LogFactory.getLog(AlterOperation.class);</span>
+<span class="fc" id="L57">    private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();</span>
+    // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
+    // to exception message using TableUtils.setSinkForPartition.
+    private final LongList extraInfo;
+    private final ObjCharSequenceList extraStrInfo;
+    private CharSequenceList activeExtraStrInfo;
+    private short command;
+    private MemoryFCRImpl deserializeMem;
+
+    public AlterOperation() {
+<span class="fc" id="L67">        this(new LongList(), new ObjList&lt;&gt;());</span>
+<span class="fc" id="L68">    }</span>
+
+<span class="fc" id="L70">    public AlterOperation(LongList extraInfo, ObjList&lt;CharSequence&gt; charSequenceObjList) {</span>
+<span class="fc" id="L71">        this.extraInfo = extraInfo;</span>
+<span class="fc" id="L72">        this.extraStrInfo = new ObjCharSequenceList(charSequenceObjList);</span>
+<span class="fc" id="L73">        this.command = DO_NOTHING;</span>
+<span class="fc" id="L74">    }</span>
+
+    @Override
+    // todo: supply bitset to indicate which ops are supported and which arent
+    //     &quot;structural changes&quot; doesn't cover is as &quot;add column&quot; is supported
+    public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        try {
+<span class="fc bfc" id="L81" title="All 13 branches covered.">            switch (command) {</span>
+                case ADD_COLUMN:
+<span class="fc" id="L83">                    applyAddColumn(svc);</span>
+<span class="fc" id="L84">                    break;</span>
+                case DROP_COLUMN:
+<span class="fc bfc" id="L86" title="All 2 branches covered.">                    if (!contextAllowsAnyStructureChanges) {</span>
+<span class="fc" id="L87">                        throw AlterTableContextException.INSTANCE;</span>
+                    }
+<span class="fc" id="L89">                    applyDropColumn(svc);</span>
+<span class="fc" id="L90">                    break;</span>
+                case RENAME_COLUMN:
+<span class="fc bfc" id="L92" title="All 2 branches covered.">                    if (!contextAllowsAnyStructureChanges) {</span>
+<span class="fc" id="L93">                        throw AlterTableContextException.INSTANCE;</span>
+                    }
+<span class="fc" id="L95">                    applyRenameColumn(svc);</span>
+<span class="fc" id="L96">                    break;</span>
+                case DROP_PARTITION:
+<span class="fc" id="L98">                    applyDropPartition(svc);</span>
+<span class="fc" id="L99">                    break;</span>
+                case DETACH_PARTITION:
+<span class="fc" id="L101">                    applyDetachPartition(svc);</span>
+<span class="fc" id="L102">                    break;</span>
+                case ATTACH_PARTITION:
+<span class="fc" id="L104">                    applyAttachPartition(svc);</span>
+<span class="fc" id="L105">                    break;</span>
+                case ADD_INDEX:
+<span class="fc" id="L107">                    applyAddIndex(svc);</span>
+<span class="fc" id="L108">                    break;</span>
+                case DROP_INDEX:
+<span class="fc" id="L110">                    applyDropIndex(svc);</span>
+<span class="fc" id="L111">                    break;</span>
+                case ADD_SYMBOL_CACHE:
+<span class="fc" id="L113">                    applySetSymbolCache(svc, true);</span>
+<span class="fc" id="L114">                    break;</span>
+                case REMOVE_SYMBOL_CACHE:
+<span class="fc" id="L116">                    applySetSymbolCache(svc, false);</span>
+<span class="fc" id="L117">                    break;</span>
+                case SET_PARAM_MAX_UNCOMMITTED_ROWS:
+<span class="fc" id="L119">                    applyParamUncommittedRows(svc);</span>
+<span class="fc" id="L120">                    break;</span>
+                case SET_PARAM_COMMIT_LAG:
+<span class="fc" id="L122">                    applyParamO3MaxLag(svc);</span>
+<span class="fc" id="L123">                    break;</span>
+                default:
+<span class="fc" id="L125">                    LOG.error()</span>
+<span class="fc" id="L126">                            .$(&quot;invalid alter table command [code=&quot;).$(command)</span>
+<span class="fc" id="L127">                            .$(&quot; ,table=&quot;).$(svc.getTableToken())</span>
+<span class="fc" id="L128">                            .I$();</span>
+<span class="fc" id="L129">                    throw CairoException.critical(0).put(&quot;invalid alter table command [code=&quot;).put(command).put(']');</span>
+            }
+<span class="nc" id="L131">        } catch (EntryUnavailableException ex) {</span>
+<span class="nc" id="L132">            throw ex;</span>
+<span class="fc" id="L133">        } catch (CairoException e) {</span>
+<span class="fc" id="L134">            LOG.critical().$(&quot;could not alter table [table=&quot;).$(svc.getTableToken())</span>
+<span class="fc" id="L135">                    .$(&quot;, command=&quot;).$(command)</span>
+<span class="fc" id="L136">                    .$(&quot;, errno=&quot;).$(e.getErrno())</span>
+<span class="fc" id="L137">                    .$(&quot;, message=`&quot;).$(e.getFlyweightMessage()).$('`')</span>
+<span class="fc" id="L138">                    .I$();</span>
+
+<span class="fc" id="L140">            throw e;</span>
+<span class="fc" id="L141">        }</span>
+<span class="fc" id="L142">        return 0;</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="fc" id="L147">        command = DO_NOTHING;</span>
+<span class="fc" id="L148">        extraStrInfo.clear();</span>
+<span class="fc" id="L149">        directExtraStrInfo.clear();</span>
+<span class="fc" id="L150">        activeExtraStrInfo = extraStrInfo;</span>
+<span class="fc" id="L151">        extraInfo.clear();</span>
+<span class="fc" id="L152">        clearCommandCorrelationId();</span>
+<span class="fc" id="L153">    }</span>
+
+    @Override
+    public AlterOperation deserialize(TableWriterTask event) {
+<span class="fc" id="L157">        clear();</span>
+
+<span class="fc" id="L159">        tableToken = event.getTableToken();</span>
+<span class="fc" id="L160">        long readPtr = event.getData();</span>
+<span class="fc" id="L161">        long length = event.getDataSize();</span>
+<span class="fc" id="L162">        final long hi = readPtr + length;</span>
+
+        // This is not hot path, do safe deserialization
+<span class="pc bpc" id="L165" title="1 of 2 branches missed.">        if (readPtr + 10 &gt;= hi) {</span>
+<span class="nc" id="L166">            throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [1]&quot;);</span>
+        }
+
+<span class="fc bfc" id="L169" title="All 2 branches covered.">        if (deserializeMem == null) {</span>
+<span class="fc" id="L170">            deserializeMem = new MemoryFCRImpl();</span>
+        }
+<span class="fc" id="L172">        deserializeMem.of(readPtr, length);</span>
+<span class="fc" id="L173">        deserializeBody(deserializeMem, 0L, length);</span>
+<span class="fc" id="L174">        return this;</span>
+    }
+
+    public void deserializeBody(MemoryCR buffer, long offsetLo, long offsetHi) {
+<span class="fc" id="L178">        clear();</span>
+<span class="fc" id="L179">        long readPtr = offsetLo;</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">        if (readPtr + 10 &gt; offsetHi) {</span>
+<span class="fc" id="L181">            throw CairoException</span>
+<span class="fc" id="L182">                    .critical(0)</span>
+<span class="fc" id="L183">                    .put(&quot;cannot read alter statement serialized, data is too short to read 10 bytes header [offset=&quot;)</span>
+<span class="fc" id="L184">                    .put(offsetLo)</span>
+<span class="fc" id="L185">                    .put(&quot;, size=&quot;)</span>
+<span class="fc" id="L186">                    .put(offsetHi - offsetLo)</span>
+<span class="fc" id="L187">                    .put(']');</span>
+        }
+<span class="fc" id="L189">        command = buffer.getShort(readPtr);</span>
+<span class="fc" id="L190">        readPtr += 2;</span>
+<span class="fc" id="L191">        tableNamePosition = buffer.getInt(readPtr);</span>
+<span class="fc" id="L192">        readPtr += 4;</span>
+<span class="fc" id="L193">        int longSize = buffer.getInt(readPtr);</span>
+<span class="fc" id="L194">        readPtr += 4;</span>
+<span class="pc bpc" id="L195" title="1 of 4 branches missed.">        if (longSize &lt; 0 || readPtr + longSize * 8L &gt;= offsetHi) {</span>
+<span class="fc" id="L196">            throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [2]&quot;);</span>
+        }
+<span class="fc" id="L198">        extraInfo.clear();</span>
+<span class="fc bfc" id="L199" title="All 2 branches covered.">        for (int i = 0; i &lt; longSize; i++) {</span>
+<span class="fc" id="L200">            extraInfo.add(buffer.getLong(readPtr));</span>
+<span class="fc" id="L201">            readPtr += 8;</span>
+        }
+<span class="fc" id="L203">        directExtraStrInfo.of(buffer, readPtr, offsetHi);</span>
+<span class="fc" id="L204">        activeExtraStrInfo = directExtraStrInfo;</span>
+<span class="fc" id="L205">    }</span>
+
+    @Override
+    public boolean isStructural() {
+<span class="fc bfc" id="L209" title="All 2 branches covered.">        switch (command) {</span>
+            case ADD_COLUMN:
+            case RENAME_COLUMN:
+            case DROP_COLUMN:
+<span class="fc" id="L213">                return true;</span>
+            default:
+<span class="fc" id="L215">                return false;</span>
+        }
+    }
+
+    public AlterOperation of(
+            short command,
+            TableToken tableToken,
+            int tableId,
+            int tableNamePosition
+    ) {
+<span class="fc" id="L225">        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableToken, tableId, -1, tableNamePosition);</span>
+<span class="fc" id="L226">        this.command = command;</span>
+<span class="fc" id="L227">        this.activeExtraStrInfo = this.extraStrInfo;</span>
+<span class="fc" id="L228">        return this;</span>
+    }
+
+    public void ofAddColumn(
+            int tableId,
+            TableToken tableToken,
+            int tableNamePosition,
+            CharSequence columnName,
+            int columnNamePosition,
+            int columnType,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity
+    ) {
+<span class="fc" id="L243">        of(AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);</span>
+<span class="pc bpc" id="L244" title="2 of 4 branches missed.">        assert columnName != null &amp;&amp; columnName.length() &gt; 0;</span>
+<span class="fc" id="L245">        extraStrInfo.strings.add(Chars.toString(columnName));</span>
+<span class="fc" id="L246">        extraInfo.add(columnType);</span>
+<span class="fc" id="L247">        extraInfo.add(symbolCapacity);</span>
+<span class="fc bfc" id="L248" title="All 2 branches covered.">        extraInfo.add(cache ? 1 : -1);</span>
+<span class="fc bfc" id="L249" title="All 2 branches covered.">        extraInfo.add(indexed ? 1 : -1);</span>
+<span class="fc" id="L250">        extraInfo.add(indexValueBlockCapacity);</span>
+<span class="fc" id="L251">        extraInfo.add(columnNamePosition);</span>
+<span class="fc" id="L252">    }</span>
+
+    @Override
+    public void serialize(TableWriterTask event) {
+<span class="fc" id="L256">        super.serialize(event);</span>
+<span class="fc" id="L257">        event.putShort(command);</span>
+<span class="fc" id="L258">        event.putInt(tableNamePosition);</span>
+<span class="fc" id="L259">        event.putInt(extraInfo.size());</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        for (int i = 0, n = extraInfo.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L261">            event.putLong(extraInfo.getQuick(i));</span>
+        }
+
+<span class="fc" id="L264">        event.putInt(extraStrInfo.size());</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        for (int i = 0, n = extraStrInfo.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L266">            event.putStr(extraStrInfo.getStrA(i));</span>
+        }
+<span class="fc" id="L268">    }</span>
+
+    public void serializeBody(MemoryA sink) {
+<span class="fc" id="L271">        sink.putShort(command);</span>
+<span class="fc" id="L272">        sink.putInt(tableNamePosition);</span>
+<span class="fc" id="L273">        sink.putInt(extraInfo.size());</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">        for (int i = 0, n = extraInfo.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L275">            sink.putLong(extraInfo.getQuick(i));</span>
+        }
+
+<span class="fc" id="L278">        sink.putInt(extraStrInfo.size());</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">        for (int i = 0, n = extraStrInfo.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L280">            sink.putStr(extraStrInfo.getStrA(i));</span>
+        }
+<span class="fc" id="L282">    }</span>
+
+    @Override
+    public void startAsync() {
+<span class="fc" id="L286">    }</span>
+
+    private void applyAddColumn(MetadataService svc) {
+<span class="fc" id="L289">        int lParam = 0;</span>
+<span class="fc bfc" id="L290" title="All 2 branches covered.">        for (int i = 0, n = activeExtraStrInfo.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L291">            CharSequence columnName = activeExtraStrInfo.getStrA(i);</span>
+<span class="fc" id="L292">            int type = (int) extraInfo.get(lParam++);</span>
+<span class="fc" id="L293">            int symbolCapacity = (int) extraInfo.get(lParam++);</span>
+<span class="fc bfc" id="L294" title="All 2 branches covered.">            boolean symbolCacheFlag = extraInfo.get(lParam++) &gt; 0;</span>
+<span class="fc bfc" id="L295" title="All 2 branches covered.">            boolean isIndexed = extraInfo.get(lParam++) &gt; 0;</span>
+<span class="fc" id="L296">            int indexValueBlockCapacity = (int) extraInfo.get(lParam++);</span>
+<span class="fc" id="L297">            int columnNamePosition = (int) extraInfo.get(lParam++);</span>
+            try {
+<span class="fc" id="L299">                svc.addColumn(</span>
+                        columnName,
+                        type,
+                        symbolCapacity,
+                        symbolCacheFlag,
+                        isIndexed,
+                        indexValueBlockCapacity,
+                        false
+                );
+<span class="fc" id="L308">            } catch (CairoException e) {</span>
+<span class="fc" id="L309">                e.position(columnNamePosition);</span>
+<span class="fc" id="L310">                throw e;</span>
+<span class="fc" id="L311">            }</span>
+        }
+<span class="fc" id="L313">    }</span>
+
+    private void applyAddIndex(MetadataService svc) {
+<span class="fc" id="L316">        final CharSequence columnName = activeExtraStrInfo.getStrA(0);</span>
+        try {
+<span class="fc" id="L318">            svc.addIndex(columnName, (int) extraInfo.get(0));</span>
+<span class="fc" id="L319">        } catch (CairoException e) {</span>
+            // augment exception with table position
+<span class="fc" id="L321">            e.position(tableNamePosition);</span>
+<span class="fc" id="L322">            throw e;</span>
+<span class="fc" id="L323">        }</span>
+<span class="fc" id="L324">    }</span>
+
+    private void applyAttachPartition(MetadataService svc) {
+<span class="fc bfc" id="L327" title="All 2 branches covered.">        for (int i = 0, n = extraInfo.size() / 2; i &lt; n; i++) {</span>
+<span class="fc" id="L328">            final long partitionTimestamp = extraInfo.getQuick(i * 2);</span>
+<span class="fc" id="L329">            AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);</span>
+<span class="fc bfc" id="L330" title="All 2 branches covered.">            if (AttachDetachStatus.OK != attachDetachStatus) {</span>
+<span class="pc bpc" id="L331" title="1 of 2 branches missed.">                throw CairoException.critical(CairoException.METADATA_VALIDATION).put(&quot;could not attach partition [table=&quot;).put(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</span>
+<span class="fc" id="L332">                        .put(&quot;, detachStatus=&quot;).put(attachDetachStatus.name())</span>
+<span class="fc" id="L333">                        .put(&quot;, partitionTimestamp=&quot;).ts(partitionTimestamp)</span>
+<span class="fc" id="L334">                        .put(&quot;, partitionBy=&quot;).put(PartitionBy.toString(svc.getPartitionBy()))</span>
+<span class="fc" id="L335">                        .put(']')</span>
+<span class="fc" id="L336">                        .position((int) extraInfo.getQuick(i * 2 + 1));</span>
+            }
+        }
+<span class="fc" id="L339">    }</span>
+
+    private void applyDetachPartition(MetadataService svc) {
+<span class="fc bfc" id="L342" title="All 2 branches covered.">        for (int i = 0, n = extraInfo.size() / 2; i &lt; n; i++) {</span>
+<span class="fc" id="L343">            final long partitionTimestamp = extraInfo.getQuick(i * 2);</span>
+<span class="fc" id="L344">            AttachDetachStatus attachDetachStatus = svc.detachPartition(partitionTimestamp);</span>
+<span class="fc bfc" id="L345" title="All 2 branches covered.">            if (AttachDetachStatus.OK != attachDetachStatus) {</span>
+<span class="pc bpc" id="L346" title="1 of 2 branches missed.">                throw CairoException.critical(CairoException.METADATA_VALIDATION).put(&quot;could not detach partition [table=&quot;).put(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</span>
+<span class="fc" id="L347">                        .put(&quot;, detachStatus=&quot;).put(attachDetachStatus.name())</span>
+<span class="fc" id="L348">                        .put(&quot;, partitionTimestamp=&quot;).ts(partitionTimestamp)</span>
+<span class="fc" id="L349">                        .put(&quot;, partitionBy=&quot;).put(PartitionBy.toString(svc.getPartitionBy()))</span>
+<span class="fc" id="L350">                        .put(']')</span>
+<span class="fc" id="L351">                        .position((int) extraInfo.getQuick(i * 2 + 1));</span>
+            }
+        }
+<span class="fc" id="L354">    }</span>
+
+    private void applyDropColumn(MetadataService svc) {
+<span class="fc bfc" id="L357" title="All 2 branches covered.">        for (int i = 0, n = activeExtraStrInfo.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L358">            svc.removeColumn(activeExtraStrInfo.getStrA(i));</span>
+        }
+<span class="fc" id="L360">    }</span>
+
+    private void applyDropIndex(MetadataService svc) {
+<span class="fc" id="L363">        final CharSequence columnName = activeExtraStrInfo.getStrA(0);</span>
+<span class="fc" id="L364">        final int columnNamePosition = (int) extraInfo.get(0);</span>
+        try {
+<span class="fc" id="L366">            svc.dropIndex(columnName);</span>
+<span class="fc" id="L367">        } catch (CairoException e) {</span>
+<span class="fc" id="L368">            e.position(columnNamePosition);</span>
+<span class="fc" id="L369">            throw e;</span>
+<span class="fc" id="L370">        }</span>
+<span class="fc" id="L371">    }</span>
+
+    private void applyDropPartition(MetadataService svc) {
+        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+<span class="fc bfc" id="L375" title="All 2 branches covered.">        for (int i = 0, n = extraInfo.size() / 2; i &lt; n; i++) {</span>
+<span class="fc" id="L376">            long partitionTimestamp = extraInfo.getQuick(i * 2);</span>
+<span class="fc bfc" id="L377" title="All 2 branches covered.">            if (!svc.removePartition(partitionTimestamp)) {</span>
+<span class="fc" id="L378">                throw CairoException.nonCritical()</span>
+<span class="pc bpc" id="L379" title="1 of 2 branches missed.">                        .put(&quot;could not remove partition [table=&quot;).put(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</span>
+<span class="fc" id="L380">                        .put(&quot;, partitionTimestamp=&quot;).ts(partitionTimestamp)</span>
+<span class="fc" id="L381">                        .put(&quot;, partitionBy=&quot;).put(PartitionBy.toString(svc.getPartitionBy()))</span>
+<span class="fc" id="L382">                        .put(']')</span>
+<span class="fc" id="L383">                        .position((int) extraInfo.getQuick(i * 2 + 1));</span>
+            }
+        }
+<span class="fc" id="L386">    }</span>
+
+    private void applyParamO3MaxLag(MetadataService svc) {
+<span class="fc" id="L389">        long o3MaxLag = extraInfo.get(0);</span>
+        try {
+<span class="fc" id="L391">            svc.setMetaO3MaxLag(o3MaxLag);</span>
+<span class="nc" id="L392">        } catch (CairoException e) {</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">            LOG.error().$(&quot;could not change o3MaxLag [table=&quot;).utf8(tableToken != null ? tableToken.getTableName() : &quot;&lt;null&gt;&quot;)</span>
+<span class="nc" id="L394">                    .$(&quot;, errno=&quot;).$(e.getErrno())</span>
+<span class="nc" id="L395">                    .$(&quot;, error=&quot;).$(e.getFlyweightMessage())</span>
+<span class="nc" id="L396">                    .I$();</span>
+<span class="nc" id="L397">            throw e;</span>
+<span class="fc" id="L398">        }</span>
+<span class="fc" id="L399">    }</span>
+
+    private void applyParamUncommittedRows(MetadataService svc) {
+<span class="fc" id="L402">        int maxUncommittedRows = (int) extraInfo.get(0);</span>
+        try {
+<span class="fc" id="L404">            svc.setMetaMaxUncommittedRows(maxUncommittedRows);</span>
+<span class="fc" id="L405">        } catch (CairoException e) {</span>
+<span class="fc" id="L406">            e.position(tableNamePosition);</span>
+<span class="fc" id="L407">            throw e;</span>
+<span class="fc" id="L408">        }</span>
+<span class="fc" id="L409">    }</span>
+
+    private void applyRenameColumn(MetadataService svc) {
+        // To avoid storing 2 var len fields, store only new name as CharSequence
+        // and index of existing column.
+<span class="fc" id="L414">        int i = 0, n = activeExtraStrInfo.size();</span>
+<span class="fc bfc" id="L415" title="All 2 branches covered.">        while (i &lt; n) {</span>
+<span class="fc" id="L416">            CharSequence columnName = activeExtraStrInfo.getStrA(i++);</span>
+<span class="fc" id="L417">            CharSequence newName = activeExtraStrInfo.getStrB(i++);</span>
+<span class="fc" id="L418">            svc.renameColumn(columnName, newName);</span>
+<span class="fc" id="L419">        }</span>
+<span class="fc" id="L420">    }</span>
+
+    private void applySetSymbolCache(MetadataService svc, boolean isCacheOn) {
+<span class="fc" id="L423">        CharSequence columnName = activeExtraStrInfo.getStrA(0);</span>
+<span class="fc" id="L424">        svc.changeCacheFlag(</span>
+<span class="fc" id="L425">                svc.getMetadata().getColumnIndex(columnName),</span>
+                isCacheOn
+        );
+<span class="fc" id="L428">    }</span>
+
+    interface CharSequenceList extends Mutable {
+        CharSequence getStrA(int i);
+
+        CharSequence getStrB(int i);
+
+        int size();
+    }
+
+<span class="fc" id="L438">    private static class DirectCharSequenceList implements CharSequenceList {</span>
+<span class="fc" id="L439">        private final LongList offsets = new LongList();</span>
+<span class="fc" id="L440">        private final DirectCharSequence strA = new DirectCharSequence();</span>
+<span class="fc" id="L441">        private final DirectCharSequence strB = new DirectCharSequence();</span>
+
+        @Override
+        public void clear() {
+<span class="fc" id="L445">            offsets.clear();</span>
+<span class="fc" id="L446">        }</span>
+
+        public CharSequence getStrA(int i) {
+<span class="fc" id="L449">            long lo = offsets.get(i * 2);</span>
+<span class="fc" id="L450">            long hi = offsets.get(i * 2 + 1);</span>
+<span class="fc" id="L451">            strA.of(lo, hi);</span>
+<span class="fc" id="L452">            return strA;</span>
+        }
+
+        @Override
+        public CharSequence getStrB(int i) {
+<span class="fc" id="L457">            long lo = offsets.get(i * 2);</span>
+<span class="fc" id="L458">            long hi = offsets.get(i * 2 + 1);</span>
+<span class="fc" id="L459">            strB.of(lo, hi);</span>
+<span class="fc" id="L460">            return strB;</span>
+        }
+
+        public void of(MemoryCR buffer, long lo, long hi) {
+<span class="pc bpc" id="L464" title="1 of 2 branches missed.">            if (lo + Integer.BYTES &gt; hi) {</span>
+<span class="nc" id="L465">                throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [11]&quot;);</span>
+            }
+<span class="fc" id="L467">            int size = buffer.getInt(lo);</span>
+<span class="fc" id="L468">            lo += 4;</span>
+<span class="fc bfc" id="L469" title="All 2 branches covered.">            for (int i = 0; i &lt; size; i++) {</span>
+<span class="pc bpc" id="L470" title="1 of 2 branches missed.">                if (lo + Integer.BYTES &gt; hi) {</span>
+<span class="nc" id="L471">                    throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [12]&quot;);</span>
+                }
+<span class="fc" id="L473">                int stringSize = 2 * buffer.getInt(lo);</span>
+<span class="fc" id="L474">                lo += 4;</span>
+<span class="pc bpc" id="L475" title="1 of 2 branches missed.">                if (lo + stringSize &gt; hi) {</span>
+<span class="nc" id="L476">                    throw CairoException.critical(0).put(&quot;invalid alter statement serialized to writer queue [13]&quot;);</span>
+                }
+<span class="fc" id="L478">                long address = buffer.addressOf(lo);</span>
+<span class="fc" id="L479">                offsets.add(address, address + stringSize);</span>
+<span class="fc" id="L480">                lo += stringSize;</span>
+            }
+<span class="fc" id="L482">        }</span>
+
+        @Override
+        public int size() {
+<span class="fc" id="L486">            return offsets.size() / 2;</span>
+        }
+    }
+
+    private static class ObjCharSequenceList implements CharSequenceList {
+        private final ObjList&lt;CharSequence&gt; strings;
+
+<span class="fc" id="L493">        public ObjCharSequenceList(ObjList&lt;CharSequence&gt; strings) {</span>
+<span class="fc" id="L494">            this.strings = strings;</span>
+<span class="fc" id="L495">        }</span>
+
+        @Override
+        public void clear() {
+<span class="fc" id="L499">            strings.clear();</span>
+<span class="fc" id="L500">        }</span>
+
+        public CharSequence getStrA(int i) {
+<span class="fc" id="L503">            return strings.get(i);</span>
+        }
+
+        @Override
+        public CharSequence getStrB(int i) {
+<span class="fc" id="L508">            return strings.get(i);</span>
+        }
+
+        @Override
+        public int size() {
+<span class="fc" id="L513">            return strings.size();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

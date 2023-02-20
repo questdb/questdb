@@ -1,0 +1,357 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>O3PartitionPurgeJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">O3PartitionPurgeJob.java</span></div><h1>O3PartitionPurgeJob.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.tasks.O3PartitionPurgeTask;
+
+import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
+public class O3PartitionPurgeJob extends AbstractQueueConsumerJob&lt;O3PartitionPurgeTask&gt; implements Closeable {
+
+<span class="fc" id="L45">    private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);</span>
+    private final CairoConfiguration configuration;
+    private final StringSink[] fileNameSinks;
+<span class="fc" id="L48">    private final AtomicBoolean halted = new AtomicBoolean(false);</span>
+    private final ObjList&lt;DirectLongList&gt; partitionList;
+    private final ObjList&lt;TxReader&gt; txnReaders;
+    private final ObjList&lt;TxnScoreboard&gt; txnScoreboards;
+
+    public O3PartitionPurgeJob(MessageBus messageBus, int workerCount) {
+<span class="fc" id="L54">        super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());</span>
+<span class="fc" id="L55">        this.configuration = messageBus.getConfiguration();</span>
+<span class="fc" id="L56">        this.fileNameSinks = new StringSink[workerCount];</span>
+<span class="fc" id="L57">        this.partitionList = new ObjList&lt;&gt;(workerCount);</span>
+<span class="fc" id="L58">        this.txnScoreboards = new ObjList&lt;&gt;(workerCount);</span>
+<span class="fc" id="L59">        this.txnReaders = new ObjList&lt;&gt;(workerCount);</span>
+
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L62">            fileNameSinks[i] = new StringSink();</span>
+<span class="fc" id="L63">            partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));</span>
+<span class="fc" id="L64">            txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));</span>
+<span class="fc" id="L65">            txnReaders.add(new TxReader(configuration.getFilesFacade()));</span>
+        }
+<span class="fc" id="L67">    }</span>
+
+    @Override
+    public void close() {
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">        if (halted.compareAndSet(false, true)) {</span>
+<span class="fc" id="L72">            Misc.freeObjList(partitionList);</span>
+<span class="fc" id="L73">            Misc.freeObjList(txnReaders);</span>
+<span class="fc" id="L74">            Misc.freeObjList(txnScoreboards);</span>
+        }
+<span class="fc" id="L76">    }</span>
+
+
+    private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
+<span class="fc" id="L80">        int index = Chars.lastIndexOf(fileNameSink, '.');</span>
+
+<span class="fc" id="L82">        int len = fileNameSink.length();</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L84">            index = len;</span>
+        }
+        try {
+<span class="fc bfc" id="L87" title="All 2 branches covered.">            if (index &lt; len) {</span>
+<span class="fc" id="L88">                long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, len);</span>
+                // When reader locks transaction 100 it opens partition version .99 or lower.
+                // Also, when there is no transaction version in the name, it is counted as -1.
+                // By adding +1 here we kill 2 birds in with one stone, partition versions are aligned with
+                // txn scoreboard reader locks and no need to add -1 which allows us to use 128bit
+                // sort to sort 2 x 64bit unsigned integers
+<span class="fc" id="L94">                partitionList.add(partitionVersion + 1);</span>
+<span class="fc" id="L95">            } else {</span>
+                // This should be -1, but it is only possible to correctly sort 2 unsigned longs
+                // as 128bit integer sort
+                // Set 0 instead of -1 and revert it later on. There should be not possible to have .0 in the partition name
+<span class="fc" id="L99">                partitionList.add(0);</span>
+            }
+
+            try {
+<span class="fc" id="L103">                long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);</span>
+<span class="fc" id="L104">                partitionList.add(partitionTs);</span>
+<span class="fc" id="L105">            } catch (NumericException e) {</span>
+<span class="pc bpc" id="L106" title="2 of 4 branches missed.">                if (!Chars.startsWith(tableName, WalUtils.WAL_NAME_BASE) &amp;&amp; !Chars.equals(tableName, WalUtils.SEQ_DIR)) {</span>
+<span class="fc" id="L107">                    LOG.error().$(&quot;unknown directory [table=&quot;).utf8(tableName).$(&quot;, dir=&quot;).utf8(fileNameSink).I$();</span>
+                }
+<span class="fc" id="L109">                partitionList.setPos(partitionList.size() - 1); // remove partition version record</span>
+<span class="fc" id="L110">            }</span>
+<span class="fc" id="L111">        } catch (NumericException e) {</span>
+<span class="fc" id="L112">            LOG.error().$(&quot;unknown directory [table=&quot;).utf8(tableName).$(&quot;, dir=&quot;).utf8(fileNameSink).I$();</span>
+<span class="fc" id="L113">        }</span>
+<span class="fc" id="L114">    }</span>
+
+    private static void processDetachedPartition(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+        // Partition is dropped or not fully committed.
+        // It is only possible to delete when there are no readers
+<span class="fc" id="L130">        long lastTxn = txReader.getTxn();</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">        for (int i = hi - 2, n = lo - 1; i &gt; n; i -= 2) {</span>
+<span class="fc" id="L132">            long nameTxn = partitionList.get(i);</span>
+
+            // If last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
+            // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn &gt; 3, e.g. when nameTxn &lt; lastTxn
+<span class="fc bfc" id="L136" title="All 4 branches covered.">            boolean rangeUnlocked = nameTxn &lt; lastTxn &amp;&amp; txnScoreboard.isRangeAvailable(nameTxn, lastTxn);</span>
+
+<span class="fc" id="L138">            path.trimTo(tableRootLen);</span>
+<span class="fc" id="L139">            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);</span>
+<span class="fc" id="L140">            TableUtils.txnPartitionConditionally(path, nameTxn - 1);</span>
+<span class="fc" id="L141">            path.$();</span>
+
+<span class="fc bfc" id="L143" title="All 2 branches covered.">            if (rangeUnlocked) {</span>
+                // nameTxn can be deleted
+                // -1 here is to compensate +1 added when partition version parsed from folder name
+                // See comments of why +1 added there in parsePartitionDateVersion()
+<span class="fc" id="L147">                LOG.info().$(&quot;purging dropped partition directory [path=&quot;).utf8(path).I$();</span>
+<span class="fc" id="L148">                ff.unlinkOrRemove(path, LOG);</span>
+<span class="fc" id="L149">                lastTxn = nameTxn;</span>
+            } else {
+<span class="fc" id="L151">                LOG.info().$(&quot;cannot purge partition directory, locked for reading [path=&quot;).utf8(path).I$();</span>
+<span class="fc" id="L152">                break;</span>
+            }
+        }
+<span class="fc" id="L155">    }</span>
+
+    private static void processPartition(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+<span class="fc bfc" id="L169" title="All 2 branches covered.">        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) &gt; 0;</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">        if (partitionInTxnFile) {</span>
+<span class="fc" id="L171">            processPartition0(</span>
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
+        } else {
+<span class="fc" id="L184">            processDetachedPartition(</span>
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
+        }
+<span class="fc" id="L197">    }</span>
+
+    private static void processPartition0(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+<span class="fc" id="L211">        long lastCommittedPartitionName = txReader.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);</span>
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">        if (lastCommittedPartitionName &gt; -1) {</span>
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">            assert hi &lt;= partitionList.size();</span>
+            // lo points to the beginning element in partitionList, hi next after last
+            // each partition folder represented by a pair in the partitionList (partition version, partition timestamp)
+            // Skip first pair, start from second and check if it can be deleted.
+<span class="fc bfc" id="L217" title="All 2 branches covered.">            for (int i = lo + 2; i &lt; hi; i += 2) {</span>
+<span class="fc" id="L218">                long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i));</span>
+<span class="fc" id="L219">                long previousNameVersion = partitionList.get(i - 2);</span>
+
+<span class="fc bfc" id="L221" title="All 2 branches covered.">                boolean rangeUnlocked = previousNameVersion &lt; nextNameVersion</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">                        &amp;&amp; txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);</span>
+
+<span class="fc" id="L224">                path.trimTo(tableRootLen);</span>
+<span class="fc" id="L225">                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);</span>
+<span class="fc" id="L226">                TableUtils.txnPartitionConditionally(path, previousNameVersion - 1);</span>
+<span class="fc" id="L227">                path.$();</span>
+
+<span class="fc bfc" id="L229" title="All 2 branches covered.">                if (rangeUnlocked) {</span>
+                    // previousNameVersion can be deleted
+                    // -1 here is to compensate +1 added when partition version parsed from folder name
+                    // See comments of why +1 added there in parsePartitionDateVersion()
+<span class="fc" id="L233">                    LOG.info().$(&quot;purging overwritten partition directory [path=&quot;).utf8(path).I$();</span>
+<span class="fc" id="L234">                    ff.unlinkOrRemove(path, LOG);</span>
+                } else {
+<span class="fc" id="L236">                    LOG.info().$(&quot;cannot purge overwritten partition directory, locked for reading [path=&quot;).utf8(path).I$();</span>
+                }
+            }
+        }
+<span class="fc" id="L240">    }</span>
+
+    private void discoverPartitions(
+            FilesFacade ff,
+            StringSink fileNameSink,
+            DirectLongList partitionList,
+            CharSequence root,
+            TableToken tableToken,
+            TxnScoreboard txnScoreboard,
+            TxReader txReader,
+            int partitionBy) {
+
+<span class="fc" id="L252">        LOG.info().$(&quot;processing [table=&quot;).utf8(tableToken.getDirName()).I$();</span>
+<span class="fc" id="L253">        Path path = Path.getThreadLocal(root).concat(tableToken);</span>
+<span class="fc" id="L254">        int plimit = path.length();</span>
+<span class="fc" id="L255">        partitionList.clear();</span>
+<span class="fc" id="L256">        DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);</span>
+<span class="fc" id="L257">        long p = ff.findFirst(path.$());</span>
+<span class="fc bfc" id="L258" title="All 2 branches covered.">        if (p &gt; 0) {</span>
+            try {
+                do {
+<span class="fc bfc" id="L261" title="All 2 branches covered.">                    if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(p), ff.findType(p), fileNameSink)) {</span>
+<span class="fc" id="L262">                        parsePartitionDateVersion(fileNameSink, partitionList, tableToken.getDirName(), partitionByFormat);</span>
+<span class="fc" id="L263">                        path.trimTo(plimit).$();</span>
+                    }
+<span class="fc bfc" id="L265" title="All 2 branches covered.">                } while (ff.findNext(p) &gt; 0);</span>
+            } finally {
+<span class="fc" id="L267">                ff.findClose(p);</span>
+            }
+        }
+
+        // find duplicate partitions
+<span class="pc bpc" id="L272" title="1 of 2 branches missed.">        assert partitionList.size() % 2 == 0;</span>
+<span class="fc" id="L273">        Vect.sort128BitAscInPlace(partitionList.getAddress(), partitionList.size() / 2);</span>
+
+<span class="fc" id="L275">        long partitionTimestamp = Numbers.LONG_NaN;</span>
+<span class="fc" id="L276">        int lo = 0;</span>
+<span class="fc" id="L277">        int n = (int) partitionList.size();</span>
+
+<span class="fc" id="L279">        path.of(root).concat(tableToken);</span>
+
+<span class="fc" id="L281">        int tableRootLen = path.length();</span>
+        try {
+<span class="fc" id="L283">            txnScoreboard.ofRO(path);</span>
+<span class="fc" id="L284">            txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);</span>
+<span class="fc" id="L285">            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());</span>
+
+<span class="fc bfc" id="L287" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i += 2) {</span>
+<span class="fc" id="L288">                long currentPartitionTs = partitionList.get(i + 1);</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">                if (currentPartitionTs != partitionTimestamp) {</span>
+<span class="fc bfc" id="L290" title="All 4 branches covered.">                    if (i &gt; lo + 2 ||</span>
+<span class="fc bfc" id="L291" title="All 2 branches covered.">                            (i &gt; 0 &amp;&amp; txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) &lt; 0)) {</span>
+<span class="fc" id="L292">                        processPartition(</span>
+                                ff,
+                                path,
+                                tableRootLen,
+                                txReader,
+                                txnScoreboard,
+                                partitionTimestamp,
+                                partitionBy,
+                                partitionList,
+                                lo,
+                                i
+                        );
+                    }
+<span class="fc" id="L305">                    lo = i;</span>
+<span class="fc" id="L306">                    partitionTimestamp = currentPartitionTs;</span>
+                }
+            }
+            // Tail
+<span class="fc bfc" id="L310" title="All 4 branches covered.">            if (n &gt; lo + 2 || txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) &lt; 0) {</span>
+<span class="fc" id="L311">                processPartition(</span>
+                        ff,
+                        path,
+                        tableRootLen,
+                        txReader,
+                        txnScoreboard,
+                        partitionTimestamp,
+                        partitionBy,
+                        partitionList,
+                        lo,
+                        n
+                );
+            }
+<span class="fc" id="L324">        } catch (CairoException ex) {</span>
+            // It is possible that table is dropped while this async job was in the queue.
+            // so it can be not too bad. Log error and continue work on the queue
+<span class="fc" id="L327">            LOG.error()</span>
+<span class="fc" id="L328">                    .$(&quot;could not purge partition open [table=`&quot;).utf8(tableToken.getDirName())</span>
+<span class="fc" id="L329">                    .$(&quot;`, ex=&quot;).$(ex.getFlyweightMessage())</span>
+<span class="fc" id="L330">                    .$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="fc" id="L331">                    .I$();</span>
+<span class="fc" id="L332">            LOG.error().$(ex.getFlyweightMessage()).$();</span>
+        } finally {
+<span class="fc" id="L334">            txReader.clear();</span>
+<span class="fc" id="L335">            txnScoreboard.clear();</span>
+        }
+<span class="fc" id="L337">        LOG.info().$(&quot;processed [table=&quot;).$(tableToken).I$();</span>
+<span class="fc" id="L338">    }</span>
+
+    @Override
+    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+<span class="fc" id="L342">        final O3PartitionPurgeTask task = queue.get(cursor);</span>
+<span class="fc" id="L343">        discoverPartitions(</span>
+<span class="fc" id="L344">                configuration.getFilesFacade(),</span>
+                fileNameSinks[workerId],
+<span class="fc" id="L346">                partitionList.get(workerId),</span>
+<span class="fc" id="L347">                configuration.getRoot(),</span>
+<span class="fc" id="L348">                task.getTableToken(),</span>
+<span class="fc" id="L349">                txnScoreboards.get(workerId),</span>
+<span class="fc" id="L350">                txnReaders.get(workerId),</span>
+<span class="fc" id="L351">                task.getPartitionBy()</span>
+        );
+<span class="fc" id="L353">        subSeq.done(cursor);</span>
+<span class="fc" id="L354">        return true;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

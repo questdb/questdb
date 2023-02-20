@@ -1,0 +1,577 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LongList.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">LongList.java</span></div><h1>LongList.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.cairo.BinarySearch;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.Arrays;
+
+<span class="fc" id="L33">public class LongList implements Mutable, LongVec, Sinkable {</span>
+    private static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final long DEFAULT_NO_ENTRY_VALUE = -1L;
+    private final long noEntryValue;
+    private long[] data;
+<span class="fc" id="L38">    private int pos = 0;</span>
+
+    public LongList() {
+<span class="fc" id="L41">        this(DEFAULT_ARRAY_SIZE);</span>
+<span class="fc" id="L42">    }</span>
+
+    public LongList(int capacity) {
+<span class="fc" id="L45">        this(capacity, DEFAULT_NO_ENTRY_VALUE);</span>
+<span class="fc" id="L46">    }</span>
+
+<span class="fc" id="L48">    public LongList(int capacity, long noEntryValue) {</span>
+<span class="fc" id="L49">        this.data = new long[capacity];</span>
+<span class="fc" id="L50">        this.noEntryValue = noEntryValue;</span>
+<span class="fc" id="L51">    }</span>
+
+<span class="fc" id="L53">    public LongList(LongList other) {</span>
+<span class="fc" id="L54">        this.data = new long[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];</span>
+<span class="fc" id="L55">        setPos(other.size());</span>
+<span class="fc" id="L56">        System.arraycopy(other.data, 0, this.data, 0, pos);</span>
+<span class="fc" id="L57">        this.noEntryValue = other.noEntryValue;</span>
+<span class="fc" id="L58">    }</span>
+
+<span class="fc" id="L60">    public LongList(long[] other) {</span>
+<span class="fc" id="L61">        this.data = new long[other.length];</span>
+<span class="fc" id="L62">        setPos(other.length);</span>
+<span class="fc" id="L63">        System.arraycopy(other, 0, this.data, 0, pos);</span>
+<span class="fc" id="L64">        this.noEntryValue = DEFAULT_NO_ENTRY_VALUE;</span>
+<span class="fc" id="L65">    }</span>
+
+    public void add(long value) {
+<span class="fc" id="L68">        ensureCapacity(pos + 1);</span>
+<span class="fc" id="L69">        data[pos++] = value;</span>
+<span class="fc" id="L70">    }</span>
+
+    public void add(long value0, long value1) {
+<span class="fc" id="L73">        int n = pos;</span>
+<span class="fc" id="L74">        ensureCapacity(n + 2);</span>
+<span class="fc" id="L75">        data[n++] = value0;</span>
+<span class="fc" id="L76">        data[n++] = value1;</span>
+<span class="fc" id="L77">        pos = n;</span>
+<span class="fc" id="L78">    }</span>
+
+    public void add(long value0, long value1, long value2, long value3) {
+<span class="fc" id="L81">        int n = pos;</span>
+<span class="fc" id="L82">        ensureCapacity(n + 4);</span>
+<span class="fc" id="L83">        data[n++] = value0;</span>
+<span class="fc" id="L84">        data[n++] = value1;</span>
+<span class="fc" id="L85">        data[n++] = value2;</span>
+<span class="fc" id="L86">        data[n++] = value3;</span>
+<span class="fc" id="L87">        pos = n;</span>
+<span class="fc" id="L88">    }</span>
+
+    public void add(long value0, long value1, long value2, long value3, long value4, long value5, long value6, long value7) {
+<span class="fc" id="L91">        int n = pos;</span>
+<span class="fc" id="L92">        ensureCapacity(n + 8);</span>
+<span class="fc" id="L93">        data[n++] = value0;</span>
+<span class="fc" id="L94">        data[n++] = value1;</span>
+<span class="fc" id="L95">        data[n++] = value2;</span>
+<span class="fc" id="L96">        data[n++] = value3;</span>
+<span class="fc" id="L97">        data[n++] = value4;</span>
+<span class="fc" id="L98">        data[n++] = value5;</span>
+<span class="fc" id="L99">        data[n++] = value6;</span>
+<span class="fc" id="L100">        data[n++] = value7;</span>
+<span class="fc" id="L101">        pos = n;</span>
+<span class="fc" id="L102">    }</span>
+
+    public void add(LongList that) {
+<span class="fc" id="L105">        add(that, 0, that.size());</span>
+<span class="fc" id="L106">    }</span>
+
+    public void add(LongList that, int lo, int hi) {
+<span class="fc" id="L109">        int p = pos;</span>
+<span class="fc" id="L110">        int s = hi - lo;</span>
+<span class="fc" id="L111">        ensureCapacity(p + s);</span>
+<span class="fc" id="L112">        System.arraycopy(that.data, lo, this.data, p, s);</span>
+<span class="fc" id="L113">        pos += s;</span>
+<span class="fc" id="L114">    }</span>
+
+    public void add(int index, long element) {
+<span class="nc" id="L117">        ensureCapacity(++pos);</span>
+<span class="nc" id="L118">        System.arraycopy(data, index, data, index + 1, pos - index - 1);</span>
+<span class="nc" id="L119">        data[index] = element;</span>
+<span class="nc" id="L120">    }</span>
+
+    public void arrayCopy(int srcPos, int dstPos, int length) {
+<span class="fc" id="L123">        System.arraycopy(data, srcPos, data, dstPos, length);</span>
+<span class="fc" id="L124">    }</span>
+
+    public int binarySearch(long value, int scanDir) {
+
+        // this is the same algorithm as implemented in C (util.h)
+        // template&lt;class T, class V&gt;
+        // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
+        // please ensure these implementations are in sync
+
+<span class="fc" id="L133">        int low = 0;</span>
+<span class="fc" id="L134">        int high = pos - 1;</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        while (high - low &gt; 65) {</span>
+<span class="fc" id="L136">            final int mid = (low + high) / 2;</span>
+<span class="fc" id="L137">            final long midVal = data[mid];</span>
+
+<span class="fc bfc" id="L139" title="All 2 branches covered.">            if (midVal &lt; value) {</span>
+<span class="fc" id="L140">                low = mid;</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">            } else if (midVal &gt; value) {</span>
+<span class="fc" id="L142">                high = mid - 1;</span>
+            } else {
+                // In case of multiple equal values, find the first
+<span class="fc bfc" id="L145" title="All 2 branches covered.">                return scanDir == BinarySearch.SCAN_UP ?</span>
+<span class="fc" id="L146">                        scrollUp(mid, midVal) :</span>
+<span class="fc" id="L147">                        scrollDown(mid, high, midVal);</span>
+            }
+<span class="fc" id="L149">        }</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        return scanDir == BinarySearch.SCAN_UP ?</span>
+<span class="fc" id="L151">                scanUp(value, low, high + 1) :</span>
+<span class="fc" id="L152">                scanDown(value, low, high + 1);</span>
+    }
+
+    public int binarySearchBlock(int shl, long value, int scanDir) {
+        // Binary searches using 2^shl blocks
+        // e.g. when shl == 2
+        // this method treats 4 longs as 1 entry
+        // taking first long for the comparisons
+        // and ignoring the other 3 values.
+
+        // This is useful when list is a dictionary where first long is a key
+        // and subsequent X (1, 3, 7 etc.) values are the value of the dictionary.
+
+        // this is the same algorithm as implemented in C (util.h)
+        // template&lt;class T, class V&gt;
+        // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
+        // please ensure these implementations are in sync
+
+<span class="fc" id="L170">        return binarySearchBlock(0, shl, value, scanDir);</span>
+    }
+
+    public int binarySearchBlock(int offset, int shl, long value, int scanDir) {
+<span class="fc" id="L174">        int low = offset &gt;&gt; shl;</span>
+<span class="fc" id="L175">        int high = (pos - 1) &gt;&gt; shl;</span>
+<span class="fc bfc" id="L176" title="All 2 branches covered.">        while (high - low &gt; 65) {</span>
+<span class="fc" id="L177">            final int mid = (low + high) / 2;</span>
+<span class="fc" id="L178">            final long midVal = data[mid &lt;&lt; shl];</span>
+
+<span class="fc bfc" id="L180" title="All 2 branches covered.">            if (midVal &lt; value) {</span>
+<span class="fc" id="L181">                low = mid;</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">            } else if (midVal &gt; value) {</span>
+<span class="fc" id="L183">                high = mid - 1;</span>
+            } else {
+                // In case of multiple equal values, find the first
+<span class="fc bfc" id="L186" title="All 2 branches covered.">                return scanDir == BinarySearch.SCAN_UP ?</span>
+<span class="fc" id="L187">                        scrollUpBlock(shl, mid, midVal) :</span>
+<span class="fc" id="L188">                        scrollDownBlock(shl, mid, high, midVal);</span>
+            }
+<span class="fc" id="L190">        }</span>
+<span class="fc bfc" id="L191" title="All 2 branches covered.">        return scanDir == BinarySearch.SCAN_UP ?</span>
+<span class="fc" id="L192">                scanUpBlock(shl, value, low, high + 1) :</span>
+<span class="fc" id="L193">                scanDownBlock(shl, value, low, high + 1);</span>
+    }
+
+    public void clear() {
+<span class="fc" id="L197">        pos = 0;</span>
+<span class="fc" id="L198">    }</span>
+
+    public void ensureCapacity(int capacity) {
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">        if (capacity &lt; 0) {</span>
+<span class="nc" id="L202">            throw new IllegalArgumentException(&quot;Negative capacity. Integer overflow may be?&quot;);</span>
+        }
+
+<span class="fc" id="L205">        int l = data.length;</span>
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        if (capacity &gt; l) {</span>
+<span class="fc" id="L207">            int newCap = Math.max(l &lt;&lt; 1, capacity);</span>
+<span class="fc" id="L208">            long[] buf = new long[newCap];</span>
+<span class="fc" id="L209">            System.arraycopy(data, 0, buf, 0, l);</span>
+<span class="fc" id="L210">            this.data = buf;</span>
+        }
+<span class="fc" id="L212">    }</span>
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+<span class="pc bpc" id="L219" title="1 of 6 branches missed.">        return this == that || that instanceof LongList &amp;&amp; equals((LongList) that);</span>
+    }
+
+    public void erase() {
+<span class="nc" id="L223">        pos = 0;</span>
+<span class="nc" id="L224">        Arrays.fill(data, noEntryValue);</span>
+<span class="nc" id="L225">    }</span>
+
+    public void extendAndSet(int index, long value) {
+<span class="fc" id="L228">        ensureCapacity(index + 1);</span>
+<span class="fc bfc" id="L229" title="All 2 branches covered.">        if (index &gt;= pos) {</span>
+<span class="fc" id="L230">            pos = index + 1;</span>
+        }
+<span class="fc" id="L232">        data[index] = value;</span>
+<span class="fc" id="L233">    }</span>
+
+    public void fill(int from, int to, long value) {
+<span class="fc" id="L236">        Arrays.fill(data, from, to, value);</span>
+<span class="fc" id="L237">    }</span>
+
+    public long get(int index) {
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">        if (index &lt; pos) {</span>
+<span class="fc" id="L241">            return data[index];</span>
+        }
+<span class="nc" id="L243">        throw new ArrayIndexOutOfBoundsException(index);</span>
+    }
+
+    public long getAndSetQuick(int index, long value) {
+<span class="nc" id="L247">        long v = getQuick(index);</span>
+<span class="nc" id="L248">        data[index] = value;</span>
+<span class="nc" id="L249">        return v;</span>
+    }
+
+    /**
+     * Returns last element of the list or null if list is empty.
+     *
+     * @return last element of the list
+     */
+    public long getLast() {
+<span class="fc bfc" id="L258" title="All 2 branches covered.">        if (pos &gt; 0) {</span>
+<span class="fc" id="L259">            return data[pos - 1];</span>
+        }
+<span class="fc" id="L261">        return noEntryValue;</span>
+    }
+
+    /**
+     * Returns element at the specified position. This method does not do
+     * bounds check and may cause memory corruption if index is out of bounds.
+     * Instead the responsibility to check bounds is placed on application code,
+     * which is often the case anyway, for example in indexed for() loop.
+     *
+     * @param index of the element
+     * @return element at the specified position.
+     */
+    public long getQuick(int index) {
+<span class="fc" id="L274">        return data[index];</span>
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public int hashCode() {
+<span class="nc" id="L282">        long hashCode = 1;</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        for (int i = 0, n = pos; i &lt; n; i++) {</span>
+<span class="nc" id="L284">            long v = getQuick(i);</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            hashCode = 31 * hashCode + (v == noEntryValue ? 0 : v);</span>
+        }
+<span class="nc" id="L287">        return (int) hashCode;</span>
+    }
+
+    public void increment(int index) {
+<span class="fc" id="L291">        data[index] = data[index] + 1;</span>
+<span class="fc" id="L292">    }</span>
+
+    public int indexOf(long o) {
+<span class="fc bfc" id="L295" title="All 2 branches covered.">        for (int i = 0, n = pos; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L296" title="All 2 branches covered.">            if (o == getQuick(i)) {</span>
+<span class="fc" id="L297">                return i;</span>
+            }
+        }
+<span class="fc" id="L300">        return -1;</span>
+    }
+
+    public void insert(int index, int length) {
+<span class="fc" id="L304">        ensureCapacity(pos + length);</span>
+<span class="fc bfc" id="L305" title="All 2 branches covered.">        if (pos &gt; index) {</span>
+<span class="fc" id="L306">            System.arraycopy(data, index, data, index + length, pos - index);</span>
+        }
+<span class="fc" id="L308">        pos += length;</span>
+<span class="fc" id="L309">    }</span>
+
+    public void insertFromSource(int index, LongList src, int srcLo, int srcHi) {
+<span class="pc bpc" id="L312" title="4 of 8 branches missed.">        assert index &gt; -1 &amp;&amp; index &lt; pos + 1 &amp;&amp; srcLo &gt; -1 &amp;&amp; srcHi - 1 &lt; src.size();</span>
+<span class="fc" id="L313">        int len = srcHi - srcLo;</span>
+<span class="pc bpc" id="L314" title="1 of 2 branches missed.">        if (len &gt; 0) {</span>
+<span class="fc" id="L315">            insert(index, len);</span>
+<span class="fc" id="L316">            System.arraycopy(src.data, srcLo, data, index, len);</span>
+        }
+<span class="fc" id="L318">    }</span>
+
+    @Override
+    public LongVec newInstance() {
+<span class="fc" id="L322">        LongList newList = new LongList(size());</span>
+<span class="fc" id="L323">        newList.setPos(pos);</span>
+<span class="fc" id="L324">        return newList;</span>
+    }
+
+    public void remove(long v) {
+<span class="fc" id="L328">        int index = indexOf(v);</span>
+<span class="fc bfc" id="L329" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L330">            removeIndex(index);</span>
+        }
+<span class="fc" id="L332">    }</span>
+
+    public void removeIndex(int index) {
+<span class="pc bpc" id="L335" title="2 of 4 branches missed.">        if (pos &lt; 1 || index &gt;= pos) {</span>
+<span class="nc" id="L336">            return;</span>
+        }
+<span class="fc" id="L338">        int move = pos - index - 1;</span>
+<span class="fc bfc" id="L339" title="All 2 branches covered.">        if (move &gt; 0) {</span>
+<span class="fc" id="L340">            System.arraycopy(data, index + 1, data, index, move);</span>
+        }
+<span class="fc" id="L342">        data[--pos] = noEntryValue;</span>
+<span class="fc" id="L343">    }</span>
+
+    public void removeIndexBlock(int index, int slotSize) {
+<span class="pc bpc" id="L346" title="2 of 4 branches missed.">        if (pos &lt; 1 || index &gt;= pos) {</span>
+<span class="nc" id="L347">            return;</span>
+        }
+<span class="fc" id="L349">        int move = pos - index - slotSize;</span>
+<span class="fc bfc" id="L350" title="All 2 branches covered.">        if (move &gt; 0) {</span>
+<span class="fc" id="L351">            System.arraycopy(data, index + slotSize, data, index, move);</span>
+        }
+<span class="fc" id="L353">        pos -= slotSize;</span>
+<span class="fc" id="L354">        Arrays.fill(data, pos, pos + slotSize, noEntryValue);</span>
+<span class="fc" id="L355">    }</span>
+
+    public void seed(int capacity, long value) {
+<span class="fc" id="L358">        ensureCapacity(capacity);</span>
+<span class="fc" id="L359">        pos = capacity;</span>
+<span class="fc" id="L360">        fill(0, capacity, value);</span>
+<span class="fc" id="L361">    }</span>
+
+    public void seed(int fromIndex, int count, long value) {
+<span class="fc" id="L364">        int capacity = fromIndex + count;</span>
+<span class="fc" id="L365">        ensureCapacity(capacity);</span>
+<span class="fc" id="L366">        Arrays.fill(data, fromIndex, capacity, value);</span>
+<span class="fc" id="L367">    }</span>
+
+    public void set(int index, long element) {
+<span class="pc bpc" id="L370" title="1 of 2 branches missed.">        if (index &lt; pos) {</span>
+<span class="fc" id="L371">            data[index] = element;</span>
+<span class="fc" id="L372">            return;</span>
+        }
+<span class="nc" id="L374">        throw new ArrayIndexOutOfBoundsException(index);</span>
+    }
+
+    public void setAll(int capacity, long value) {
+<span class="fc" id="L378">        ensureCapacity(capacity);</span>
+<span class="fc" id="L379">        pos = capacity;</span>
+<span class="fc" id="L380">        Arrays.fill(data, value);</span>
+<span class="fc" id="L381">    }</span>
+
+    public void setLast(long value) {
+<span class="nc bnc" id="L384" title="All 2 branches missed.">        if (pos &gt; 0) {</span>
+<span class="nc" id="L385">            data[pos - 1] = value;</span>
+        }
+<span class="nc" id="L387">    }</span>
+
+    public final void setPos(int pos) {
+<span class="fc" id="L390">        ensureCapacity(pos);</span>
+<span class="fc" id="L391">        this.pos = pos;</span>
+<span class="fc" id="L392">    }</span>
+
+    public void setQuick(int index, long value) {
+<span class="pc bpc" id="L395" title="1 of 2 branches missed.">        assert index &lt; pos;</span>
+<span class="fc" id="L396">        data[index] = value;</span>
+<span class="fc" id="L397">    }</span>
+
+    @TestOnly
+    public void shuffle(Rnd rnd, int sh) {
+        // sh is a power of 2 to indicate number of
+        // values stored per virtual &quot;slot&quot;. E.g. if
+        // we store two values at a time, we want to shuffle pairs
+<span class="nc" id="L404">        int size = size() &gt;&gt; sh;</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        for (int i = size; i &gt; 1; i--) {</span>
+<span class="nc" id="L406">            swap(i - 1, rnd.nextInt(i), sh);</span>
+        }
+<span class="nc" id="L408">    }</span>
+
+    public int size() {
+<span class="fc" id="L411">        return pos;</span>
+    }
+
+    /**
+     * Sorts the specified array.
+     */
+    public void sort() {
+<span class="fc" id="L418">        LongSort.sort(this, 0, size() - 1);</span>
+<span class="fc" id="L419">    }</span>
+
+    public LongList subset(int lo, int hi) {
+<span class="nc" id="L422">        int _hi = Math.min(hi, pos);</span>
+<span class="nc" id="L423">        LongList that = new LongList(_hi - lo);</span>
+<span class="nc" id="L424">        System.arraycopy(this.data, lo, that.data, 0, _hi - lo);</span>
+<span class="nc" id="L425">        that.pos = _hi - lo;</span>
+<span class="nc" id="L426">        return that;</span>
+    }
+
+    public void swap(int i, int j, int shl) {
+<span class="nc" id="L430">        int k = 1 &lt;&lt; shl;</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">        for (int k1 = 0; k1 &lt; k; k1++) {</span>
+<span class="nc" id="L432">            final int ii = (i &lt;&lt; shl) + k1;</span>
+<span class="nc" id="L433">            final int ji = (j &lt;&lt; shl) + k1;</span>
+<span class="nc" id="L434">            final long jv = getQuick(ji);</span>
+<span class="nc" id="L435">            setQuick(ji, getQuick(ii));</span>
+<span class="nc" id="L436">            setQuick(ii, jv);</span>
+        }
+<span class="nc" id="L438">    }</span>
+
+    @Override
+    public void toSink(CharSink sink) {
+<span class="fc" id="L442">        sink.put('[');</span>
+<span class="fc bfc" id="L443" title="All 2 branches covered.">        for (int i = 0, k = pos; i &lt; k; i++) {</span>
+<span class="fc bfc" id="L444" title="All 2 branches covered.">            if (i &gt; 0) {</span>
+<span class="fc" id="L445">                sink.put(',');</span>
+            }
+<span class="fc" id="L447">            sink.put(get(i));</span>
+        }
+<span class="fc" id="L449">        sink.put(']');</span>
+<span class="fc" id="L450">    }</span>
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+<span class="fc" id="L457">        final CharSink sb = Misc.getThreadLocalBuilder();</span>
+<span class="fc" id="L458">        toSink(sb);</span>
+<span class="fc" id="L459">        return sb.toString();</span>
+    }
+
+    public void zero(int value) {
+<span class="fc" id="L463">        Arrays.fill(data, 0, pos, value);</span>
+<span class="fc" id="L464">    }</span>
+
+    private boolean equals(LongList that) {
+<span class="fc bfc" id="L467" title="All 2 branches covered.">        if (this.pos != that.pos) {</span>
+<span class="fc" id="L468">            return false;</span>
+        }
+<span class="fc bfc" id="L470" title="All 2 branches covered.">        if (this.noEntryValue != that.noEntryValue) {</span>
+<span class="fc" id="L471">            return false;</span>
+        }
+<span class="fc bfc" id="L473" title="All 2 branches covered.">        for (int i = 0, n = pos; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L474" title="All 2 branches covered.">            if (this.getQuick(i) != that.getQuick(i)) {</span>
+<span class="fc" id="L475">                return false;</span>
+            }
+        }
+<span class="fc" id="L478">        return true;</span>
+    }
+
+    private int scanDown(long v, int low, int high) {
+<span class="fc bfc" id="L482" title="All 2 branches covered.">        for (int i = high - 1; i &gt;= low; i--) {</span>
+<span class="fc" id="L483">            long that = data[i];</span>
+<span class="fc bfc" id="L484" title="All 2 branches covered.">            if (that == v) {</span>
+<span class="fc" id="L485">                return i;</span>
+            }
+<span class="fc bfc" id="L487" title="All 2 branches covered.">            if (that &lt; v) {</span>
+<span class="fc" id="L488">                return -(i + 2);</span>
+            }
+        }
+<span class="fc" id="L491">        return -(low + 1);</span>
+    }
+
+    private int scanDownBlock(int shl, long v, int low, int high) {
+<span class="fc bfc" id="L495" title="All 2 branches covered.">        for (int i = high - 1; i &gt;= low; i--) {</span>
+<span class="fc" id="L496">            long that = data[i &lt;&lt; shl];</span>
+<span class="fc bfc" id="L497" title="All 2 branches covered.">            if (that == v) {</span>
+<span class="fc" id="L498">                return i &lt;&lt; shl;</span>
+            }
+<span class="fc bfc" id="L500" title="All 2 branches covered.">            if (that &lt; v) {</span>
+<span class="fc" id="L501">                return -(((i + 1) &lt;&lt; shl) + 1);</span>
+            }
+        }
+<span class="fc" id="L504">        return -((low &lt;&lt; shl) + 1);</span>
+    }
+
+    private int scanUp(long value, int low, int high) {
+<span class="fc bfc" id="L508" title="All 2 branches covered.">        for (int i = low; i &lt; high; i++) {</span>
+<span class="fc" id="L509">            long that = data[i];</span>
+<span class="fc bfc" id="L510" title="All 2 branches covered.">            if (that == value) {</span>
+<span class="fc" id="L511">                return i;</span>
+            }
+<span class="fc bfc" id="L513" title="All 2 branches covered.">            if (that &gt; value) {</span>
+<span class="fc" id="L514">                return -(i + 1);</span>
+            }
+        }
+<span class="fc" id="L517">        return -(high + 1);</span>
+    }
+
+    private int scanUpBlock(int shl, long value, int low, int high) {
+<span class="fc bfc" id="L521" title="All 2 branches covered.">        for (int i = low; i &lt; high; i++) {</span>
+<span class="fc" id="L522">            long that = data[i &lt;&lt; shl];</span>
+<span class="fc bfc" id="L523" title="All 2 branches covered.">            if (that == value) {</span>
+<span class="fc" id="L524">                return i &lt;&lt; shl;</span>
+            }
+<span class="fc bfc" id="L526" title="All 2 branches covered.">            if (that &gt; value) {</span>
+<span class="fc" id="L527">                return -((i &lt;&lt; shl) + 1);</span>
+            }
+        }
+<span class="fc" id="L530">        return -((high &lt;&lt; shl) + 1);</span>
+    }
+
+    private int scrollDown(int low, int high, long value) {
+        do {
+<span class="fc bfc" id="L535" title="All 2 branches covered.">            if (low &lt; high) {</span>
+<span class="fc" id="L536">                low++;</span>
+            } else {
+<span class="fc" id="L538">                return low;</span>
+            }
+<span class="fc bfc" id="L540" title="All 2 branches covered.">        } while (data[low] == value);</span>
+<span class="fc" id="L541">        return low - 1;</span>
+    }
+
+    private int scrollDownBlock(int shl, int low, int high, long value) {
+        do {
+<span class="fc bfc" id="L546" title="All 2 branches covered.">            if (low &lt; high) {</span>
+<span class="fc" id="L547">                low++;</span>
+            } else {
+<span class="fc" id="L549">                return low &lt;&lt; shl;</span>
+            }
+<span class="fc bfc" id="L551" title="All 2 branches covered.">        } while (data[low &lt;&lt; shl] == value);</span>
+<span class="fc" id="L552">        return (low - 1) &lt;&lt; shl;</span>
+    }
+
+    private int scrollUp(int high, long value) {
+        do {
+<span class="fc bfc" id="L557" title="All 2 branches covered.">            if (high &gt; 0) {</span>
+<span class="fc" id="L558">                high--;</span>
+            } else {
+<span class="fc" id="L560">                return 0;</span>
+            }
+<span class="fc bfc" id="L562" title="All 2 branches covered.">        } while (data[high] == value);</span>
+<span class="fc" id="L563">        return high + 1;</span>
+    }
+
+    private int scrollUpBlock(int shl, int high, long value) {
+        do {
+<span class="fc bfc" id="L568" title="All 2 branches covered.">            if (high &gt; 0) {</span>
+<span class="fc" id="L569">                high--;</span>
+            } else {
+<span class="fc" id="L571">                return 0;</span>
+            }
+<span class="fc bfc" id="L573" title="All 2 branches covered.">        } while (data[high &lt;&lt; shl] == value);</span>
+<span class="fc" id="L574">        return (high + 1) &lt;&lt; shl;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

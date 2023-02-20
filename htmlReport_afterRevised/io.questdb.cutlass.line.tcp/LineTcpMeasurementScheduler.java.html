@@ -1,0 +1,866 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineTcpMeasurementScheduler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.tcp</a> &gt; <span class="el_source">LineTcpMeasurementScheduler.java</span></div><h1>LineTcpMeasurementScheduler.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.tcp;
+
+import io.questdb.Telemetry;
+import io.questdb.TelemetryOrigin;
+import io.questdb.TelemetrySystemEvent;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.WorkerPool;
+import io.questdb.network.IODispatcher;
+import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
+
+import static io.questdb.cutlass.line.tcp.LineTcpMeasurementEvent.*;
+import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
+import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
+
+class LineTcpMeasurementScheduler implements Closeable {
+<span class="fc" id="L62">    private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);</span>
+    private final ObjList&lt;TableUpdateDetails&gt;[] assignedTables;
+    private final boolean autoCreateNewColumns;
+    private final boolean autoCreateNewTables;
+    private final CairoConfiguration cairoConfiguration;
+    private final LineTcpReceiverConfiguration configuration;
+<span class="fc" id="L68">    private final MemoryMARW ddlMem = Vm.getMARWInstance();</span>
+    private final DefaultColumnTypes defaultColumnTypes;
+    private final CairoEngine engine;
+    private final LowerCaseCharSequenceObjHashMap&lt;TableUpdateDetails&gt; idleTableUpdateDetailsUtf16;
+    private final long[] loadByWriterThread;
+    private final NetworkIOJob[] netIoJobs;
+<span class="fc" id="L74">    private final Path path = new Path();</span>
+    private final MPSequence[] pubSeq;
+    private final RingQueue&lt;LineTcpMeasurementEvent&gt;[] queue;
+    private final CairoSecurityContext securityContext;
+    private final StringSink[] tableNameSinks;
+    private final TableStructureAdapter tableStructureAdapter;
+<span class="fc" id="L80">    private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();</span>
+    private final LowerCaseCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf16;
+    private final Telemetry&lt;TelemetryTask&gt; telemetry;
+    private final IOTableUpdateDetailsPool walIdleUpdateDetailsUtf8;
+    private final long writerIdleTimeout;
+    private LineTcpReceiver.SchedulerListener listener;
+
+    LineTcpMeasurementScheduler(
+            LineTcpReceiverConfiguration lineConfiguration,
+            CairoEngine engine,
+            WorkerPool ioWorkerPool,
+            IODispatcher&lt;LineTcpConnectionContext&gt; dispatcher,
+            WorkerPool writerWorkerPool
+<span class="fc" id="L93">    ) {</span>
+<span class="fc" id="L94">        this.engine = engine;</span>
+<span class="fc" id="L95">        this.telemetry = engine.getTelemetry();</span>
+<span class="fc" id="L96">        this.securityContext = lineConfiguration.getCairoSecurityContext();</span>
+<span class="fc" id="L97">        this.cairoConfiguration = engine.getConfiguration();</span>
+<span class="fc" id="L98">        this.configuration = lineConfiguration;</span>
+<span class="fc" id="L99">        MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();</span>
+<span class="fc" id="L100">        this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);</span>
+<span class="fc" id="L101">        final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();</span>
+<span class="fc" id="L102">        this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];</span>
+<span class="fc" id="L103">        this.tableNameSinks = new StringSink[ioWorkerPoolSize];</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        for (int i = 0; i &lt; ioWorkerPoolSize; i++) {</span>
+<span class="fc" id="L105">            tableNameSinks[i] = new StringSink();</span>
+<span class="fc" id="L106">            NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);</span>
+<span class="fc" id="L107">            netIoJobs[i] = netIoJob;</span>
+<span class="fc" id="L108">            ioWorkerPool.assign(i, netIoJob);</span>
+<span class="fc" id="L109">            ioWorkerPool.freeOnExit(netIoJob);</span>
+        }
+
+        // Worker count is set to 1 because we do not use this execution context
+        // in worker threads.
+<span class="fc" id="L114">        tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L115">        idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L116">        loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];</span>
+<span class="fc" id="L117">        autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();</span>
+<span class="fc" id="L118">        autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();</span>
+<span class="fc" id="L119">        int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();</span>
+<span class="fc" id="L120">        int queueSize = lineConfiguration.getWriterQueueCapacity();</span>
+<span class="fc" id="L121">        long commitIntervalDefault = configuration.getCommitIntervalDefault();</span>
+<span class="fc" id="L122">        int nWriterThreads = writerWorkerPool.getWorkerCount();</span>
+<span class="fc" id="L123">        pubSeq = new MPSequence[nWriterThreads];</span>
+        //noinspection unchecked
+<span class="fc" id="L125">        queue = new RingQueue[nWriterThreads];</span>
+        //noinspection unchecked
+<span class="fc" id="L127">        assignedTables = new ObjList[nWriterThreads];</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        for (int i = 0; i &lt; nWriterThreads; i++) {</span>
+<span class="fc" id="L129">            MPSequence ps = new MPSequence(queueSize);</span>
+<span class="fc" id="L130">            pubSeq[i] = ps;</span>
+
+<span class="fc" id="L132">            RingQueue&lt;LineTcpMeasurementEvent&gt; q = new RingQueue&lt;&gt;(</span>
+<span class="fc" id="L133">                    (address, addressSize) -&gt; new LineTcpMeasurementEvent(</span>
+                            address,
+                            addressSize,
+<span class="fc" id="L136">                            lineConfiguration.getMicrosecondClock(),</span>
+<span class="fc" id="L137">                            lineConfiguration.getTimestampAdapter(),</span>
+                            defaultColumnTypes,
+<span class="fc" id="L139">                            lineConfiguration.isStringToCharCastAllowed(),</span>
+<span class="fc" id="L140">                            lineConfiguration.getMaxFileNameLength(),</span>
+<span class="fc" id="L141">                            lineConfiguration.getAutoCreateNewColumns()</span>
+                    ),
+<span class="fc" id="L143">                    getEventSlotSize(maxMeasurementSize),</span>
+                    queueSize,
+                    MemoryTag.NATIVE_ILP_RSS
+            );
+
+<span class="fc" id="L148">            queue[i] = q;</span>
+<span class="fc" id="L149">            SCSequence subSeq = new SCSequence();</span>
+<span class="fc" id="L150">            ps.then(subSeq).then(ps);</span>
+
+<span class="fc" id="L152">            assignedTables[i] = new ObjList&lt;&gt;();</span>
+
+<span class="fc" id="L154">            final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(</span>
+                    i,
+                    q,
+                    subSeq,
+                    milliClock,
+                    commitIntervalDefault,
+                    this,
+<span class="fc" id="L161">                    engine.getMetrics(),</span>
+                    assignedTables[i]
+            );
+<span class="fc" id="L164">            writerWorkerPool.assign(i, lineTcpWriterJob);</span>
+<span class="fc" id="L165">            writerWorkerPool.freeOnExit(lineTcpWriterJob);</span>
+        }
+<span class="fc" id="L167">        this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, defaultColumnTypes, configuration.getDefaultPartitionBy());</span>
+<span class="fc" id="L168">        writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();</span>
+<span class="fc" id="L169">        walIdleUpdateDetailsUtf8 = new IOTableUpdateDetailsPool(ioWorkerPoolSize);</span>
+<span class="fc" id="L170">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L174">        tableUpdateDetailsLock.writeLock().lock();</span>
+        try {
+<span class="fc" id="L176">            closeLocals(tableUpdateDetailsUtf16);</span>
+<span class="fc" id="L177">            closeLocals(idleTableUpdateDetailsUtf16);</span>
+        } finally {
+<span class="fc" id="L179">            tableUpdateDetailsLock.writeLock().unlock();</span>
+        }
+<span class="fc" id="L181">        Misc.free(walIdleUpdateDetailsUtf8);</span>
+
+<span class="fc" id="L183">        Misc.free(path);</span>
+<span class="fc" id="L184">        Misc.free(ddlMem);</span>
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        for (int i = 0, n = assignedTables.length; i &lt; n; i++) {</span>
+<span class="fc" id="L186">            Misc.freeObjList(assignedTables[i]);</span>
+<span class="fc" id="L187">            assignedTables[i].clear();</span>
+        }
+        //noinspection ForLoopReplaceableByForEach
+<span class="fc bfc" id="L190" title="All 2 branches covered.">        for (int i = 0, n = queue.length; i &lt; n; i++) {</span>
+<span class="fc" id="L191">            Misc.free(queue[i]);</span>
+        }
+<span class="fc bfc" id="L193" title="All 2 branches covered.">        for (int i = 0, n = netIoJobs.length; i &lt; n; i++) {</span>
+<span class="fc" id="L194">            netIoJobs[i].close();</span>
+        }
+<span class="fc" id="L196">    }</span>
+
+    public long commitWalTables(ByteCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf8, long wallClockMillis) {
+<span class="fc" id="L199">        long minTableNextCommitTime = Long.MAX_VALUE;</span>
+<span class="fc bfc" id="L200" title="All 2 branches covered.">        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n &lt; sz; n++) {</span>
+<span class="fc" id="L201">            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);</span>
+<span class="fc" id="L202">            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);</span>
+
+<span class="pc bpc" id="L204" title="1 of 2 branches missed.">            if (tud.isWal()) {</span>
+<span class="nc" id="L205">                final MillisecondClock millisecondClock = tud.getMillisecondClock();</span>
+                try {
+<span class="nc" id="L207">                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);</span>
+                    // get current time again, commit is not instant and take quite some time.
+<span class="nc" id="L209">                    wallClockMillis = millisecondClock.getTicks();</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">                    if (tableNextCommitTime &lt; minTableNextCommitTime) {</span>
+                        // taking the earliest commit time
+<span class="nc" id="L212">                        minTableNextCommitTime = tableNextCommitTime;</span>
+                    }
+<span class="nc" id="L214">                } catch (Throwable ex) {</span>
+<span class="nc" id="L215">                    LOG.critical().$(&quot;commit failed [table=&quot;).$(tud.getTableNameUtf16()).$(&quot;,ex=&quot;).$(ex).I$();</span>
+<span class="nc" id="L216">                    engine.getMetrics().health().incrementUnhandledErrors();</span>
+<span class="nc" id="L217">                }</span>
+            }
+        }
+        // if no tables, just use the default commit interval
+<span class="fc" id="L221">        long commitIntervalDefault = configuration.getCommitIntervalDefault();</span>
+<span class="pc bpc" id="L222" title="1 of 2 branches missed.">        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;</span>
+    }
+
+    public boolean doMaintenance(
+            ByteCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf8,
+            int readerWorkerId,
+            long millis
+    ) {
+<span class="fc" id="L230">        walIdleUpdateDetailsUtf8.closeIdle(millis, writerIdleTimeout, listener);</span>
+
+<span class="fc bfc" id="L232" title="All 2 branches covered.">        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n &lt; sz; n++) {</span>
+<span class="fc" id="L233">            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);</span>
+<span class="fc" id="L234">            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);</span>
+
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            if (millis - tud.getLastMeasurementMillis() &gt;= writerIdleTimeout) {</span>
+<span class="fc" id="L237">                tableUpdateDetailsLock.writeLock().lock();</span>
+                try {
+<span class="fc bfc" id="L239" title="All 2 branches covered.">                    if (tud.getNetworkIOOwnerCount() == 1) {</span>
+<span class="fc" id="L240">                        final int writerWorkerId = tud.getWriterThreadId();</span>
+<span class="fc" id="L241">                        final long seq = getNextPublisherEventSequence(writerWorkerId);</span>
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">                        if (seq &gt; -1) {</span>
+<span class="fc" id="L243">                            LineTcpMeasurementEvent event = queue[writerWorkerId].get(seq);</span>
+<span class="fc" id="L244">                            event.createWriterReleaseEvent(tud, true);</span>
+<span class="fc" id="L245">                            tableUpdateDetailsUtf8.remove(tableNameUtf8);</span>
+<span class="fc" id="L246">                            final CharSequence tableNameUtf16 = tud.getTableNameUtf16();</span>
+<span class="fc" id="L247">                            tableUpdateDetailsUtf16.remove(tableNameUtf16);</span>
+<span class="fc" id="L248">                            idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);</span>
+<span class="fc" id="L249">                            tud.removeReference(readerWorkerId);</span>
+<span class="fc" id="L250">                            pubSeq[writerWorkerId].done(seq);</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">                            if (listener != null) {</span>
+                                // table going idle
+<span class="fc" id="L253">                                listener.onEvent(tud.getTableToken(), 1);</span>
+                            }
+<span class="fc" id="L255">                            LOG.info().$(&quot;active table going idle [tableName=&quot;).$(tableNameUtf16).I$();</span>
+                        }
+<span class="fc" id="L257">                        return true;</span>
+                    } else {
+<span class="fc" id="L259">                        tableUpdateDetailsUtf8.remove(tableNameUtf8);</span>
+<span class="fc" id="L260">                        tud.removeReference(readerWorkerId);</span>
+
+<span class="pc bpc" id="L262" title="1 of 2 branches missed.">                        if (tud.isWal()) {</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">                            if (listener != null) {</span>
+                                // table going idle
+<span class="nc" id="L265">                                listener.onEvent(tud.getTableToken(), 1);</span>
+                            }
+<span class="nc" id="L267">                            tud.releaseWriter(true);</span>
+<span class="nc" id="L268">                            tud.close();</span>
+                        }
+                    }
+<span class="fc bfc" id="L271" title="All 2 branches covered.">                    return sz &gt; 1;</span>
+                } finally {
+<span class="fc" id="L273">                    tableUpdateDetailsLock.writeLock().unlock();</span>
+                }
+            }
+        }
+<span class="fc" id="L277">        return false;</span>
+    }
+
+    public void processWriterReleaseEvent(LineTcpMeasurementEvent event, int workerId) {
+<span class="fc" id="L281">        tableUpdateDetailsLock.readLock().lock();</span>
+        try {
+<span class="fc" id="L283">            final TableUpdateDetails tub = event.getTableUpdateDetails();</span>
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">            if (tub.getWriterThreadId() != workerId) {</span>
+<span class="nc" id="L285">                return;</span>
+            }
+<span class="pc bpc" id="L287" title="1 of 4 branches missed.">            if (!event.getTableUpdateDetails().isWriterInError() &amp;&amp; tableUpdateDetailsUtf16.keyIndex(tub.getTableNameUtf16()) &lt; 0) {</span>
+                // Table must have been re-assigned to an IO thread
+<span class="nc" id="L289">                return;</span>
+            }
+<span class="fc" id="L291">            LOG.info()</span>
+<span class="fc" id="L292">                    .$(&quot;releasing writer, its been idle since &quot;).$ts(tub.getLastMeasurementMillis() * 1_000)</span>
+<span class="fc" id="L293">                    .$(&quot;[tableName=&quot;).$(tub.getTableNameUtf16())</span>
+<span class="fc" id="L294">                    .I$();</span>
+
+<span class="fc" id="L296">            event.releaseWriter();</span>
+        } finally {
+<span class="fc" id="L298">            tableUpdateDetailsLock.readLock().unlock();</span>
+        }
+<span class="fc" id="L300">    }</span>
+
+    public void releaseWalTableDetails(ByteCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf8) {
+<span class="fc" id="L303">        ObjList&lt;ByteCharSequence&gt; keys = tableUpdateDetailsUtf8.keys();</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">        for (int n = keys.size() - 1; n &gt; -1; --n) {</span>
+<span class="fc" id="L305">            final ByteCharSequence tableNameUtf8 = keys.getQuick(n);</span>
+<span class="fc" id="L306">            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);</span>
+<span class="fc bfc" id="L307" title="All 2 branches covered.">            if (tud.isWal()) {</span>
+<span class="fc" id="L308">                tableUpdateDetailsUtf8.remove(tableNameUtf8);</span>
+<span class="fc" id="L309">                walIdleUpdateDetailsUtf8.put(tableNameUtf8, tud);</span>
+            }
+        }
+<span class="fc" id="L312">    }</span>
+
+
+    private static long getEventSlotSize(int maxMeasurementSize) {
+<span class="fc" id="L316">        return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));</span>
+    }
+
+    private void appendToWal(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
+<span class="fc" id="L320">        final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();</span>
+<span class="fc" id="L321">        LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();</span>
+        // pass 1: create all columns that do not exist
+<span class="fc" id="L323">        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(netIoJob.getWorkerId());</span>
+<span class="fc" id="L324">        ld.resetStateIfNecessary();</span>
+<span class="fc" id="L325">        ld.clearColumnTypes();</span>
+
+<span class="fc" id="L327">        WalWriter ww = (WalWriter) tud.getWriter();</span>
+<span class="fc" id="L328">        TableRecordMetadata metadata = ww.getMetadata();</span>
+
+<span class="fc" id="L330">        long timestamp = parser.getTimestamp();</span>
+<span class="fc bfc" id="L331" title="All 2 branches covered.">        if (timestamp != LineTcpParser.NULL_TIMESTAMP) {</span>
+<span class="fc" id="L332">            timestamp = timestampAdapter.getMicros(timestamp);</span>
+        } else {
+<span class="fc" id="L334">            timestamp = configuration.getMicrosecondClock().getTicks();</span>
+        }
+
+<span class="fc" id="L337">        final int entCount = parser.getEntityCount();</span>
+<span class="fc bfc" id="L338" title="All 2 branches covered.">        for (int i = 0; i &lt; entCount; i++) {</span>
+<span class="fc" id="L339">            final LineTcpParser.ProtoEntity ent = parser.getEntity(i);</span>
+<span class="fc" id="L340">            int columnIndex = ld.getColumnIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);</span>
+<span class="fc" id="L341">            int columnType = ColumnType.UNDEFINED;</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">            if (columnIndex == COLUMN_NOT_FOUND) {</span>
+<span class="fc" id="L343">                final String columnNameUtf16 = ld.getColNameUtf16();</span>
+<span class="fc bfc" id="L344" title="All 4 branches covered.">                if (autoCreateNewColumns &amp;&amp; TableUtils.isValidColumnName(columnNameUtf16, cairoConfiguration.getMaxFileNameLength())) {</span>
+<span class="pc bpc" id="L345" title="1 of 2 branches missed.">                    if (metadata.getColumnIndexQuiet(columnNameUtf16) &lt; 0) {</span>
+<span class="fc" id="L346">                        tud.commit(false);</span>
+                        try {
+<span class="fc" id="L348">                            ww.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()));</span>
+<span class="fc" id="L349">                        } catch (CairoException e) {</span>
+<span class="fc" id="L350">                            columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);</span>
+<span class="pc bpc" id="L351" title="1 of 2 branches missed.">                            if (columnIndex &lt; 0) {</span>
+                                // the column is still not there, something must be wrong
+<span class="nc" id="L353">                                throw e;</span>
+                            }
+                            // all good, someone added the column concurrently
+<span class="fc" id="L356">                        }</span>
+                    }
+<span class="fc" id="L358">                    columnIndex = metadata.getColumnIndexQuiet(columnNameUtf16);</span>
+<span class="fc" id="L359">                    columnType = metadata.getColumnType(columnIndex);</span>
+<span class="fc bfc" id="L360" title="All 2 branches covered.">                } else if (!autoCreateNewColumns) {</span>
+<span class="fc" id="L361">                    throw newColumnsNotAllowed(tud, columnNameUtf16);</span>
+                } else {
+<span class="fc" id="L363">                    throw invalidColNameError(tud, columnNameUtf16);</span>
+                }
+<span class="fc bfc" id="L365" title="All 2 branches covered.">            } else if (columnIndex &gt; -1) {</span>
+<span class="fc bfc" id="L366" title="All 2 branches covered.">                if (columnIndex == tud.getTimestampIndex()) {</span>
+<span class="fc" id="L367">                    timestamp = timestampAdapter.getMicros(ent.getLongValue());</span>
+<span class="fc" id="L368">                    columnIndex = DUPLICATED_COLUMN;</span>
+                }
+<span class="fc bfc" id="L370" title="All 2 branches covered.">                columnType = columnIndex &lt; 0 ? ColumnType.UNDEFINED : metadata.getColumnType(columnIndex);</span>
+            }
+<span class="fc" id="L372">            ld.addColumnType(columnIndex, columnType);</span>
+        }
+
+<span class="fc" id="L375">        TableWriter.Row r = ww.newRow(timestamp);</span>
+        try {
+<span class="fc bfc" id="L377" title="All 2 branches covered.">            for (int i = 0; i &lt; entCount; i++) {</span>
+<span class="fc" id="L378">                final LineTcpParser.ProtoEntity ent = parser.getEntity(i);</span>
+
+<span class="fc" id="L380">                short entType = ent.getType();</span>
+<span class="fc" id="L381">                int colTypeAndIndex = ld.getColumnType(i);</span>
+<span class="fc" id="L382">                int colType = Numbers.decodeLowShort(colTypeAndIndex);</span>
+<span class="fc" id="L383">                int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);</span>
+
+<span class="fc bfc" id="L385" title="All 2 branches covered.">                if (columnIndex &lt; 0) {</span>
+<span class="fc" id="L386">                    continue;</span>
+                }
+
+<span class="fc bfc" id="L389" title="All 9 branches covered.">                switch (entType) {</span>
+                    case LineTcpParser.ENTITY_TYPE_TAG: {
+<span class="fc bfc" id="L391" title="All 2 branches covered.">                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {</span>
+<span class="fc" id="L392">                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());</span>
+                        } else {
+<span class="fc" id="L394">                            throw castError(&quot;tag&quot;, i, colType, ent.getName());</span>
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_INTEGER: {
+<span class="fc bfc" id="L399" title="All 10 branches covered.">                        switch (ColumnType.tagOf(colType)) {</span>
+                            case ColumnType.LONG:
+<span class="fc" id="L401">                                r.putLong(columnIndex, ent.getLongValue());</span>
+<span class="fc" id="L402">                                break;</span>
+
+                            case ColumnType.INT: {
+<span class="fc" id="L405">                                final long entityValue = ent.getLongValue();</span>
+<span class="pc bpc" id="L406" title="1 of 4 branches missed.">                                if (entityValue &gt;= Integer.MIN_VALUE &amp;&amp; entityValue &lt;= Integer.MAX_VALUE) {</span>
+<span class="fc" id="L407">                                    r.putInt(columnIndex, (int) entityValue);</span>
+<span class="pc bpc" id="L408" title="1 of 2 branches missed.">                                } else if (entityValue == Numbers.LONG_NaN) {</span>
+<span class="fc" id="L409">                                    r.putInt(columnIndex, Numbers.INT_NaN);</span>
+                                } else {
+<span class="nc" id="L411">                                    throw boundsError(entityValue, i, ColumnType.INT);</span>
+                                }
+                                break;
+                            }
+                            case ColumnType.SHORT: {
+<span class="fc" id="L416">                                final long entityValue = ent.getLongValue();</span>
+<span class="fc bfc" id="L417" title="All 4 branches covered.">                                if (entityValue &gt;= Short.MIN_VALUE &amp;&amp; entityValue &lt;= Short.MAX_VALUE) {</span>
+<span class="fc" id="L418">                                    r.putShort(columnIndex, (short) entityValue);</span>
+<span class="fc bfc" id="L419" title="All 2 branches covered.">                                } else if (entityValue == Numbers.LONG_NaN) {</span>
+<span class="fc" id="L420">                                    r.putShort(columnIndex, (short) 0);</span>
+                                } else {
+<span class="fc" id="L422">                                    throw boundsError(entityValue, i, ColumnType.SHORT);</span>
+                                }
+                                break;
+                            }
+                            case ColumnType.BYTE: {
+<span class="fc" id="L427">                                final long entityValue = ent.getLongValue();</span>
+<span class="fc bfc" id="L428" title="All 4 branches covered.">                                if (entityValue &gt;= Byte.MIN_VALUE &amp;&amp; entityValue &lt;= Byte.MAX_VALUE) {</span>
+<span class="fc" id="L429">                                    r.putByte(columnIndex, (byte) entityValue);</span>
+<span class="pc bpc" id="L430" title="1 of 2 branches missed.">                                } else if (entityValue == Numbers.LONG_NaN) {</span>
+<span class="nc" id="L431">                                    r.putByte(columnIndex, (byte) 0);</span>
+                                } else {
+<span class="fc" id="L433">                                    throw boundsError(entityValue, i, ColumnType.BYTE);</span>
+                                }
+                                break;
+                            }
+                            case ColumnType.TIMESTAMP:
+<span class="fc" id="L438">                                r.putTimestamp(columnIndex, ent.getLongValue());</span>
+<span class="fc" id="L439">                                break;</span>
+
+                            case ColumnType.DATE:
+<span class="fc" id="L442">                                r.putDate(columnIndex, ent.getLongValue());</span>
+<span class="fc" id="L443">                                break;</span>
+
+                            case ColumnType.DOUBLE:
+<span class="fc" id="L446">                                r.putDouble(columnIndex, ent.getLongValue());</span>
+<span class="fc" id="L447">                                break;</span>
+
+                            case ColumnType.FLOAT:
+<span class="fc" id="L450">                                r.putFloat(columnIndex, ent.getLongValue());</span>
+<span class="fc" id="L451">                                break;</span>
+
+                            case ColumnType.SYMBOL:
+<span class="fc" id="L454">                                r.putSym(columnIndex, ent.getValue());</span>
+<span class="fc" id="L455">                                break;</span>
+
+                            default:
+<span class="fc" id="L458">                                throw castError(&quot;integer&quot;, i, colType, ent.getName());</span>
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_FLOAT: {
+<span class="fc bfc" id="L463" title="All 4 branches covered.">                        switch (ColumnType.tagOf(colType)) {</span>
+                            case ColumnType.DOUBLE:
+<span class="fc" id="L465">                                r.putDouble(columnIndex, ent.getFloatValue());</span>
+<span class="fc" id="L466">                                break;</span>
+
+                            case ColumnType.FLOAT:
+<span class="fc" id="L469">                                r.putFloat(columnIndex, (float) ent.getFloatValue());</span>
+<span class="fc" id="L470">                                break;</span>
+
+                            case ColumnType.SYMBOL:
+<span class="fc" id="L473">                                r.putSym(columnIndex, ent.getValue());</span>
+<span class="fc" id="L474">                                break;</span>
+
+                            default:
+<span class="fc" id="L477">                                throw castError(&quot;float&quot;, i, colType, ent.getName());</span>
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_STRING: {
+<span class="fc" id="L482">                        final int geoHashBits = ColumnType.getGeoHashBits(colType);</span>
+<span class="fc" id="L483">                        final DirectByteCharSequence entityValue = ent.getValue();</span>
+<span class="fc bfc" id="L484" title="All 2 branches covered.">                        if (geoHashBits == 0) { // not geohash</span>
+<span class="fc bfc" id="L485" title="All 5 branches covered.">                            switch (ColumnType.tagOf(colType)) {</span>
+                                case ColumnType.STRING:
+<span class="fc" id="L487">                                    r.putStrUtf8AsUtf16(columnIndex, entityValue, parser.hasNonAsciiChars());</span>
+<span class="fc" id="L488">                                    break;</span>
+
+                                case ColumnType.CHAR:
+<span class="pc bpc" id="L491" title="1 of 4 branches missed.">                                    if (entityValue.length() == 1 &amp;&amp; entityValue.byteAt(0) &gt; -1) {</span>
+<span class="fc" id="L492">                                        r.putChar(columnIndex, entityValue.charAt(0));</span>
+<span class="fc bfc" id="L493" title="All 2 branches covered.">                                    } else if (stringToCharCastAllowed) {</span>
+<span class="fc" id="L494">                                        int encodedResult = Chars.utf8CharDecode(entityValue.getLo(), entityValue.getHi());</span>
+<span class="pc bpc" id="L495" title="1 of 2 branches missed.">                                        if (Numbers.decodeLowShort(encodedResult) &gt; 0) {</span>
+<span class="fc" id="L496">                                            r.putChar(columnIndex, (char) Numbers.decodeHighShort(encodedResult));</span>
+                                        } else {
+<span class="nc" id="L498">                                            throw castError(&quot;string&quot;, i, colType, ent.getName());</span>
+                                        }
+<span class="fc" id="L500">                                    } else {</span>
+<span class="fc" id="L501">                                        throw castError(&quot;string&quot;, i, colType, ent.getName());</span>
+                                    }
+                                    break;
+
+                                case ColumnType.SYMBOL:
+<span class="fc" id="L506">                                    r.putSymUtf8(columnIndex, entityValue, parser.hasNonAsciiChars());</span>
+<span class="fc" id="L507">                                    break;</span>
+                                case ColumnType.UUID:
+<span class="fc" id="L509">                                    r.putUuid(columnIndex, entityValue);</span>
+<span class="fc" id="L510">                                    break;</span>
+                                default:
+<span class="fc" id="L512">                                    throw castError(&quot;string&quot;, i, colType, ent.getName());</span>
+                            }
+                        } else {
+                            long geoHash;
+                            try {
+<span class="fc" id="L517">                                DirectByteCharSequence value = ent.getValue();</span>
+<span class="fc" id="L518">                                geoHash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), geoHashBits);</span>
+<span class="fc" id="L519">                            } catch (NumericException e) {</span>
+<span class="fc" id="L520">                                geoHash = GeoHashes.NULL;</span>
+<span class="fc" id="L521">                            }</span>
+<span class="fc" id="L522">                            r.putGeoHash(columnIndex, geoHash);</span>
+                        }
+<span class="fc" id="L524">                        break;</span>
+                    }
+                    case LineTcpParser.ENTITY_TYPE_LONG256: {
+<span class="fc bfc" id="L527" title="All 3 branches covered.">                        switch (ColumnType.tagOf(colType)) {</span>
+                            case ColumnType.LONG256:
+<span class="fc" id="L529">                                r.putLong256(columnIndex, ent.getValue());</span>
+<span class="fc" id="L530">                                break;</span>
+
+                            case ColumnType.SYMBOL:
+<span class="fc" id="L533">                                r.putSym(columnIndex, ent.getValue());</span>
+<span class="fc" id="L534">                                break;</span>
+
+                            default:
+<span class="fc" id="L537">                                throw castError(&quot;long256&quot;, i, colType, ent.getName());</span>
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
+<span class="fc bfc" id="L542" title="All 9 branches covered.">                        switch (ColumnType.tagOf(colType)) {</span>
+                            case ColumnType.BOOLEAN:
+<span class="fc" id="L544">                                r.putBool(columnIndex, ent.getBooleanValue());</span>
+<span class="fc" id="L545">                                break;</span>
+
+                            case ColumnType.BYTE:
+<span class="fc bfc" id="L548" title="All 2 branches covered.">                                r.putByte(columnIndex, (byte) (ent.getBooleanValue() ? 1 : 0));</span>
+<span class="fc" id="L549">                                break;</span>
+
+                            case ColumnType.SHORT:
+<span class="fc bfc" id="L552" title="All 2 branches covered.">                                r.putShort(columnIndex, (short) (ent.getBooleanValue() ? 1 : 0));</span>
+<span class="fc" id="L553">                                break;</span>
+
+                            case ColumnType.INT:
+<span class="fc bfc" id="L556" title="All 2 branches covered.">                                r.putInt(columnIndex, ent.getBooleanValue() ? 1 : 0);</span>
+<span class="fc" id="L557">                                break;</span>
+
+                            case ColumnType.LONG:
+<span class="fc bfc" id="L560" title="All 2 branches covered.">                                r.putLong(columnIndex, ent.getBooleanValue() ? 1 : 0);</span>
+<span class="fc" id="L561">                                break;</span>
+
+                            case ColumnType.FLOAT:
+<span class="fc bfc" id="L564" title="All 2 branches covered.">                                r.putFloat(columnIndex, ent.getBooleanValue() ? 1 : 0);</span>
+<span class="fc" id="L565">                                break;</span>
+
+                            case ColumnType.DOUBLE:
+<span class="fc bfc" id="L568" title="All 2 branches covered.">                                r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);</span>
+<span class="fc" id="L569">                                break;</span>
+
+                            case ColumnType.SYMBOL:
+<span class="fc" id="L572">                                r.putSym(columnIndex, ent.getValue());</span>
+<span class="fc" id="L573">                                break;</span>
+
+                            default:
+<span class="fc" id="L576">                                throw castError(&quot;boolean&quot;, i, colType, ent.getName());</span>
+                        }
+                        break;
+                    }
+                    case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
+<span class="fc bfc" id="L581" title="All 4 branches covered.">                        switch (ColumnType.tagOf(colType)) {</span>
+                            case ColumnType.TIMESTAMP:
+<span class="fc" id="L583">                                r.putTimestamp(columnIndex, ent.getLongValue());</span>
+<span class="fc" id="L584">                                break;</span>
+
+                            case ColumnType.DATE:
+<span class="fc" id="L587">                                r.putTimestamp(columnIndex, ent.getLongValue() / 1000);</span>
+<span class="fc" id="L588">                                break;</span>
+
+                            case ColumnType.SYMBOL:
+<span class="fc" id="L591">                                r.putSym(columnIndex, ent.getValue());</span>
+<span class="fc" id="L592">                                break;</span>
+
+                            default:
+<span class="fc" id="L595">                                throw castError(&quot;timestamp&quot;, i, colType, ent.getName());</span>
+                        }
+                        break;
+                    }
+                    // parser would reject this condition based on config
+                    case LineTcpParser.ENTITY_TYPE_SYMBOL: {
+<span class="fc bfc" id="L601" title="All 2 branches covered.">                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {</span>
+<span class="fc" id="L602">                            r.putSymUtf8(columnIndex, ent.getValue(), parser.hasNonAsciiChars());</span>
+                        } else {
+<span class="fc" id="L604">                            throw castError(&quot;symbol&quot;, i, colType, ent.getName());</span>
+                        }
+                        break;
+                    }
+                    default:
+                        // unsupported types are ignored
+                        break;
+                }
+            }
+<span class="fc" id="L613">            r.append();</span>
+<span class="fc" id="L614">            tud.commitIfMaxUncommittedRowsCountReached();</span>
+<span class="nc" id="L615">        } catch (CommitFailedException commitFailedException) {</span>
+<span class="nc" id="L616">            throw commitFailedException;</span>
+<span class="fc" id="L617">        } catch (Throwable th) {</span>
+<span class="fc" id="L618">            LOG.error().$(&quot;could not write line protocol measurement [tableName=&quot;).$(tud.getTableNameUtf16()).$(&quot;, message=&quot;).$(th.getMessage()).$(th).I$();</span>
+<span class="pc bpc" id="L619" title="1 of 2 branches missed.">            if (r != null) {</span>
+<span class="fc" id="L620">                r.cancel();</span>
+            }
+<span class="fc" id="L622">        }</span>
+<span class="fc" id="L623">    }</span>
+
+    private void closeLocals(LowerCaseCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tudUtf16) {
+<span class="fc" id="L626">        ObjList&lt;CharSequence&gt; tableNames = tudUtf16.keys();</span>
+<span class="fc bfc" id="L627" title="All 2 branches covered.">        for (int n = 0, sz = tableNames.size(); n &lt; sz; n++) {</span>
+<span class="fc" id="L628">            tudUtf16.get(tableNames.get(n)).closeLocals();</span>
+        }
+<span class="fc" id="L630">        tudUtf16.clear();</span>
+<span class="fc" id="L631">    }</span>
+
+    private boolean dispatchEvent(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) {
+<span class="fc" id="L634">        final int writerThreadId = tud.getWriterThreadId();</span>
+<span class="fc" id="L635">        long seq = getNextPublisherEventSequence(writerThreadId);</span>
+<span class="fc bfc" id="L636" title="All 2 branches covered.">        if (seq &gt; -1) {</span>
+            try {
+<span class="pc bpc" id="L638" title="1 of 2 branches missed.">                if (tud.isWriterInError()) {</span>
+<span class="nc" id="L639">                    throw CairoException.critical(0).put(&quot;writer is in error, aborting ILP pipeline&quot;);</span>
+                }
+<span class="fc" id="L641">                queue[writerThreadId].get(seq).createMeasurementEvent(tud, parser, netIoJob.getWorkerId());</span>
+            } finally {
+<span class="fc" id="L643">                pubSeq[writerThreadId].done(seq);</span>
+            }
+<span class="fc" id="L645">            tud.incrementEventsProcessedSinceReshuffle();</span>
+<span class="fc" id="L646">            return false;</span>
+        }
+<span class="fc" id="L648">        return true;</span>
+    }
+
+    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
+<span class="fc" id="L652">        final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();</span>
+<span class="fc" id="L653">        TableUpdateDetails walCachedTud = walIdleUpdateDetailsUtf8.get(tableNameUtf8);</span>
+<span class="fc bfc" id="L654" title="All 2 branches covered.">        if (walCachedTud != null) {</span>
+<span class="fc" id="L655">            netIoJob.addTableUpdateDetails(walCachedTud.getTableNameUtf8(), walCachedTud);</span>
+<span class="fc" id="L656">            return walCachedTud;</span>
+        }
+
+<span class="fc" id="L659">        final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];</span>
+<span class="fc" id="L660">        tableNameUtf16.clear();</span>
+<span class="fc" id="L661">        Chars.utf8Decode(tableNameUtf8.getLo(), tableNameUtf8.getHi(), tableNameUtf16);</span>
+
+<span class="fc" id="L663">        tableUpdateDetailsLock.writeLock().lock();</span>
+        try {
+            TableUpdateDetails tud;
+            // check if the global cache has the table
+<span class="fc" id="L667">            final int tudKeyIndex = tableUpdateDetailsUtf16.keyIndex(tableNameUtf16);</span>
+<span class="fc bfc" id="L668" title="All 2 branches covered.">            if (tudKeyIndex &lt; 0) {</span>
+                // it does, which means that table is non-WAL
+                // we should not have &quot;shared&quot; WAL tables
+<span class="fc" id="L671">                tud = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);</span>
+            } else {
+<span class="fc" id="L673">                TableToken tableToken = engine.getTableTokenIfExists(tableNameUtf16);</span>
+<span class="fc" id="L674">                int status = engine.getStatus(securityContext, path, tableToken);</span>
+<span class="fc bfc" id="L675" title="All 2 branches covered.">                if (status != TableUtils.TABLE_EXISTS) {</span>
+<span class="fc bfc" id="L676" title="All 2 branches covered.">                    if (!autoCreateNewTables) {</span>
+<span class="fc" id="L677">                        throw CairoException.nonCritical()</span>
+<span class="fc" id="L678">                                .put(&quot;table does not exist, creating new tables is disabled [table=&quot;).put(tableNameUtf16)</span>
+<span class="fc" id="L679">                                .put(']');</span>
+                    }
+<span class="fc bfc" id="L681" title="All 2 branches covered.">                    if (!autoCreateNewColumns) {</span>
+<span class="fc" id="L682">                        throw CairoException.nonCritical()</span>
+<span class="fc" id="L683">                                .put(&quot;table does not exist, cannot create table, creating new columns is disabled [table=&quot;).put(tableNameUtf16)</span>
+<span class="fc" id="L684">                                .put(']');</span>
+                    }
+                    // validate that parser entities do not contain NULLs
+<span class="fc" id="L687">                    TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);</span>
+<span class="fc bfc" id="L688" title="All 2 branches covered.">                    for (int i = 0, n = tsa.getColumnCount(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L689" title="All 2 branches covered.">                        if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {</span>
+<span class="fc" id="L690">                            throw CairoException.nonCritical().put(&quot;unknown column type [columnName=&quot;).put(tsa.getColumnName(i)).put(']');</span>
+                        }
+                    }
+<span class="fc" id="L693">                    LOG.info().$(&quot;creating table [tableName=&quot;).$(tableNameUtf16).$(']').$();</span>
+<span class="fc" id="L694">                    tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);</span>
+                }
+
+                // by the time we get here, definitely exists on disk
+                // check the global idle cache - TUD can be there
+<span class="fc" id="L699">                final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);</span>
+<span class="fc bfc" id="L700" title="All 2 branches covered.">                if (idleTudKeyIndex &lt; 0) {</span>
+                    // TUD is found in global idle cache - this meant it is non-WAL
+<span class="fc" id="L702">                    tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);</span>
+<span class="fc" id="L703">                    LOG.info().$(&quot;idle table going active [tableName=&quot;).$(tud.getTableNameUtf16()).I$();</span>
+<span class="pc bpc" id="L704" title="1 of 2 branches missed.">                    if (tud.getWriter() == null) {</span>
+<span class="fc" id="L705">                        tud.closeNoLock();</span>
+                        // Use actual table name from the &quot;details&quot; to avoid case mismatches in the
+                        // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
+                        // to identify the cause
+<span class="fc" id="L709">                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tud.getTableNameUtf16(), tud.getTableNameUtf8());</span>
+                    } else {
+<span class="nc" id="L711">                        idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);</span>
+<span class="nc" id="L712">                        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);</span>
+                    }
+                } else {
+<span class="fc" id="L715">                    TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);</span>
+                    // check if table on disk is WAL
+<span class="fc" id="L717">                    path.of(engine.getConfiguration().getRoot());</span>
+<span class="fc bfc" id="L718" title="All 2 branches covered.">                    if (engine.isWalTable(tableToken)) {</span>
+                        // create WAL-oriented TUD and NOT add it to the global cache
+<span class="fc" id="L720">                        tud = new TableUpdateDetails(</span>
+                                configuration,
+                                engine,
+<span class="fc" id="L723">                                engine.getWalWriter(</span>
+                                        securityContext,
+                                        tableToken
+                                ),
+                                -1,
+                                netIoJobs,
+                                defaultColumnTypes,
+<span class="fc" id="L730">                                ByteCharSequence.newInstance(tableNameUtf8)</span>
+                        );
+                    } else {
+<span class="fc" id="L733">                        tud = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16, ByteCharSequence.newInstance(tableNameUtf8));</span>
+                    }
+                }
+            }
+
+            // tud.getTableNameUtf8() can be different case from incoming tableNameUtf8
+<span class="fc bfc" id="L739" title="All 2 branches covered.">            ByteCharSequence key = Chars.equals(tud.getTableNameUtf8(), tableNameUtf8) ? tud.getTableNameUtf8() : ByteCharSequence.newInstance(tableNameUtf8);</span>
+<span class="fc" id="L740">            netIoJob.addTableUpdateDetails(key, tud);</span>
+<span class="fc" id="L741">            return tud;</span>
+        } finally {
+<span class="fc" id="L743">            tableUpdateDetailsLock.writeLock().unlock();</span>
+        }
+    }
+
+    private boolean isOpen() {
+<span class="pc bpc" id="L748" title="1 of 2 branches missed.">        return null != pubSeq;</span>
+    }
+
+    @NotNull
+    private TableUpdateDetails unsafeAssignTableToWriterThread(int tudKeyIndex, CharSequence tableNameUtf16, ByteCharSequence tableNameUtf8) {
+<span class="fc" id="L753">        unsafeCalcThreadLoad();</span>
+<span class="fc" id="L754">        long leastLoad = Long.MAX_VALUE;</span>
+<span class="fc" id="L755">        int threadId = 0;</span>
+
+<span class="fc bfc" id="L757" title="All 2 branches covered.">        for (int i = 0, n = loadByWriterThread.length; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L758" title="All 2 branches covered.">            if (loadByWriterThread[i] &lt; leastLoad) {</span>
+<span class="fc" id="L759">                leastLoad = loadByWriterThread[i];</span>
+<span class="fc" id="L760">                threadId = i;</span>
+            }
+        }
+<span class="fc" id="L763">        TableToken tableToken = engine.getTableToken(tableNameUtf16);</span>
+<span class="fc" id="L764">        final TableUpdateDetails tud = new TableUpdateDetails(</span>
+                configuration,
+                engine,
+                // get writer here to avoid constructing
+                // object instance and potentially leaking memory if
+                // writer allocation fails
+<span class="fc" id="L770">                engine.getTableWriterAPI(securityContext, tableToken, &quot;tcpIlp&quot;),</span>
+                threadId,
+                netIoJobs,
+                defaultColumnTypes,
+                tableNameUtf8
+        );
+<span class="fc" id="L776">        tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);</span>
+<span class="fc" id="L777">        LOG.info().$(&quot;assigned &quot;).$(tableToken).$(&quot; to thread &quot;).$(threadId).$();</span>
+<span class="pc bpc" id="L778" title="1 of 2 branches missed.">        return tud;</span>
+    }
+
+    private void unsafeCalcThreadLoad() {
+<span class="fc" id="L782">        Arrays.fill(loadByWriterThread, 0);</span>
+<span class="fc" id="L783">        ObjList&lt;CharSequence&gt; tableNames = tableUpdateDetailsUtf16.keys();</span>
+<span class="fc bfc" id="L784" title="All 2 branches covered.">        for (int n = 0, sz = tableNames.size(); n &lt; sz; n++) {</span>
+<span class="fc" id="L785">            final CharSequence tableName = tableNames.getQuick(n);</span>
+<span class="fc" id="L786">            final TableUpdateDetails stats = tableUpdateDetailsUtf16.get(tableName);</span>
+<span class="pc bpc" id="L787" title="1 of 2 branches missed.">            if (stats != null) {</span>
+<span class="fc" id="L788">                loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();</span>
+            } else {
+<span class="nc" id="L790">                LOG.error().$(&quot;could not find statistic for table [name=&quot;).$(tableName).I$();</span>
+            }
+        }
+<span class="fc" id="L793">    }</span>
+
+    protected NetworkIOJob createNetworkIOJob(IODispatcher&lt;LineTcpConnectionContext&gt; dispatcher, int workerId) {
+<span class="fc" id="L796">        return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);</span>
+    }
+
+    long getNextPublisherEventSequence(int writerWorkerId) {
+<span class="pc bpc" id="L800" title="1 of 2 branches missed.">        assert isOpen();</span>
+        long seq;
+<span class="fc bfc" id="L802" title="All 2 branches covered.">        while ((seq = pubSeq[writerWorkerId].next()) == -2) {</span>
+<span class="fc" id="L803">            Os.pause();</span>
+        }
+<span class="fc" id="L805">        return seq;</span>
+    }
+
+    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
+<span class="fc" id="L809">        DirectByteCharSequence measurementName = parser.getMeasurementName();</span>
+        TableUpdateDetails tud;
+        try {
+<span class="fc" id="L812">            tud = netIoJob.getLocalTableDetails(measurementName);</span>
+<span class="fc bfc" id="L813" title="All 6 branches covered.">            if (tud == null || (tud.isWal() &amp;&amp; tud.isWriterInError())) {</span>
+<span class="fc bfc" id="L814" title="All 2 branches covered.">                if (tud != null) {</span>
+<span class="fc" id="L815">                    TableUpdateDetails removed = netIoJob.removeTableUpdateDetails(measurementName);</span>
+<span class="pc bpc" id="L816" title="1 of 2 branches missed.">                    assert tud == removed;</span>
+<span class="fc" id="L817">                    removed.releaseWriter(true);</span>
+<span class="fc bfc" id="L818" title="All 2 branches covered.">                    if (listener != null) {</span>
+<span class="fc" id="L819">                        listener.onEvent(tud.getTableToken(), 1);</span>
+                    }
+<span class="fc" id="L821">                    removed.close();</span>
+                }
+<span class="fc" id="L823">                tud = getTableUpdateDetailsFromSharedArea(netIoJob, parser);</span>
+            }
+<span class="fc" id="L825">        } catch (EntryUnavailableException ex) {</span>
+            // Table writer is locked
+<span class="fc" id="L827">            LOG.info().$(&quot;could not get table writer [tableName=&quot;).$(measurementName)</span>
+<span class="fc" id="L828">                    .$(&quot;, ex=`&quot;)</span>
+<span class="fc" id="L829">                    .$(ex.getFlyweightMessage())</span>
+<span class="fc" id="L830">                    .$(&quot;`]&quot;)</span>
+<span class="fc" id="L831">                    .$();</span>
+<span class="fc" id="L832">            return true;</span>
+<span class="fc" id="L833">        } catch (CairoException ex) {</span>
+            // Table could not be created
+<span class="fc" id="L835">            LOG.error().$(&quot;could not create table [tableName=&quot;).$(measurementName)</span>
+<span class="fc" id="L836">                    .$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="fc" id="L837">                    .$(&quot;, ex=`&quot;)</span>
+<span class="fc" id="L838">                    .$(ex.getFlyweightMessage())</span>
+<span class="fc" id="L839">                    .$(&quot;`]&quot;)</span>
+<span class="fc" id="L840">                    .I$();</span>
+            // More details will be logged by catching thread
+<span class="fc" id="L842">            throw ex;</span>
+<span class="fc" id="L843">        }</span>
+
+<span class="fc bfc" id="L845" title="All 2 branches covered.">        if (tud.isWal()) {</span>
+            try {
+<span class="fc" id="L847">                appendToWal(netIoJob, parser, tud);</span>
+<span class="fc" id="L848">            } catch (Throwable ex) {</span>
+<span class="fc" id="L849">                tud.setWriterInError();</span>
+<span class="fc" id="L850">                LOG.critical().$(&quot;closing writer because of error [table=&quot;).$(tud.getTableNameUtf16())</span>
+<span class="fc" id="L851">                        .$(&quot;,ex=&quot;)</span>
+<span class="fc" id="L852">                        .$(ex)</span>
+<span class="fc" id="L853">                        .I$();</span>
+<span class="fc" id="L854">                throw CairoException.critical(0).put(&quot;could not append to WAL [tableName=&quot;).put(measurementName).put(&quot;, error=&quot;).put(ex.getMessage()).put(']');</span>
+<span class="fc" id="L855">            }</span>
+<span class="fc" id="L856">            return false;</span>
+        }
+<span class="fc" id="L858">        return dispatchEvent(netIoJob, parser, tud);</span>
+    }
+
+    @TestOnly
+    void setListener(LineTcpReceiver.SchedulerListener listener) {
+<span class="fc" id="L863">        this.listener = listener;</span>
+<span class="fc" id="L864">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

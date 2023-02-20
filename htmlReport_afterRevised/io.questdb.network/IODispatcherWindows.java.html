@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IODispatcherWindows.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.network</a> &gt; <span class="el_source">IODispatcherWindows.java</span></div><h1>IODispatcherWindows.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.network;
+
+import io.questdb.std.LongIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+
+<span class="nc" id="L32">public class IODispatcherWindows&lt;C extends IOContext&gt; extends AbstractIODispatcher&lt;C&gt; {</span>
+<span class="nc" id="L33">    private final LongIntHashMap fds = new LongIntHashMap();</span>
+    private final FDSet readFdSet;
+    private final SelectFacade sf;
+    private final FDSet writeFdSet;
+    private boolean listenerRegistered;
+
+    public IODispatcherWindows(
+            IODispatcherConfiguration configuration,
+            IOContextFactory&lt;C&gt; ioContextFactory
+    ) {
+<span class="nc" id="L43">        super(configuration, ioContextFactory);</span>
+<span class="nc" id="L44">        this.sf = configuration.getSelectFacade();</span>
+<span class="nc" id="L45">        this.readFdSet = new FDSet(configuration.getEventCapacity());</span>
+<span class="nc" id="L46">        this.writeFdSet = new FDSet(configuration.getEventCapacity());</span>
+<span class="nc" id="L47">        readFdSet.add(serverFd);</span>
+<span class="nc" id="L48">        readFdSet.setCount(1);</span>
+<span class="nc" id="L49">        writeFdSet.setCount(0);</span>
+<span class="nc" id="L50">        listenerRegistered = true;</span>
+<span class="nc" id="L51">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L55">        super.close();</span>
+<span class="nc" id="L56">        readFdSet.close();</span>
+<span class="nc" id="L57">        writeFdSet.close();</span>
+<span class="nc" id="L58">        LOG.info().$(&quot;closed&quot;).$();</span>
+<span class="nc" id="L59">    }</span>
+
+    private boolean processRegistrations(long timestamp) {
+        long cursor;
+<span class="nc" id="L63">        boolean useful = false;</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        while ((cursor = interestSubSeq.next()) &gt; -1) {</span>
+<span class="nc" id="L65">            IOEvent&lt;C&gt; evt = interestQueue.get(cursor);</span>
+<span class="nc" id="L66">            C context = evt.context;</span>
+<span class="nc" id="L67">            int operation = evt.operation;</span>
+<span class="nc" id="L68">            interestSubSeq.done(cursor);</span>
+
+<span class="nc" id="L70">            useful = true;</span>
+
+<span class="nc" id="L72">            int r = pending.addRow();</span>
+<span class="nc" id="L73">            pending.set(r, OPM_TIMESTAMP, timestamp);</span>
+<span class="nc" id="L74">            pending.set(r, OPM_FD, context.getFd());</span>
+<span class="nc" id="L75">            pending.set(r, OPM_OPERATION, operation);</span>
+<span class="nc" id="L76">            pending.set(r, context);</span>
+<span class="nc" id="L77">        }</span>
+<span class="nc" id="L78">        return useful;</span>
+    }
+
+    private void queryFdSets(long timestamp) {
+        // collect reads into hash map
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        for (int i = 0, n = readFdSet.getCount(); i &lt; n; i++) {</span>
+<span class="nc" id="L84">            final long fd = readFdSet.get(i);</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (fd == serverFd) {</span>
+<span class="nc" id="L86">                accept(timestamp);</span>
+            } else {
+<span class="nc" id="L88">                fds.put(fd, SelectAccessor.FD_READ);</span>
+            }
+        }
+
+        // collect writes into hash map
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        for (int i = 0, n = writeFdSet.getCount(); i &lt; n; i++) {</span>
+<span class="nc" id="L94">            final long fd = writeFdSet.get(i);</span>
+<span class="nc" id="L95">            final int index = fds.keyIndex(fd);</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">            if (fds.valueAt(index) == -1) {</span>
+<span class="nc" id="L97">                fds.putAt(index, fd, SelectAccessor.FD_WRITE);</span>
+            } else {
+<span class="nc" id="L99">                fds.putAt(index, fd, SelectAccessor.FD_READ | SelectAccessor.FD_WRITE);</span>
+            }
+        }
+<span class="nc" id="L102">    }</span>
+
+    @Override
+    protected void pendingAdded(int index) {
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        pending.set(index, OPM_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);</span>
+<span class="nc" id="L107">    }</span>
+
+    @Override
+    protected void registerListenerFd() {
+<span class="nc" id="L111">        listenerRegistered = true;</span>
+<span class="nc" id="L112">    }</span>
+
+    @Override
+    protected boolean runSerially() {
+<span class="nc" id="L116">        final long timestamp = clock.getTicks();</span>
+<span class="nc" id="L117">        processDisconnects(timestamp);</span>
+
+        int count;
+<span class="nc bnc" id="L120" title="All 4 branches missed.">        if (readFdSet.getCount() &gt; 0 || writeFdSet.getCount() &gt; 0) {</span>
+<span class="nc" id="L121">            count = sf.select(readFdSet.address, writeFdSet.address, 0);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">            if (count &lt; 0) {</span>
+<span class="nc" id="L123">                LOG.error().$(&quot;select failure [err=&quot;).$(nf.errno()).I$();</span>
+<span class="nc" id="L124">                return false;</span>
+            }
+        } else {
+<span class="nc" id="L127">            count = 0;</span>
+        }
+
+<span class="nc" id="L130">        boolean useful = false;</span>
+<span class="nc" id="L131">        fds.clear();</span>
+
+        // collect reads into hash map
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        if (count &gt; 0) {</span>
+<span class="nc" id="L135">            queryFdSets(timestamp);</span>
+<span class="nc" id="L136">            useful = true;</span>
+        }
+
+        // process returned fds
+<span class="nc" id="L140">        useful |= processRegistrations(timestamp);</span>
+
+        // re-arm select() fds
+<span class="nc" id="L143">        int readFdCount = 0;</span>
+<span class="nc" id="L144">        int writeFdCount = 0;</span>
+<span class="nc" id="L145">        readFdSet.reset();</span>
+<span class="nc" id="L146">        writeFdSet.reset();</span>
+<span class="nc" id="L147">        long deadline = timestamp - idleConnectionTimeout;</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        for (int i = 0, n = pending.size(); i &lt; n; ) {</span>
+<span class="nc" id="L149">            final C context = pending.get(i);</span>
+
+            // check if the context is waiting for a suspend event
+<span class="nc" id="L152">            final SuspendEvent suspendEvent = context.getSuspendEvent();</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">            if (suspendEvent != null) {</span>
+<span class="nc bnc" id="L154" title="All 4 branches missed.">                if (suspendEvent.checkTriggered() || suspendEvent.isDeadlineMet(timestamp)) {</span>
+                    // the event has been triggered or expired already, clear it and proceed
+<span class="nc" id="L156">                    context.clearSuspendEvent();</span>
+                }
+            }
+
+<span class="nc" id="L160">            final long ts = pending.get(i, OPM_TIMESTAMP);</span>
+<span class="nc" id="L161">            final int fd = (int) pending.get(i, OPM_FD);</span>
+<span class="nc" id="L162">            final int newOp = fds.get(fd);</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">            assert fd != serverFd;</span>
+
+<span class="nc bnc" id="L165" title="All 2 branches missed.">            if (newOp == -1) {</span>
+                // new operation case
+
+                // check if the connection was idle for too long
+<span class="nc bnc" id="L169" title="All 2 branches missed.">                if (ts &lt; deadline) {</span>
+<span class="nc" id="L170">                    doDisconnect(context, DISCONNECT_SRC_IDLE);</span>
+<span class="nc" id="L171">                    pending.deleteRow(i);</span>
+<span class="nc" id="L172">                    n--;</span>
+<span class="nc" id="L173">                    useful = true;</span>
+<span class="nc" id="L174">                    continue;</span>
+                }
+
+<span class="nc" id="L177">                int operation = (int) pending.get(i, OPM_OPERATION);</span>
+<span class="nc" id="L178">                i++;</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                if (suspendEvent != null) {</span>
+                    // if the operation was suspended, we request a read to be able to detect a client disconnect
+<span class="nc" id="L181">                    operation = IOOperation.READ;</span>
+                }
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">                if (operation == IOOperation.READ) {</span>
+<span class="nc" id="L185">                    readFdSet.add(fd);</span>
+<span class="nc" id="L186">                    readFdCount++;</span>
+                } else {
+<span class="nc" id="L188">                    writeFdSet.add(fd);</span>
+<span class="nc" id="L189">                    writeFdCount++;</span>
+                }
+<span class="nc" id="L191">            } else {</span>
+                // select()'ed operation case
+<span class="nc bnc" id="L193" title="All 2 branches missed.">                if (suspendEvent != null) {</span>
+                    // the event is still pending, check if we have a client disconnect
+<span class="nc bnc" id="L195" title="All 2 branches missed.">                    if (testConnection(context.getFd())) {</span>
+<span class="nc" id="L196">                        doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);</span>
+<span class="nc" id="L197">                        pending.deleteRow(i);</span>
+<span class="nc" id="L198">                        n--;</span>
+                    } else {
+<span class="nc" id="L200">                        i++; // just skip to the next operation</span>
+                    }
+<span class="nc" id="L202">                    continue;</span>
+                }
+
+                // publish event and remove from pending
+<span class="nc" id="L206">                useful = true;</span>
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">                if ((newOp &amp; SelectAccessor.FD_READ) &gt; 0) {</span>
+<span class="nc" id="L209">                    publishOperation(IOOperation.READ, context);</span>
+                }
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                if ((newOp &amp; SelectAccessor.FD_WRITE) &gt; 0) {</span>
+<span class="nc" id="L212">                    publishOperation(IOOperation.WRITE, context);</span>
+                }
+
+<span class="nc" id="L215">                pending.deleteRow(i);</span>
+<span class="nc" id="L216">                n--;</span>
+            }
+<span class="nc" id="L218">        }</span>
+
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        if (listenerRegistered) {</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">            assert serverFd &gt;= 0;</span>
+<span class="nc" id="L222">            readFdSet.add(serverFd);</span>
+<span class="nc" id="L223">            readFdCount++;</span>
+        }
+
+<span class="nc" id="L226">        readFdSet.setCount(readFdCount);</span>
+<span class="nc" id="L227">        writeFdSet.setCount(writeFdCount);</span>
+<span class="nc" id="L228">        return useful;</span>
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+<span class="nc" id="L233">        listenerRegistered = false;</span>
+<span class="nc" id="L234">    }</span>
+
+    private static class FDSet {
+        private long _wptr;
+        private long address;
+        private long lim;
+        private int size;
+
+<span class="nc" id="L242">        private FDSet(int size) {</span>
+<span class="nc" id="L243">            int l = SelectAccessor.ARRAY_OFFSET + 8 * size;</span>
+<span class="nc" id="L244">            this.address = Unsafe.malloc(l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+<span class="nc" id="L245">            this.size = size;</span>
+<span class="nc" id="L246">            this._wptr = address + SelectAccessor.ARRAY_OFFSET;</span>
+<span class="nc" id="L247">            this.lim = address + l;</span>
+<span class="nc" id="L248">        }</span>
+
+        private void add(int fd) {
+<span class="nc bnc" id="L251" title="All 2 branches missed.">            if (_wptr == lim) {</span>
+<span class="nc" id="L252">                resize();</span>
+            }
+<span class="nc" id="L254">            long p = _wptr;</span>
+<span class="nc" id="L255">            Unsafe.getUnsafe().putLong(p, fd);</span>
+<span class="nc" id="L256">            _wptr = p + 8;</span>
+<span class="nc" id="L257">        }</span>
+
+        private void close() {
+<span class="nc bnc" id="L260" title="All 2 branches missed.">            if (address != 0) {</span>
+<span class="nc" id="L261">                address = Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+            }
+<span class="nc" id="L263">        }</span>
+
+        private long get(int index) {
+<span class="nc" id="L266">            return Unsafe.getUnsafe().getLong(address + SelectAccessor.ARRAY_OFFSET + index * 8L);</span>
+        }
+
+        private int getCount() {
+<span class="nc" id="L270">            return Unsafe.getUnsafe().getInt(address + SelectAccessor.COUNT_OFFSET);</span>
+        }
+
+        private void reset() {
+<span class="nc" id="L274">            _wptr = address + SelectAccessor.ARRAY_OFFSET;</span>
+<span class="nc" id="L275">        }</span>
+
+        private void resize() {
+<span class="nc" id="L278">            int sz = size * 2;</span>
+<span class="nc" id="L279">            int l = SelectAccessor.ARRAY_OFFSET + 8 * sz;</span>
+<span class="nc" id="L280">            long _addr = Unsafe.malloc(l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+<span class="nc" id="L281">            Vect.memcpy(_addr, address, lim - address);</span>
+<span class="nc" id="L282">            Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+<span class="nc" id="L283">            lim = _addr + l;</span>
+<span class="nc" id="L284">            size = sz;</span>
+<span class="nc" id="L285">            _wptr = _addr + (_wptr - address);</span>
+<span class="nc" id="L286">            address = _addr;</span>
+<span class="nc" id="L287">        }</span>
+
+        private void setCount(int count) {
+<span class="nc" id="L290">            Unsafe.getUnsafe().putInt(address + SelectAccessor.COUNT_OFFSET, count);</span>
+<span class="nc" id="L291">        }</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

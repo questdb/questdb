@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SequentialRowCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">SequentialRowCursorFactory.java</span></div><h1>SequentialRowCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.ObjList;
+
+/**
+ * Returns rows from current data frame in order of cursors list :
+ * - first fetches and returns all records from first cursor
+ * - then from second cursors,
+ * until all cursors are exhausted .
+ */
+public class SequentialRowCursorFactory implements RowCursorFactory {
+    private final SequentialRowCursor cursor;
+    private final ObjList&lt;? extends RowCursorFactory&gt; cursorFactories;
+    private final int[] cursorFactoriesIdx;
+    private final ObjList&lt;RowCursor&gt; cursors;
+
+<span class="fc" id="L48">    public SequentialRowCursorFactory(ObjList&lt;? extends RowCursorFactory&gt; cursorFactories, int[] cursorFactoriesIdx) {</span>
+<span class="fc" id="L49">        this.cursorFactories = cursorFactories;</span>
+<span class="fc" id="L50">        cursors = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L51">        cursor = new SequentialRowCursor();</span>
+<span class="fc" id="L52">        this.cursorFactoriesIdx = cursorFactoriesIdx;</span>
+<span class="fc" id="L53">    }</span>
+
+    @Override
+    public RowCursor getCursor(DataFrame dataFrame) {
+<span class="fc bfc" id="L57" title="All 2 branches covered.">        for (int i = 0, n = cursorFactoriesIdx[0]; i &lt; n; i++) {</span>
+<span class="fc" id="L58">            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));</span>
+        }
+<span class="fc" id="L60">        cursor.init();</span>
+<span class="fc" id="L61">        return cursor;</span>
+    }
+
+    @Override
+    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+<span class="fc" id="L66">        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);</span>
+<span class="fc" id="L67">    }</span>
+
+    @Override
+    public boolean isEntity() {
+<span class="nc" id="L71">        return false;</span>
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader) {
+<span class="fc" id="L76">        RowCursorFactory.prepareCursor(cursorFactories, tableReader);</span>
+<span class="fc" id="L77">    }</span>
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L81">        sink.type(&quot;Cursor-order scan&quot;);//postgres uses 'Append' node  </span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">        for (int i = 0, n = cursorFactories.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L83">            sink.child(cursorFactories.getQuick(i));</span>
+        }
+<span class="fc" id="L85">    }</span>
+
+<span class="fc" id="L87">    private class SequentialRowCursor implements RowCursor {</span>
+        private RowCursor currentCursor;
+<span class="fc" id="L89">        private int cursorIndex = 0;</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="fc" id="L93">            boolean hasNext = currentCursor.hasNext();</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">            if (hasNext) {</span>
+<span class="fc" id="L95">                return true;</span>
+            }
+
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            while (cursorIndex &lt; cursorFactoriesIdx[0] - 1) {</span>
+<span class="fc" id="L99">                currentCursor = cursors.getQuick(++cursorIndex);</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">                if (currentCursor.hasNext()) {</span>
+<span class="fc" id="L101">                    return true;</span>
+                }
+            }
+
+<span class="fc" id="L105">            return false;</span>
+        }
+
+        @Override
+        public long next() {
+<span class="fc" id="L110">            return currentCursor.next();</span>
+        }
+
+        private void init() {
+<span class="fc" id="L114">            cursorIndex = 0;</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">            if (cursorIndex &lt; cursorFactoriesIdx[0]) {</span>
+<span class="fc" id="L116">                currentCursor = cursors.getQuick(cursorIndex);</span>
+            }
+<span class="fc" id="L118">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Worker.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.mp</a> &gt; <span class="el_source">Worker.java</span></div><h1>Worker.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp;
+
+import io.questdb.log.Log;
+import io.questdb.metrics.HealthMetrics;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class Worker extends Thread {
+<span class="fc" id="L36">    private final static AtomicInteger COUNTER = new AtomicInteger();</span>
+    private final int affinity;
+    private final WorkerCleaner cleaner;
+    private final String criticalErrorLine;
+    private final SOCountDownLatch haltLatch;
+    private final boolean haltOnError;
+    private final ObjHashSet&lt;? extends Job&gt; jobs;
+    private final Log log;
+    private final HealthMetrics metrics;
+<span class="fc" id="L45">    private final AtomicInteger running = new AtomicInteger();</span>
+<span class="pc bnc" id="L46" title="All 2 branches missed.">    private final Job.RunStatus runStatus = () -&gt; running.get() == 2;</span>
+    private final long sleepMs;
+    private final long sleepThreshold;
+    private final int workerId;
+    private final long yieldThreshold;
+
+    public Worker(
+            final ObjHashSet&lt;? extends Job&gt; jobs,
+            final SOCountDownLatch haltLatch,
+            final int affinity,
+            final Log log,
+            final WorkerCleaner cleaner,
+            final boolean haltOnError,
+            final int workerId,
+            String poolName,
+            long yieldThreshold,
+            long sleepThreshold,
+            long sleepMs,
+            HealthMetrics metrics
+<span class="fc" id="L65">    ) {</span>
+<span class="fc" id="L66">        this.log = log;</span>
+<span class="fc" id="L67">        this.jobs = jobs;</span>
+<span class="fc" id="L68">        this.haltLatch = haltLatch;</span>
+<span class="fc" id="L69">        this.setName(&quot;questdb-&quot; + poolName + &quot;-&quot; + COUNTER.incrementAndGet());</span>
+<span class="fc" id="L70">        this.affinity = affinity;</span>
+<span class="fc" id="L71">        this.cleaner = cleaner;</span>
+<span class="fc" id="L72">        this.haltOnError = haltOnError;</span>
+<span class="fc" id="L73">        this.workerId = workerId;</span>
+<span class="fc" id="L74">        this.yieldThreshold = yieldThreshold;</span>
+<span class="fc" id="L75">        this.sleepThreshold = sleepThreshold;</span>
+<span class="fc" id="L76">        this.sleepMs = sleepMs;</span>
+<span class="fc" id="L77">        this.metrics = metrics;</span>
+<span class="fc" id="L78">        this.criticalErrorLine = &quot;0000-00-00T00:00:00.000000Z C Unhandled exception in worker &quot; + getName();</span>
+<span class="fc" id="L79">    }</span>
+
+    public int getWorkerId() {
+<span class="fc" id="L82">        return workerId;</span>
+    }
+
+    public void halt() {
+<span class="fc" id="L86">        running.set(2);</span>
+<span class="fc" id="L87">    }</span>
+
+    @Override
+    public void run() {
+<span class="fc" id="L91">        Throwable ex = null;</span>
+        try {
+<span class="fc bfc" id="L93" title="All 2 branches covered.">            if (running.compareAndSet(0, 1)) {</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">                if (affinity &gt; -1) {</span>
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">                    if (Os.setCurrentThreadAffinity(this.affinity) == 0) {</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">                        if (log != null) {</span>
+<span class="nc" id="L97">                            log.info().$(&quot;affinity set [cpu=&quot;).$(affinity).$(&quot;, name=&quot;).$(getName()).I$();</span>
+                        }
+                    } else {
+<span class="pc bpc" id="L100" title="1 of 2 branches missed.">                        if (log != null) {</span>
+<span class="nc" id="L101">                            log.error().$(&quot;could not set affinity [cpu=&quot;).$(affinity).$(&quot;, name=&quot;).$(getName()).I$();</span>
+                        }
+                    }
+                } else {
+<span class="fc bfc" id="L105" title="All 2 branches covered.">                    if (log != null) {</span>
+<span class="fc" id="L106">                        log.info().$(&quot;os scheduled worker started [name=&quot;).$(getName()).I$();</span>
+                    }
+                }
+<span class="fc" id="L109">                setupJobs();</span>
+<span class="fc" id="L110">                int n = jobs.size();</span>
+<span class="fc" id="L111">                long uselessCounter = 0;</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">                while (running.get() == 1) {</span>
+<span class="fc" id="L113">                    boolean useful = false;</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">                    for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L115">                        Unsafe.getUnsafe().loadFence();</span>
+                        try {
+                            try {
+<span class="fc" id="L118">                                useful |= jobs.get(i).run(workerId, runStatus);</span>
+<span class="fc" id="L119">                            } catch (Throwable e) {</span>
+<span class="fc" id="L120">                                onError(i, e);</span>
+<span class="fc" id="L121">                            }</span>
+                        } finally {
+<span class="fc" id="L123">                            Unsafe.getUnsafe().storeFence();</span>
+                        }
+                    }
+
+<span class="fc bfc" id="L127" title="All 2 branches covered.">                    if (useful) {</span>
+<span class="fc" id="L128">                        uselessCounter = 0;</span>
+<span class="fc" id="L129">                        continue;</span>
+                    }
+
+<span class="fc" id="L132">                    uselessCounter++;</span>
+
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">                    if (uselessCounter &lt; 0) {</span>
+                        // deal with overflow
+<span class="nc" id="L136">                        uselessCounter = sleepThreshold + 1;</span>
+                    }
+
+<span class="fc bfc" id="L139" title="All 2 branches covered.">                    if (uselessCounter &gt; sleepThreshold) {</span>
+<span class="fc" id="L140">                        Os.sleep(sleepMs);</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">                    } else if (uselessCounter &gt; yieldThreshold) {</span>
+<span class="fc" id="L142">                        Os.pause();</span>
+                    }
+<span class="fc" id="L144">                }</span>
+            }
+<span class="nc" id="L146">        } catch (Throwable e) {</span>
+<span class="nc" id="L147">            ex = e;</span>
+<span class="nc" id="L148">            stdErrCritical(e);</span>
+        } finally {
+            // cleaner will typically attempt to release
+            // thread-local instances
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">            if (cleaner != null) {</span>
+<span class="fc" id="L153">                cleaner.run(ex);</span>
+            }
+<span class="fc" id="L155">            haltLatch.countDown();</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">            if (log != null) {</span>
+<span class="fc" id="L157">                log.info().$(&quot;os scheduled worker stopped [name=&quot;).$(getName()).I$();</span>
+            }
+        }
+<span class="fc" id="L160">    }</span>
+
+    private void onError(int i, Throwable e) throws Throwable {
+        try {
+<span class="fc" id="L164">            metrics.incrementUnhandledErrors();</span>
+<span class="nc" id="L165">        } catch (Throwable t) {</span>
+<span class="nc" id="L166">            stdErrCritical(e);</span>
+<span class="fc" id="L167">        }</span>
+
+        // Log error even then halt if halt error setting is on.
+<span class="fc bfc" id="L170" title="All 2 branches covered.">        if (log != null) {</span>
+<span class="fc" id="L171">            log.critical().$(&quot;unhandled error [job=&quot;).$(jobs.get(i).toString()).$(&quot;, ex=&quot;).$(e).I$();</span>
+        } else {
+<span class="fc" id="L173">            stdErrCritical(e);</span>
+        }
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">        if (haltOnError) {</span>
+<span class="nc" id="L176">            throw e;</span>
+        }
+<span class="fc" id="L178">    }</span>
+
+    private void setupJobs() {
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        if (running.get() == 1) {</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">            for (int i = 0; i &lt; jobs.size(); i++) {</span>
+<span class="fc" id="L183">                Unsafe.getUnsafe().loadFence();</span>
+                try {
+<span class="fc" id="L185">                    Job job = jobs.get(i);</span>
+<span class="fc bfc" id="L186" title="All 2 branches covered.">                    if (job instanceof EagerThreadSetup) {</span>
+<span class="fc" id="L187">                        ((EagerThreadSetup) job).setup();</span>
+                    }
+                } finally {
+<span class="fc" id="L190">                    Unsafe.getUnsafe().storeFence();</span>
+                }
+            }
+        }
+<span class="fc" id="L194">    }</span>
+
+    private void stdErrCritical(Throwable e) {
+<span class="fc" id="L197">        System.err.println(criticalErrorLine);</span>
+<span class="fc" id="L198">        e.printStackTrace();</span>
+<span class="fc" id="L199">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

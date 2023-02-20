@@ -1,0 +1,861 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FastMap.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.map</a> &gt; <span class="el_source">FastMap.java</span></div><h1>FastMap.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.map;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+/**
+ * FastMap is a general purpose off-heap hash table used to store intermediate data of join,
+ * group by, sample by queries, but not only. It provides {@link MapKey} and {@link MapValue},
+ * as well as {@link RecordCursor} interfaces for data access and modification.
+ * The preferred way to create a FastMap is {@link MapFactory}.
+ * &lt;p&gt;
+ * &lt;strong&gt;Important!&lt;/strong&gt;
+ * Key and value structures must match the ones provided via lists of columns ({@link ColumnTypes})
+ * to the map constructor. Later put* calls made on {@link MapKey} and {@link MapValue} must match
+ * the declared column types to guarantee memory access safety.
+ * &lt;p&gt;
+ * Keys may be var-size, i.e. a key may contain string or binary columns, while values are expected
+ * to be fixed-size. Only insertions and updates operations are supported meaning that a key can't
+ * be removed from the map once it was inserted.
+ * &lt;p&gt;
+ * Map iteration provided by {@link RecordCursor} preserves the key insertion order.
+ * &lt;p&gt;
+ * The hash table is organized into two main parts:
+ * &lt;ul&gt;
+ * &lt;li&gt;1. Off-heap list for heap offsets&lt;/li&gt;
+ * &lt;li&gt;2. Off-heap memory for key-value pairs a.k.a. &quot;key memory&quot;&lt;/li&gt;
+ * &lt;/ul&gt;
+ * The offset list contains [compressed_offset, hash_code] pairs. An offset value contains an offset to
+ * the address of a key-value pair in the key memory compressed to an int. Key-value pair addresses are
+ * 8 byte aligned, so a FastMap is capable of holding up to 32GB of data.
+ * &lt;p&gt;
+ * The offset list is used as a hash table with linear probing. So, a table resize allocates a new
+ * offset list and copies offsets there while the key memory stays as is.
+ * &lt;p&gt;
+ * Key-value pairs stored in the key memory may have the following layout:
+ * &lt;pre&gt;
+ * |       length         | Value columns 0..V | Key columns 0..K |
+ * +----------------------+--------------------+------------------+
+ * |      4 bytes         |         -          |        -         |
+ * +----------------------+--------------------+------------------+
+ * &lt;/pre&gt;
+ * Length field is present for var-size keys only. It stores full key-value pair length in bytes.
+ */
+public class FastMap implements Map, Reopenable {
+
+<span class="fc" id="L76">    private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) &lt;&lt; 3;</span>
+    private static final int MIN_INITIAL_CAPACITY = 128;
+    private static final long OFFSET_SLOT_SIZE = 2;
+    private final FastMapCursor cursor;
+    private final int initialKeyCapacity;
+    private final int initialPageSize;
+    private final BaseKey key;
+    private final int keyOffset;
+    // Set to -1 when key is var-size.
+    private final int keySize;
+    private final int listMemoryTag;
+    private final double loadFactor;
+    private final int mapMemoryTag;
+    private final int maxResizes;
+    private final FastMapRecord record;
+    private final FastMapValue value;
+    private final FastMapValue value2;
+    private final FastMapValue value3;
+    private final int valueColumnCount;
+    private final int valueSize;
+    private long capacity;
+    private int free;
+    private long kLimit; // Key memory limit pointer.
+    private long kPos;   // Current key memory pointer.
+    private long kStart; // Key memory start pointer.
+    private int keyCapacity;
+    private int mask;
+    private int nResizes;
+    // Offsets are shifted by +1 (0 -&gt; 1, 1 -&gt; 2, etc.), so that we fill the memory with 0.
+    private DirectLongList offsets;
+<span class="fc" id="L106">    private int size = 0;</span>
+
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes
+    ) {
+<span class="fc" id="L115">        this(pageSize, keyTypes, null, keyCapacity, loadFactor, maxResizes);</span>
+<span class="fc" id="L116">    }</span>
+
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            int memoryTag
+    ) {
+<span class="fc" id="L127">        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);</span>
+<span class="fc" id="L128">    }</span>
+
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes
+    ) {
+<span class="fc" id="L138">        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);</span>
+<span class="fc" id="L139">    }</span>
+
+    @TestOnly
+    FastMap(
+            int pageSize,
+            @NotNull @Transient ColumnTypes keyTypes,
+            @Nullable @Transient ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            int mapMemoryTag,
+            int listMemoryTag
+<span class="fc" id="L151">    ) {</span>
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">        assert pageSize &gt; 3;</span>
+<span class="pc bpc" id="L153" title="2 of 4 branches missed.">        assert loadFactor &gt; 0 &amp;&amp; loadFactor &lt; 1d;</span>
+
+<span class="fc" id="L155">        this.mapMemoryTag = mapMemoryTag;</span>
+<span class="fc" id="L156">        this.listMemoryTag = listMemoryTag;</span>
+<span class="fc" id="L157">        initialKeyCapacity = keyCapacity;</span>
+<span class="fc" id="L158">        initialPageSize = pageSize;</span>
+<span class="fc" id="L159">        this.loadFactor = loadFactor;</span>
+<span class="fc" id="L160">        kStart = kPos = Unsafe.malloc(capacity = pageSize, mapMemoryTag);</span>
+<span class="fc" id="L161">        kLimit = kStart + pageSize;</span>
+<span class="fc" id="L162">        this.keyCapacity = (int) (keyCapacity / loadFactor);</span>
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        this.keyCapacity = this.keyCapacity &lt; MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);</span>
+<span class="fc" id="L164">        mask = this.keyCapacity - 1;</span>
+<span class="fc" id="L165">        free = (int) (this.keyCapacity * loadFactor);</span>
+<span class="fc" id="L166">        offsets = new DirectLongList(this.keyCapacity, listMemoryTag);</span>
+<span class="fc" id="L167">        offsets.setPos(this.keyCapacity);</span>
+<span class="fc" id="L168">        offsets.zero(0);</span>
+<span class="fc" id="L169">        nResizes = 0;</span>
+<span class="fc" id="L170">        this.maxResizes = maxResizes;</span>
+
+<span class="fc" id="L172">        final int keyColumnCount = keyTypes.getColumnCount();</span>
+<span class="fc" id="L173">        int keySize = 0;</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">        for (int i = 0; i &lt; keyColumnCount; i++) {</span>
+<span class="fc" id="L175">            final int columnType = keyTypes.getColumnType(i);</span>
+<span class="fc" id="L176">            final int size = ColumnType.sizeOf(columnType);</span>
+<span class="fc bfc" id="L177" title="All 2 branches covered.">            if (size &gt; 0) {</span>
+<span class="fc" id="L178">                keySize += size;</span>
+            } else {
+<span class="fc" id="L180">                keySize = -1;</span>
+<span class="fc" id="L181">                break;</span>
+            }
+        }
+<span class="fc" id="L184">        this.keySize = keySize;</span>
+
+        // Reserve 4 bytes for key length in case of var-size keys.
+<span class="fc bfc" id="L187" title="All 2 branches covered.">        int offset = keySize != -1 ? 0 : 4;</span>
+<span class="fc" id="L188">        int[] valueOffsets = null;</span>
+<span class="fc" id="L189">        int valueSize = 0;</span>
+<span class="fc bfc" id="L190" title="All 2 branches covered.">        if (valueTypes != null) {</span>
+<span class="fc" id="L191">            valueColumnCount = valueTypes.getColumnCount();</span>
+<span class="fc" id="L192">            valueOffsets = new int[valueColumnCount];</span>
+
+<span class="fc bfc" id="L194" title="All 2 branches covered.">            for (int i = 0; i &lt; valueColumnCount; i++) {</span>
+<span class="fc" id="L195">                valueOffsets[i] = offset;</span>
+<span class="fc" id="L196">                final int columnType = valueTypes.getColumnType(i);</span>
+<span class="fc" id="L197">                final int size = ColumnType.sizeOf(columnType);</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">                if (size &lt;= 0) {</span>
+<span class="fc" id="L199">                    close();</span>
+<span class="fc" id="L200">                    throw CairoException.nonCritical().put(&quot;value type is not supported: &quot;).put(ColumnType.nameOf(columnType));</span>
+                }
+<span class="fc" id="L202">                offset += size;</span>
+<span class="fc" id="L203">                valueSize += size;</span>
+            }
+        } else {
+<span class="fc" id="L206">            valueColumnCount = 0;</span>
+        }
+<span class="fc" id="L208">        this.valueSize = valueSize;</span>
+<span class="fc" id="L209">        keyOffset = offset;</span>
+
+<span class="fc" id="L211">        value = new FastMapValue(valueOffsets);</span>
+<span class="fc" id="L212">        value2 = new FastMapValue(valueOffsets);</span>
+<span class="fc" id="L213">        value3 = new FastMapValue(valueOffsets);</span>
+
+<span class="fc" id="L215">        record = new FastMapRecord(valueOffsets, keyOffset, value, keyTypes, valueTypes);</span>
+
+<span class="pc bpc" id="L217" title="1 of 2 branches missed.">        assert keySize + valueSize &lt; kLimit - kStart : &quot;page size is too small to fit a single key&quot;;</span>
+<span class="fc" id="L218">        cursor = new FastMapCursor(record, this);</span>
+<span class="fc bfc" id="L219" title="All 2 branches covered.">        key = keySize == -1 ? new VarSizeKey() : new FixedSizeKey();</span>
+<span class="fc" id="L220">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L224">        kPos = kStart;</span>
+<span class="fc" id="L225">        free = (int) (keyCapacity * loadFactor);</span>
+<span class="fc" id="L226">        size = 0;</span>
+<span class="fc" id="L227">        offsets.zero(0);</span>
+<span class="fc" id="L228">    }</span>
+
+    @Override
+    public final void close() {
+<span class="fc" id="L232">        Misc.free(offsets);</span>
+<span class="fc bfc" id="L233" title="All 2 branches covered.">        if (kStart != 0) {</span>
+<span class="fc" id="L234">            Unsafe.free(kStart, capacity, mapMemoryTag);</span>
+<span class="fc" id="L235">            kLimit = kStart = kPos = 0;</span>
+<span class="fc" id="L236">            free = 0;</span>
+<span class="fc" id="L237">            size = 0;</span>
+<span class="fc" id="L238">            capacity = 0;</span>
+        }
+<span class="fc" id="L240">    }</span>
+
+    public long getAreaSize() {
+<span class="fc" id="L243">        return kLimit - kStart;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor() {
+<span class="fc" id="L248">        return cursor.init(kStart, kLimit, size);</span>
+    }
+
+    public int getKeyCapacity() {
+<span class="fc" id="L252">        return keyCapacity;</span>
+    }
+
+    @Override
+    public MapRecord getRecord() {
+<span class="fc" id="L257">        return record;</span>
+    }
+
+    public void reopen() {
+<span class="pc bpc" id="L261" title="1 of 2 branches missed.">        if (kStart == 0) {</span>
+            // handles both mem and offsets
+<span class="fc" id="L263">            restoreInitialCapacity();</span>
+        }
+<span class="fc" id="L265">    }</span>
+
+    @Override
+    public void restoreInitialCapacity() {
+<span class="fc" id="L269">        kStart = kPos = Unsafe.realloc(kStart, kLimit - kStart, capacity = initialPageSize, mapMemoryTag);</span>
+<span class="fc" id="L270">        kLimit = kStart + initialPageSize;</span>
+<span class="fc" id="L271">        keyCapacity = (int) (initialKeyCapacity / loadFactor);</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">        keyCapacity = keyCapacity &lt; MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(keyCapacity);</span>
+<span class="fc" id="L273">        mask = keyCapacity - 1;</span>
+<span class="fc" id="L274">        free = (int) (keyCapacity * loadFactor);</span>
+<span class="fc" id="L275">        offsets.resetCapacity();</span>
+<span class="fc" id="L276">        offsets.setCapacity(keyCapacity);</span>
+<span class="fc" id="L277">        offsets.setPos(keyCapacity);</span>
+<span class="fc" id="L278">        offsets.zero(0);</span>
+<span class="fc" id="L279">        nResizes = 0;</span>
+<span class="fc" id="L280">    }</span>
+
+    @Override
+    public long size() {
+<span class="fc" id="L284">        return size;</span>
+    }
+
+    @Override
+    public MapValue valueAt(long address) {
+<span class="fc" id="L289">        return valueOf(address, false, value);</span>
+    }
+
+    @Override
+    public MapKey withKey() {
+<span class="fc" id="L294">        return key.init();</span>
+    }
+
+    private static long getPackedOffset(DirectLongList offsets, int index) {
+<span class="fc" id="L298">        return offsets.get(index);</span>
+    }
+
+    private static void setPackedOffset(DirectLongList offsets, int index, long offset, int hashCode) {
+<span class="fc" id="L302">        offsets.set(index, Numbers.encodeLowHighInts((int) ((offset &gt;&gt; 3) + 1), hashCode));</span>
+<span class="fc" id="L303">    }</span>
+
+    private static void setPackedOffset(DirectLongList offsets, int index, long packedOffset) {
+<span class="fc" id="L306">        offsets.set(index, packedOffset);</span>
+<span class="fc" id="L307">    }</span>
+
+    private static int unpackHashCode(long packedOffset) {
+<span class="fc" id="L310">        return Numbers.decodeHighInt(packedOffset);</span>
+    }
+
+    private static long unpackOffset(long packedOffset) {
+<span class="fc" id="L314">        return (Integer.toUnsignedLong(Numbers.decodeLowInt(packedOffset)) - 1) &lt;&lt; 3;</span>
+    }
+
+    private FastMapValue asNew(BaseKey keyWriter, int index, int hashCode, FastMapValue value) {
+<span class="fc" id="L318">        kPos = keyWriter.appendAddress;</span>
+        // Align current pointer to 8 bytes, so that we can store compressed offsets.
+<span class="fc bfc" id="L320" title="All 2 branches covered.">        if ((kPos &amp; 0x7) != 0) {</span>
+<span class="fc" id="L321">            kPos |= 0x7;</span>
+<span class="fc" id="L322">            kPos++;</span>
+        }
+<span class="fc" id="L324">        setPackedOffset(offsets, index, keyWriter.startAddress - kStart, hashCode);</span>
+<span class="fc bfc" id="L325" title="All 2 branches covered.">        if (--free == 0) {</span>
+<span class="fc" id="L326">            rehash();</span>
+        }
+<span class="fc" id="L328">        size++;</span>
+<span class="fc" id="L329">        return valueOf(keyWriter.startAddress, true, value);</span>
+    }
+
+    private FastMapValue probe0(BaseKey keyWriter, int index, int hashCode, FastMapValue value) {
+        long packedOffset;
+        long offset;
+<span class="fc bfc" id="L335" title="All 2 branches covered.">        while ((offset = unpackOffset(packedOffset = getPackedOffset(offsets, index = (++index &amp; mask)))) &gt; -1) {</span>
+<span class="fc bfc" id="L336" title="All 4 branches covered.">            if (hashCode == unpackHashCode(packedOffset) &amp;&amp; keyWriter.eq(offset)) {</span>
+<span class="fc" id="L337">                return valueOf(kStart + offset, false, value);</span>
+            }
+        }
+<span class="fc" id="L340">        return asNew(keyWriter, index, hashCode, value);</span>
+    }
+
+    private FastMapValue probeReadOnly(BaseKey keyWriter, int index, long hashCode, FastMapValue value) {
+        long packedOffset;
+        long offset;
+<span class="fc bfc" id="L346" title="All 2 branches covered.">        while ((offset = unpackOffset(packedOffset = getPackedOffset(offsets, index = (++index &amp; mask)))) &gt; -1) {</span>
+<span class="fc bfc" id="L347" title="All 4 branches covered.">            if (hashCode == unpackHashCode(packedOffset) &amp;&amp; keyWriter.eq(offset)) {</span>
+<span class="fc" id="L348">                return valueOf(kStart + offset, false, value);</span>
+            }
+        }
+<span class="fc" id="L351">        return null;</span>
+    }
+
+    private void rehash() {
+<span class="fc" id="L355">        int capacity = keyCapacity &lt;&lt; 1;</span>
+<span class="fc" id="L356">        mask = capacity - 1;</span>
+<span class="fc" id="L357">        DirectLongList newOffsets = new DirectLongList(capacity, listMemoryTag);</span>
+<span class="fc" id="L358">        newOffsets.setPos(capacity);</span>
+<span class="fc" id="L359">        newOffsets.zero(0);</span>
+
+<span class="fc bfc" id="L361" title="All 2 branches covered.">        for (int i = 0, k = (int) offsets.size(); i &lt; k; i++) {</span>
+<span class="fc" id="L362">            long packedOffset = getPackedOffset(offsets, i);</span>
+<span class="fc" id="L363">            long offset = unpackOffset(packedOffset);</span>
+<span class="fc bfc" id="L364" title="All 2 branches covered.">            if (offset &lt; 0) {</span>
+<span class="fc" id="L365">                continue;</span>
+            }
+<span class="fc" id="L367">            int hashCode = unpackHashCode(packedOffset);</span>
+<span class="fc" id="L368">            int index = hashCode &amp; mask;</span>
+<span class="fc bfc" id="L369" title="All 2 branches covered.">            while (unpackOffset(getPackedOffset(newOffsets, index)) &gt; -1) {</span>
+<span class="fc" id="L370">                index = (index + 1) &amp; mask;</span>
+            }
+<span class="fc" id="L372">            setPackedOffset(newOffsets, index, packedOffset);</span>
+        }
+<span class="fc" id="L374">        offsets.close();</span>
+<span class="fc" id="L375">        offsets = newOffsets;</span>
+<span class="fc" id="L376">        free += (capacity - keyCapacity) * loadFactor;</span>
+<span class="fc" id="L377">        keyCapacity = capacity;</span>
+<span class="fc" id="L378">    }</span>
+
+    private void resize(int size) {
+<span class="fc bfc" id="L381" title="All 2 branches covered.">        if (nResizes &lt; maxResizes) {</span>
+<span class="fc" id="L382">            nResizes++;</span>
+<span class="fc" id="L383">            long kCapacity = (kLimit - kStart) &lt;&lt; 1;</span>
+<span class="fc" id="L384">            long target = key.appendAddress + size - kStart;</span>
+<span class="pc bpc" id="L385" title="1 of 2 branches missed.">            if (kCapacity &lt; target) {</span>
+<span class="nc" id="L386">                kCapacity = Numbers.ceilPow2(target);</span>
+            }
+<span class="pc bpc" id="L388" title="1 of 2 branches missed.">            if (kCapacity &gt; MAX_HEAP_SIZE) {</span>
+<span class="nc" id="L389">                throw LimitOverflowException.instance().put(&quot;limit of &quot;).put(MAX_HEAP_SIZE).put(&quot; memory exceeded in FastMap&quot;);</span>
+            }
+<span class="fc" id="L391">            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity, mapMemoryTag);</span>
+
+<span class="fc" id="L393">            this.capacity = kCapacity;</span>
+<span class="fc" id="L394">            long d = kAddress - this.kStart;</span>
+<span class="fc" id="L395">            kPos += d;</span>
+<span class="fc" id="L396">            key.startAddress += d;</span>
+<span class="fc" id="L397">            key.appendAddress += d;</span>
+
+<span class="pc bpc" id="L399" title="1 of 2 branches missed.">            assert kPos &gt; 0;</span>
+<span class="pc bpc" id="L400" title="1 of 2 branches missed.">            assert key.startAddress &gt; 0;</span>
+<span class="pc bpc" id="L401" title="1 of 2 branches missed.">            assert key.appendAddress &gt; 0;</span>
+
+<span class="fc" id="L403">            this.kStart = kAddress;</span>
+<span class="fc" id="L404">            this.kLimit = kAddress + kCapacity;</span>
+<span class="fc" id="L405">        } else {</span>
+<span class="fc" id="L406">            throw LimitOverflowException.instance().put(&quot;limit of &quot;).put(maxResizes).put(&quot; resizes exceeded in FastMap&quot;);</span>
+        }
+<span class="fc" id="L408">    }</span>
+
+    private FastMapValue valueOf(long address, boolean newValue, FastMapValue value) {
+<span class="fc" id="L411">        return value.of(address, kLimit, newValue);</span>
+    }
+
+    long getAppendOffset() {
+<span class="fc" id="L415">        return kPos;</span>
+    }
+
+    int getValueColumnCount() {
+<span class="fc" id="L419">        return valueColumnCount;</span>
+    }
+
+    int keySize() {
+<span class="fc" id="L423">        return keySize;</span>
+    }
+
+    int valueSize() {
+<span class="fc" id="L427">        return valueSize;</span>
+    }
+
+<span class="fc" id="L430">    private abstract class BaseKey implements MapKey {</span>
+        protected long appendAddress;
+        protected long startAddress;
+
+        @Override
+        public MapValue createValue() {
+<span class="fc" id="L436">            return createValue(value);</span>
+        }
+
+        @Override
+        public MapValue createValue2() {
+<span class="nc" id="L441">            return createValue(value2);</span>
+        }
+
+        @Override
+        public MapValue createValue3() {
+<span class="nc" id="L446">            return createValue(value3);</span>
+        }
+
+        @Override
+        public MapValue findValue() {
+<span class="fc" id="L451">            return findValue(value);</span>
+        }
+
+        @Override
+        public MapValue findValue2() {
+<span class="fc" id="L456">            return findValue(value2);</span>
+        }
+
+        @Override
+        public MapValue findValue3() {
+<span class="fc" id="L461">            return findValue(value3);</span>
+        }
+
+        public BaseKey init() {
+<span class="fc" id="L465">            startAddress = kPos;</span>
+<span class="fc" id="L466">            appendAddress = kPos + keyOffset;</span>
+<span class="fc" id="L467">            return this;</span>
+        }
+
+        @Override
+        public void put(Record record, RecordSink sink) {
+<span class="fc" id="L472">            sink.copy(record, this);</span>
+<span class="fc" id="L473">        }</span>
+
+        @Override
+        public void putRecord(Record value) {
+            // no-op
+<span class="nc" id="L478">        }</span>
+
+        private MapValue createValue(FastMapValue value) {
+<span class="fc" id="L481">            commit();</span>
+            // calculate hash remembering &quot;key&quot; structure
+            // [ len | value block | key offset block | key data block ]
+<span class="fc" id="L484">            int hashCode = hash();</span>
+<span class="fc" id="L485">            int index = hashCode &amp; mask;</span>
+<span class="fc" id="L486">            long packedOffset = getPackedOffset(offsets, index);</span>
+<span class="fc" id="L487">            long offset = unpackOffset(packedOffset);</span>
+
+<span class="fc bfc" id="L489" title="All 2 branches covered.">            if (offset &lt; 0) {</span>
+<span class="fc" id="L490">                return asNew(this, index, hashCode, value);</span>
+<span class="fc bfc" id="L491" title="All 4 branches covered.">            } else if (hashCode == unpackHashCode(packedOffset) &amp;&amp; eq(offset)) {</span>
+<span class="fc" id="L492">                return valueOf(kStart + offset, false, value);</span>
+            } else {
+<span class="fc" id="L494">                return probe0(this, index, hashCode, value);</span>
+            }
+        }
+
+        private MapValue findValue(FastMapValue value) {
+<span class="fc" id="L499">            commit();</span>
+<span class="fc" id="L500">            int hashCode = hash();</span>
+<span class="fc" id="L501">            int index = hashCode &amp; mask;</span>
+<span class="fc" id="L502">            long packedOffset = getPackedOffset(offsets, index);</span>
+<span class="fc" id="L503">            long offset = unpackOffset(packedOffset);</span>
+
+<span class="fc bfc" id="L505" title="All 2 branches covered.">            if (offset &lt; 0) {</span>
+<span class="fc" id="L506">                return null;</span>
+<span class="pc bpc" id="L507" title="1 of 4 branches missed.">            } else if (hashCode == unpackHashCode(packedOffset) &amp;&amp; eq(offset)) {</span>
+<span class="fc" id="L508">                return valueOf(kStart + offset, false, value);</span>
+            } else {
+<span class="fc" id="L510">                return probeReadOnly(this, index, hashCode, value);</span>
+            }
+        }
+
+        protected void checkSize(int size) {
+<span class="fc bfc" id="L515" title="All 2 branches covered.">            if (appendAddress + size &gt; kLimit) {</span>
+<span class="fc" id="L516">                resize(size);</span>
+            }
+<span class="fc" id="L518">        }</span>
+
+        protected void commit() {
+            // no-op
+<span class="fc" id="L522">        }</span>
+
+        protected abstract boolean eq(long offset);
+
+        protected abstract int hash();
+    }
+
+<span class="fc" id="L529">    private class FixedSizeKey extends BaseKey {</span>
+
+        public FixedSizeKey init() {
+<span class="fc" id="L532">            super.init();</span>
+<span class="fc" id="L533">            checkSize(keySize + valueSize);</span>
+<span class="fc" id="L534">            return this;</span>
+        }
+
+        @Override
+        public void putBin(BinarySequence value) {
+<span class="nc" id="L539">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public void putBool(boolean value) {
+<span class="pc bpc" id="L544" title="1 of 2 branches missed.">            assert appendAddress + Byte.BYTES &lt;= kLimit;</span>
+<span class="fc bfc" id="L545" title="All 2 branches covered.">            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));</span>
+<span class="fc" id="L546">            appendAddress += Byte.BYTES;</span>
+<span class="fc" id="L547">        }</span>
+
+        @Override
+        public void putByte(byte value) {
+<span class="pc bpc" id="L551" title="1 of 2 branches missed.">            assert appendAddress + Byte.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L552">            Unsafe.getUnsafe().putByte(appendAddress, value);</span>
+<span class="fc" id="L553">            appendAddress += Byte.BYTES;</span>
+<span class="fc" id="L554">        }</span>
+
+        @Override
+        public void putChar(char value) {
+<span class="pc bpc" id="L558" title="1 of 2 branches missed.">            assert appendAddress + Character.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L559">            Unsafe.getUnsafe().putChar(appendAddress, value);</span>
+<span class="fc" id="L560">            appendAddress += Character.BYTES;</span>
+<span class="fc" id="L561">        }</span>
+
+        @Override
+        public void putDate(long value) {
+<span class="fc" id="L565">            putLong(value);</span>
+<span class="fc" id="L566">        }</span>
+
+        @Override
+        public void putDouble(double value) {
+<span class="pc bpc" id="L570" title="1 of 2 branches missed.">            assert appendAddress + Double.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L571">            Unsafe.getUnsafe().putDouble(appendAddress, value);</span>
+<span class="fc" id="L572">            appendAddress += Double.BYTES;</span>
+<span class="fc" id="L573">        }</span>
+
+        @Override
+        public void putFloat(float value) {
+<span class="pc bpc" id="L577" title="1 of 2 branches missed.">            assert appendAddress + Float.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L578">            Unsafe.getUnsafe().putFloat(appendAddress, value);</span>
+<span class="fc" id="L579">            appendAddress += Float.BYTES;</span>
+<span class="fc" id="L580">        }</span>
+
+        @Override
+        public void putInt(int value) {
+<span class="pc bpc" id="L584" title="1 of 2 branches missed.">            assert appendAddress + Integer.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L585">            Unsafe.getUnsafe().putInt(appendAddress, value);</span>
+<span class="fc" id="L586">            appendAddress += Integer.BYTES;</span>
+<span class="fc" id="L587">        }</span>
+
+        @Override
+        public void putLong(long value) {
+<span class="pc bpc" id="L591" title="1 of 2 branches missed.">            assert appendAddress + Long.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L592">            Unsafe.getUnsafe().putLong(appendAddress, value);</span>
+<span class="fc" id="L593">            appendAddress += Long.BYTES;</span>
+<span class="fc" id="L594">        }</span>
+
+        @Override
+        public void putLong128(long lo, long hi) {
+<span class="pc bpc" id="L598" title="1 of 2 branches missed.">            assert appendAddress + 16 &lt;= kLimit;</span>
+<span class="fc" id="L599">            Unsafe.getUnsafe().putLong(appendAddress, lo);</span>
+<span class="fc" id="L600">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);</span>
+<span class="fc" id="L601">            appendAddress += 16;</span>
+<span class="fc" id="L602">        }</span>
+
+        @Override
+        public void putLong256(Long256 value) {
+<span class="pc bpc" id="L606" title="1 of 2 branches missed.">            assert appendAddress + Long256.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L607">            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());</span>
+<span class="fc" id="L608">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());</span>
+<span class="fc" id="L609">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());</span>
+<span class="fc" id="L610">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());</span>
+<span class="fc" id="L611">            appendAddress += Long256.BYTES;</span>
+<span class="fc" id="L612">        }</span>
+
+        @Override
+        public void putShort(short value) {
+<span class="pc bpc" id="L616" title="1 of 2 branches missed.">            assert appendAddress + Short.BYTES &lt;= kLimit;</span>
+<span class="fc" id="L617">            Unsafe.getUnsafe().putShort(appendAddress, value);</span>
+<span class="fc" id="L618">            appendAddress += Short.BYTES;</span>
+<span class="fc" id="L619">        }</span>
+
+        @Override
+        public void putStr(CharSequence value) {
+<span class="nc" id="L623">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+<span class="nc" id="L628">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public void putStrLowerCase(CharSequence value) {
+<span class="nc" id="L633">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public void putStrLowerCase(CharSequence value, int lo, int hi) {
+<span class="nc" id="L638">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public void putTimestamp(long value) {
+<span class="fc" id="L643">            putLong(value);</span>
+<span class="fc" id="L644">        }</span>
+
+        @Override
+        public void skip(int bytes) {
+<span class="nc" id="L648">            appendAddress += bytes;</span>
+<span class="nc" id="L649">        }</span>
+
+        @Override
+        protected boolean eq(long offset) {
+<span class="fc" id="L653">            return Vect.memeq(kStart + offset + keyOffset, startAddress + keyOffset, keySize);</span>
+        }
+
+        @Override
+        protected int hash() {
+<span class="fc" id="L658">            return Hash.hashMem32(startAddress + keyOffset, keySize);</span>
+        }
+    }
+
+<span class="fc" id="L662">    private class VarSizeKey extends BaseKey {</span>
+        private int len;
+
+        @Override
+        public void putBin(BinarySequence value) {
+<span class="fc bfc" id="L667" title="All 2 branches covered.">            if (value == null) {</span>
+<span class="fc" id="L668">                putNull();</span>
+            } else {
+<span class="fc" id="L670">                long len = value.length() + 4;</span>
+<span class="fc bfc" id="L671" title="All 2 branches covered.">                if (len &gt; Integer.MAX_VALUE) {</span>
+<span class="fc" id="L672">                    throw CairoException.nonCritical().put(&quot;binary column is too large&quot;);</span>
+                }
+
+<span class="fc" id="L675">                checkSize((int) len);</span>
+<span class="fc" id="L676">                int l = (int) (len - 4);</span>
+<span class="fc" id="L677">                Unsafe.getUnsafe().putInt(appendAddress, l);</span>
+<span class="fc" id="L678">                value.copyTo(appendAddress + 4L, 0L, l);</span>
+<span class="fc" id="L679">                appendAddress += len;</span>
+            }
+<span class="fc" id="L681">        }</span>
+
+        @Override
+        public void putBool(boolean value) {
+<span class="fc" id="L685">            checkSize(1);</span>
+<span class="fc bfc" id="L686" title="All 2 branches covered.">            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));</span>
+<span class="fc" id="L687">            appendAddress += 1;</span>
+<span class="fc" id="L688">        }</span>
+
+        @Override
+        public void putByte(byte value) {
+<span class="fc" id="L692">            checkSize(1);</span>
+<span class="fc" id="L693">            Unsafe.getUnsafe().putByte(appendAddress, value);</span>
+<span class="fc" id="L694">            appendAddress += 1;</span>
+<span class="fc" id="L695">        }</span>
+
+        @Override
+        public void putChar(char value) {
+<span class="fc" id="L699">            checkSize(Character.BYTES);</span>
+<span class="fc" id="L700">            Unsafe.getUnsafe().putChar(appendAddress, value);</span>
+<span class="fc" id="L701">            appendAddress += Character.BYTES;</span>
+<span class="fc" id="L702">        }</span>
+
+        @Override
+        public void putDate(long value) {
+<span class="fc" id="L706">            putLong(value);</span>
+<span class="fc" id="L707">        }</span>
+
+        @Override
+        public void putDouble(double value) {
+<span class="fc" id="L711">            checkSize(Double.BYTES);</span>
+<span class="fc" id="L712">            Unsafe.getUnsafe().putDouble(appendAddress, value);</span>
+<span class="fc" id="L713">            appendAddress += Double.BYTES;</span>
+<span class="fc" id="L714">        }</span>
+
+        @Override
+        public void putFloat(float value) {
+<span class="fc" id="L718">            checkSize(Float.BYTES);</span>
+<span class="fc" id="L719">            Unsafe.getUnsafe().putFloat(appendAddress, value);</span>
+<span class="fc" id="L720">            appendAddress += Float.BYTES;</span>
+<span class="fc" id="L721">        }</span>
+
+        @Override
+        public void putInt(int value) {
+<span class="fc" id="L725">            checkSize(Integer.BYTES);</span>
+<span class="fc" id="L726">            Unsafe.getUnsafe().putInt(appendAddress, value);</span>
+<span class="fc" id="L727">            appendAddress += Integer.BYTES;</span>
+<span class="fc" id="L728">        }</span>
+
+        @Override
+        public void putLong(long value) {
+<span class="fc" id="L732">            checkSize(Long.BYTES);</span>
+<span class="fc" id="L733">            Unsafe.getUnsafe().putLong(appendAddress, value);</span>
+<span class="fc" id="L734">            appendAddress += Long.BYTES;</span>
+<span class="fc" id="L735">        }</span>
+
+        @Override
+        public void putLong128(long lo, long hi) {
+<span class="fc" id="L739">            checkSize(16);</span>
+<span class="fc" id="L740">            Unsafe.getUnsafe().putLong(appendAddress, lo);</span>
+<span class="fc" id="L741">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);</span>
+<span class="fc" id="L742">            appendAddress += 16;</span>
+<span class="fc" id="L743">        }</span>
+
+        @Override
+        public void putLong256(Long256 value) {
+<span class="fc" id="L747">            checkSize(Long256.BYTES);</span>
+<span class="fc" id="L748">            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());</span>
+<span class="fc" id="L749">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());</span>
+<span class="fc" id="L750">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());</span>
+<span class="fc" id="L751">            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());</span>
+<span class="fc" id="L752">            appendAddress += Long256.BYTES;</span>
+<span class="fc" id="L753">        }</span>
+
+        @Override
+        public void putShort(short value) {
+<span class="fc" id="L757">            checkSize(2);</span>
+<span class="fc" id="L758">            Unsafe.getUnsafe().putShort(appendAddress, value);</span>
+<span class="fc" id="L759">            appendAddress += 2;</span>
+<span class="fc" id="L760">        }</span>
+
+        @Override
+        public void putStr(CharSequence value) {
+<span class="fc bfc" id="L764" title="All 2 branches covered.">            if (value == null) {</span>
+<span class="fc" id="L765">                putNull();</span>
+<span class="fc" id="L766">                return;</span>
+            }
+
+<span class="fc" id="L769">            int len = value.length();</span>
+<span class="fc" id="L770">            checkSize((len &lt;&lt; 1) + 4);</span>
+<span class="fc" id="L771">            Unsafe.getUnsafe().putInt(appendAddress, len);</span>
+<span class="fc" id="L772">            appendAddress += 4;</span>
+<span class="fc bfc" id="L773" title="All 2 branches covered.">            for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L774">                Unsafe.getUnsafe().putChar(appendAddress + ((long) i &lt;&lt; 1), value.charAt(i));</span>
+            }
+<span class="fc" id="L776">            appendAddress += (long) len &lt;&lt; 1;</span>
+<span class="fc" id="L777">        }</span>
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+<span class="fc" id="L781">            int len = hi - lo;</span>
+<span class="fc" id="L782">            checkSize((len &lt;&lt; 1) + 4);</span>
+<span class="fc" id="L783">            Unsafe.getUnsafe().putInt(appendAddress, len);</span>
+<span class="fc" id="L784">            appendAddress += 4;</span>
+<span class="fc bfc" id="L785" title="All 2 branches covered.">            for (int i = lo; i &lt; hi; i++) {</span>
+<span class="fc" id="L786">                Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) &lt;&lt; 1), value.charAt(i));</span>
+            }
+<span class="fc" id="L788">            appendAddress += (long) len &lt;&lt; 1;</span>
+<span class="fc" id="L789">        }</span>
+
+        @Override
+        public void putStrLowerCase(CharSequence value) {
+<span class="pc bpc" id="L793" title="1 of 2 branches missed.">            if (value == null) {</span>
+<span class="nc" id="L794">                putNull();</span>
+<span class="nc" id="L795">                return;</span>
+            }
+
+<span class="fc" id="L798">            int len = value.length();</span>
+<span class="fc" id="L799">            checkSize((len &lt;&lt; 1) + 4);</span>
+<span class="fc" id="L800">            Unsafe.getUnsafe().putInt(appendAddress, len);</span>
+<span class="fc" id="L801">            appendAddress += 4;</span>
+<span class="fc bfc" id="L802" title="All 2 branches covered.">            for (int i = 0; i &lt; len; i++) {</span>
+<span class="fc" id="L803">                Unsafe.getUnsafe().putChar(appendAddress + ((long) i &lt;&lt; 1), Character.toLowerCase(value.charAt(i)));</span>
+            }
+<span class="fc" id="L805">            appendAddress += (long) len &lt;&lt; 1;</span>
+<span class="fc" id="L806">        }</span>
+
+        @Override
+        public void putStrLowerCase(CharSequence value, int lo, int hi) {
+<span class="fc" id="L810">            int len = hi - lo;</span>
+<span class="fc" id="L811">            checkSize((len &lt;&lt; 1) + 4);</span>
+<span class="fc" id="L812">            Unsafe.getUnsafe().putInt(appendAddress, len);</span>
+<span class="fc" id="L813">            appendAddress += 4;</span>
+<span class="fc bfc" id="L814" title="All 2 branches covered.">            for (int i = lo; i &lt; hi; i++) {</span>
+<span class="fc" id="L815">                Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) &lt;&lt; 1), Character.toLowerCase(value.charAt(i)));</span>
+            }
+<span class="fc" id="L817">            appendAddress += (long) len &lt;&lt; 1;</span>
+<span class="fc" id="L818">        }</span>
+
+        @Override
+        public void putTimestamp(long value) {
+<span class="fc" id="L822">            putLong(value);</span>
+<span class="fc" id="L823">        }</span>
+
+        @Override
+        public void skip(int bytes) {
+<span class="nc" id="L827">            checkSize(bytes);</span>
+<span class="nc" id="L828">            appendAddress += bytes;</span>
+<span class="nc" id="L829">        }</span>
+
+        private void putNull() {
+<span class="fc" id="L832">            checkSize(4);</span>
+<span class="fc" id="L833">            Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);</span>
+<span class="fc" id="L834">            appendAddress += 4;</span>
+<span class="fc" id="L835">        }</span>
+
+        @Override
+        protected void commit() {
+<span class="fc" id="L839">            Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress));</span>
+<span class="fc" id="L840">        }</span>
+
+        @Override
+        protected boolean eq(long offset) {
+<span class="fc" id="L844">            long a = kStart + offset;</span>
+<span class="fc" id="L845">            long b = startAddress;</span>
+
+            // Check the length first.
+<span class="fc bfc" id="L848" title="All 2 branches covered.">            if (Unsafe.getUnsafe().getInt(a) != Unsafe.getUnsafe().getInt(b)) {</span>
+<span class="fc" id="L849">                return false;</span>
+            }
+
+<span class="fc" id="L852">            return Vect.memeq(a + keyOffset, b + keyOffset, this.len - keyOffset);</span>
+        }
+
+        @Override
+        protected int hash() {
+<span class="fc" id="L857">            return Hash.hashMem32(startAddress + keyOffset, len - keyOffset);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

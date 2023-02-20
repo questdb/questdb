@@ -1,0 +1,461 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WalEventCursor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal</a> &gt; <span class="el_source">WalEventCursor.java</span></div><h1>WalEventCursor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.str.StringSink;
+
+import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
+
+public class WalEventCursor {
+    public static final long END_OF_EVENTS = -1L;
+
+<span class="fc" id="L42">    private final DataInfo dataInfo = new DataInfo();</span>
+    private final MemoryMR eventMem;
+<span class="fc" id="L44">    private final SqlInfo sqlInfo = new SqlInfo();</span>
+    private long memSize;
+<span class="fc" id="L46">    private long nextOffset = Integer.BYTES;</span>
+<span class="fc" id="L47">    private long offset = Integer.BYTES; // skip wal meta version</span>
+<span class="fc" id="L48">    private long txn = END_OF_EVENTS;</span>
+<span class="fc" id="L49">    private byte type = NONE;</span>
+
+<span class="fc" id="L51">    public WalEventCursor(MemoryMR eventMem) {</span>
+<span class="fc" id="L52">        this.eventMem = eventMem;</span>
+<span class="fc" id="L53">    }</span>
+
+    public void drain() {
+<span class="fc" id="L56">        long o = offset;</span>
+        while (true) {
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">            if (memSize &gt;= o + Integer.BYTES) {</span>
+<span class="fc" id="L59">                final int value = eventMem.getInt(o);</span>
+<span class="fc" id="L60">                o += Integer.BYTES;</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">                if (value == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {</span>
+<span class="fc" id="L62">                    offset = o;</span>
+<span class="fc" id="L63">                    break;</span>
+                }
+
+<span class="fc" id="L66">                final int strLength = eventMem.getStrLen(o);</span>
+<span class="fc" id="L67">                final long storageLength = Vm.getStorageLength(strLength);</span>
+<span class="fc" id="L68">                o += storageLength;</span>
+<span class="fc" id="L69">            } else {</span>
+<span class="nc" id="L70">                throw CairoException.critical(0).put(&quot;WAL event file is too small, size=&quot;).put(memSize)</span>
+<span class="nc" id="L71">                        .put(&quot;, required=&quot;).put(o + Integer.BYTES);</span>
+            }
+        }
+<span class="fc" id="L74">    }</span>
+
+    public DataInfo getDataInfo() {
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">        if (type != DATA) {</span>
+<span class="nc" id="L78">            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put(&quot;WAL event type is not DATA, type=&quot;).put(type);</span>
+        }
+<span class="fc" id="L80">        return dataInfo;</span>
+    }
+
+    public SqlInfo getSqlInfo() {
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        if (type != SQL) {</span>
+<span class="nc" id="L85">            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put(&quot;WAL event type is not SQL, type=&quot;).put(type);</span>
+        }
+<span class="fc" id="L87">        return sqlInfo;</span>
+    }
+
+    public long getTxn() {
+<span class="fc" id="L91">        return txn;</span>
+    }
+
+    public byte getType() {
+<span class="fc" id="L95">        return type;</span>
+    }
+
+    public boolean hasNext() {
+<span class="fc" id="L99">        offset = nextOffset;</span>
+<span class="fc" id="L100">        int length = readInt();</span>
+<span class="fc bfc" id="L101" title="All 2 branches covered.">        if (length &lt; 1) {</span>
+            // EOF
+<span class="fc" id="L103">            return false;</span>
+        }
+<span class="fc" id="L105">        nextOffset = length + nextOffset;</span>
+
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (memSize &lt; nextOffset + Integer.BYTES) {</span>
+<span class="fc" id="L108">            eventMem.extend(nextOffset + Integer.BYTES);</span>
+<span class="fc" id="L109">            memSize = eventMem.size();</span>
+        }
+<span class="fc" id="L111">        txn = readLong();</span>
+<span class="pc bpc" id="L112" title="1 of 2 branches missed.">        if (txn == END_OF_EVENTS) {</span>
+<span class="nc" id="L113">            return false;</span>
+        }
+<span class="fc" id="L115">        readRecord();</span>
+<span class="fc" id="L116">        return true;</span>
+    }
+
+    public void reset() {
+<span class="fc" id="L120">        memSize = eventMem.size();</span>
+<span class="fc" id="L121">        nextOffset = WALE_HEADER_SIZE; // skip wal meta version</span>
+<span class="fc" id="L122">        txn = END_OF_EVENTS;</span>
+<span class="fc" id="L123">        type = WalTxnType.NONE;</span>
+<span class="fc" id="L124">    }</span>
+
+    private void checkMemSize(long requiredBytes) {
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">        if (memSize &lt; offset + requiredBytes) {</span>
+<span class="nc" id="L128">            throw CairoException.critical(0).put(&quot;WAL event file is too small, size=&quot;).put(memSize)</span>
+<span class="nc" id="L129">                    .put(&quot;, required=&quot;).put(offset + requiredBytes);</span>
+        }
+<span class="fc" id="L131">    }</span>
+
+    private BinarySequence readBin() {
+<span class="fc" id="L134">        checkMemSize(Long.BYTES);</span>
+<span class="fc" id="L135">        final long binLength = eventMem.getBinLen(offset);</span>
+
+<span class="fc" id="L137">        checkMemSize(binLength);</span>
+<span class="fc" id="L138">        final BinarySequence value = eventMem.getBin(offset);</span>
+<span class="fc" id="L139">        offset += binLength + Long.BYTES;</span>
+<span class="fc" id="L140">        return value;</span>
+    }
+
+    private boolean readBool() {
+<span class="fc" id="L144">        checkMemSize(Byte.BYTES);</span>
+<span class="fc" id="L145">        final boolean value = eventMem.getBool(offset);</span>
+<span class="fc" id="L146">        offset += Byte.BYTES;</span>
+<span class="fc" id="L147">        return value;</span>
+    }
+
+    private byte readByte() {
+<span class="fc" id="L151">        checkMemSize(Byte.BYTES);</span>
+<span class="fc" id="L152">        final byte value = eventMem.getByte(offset);</span>
+<span class="fc" id="L153">        offset += Byte.BYTES;</span>
+<span class="fc" id="L154">        return value;</span>
+    }
+
+    private char readChar() {
+<span class="fc" id="L158">        checkMemSize(Character.BYTES);</span>
+<span class="fc" id="L159">        final char value = eventMem.getChar(offset);</span>
+<span class="fc" id="L160">        offset += Character.BYTES;</span>
+<span class="fc" id="L161">        return value;</span>
+    }
+
+    private double readDouble() {
+<span class="fc" id="L165">        checkMemSize(Double.BYTES);</span>
+<span class="fc" id="L166">        final double value = eventMem.getDouble(offset);</span>
+<span class="fc" id="L167">        offset += Double.BYTES;</span>
+<span class="fc" id="L168">        return value;</span>
+    }
+
+    private float readFloat() {
+<span class="fc" id="L172">        checkMemSize(Float.BYTES);</span>
+<span class="fc" id="L173">        final float value = eventMem.getFloat(offset);</span>
+<span class="fc" id="L174">        offset += Float.BYTES;</span>
+<span class="fc" id="L175">        return value;</span>
+    }
+
+    private int readInt() {
+<span class="fc" id="L179">        checkMemSize(Integer.BYTES);</span>
+<span class="fc" id="L180">        final int value = eventMem.getInt(offset);</span>
+<span class="fc" id="L181">        offset += Integer.BYTES;</span>
+<span class="fc" id="L182">        return value;</span>
+    }
+
+    private long readLong() {
+<span class="fc" id="L186">        checkMemSize(Long.BYTES);</span>
+<span class="fc" id="L187">        final long value = eventMem.getLong(offset);</span>
+<span class="fc" id="L188">        offset += Long.BYTES;</span>
+<span class="fc" id="L189">        return value;</span>
+    }
+
+    private void readRecord() {
+<span class="fc" id="L193">        type = readByte();</span>
+<span class="pc bpc" id="L194" title="1 of 4 branches missed.">        switch (type) {</span>
+            case DATA:
+<span class="fc" id="L196">                dataInfo.read();</span>
+<span class="fc" id="L197">                break;</span>
+            case SQL:
+<span class="fc" id="L199">                sqlInfo.read();</span>
+<span class="fc" id="L200">                break;</span>
+            case TRUNCATE:
+<span class="fc" id="L202">                break;</span>
+            default:
+<span class="nc" id="L204">                throw CairoException.critical(CairoException.METADATA_VALIDATION).put(&quot;Unsupported WAL event type: &quot;).put(type);</span>
+        }
+<span class="fc" id="L206">    }</span>
+
+    private short readShort() {
+<span class="fc" id="L209">        checkMemSize(Short.BYTES);</span>
+<span class="fc" id="L210">        final short value = eventMem.getShort(offset);</span>
+<span class="fc" id="L211">        offset += Short.BYTES;</span>
+<span class="fc" id="L212">        return value;</span>
+    }
+
+    private CharSequence readStr() {
+<span class="fc" id="L216">        checkMemSize(Integer.BYTES);</span>
+<span class="fc" id="L217">        final int strLength = eventMem.getStrLen(offset);</span>
+<span class="fc bfc" id="L218" title="All 2 branches covered.">        final long storageLength = strLength &gt; 0 ? Vm.getStorageLength(strLength) : Integer.BYTES;</span>
+
+<span class="fc" id="L220">        checkMemSize(storageLength);</span>
+<span class="pc bpc" id="L221" title="1 of 2 branches missed.">        final CharSequence value = strLength &gt;= 0 ? eventMem.getStr(offset) : null;</span>
+<span class="fc" id="L222">        offset += storageLength;</span>
+<span class="fc" id="L223">        return value;</span>
+    }
+
+    void openOffset(long offset) {
+<span class="fc" id="L227">        reset();</span>
+<span class="fc bfc" id="L228" title="All 2 branches covered.">        if (offset &gt; 0) {</span>
+<span class="fc" id="L229">            this.offset = offset;</span>
+<span class="fc" id="L230">            int size = readInt();</span>
+<span class="fc" id="L231">            this.nextOffset = offset + size;</span>
+<span class="fc" id="L232">            this.txn = readLong();</span>
+<span class="fc" id="L233">            this.memSize = eventMem.size();</span>
+<span class="fc" id="L234">            this.readRecord();</span>
+<span class="fc" id="L235">        } else {</span>
+<span class="fc" id="L236">            reset();</span>
+        }
+<span class="fc" id="L238">    }</span>
+
+    SymbolMapDiff readNextSymbolMapDiff(SymbolMapDiffImpl symbolMapDiff) {
+<span class="fc" id="L241">        final int columnIndex = readInt();</span>
+<span class="fc bfc" id="L242" title="All 2 branches covered.">        if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {</span>
+<span class="fc" id="L243">            return null;</span>
+        }
+<span class="fc" id="L245">        final boolean nullFlag = readBool();</span>
+<span class="fc" id="L246">        final int cleanTableSymbolCount = readInt();</span>
+<span class="fc" id="L247">        final int size = readInt();</span>
+
+<span class="fc" id="L249">        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size, nullFlag);</span>
+<span class="fc" id="L250">        return symbolMapDiff;</span>
+    }
+
+    SymbolMapDiffImpl.Entry readNextSymbolMapDiffEntry(SymbolMapDiffImpl.Entry entry) {
+<span class="fc" id="L254">        final int key = readInt();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">        if (key == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {</span>
+<span class="fc" id="L256">            entry.clear();</span>
+<span class="fc" id="L257">            return null;</span>
+        }
+<span class="fc" id="L259">        final CharSequence symbol = readStr();</span>
+<span class="fc" id="L260">        entry.of(key, symbol);</span>
+<span class="fc" id="L261">        return entry;</span>
+    }
+
+<span class="fc" id="L264">    public class DataInfo implements SymbolMapDiffCursor {</span>
+<span class="fc" id="L265">        private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);</span>
+        private long endRowID;
+        private long maxTimestamp;
+        private long minTimestamp;
+        private boolean outOfOrder;
+        private long startRowID;
+
+        public long getEndRowID() {
+<span class="fc" id="L273">            return endRowID;</span>
+        }
+
+        public long getMaxTimestamp() {
+<span class="fc" id="L277">            return maxTimestamp;</span>
+        }
+
+        public long getMinTimestamp() {
+<span class="fc" id="L281">            return minTimestamp;</span>
+        }
+
+        public long getStartRowID() {
+<span class="fc" id="L285">            return startRowID;</span>
+        }
+
+        public boolean isOutOfOrder() {
+<span class="fc" id="L289">            return outOfOrder;</span>
+        }
+
+        public SymbolMapDiff nextSymbolMapDiff() {
+<span class="fc" id="L293">            return readNextSymbolMapDiff(symbolMapDiff);</span>
+        }
+
+        private void read() {
+<span class="fc" id="L297">            startRowID = readLong();</span>
+<span class="fc" id="L298">            endRowID = readLong();</span>
+<span class="fc" id="L299">            minTimestamp = readLong();</span>
+<span class="fc" id="L300">            maxTimestamp = readLong();</span>
+<span class="fc" id="L301">            outOfOrder = readBool();</span>
+<span class="fc" id="L302">        }</span>
+    }
+
+<span class="fc" id="L305">    public class SqlInfo {</span>
+<span class="fc" id="L306">        private final StringSink sql = new StringSink();</span>
+        private int cmdType;
+        private long rndSeed0;
+        private long rndSeed1;
+
+        public int getCmdType() {
+<span class="fc" id="L312">            return cmdType;</span>
+        }
+
+        public long getRndSeed0() {
+<span class="fc" id="L316">            return rndSeed0;</span>
+        }
+
+        public long getRndSeed1() {
+<span class="fc" id="L320">            return rndSeed1;</span>
+        }
+
+        public CharSequence getSql() {
+<span class="fc" id="L324">            return sql;</span>
+        }
+
+        public void populateBindVariableService(BindVariableService bindVariableService) {
+<span class="fc" id="L328">            bindVariableService.clear();</span>
+            try {
+<span class="fc" id="L330">                populateIndexedVariables(bindVariableService);</span>
+<span class="fc" id="L331">                populateNamedVariables(bindVariableService);</span>
+<span class="nc" id="L332">            } catch (SqlException e) {</span>
+<span class="nc" id="L333">                throw CairoException.critical(0).put(e.getMessage());</span>
+<span class="fc" id="L334">            }</span>
+<span class="fc" id="L335">        }</span>
+
+        private void populateIndexedVariables(BindVariableService bindVariableService) throws SqlException {
+<span class="fc" id="L338">            final int count = readInt();</span>
+<span class="fc bfc" id="L339" title="All 2 branches covered.">            for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc" id="L340">                final int type = readInt();</span>
+<span class="pc bpc" id="L341" title="1 of 15 branches missed.">                switch (ColumnType.tagOf(type)) {</span>
+                    case ColumnType.BOOLEAN:
+<span class="fc" id="L343">                        bindVariableService.setBoolean(i, readBool());</span>
+<span class="fc" id="L344">                        break;</span>
+                    case ColumnType.BYTE:
+<span class="fc" id="L346">                        bindVariableService.setByte(i, readByte());</span>
+<span class="fc" id="L347">                        break;</span>
+                    case ColumnType.SHORT:
+<span class="fc" id="L349">                        bindVariableService.setShort(i, readShort());</span>
+<span class="fc" id="L350">                        break;</span>
+                    case ColumnType.CHAR:
+<span class="fc" id="L352">                        bindVariableService.setChar(i, readChar());</span>
+<span class="fc" id="L353">                        break;</span>
+                    case ColumnType.INT:
+<span class="fc" id="L355">                        bindVariableService.setInt(i, readInt());</span>
+<span class="fc" id="L356">                        break;</span>
+                    case ColumnType.FLOAT:
+<span class="fc" id="L358">                        bindVariableService.setFloat(i, readFloat());</span>
+<span class="fc" id="L359">                        break;</span>
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+<span class="fc" id="L363">                        bindVariableService.setLong(i, readLong());</span>
+<span class="fc" id="L364">                        break;</span>
+                    case ColumnType.DOUBLE:
+<span class="fc" id="L366">                        bindVariableService.setDouble(i, readDouble());</span>
+<span class="fc" id="L367">                        break;</span>
+                    case ColumnType.STRING:
+<span class="fc" id="L369">                        bindVariableService.setStr(i, readStr());</span>
+<span class="fc" id="L370">                        break;</span>
+                    case ColumnType.BINARY:
+<span class="fc" id="L372">                        bindVariableService.setBin(i, readBin());</span>
+<span class="fc" id="L373">                        break;</span>
+                    case ColumnType.GEOBYTE:
+<span class="fc" id="L375">                        bindVariableService.setGeoHash(i, readByte(), type);</span>
+<span class="fc" id="L376">                        break;</span>
+                    case ColumnType.GEOSHORT:
+<span class="fc" id="L378">                        bindVariableService.setGeoHash(i, readShort(), type);</span>
+<span class="fc" id="L379">                        break;</span>
+                    case ColumnType.GEOINT:
+<span class="fc" id="L381">                        bindVariableService.setGeoHash(i, readInt(), type);</span>
+<span class="fc" id="L382">                        break;</span>
+                    case ColumnType.GEOLONG:
+<span class="fc" id="L384">                        bindVariableService.setGeoHash(i, readLong(), type);</span>
+<span class="fc" id="L385">                        break;</span>
+                    default:
+<span class="nc" id="L387">                        throw new UnsupportedOperationException(&quot;unsupported column type: &quot; + ColumnType.nameOf(type));</span>
+                }
+            }
+<span class="fc" id="L390">        }</span>
+
+        private void populateNamedVariables(BindVariableService bindVariableService) throws SqlException {
+<span class="fc" id="L393">            final int count = readInt();</span>
+<span class="fc bfc" id="L394" title="All 2 branches covered.">            for (int i = 0; i &lt; count; i++) {</span>
+                // garbage, string intern?
+<span class="fc" id="L396">                final CharSequence name = readStr().toString();</span>
+<span class="fc" id="L397">                final int type = readInt();</span>
+<span class="pc bpc" id="L398" title="1 of 16 branches missed.">                switch (ColumnType.tagOf(type)) {</span>
+                    case ColumnType.BOOLEAN:
+<span class="fc" id="L400">                        bindVariableService.setBoolean(name, readBool());</span>
+<span class="fc" id="L401">                        break;</span>
+                    case ColumnType.BYTE:
+<span class="fc" id="L403">                        bindVariableService.setByte(name, readByte());</span>
+<span class="fc" id="L404">                        break;</span>
+                    case ColumnType.SHORT:
+<span class="fc" id="L406">                        bindVariableService.setShort(name, readShort());</span>
+<span class="fc" id="L407">                        break;</span>
+                    case ColumnType.CHAR:
+<span class="fc" id="L409">                        bindVariableService.setChar(name, readChar());</span>
+<span class="fc" id="L410">                        break;</span>
+                    case ColumnType.INT:
+<span class="fc" id="L412">                        bindVariableService.setInt(name, readInt());</span>
+<span class="fc" id="L413">                        break;</span>
+                    case ColumnType.FLOAT:
+<span class="fc" id="L415">                        bindVariableService.setFloat(name, readFloat());</span>
+<span class="fc" id="L416">                        break;</span>
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+<span class="fc" id="L420">                        bindVariableService.setLong(name, readLong());</span>
+<span class="fc" id="L421">                        break;</span>
+                    case ColumnType.DOUBLE:
+<span class="fc" id="L423">                        bindVariableService.setDouble(name, readDouble());</span>
+<span class="fc" id="L424">                        break;</span>
+                    case ColumnType.STRING:
+<span class="fc" id="L426">                        bindVariableService.setStr(name, readStr());</span>
+<span class="fc" id="L427">                        break;</span>
+                    case ColumnType.BINARY:
+<span class="fc" id="L429">                        bindVariableService.setBin(name, readBin());</span>
+<span class="fc" id="L430">                        break;</span>
+                    case ColumnType.GEOBYTE:
+<span class="fc" id="L432">                        bindVariableService.setGeoHash(name, readByte(), type);</span>
+<span class="fc" id="L433">                        break;</span>
+                    case ColumnType.GEOSHORT:
+<span class="fc" id="L435">                        bindVariableService.setGeoHash(name, readShort(), type);</span>
+<span class="fc" id="L436">                        break;</span>
+                    case ColumnType.GEOINT:
+<span class="fc" id="L438">                        bindVariableService.setGeoHash(name, readInt(), type);</span>
+<span class="fc" id="L439">                        break;</span>
+                    case ColumnType.GEOLONG:
+<span class="fc" id="L441">                        bindVariableService.setGeoHash(name, readLong(), type);</span>
+<span class="fc" id="L442">                        break;</span>
+                    case ColumnType.UUID:
+<span class="fc" id="L444">                        bindVariableService.setUuid(name, readLong(), readLong());</span>
+<span class="fc" id="L445">                        break;</span>
+                    default:
+<span class="nc" id="L447">                        throw new UnsupportedOperationException(&quot;unsupported column type: &quot; + ColumnType.nameOf(type));</span>
+                }
+            }
+<span class="fc" id="L450">        }</span>
+
+        private void read() {
+<span class="fc" id="L453">            cmdType = readInt();</span>
+<span class="fc" id="L454">            sql.clear();</span>
+<span class="fc" id="L455">            sql.put(readStr());</span>
+<span class="fc" id="L456">            rndSeed0 = readLong();</span>
+<span class="fc" id="L457">            rndSeed1 = readLong();</span>
+<span class="fc" id="L458">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

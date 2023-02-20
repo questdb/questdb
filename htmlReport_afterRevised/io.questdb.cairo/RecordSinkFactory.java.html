@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RecordSinkFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">RecordSinkFactory.java</span></div><h1>RecordSinkFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
+
+<span class="nc" id="L33">public class RecordSinkFactory {</span>
+
+    public static RecordSink getInstance(BytecodeAssembler asm, ColumnTypes columnTypes, @Transient ColumnFilter columnFilter, boolean symAsString) {
+<span class="fc" id="L36">        return getInstance(asm, columnTypes, columnFilter, symAsString, null);</span>
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient ColumnFilter columnFilter,
+            boolean symAsString,
+            @Transient @Nullable IntList skewIndex
+    ) {
+<span class="fc" id="L46">        asm.init(RecordSink.class);</span>
+<span class="fc" id="L47">        asm.setupPool();</span>
+<span class="fc" id="L48">        final int thisClassIndex = asm.poolClass(asm.poolUtf8(&quot;io/questdb/cairo/sink&quot;));</span>
+<span class="fc" id="L49">        final int interfaceClassIndex = asm.poolClass(RecordSink.class);</span>
+
+<span class="fc" id="L51">        final int rGetInt = asm.poolInterfaceMethod(Record.class, &quot;getInt&quot;, &quot;(I)I&quot;);</span>
+<span class="fc" id="L52">        final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, &quot;getGeoInt&quot;, &quot;(I)I&quot;);</span>
+<span class="fc" id="L53">        final int rGetLong = asm.poolInterfaceMethod(Record.class, &quot;getLong&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L54">        final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, &quot;getGeoLong&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L55">        final int rGetLong256 = asm.poolInterfaceMethod(Record.class, &quot;getLong256A&quot;, &quot;(I)Lio/questdb/std/Long256;&quot;);</span>
+<span class="fc" id="L56">        final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, &quot;getLong128Lo&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L57">        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, &quot;getLong128Hi&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L58">        final int rGetDate = asm.poolInterfaceMethod(Record.class, &quot;getDate&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L59">        final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, &quot;getTimestamp&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L60">        final int rGetByte = asm.poolInterfaceMethod(Record.class, &quot;getByte&quot;, &quot;(I)B&quot;);</span>
+<span class="fc" id="L61">        final int rGetGeoByte = asm.poolInterfaceMethod(Record.class, &quot;getGeoByte&quot;, &quot;(I)B&quot;);</span>
+<span class="fc" id="L62">        final int rGetShort = asm.poolInterfaceMethod(Record.class, &quot;getShort&quot;, &quot;(I)S&quot;);</span>
+<span class="fc" id="L63">        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, &quot;getGeoShort&quot;, &quot;(I)S&quot;);</span>
+<span class="fc" id="L64">        final int rGetChar = asm.poolInterfaceMethod(Record.class, &quot;getChar&quot;, &quot;(I)C&quot;);</span>
+<span class="fc" id="L65">        final int rGetBool = asm.poolInterfaceMethod(Record.class, &quot;getBool&quot;, &quot;(I)Z&quot;);</span>
+<span class="fc" id="L66">        final int rGetFloat = asm.poolInterfaceMethod(Record.class, &quot;getFloat&quot;, &quot;(I)F&quot;);</span>
+<span class="fc" id="L67">        final int rGetDouble = asm.poolInterfaceMethod(Record.class, &quot;getDouble&quot;, &quot;(I)D&quot;);</span>
+<span class="fc" id="L68">        final int rGetStr = asm.poolInterfaceMethod(Record.class, &quot;getStr&quot;, &quot;(I)Ljava/lang/CharSequence;&quot;);</span>
+<span class="fc" id="L69">        final int rGetSym = asm.poolInterfaceMethod(Record.class, &quot;getSym&quot;, &quot;(I)Ljava/lang/CharSequence;&quot;);</span>
+<span class="fc" id="L70">        final int rGetBin = asm.poolInterfaceMethod(Record.class, &quot;getBin&quot;, &quot;(I)Lio/questdb/std/BinarySequence;&quot;);</span>
+<span class="fc" id="L71">        final int rGetRecord = asm.poolInterfaceMethod(Record.class, &quot;getRecord&quot;, &quot;(I)Lio/questdb/cairo/sql/Record;&quot;);</span>
+
+        //
+<span class="fc" id="L74">        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putInt&quot;, &quot;(I)V&quot;);</span>
+<span class="fc" id="L75">        final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;skip&quot;, &quot;(I)V&quot;);</span>
+<span class="fc" id="L76">        final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putLong&quot;, &quot;(J)V&quot;);</span>
+<span class="fc" id="L77">        final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putLong256&quot;, &quot;(Lio/questdb/std/Long256;)V&quot;);</span>
+<span class="fc" id="L78">        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putLong128&quot;, &quot;(JJ)V&quot;);</span>
+<span class="fc" id="L79">        final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putByte&quot;, &quot;(B)V&quot;);</span>
+<span class="fc" id="L80">        final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putShort&quot;, &quot;(S)V&quot;);</span>
+<span class="fc" id="L81">        final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putChar&quot;, &quot;(C)V&quot;);</span>
+<span class="fc" id="L82">        final int wPutBool = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putBool&quot;, &quot;(Z)V&quot;);</span>
+<span class="fc" id="L83">        final int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putFloat&quot;, &quot;(F)V&quot;);</span>
+<span class="fc" id="L84">        final int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putDouble&quot;, &quot;(D)V&quot;);</span>
+<span class="fc" id="L85">        final int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putStr&quot;, &quot;(Ljava/lang/CharSequence;)V&quot;);</span>
+<span class="fc" id="L86">        final int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putDate&quot;, &quot;(J)V&quot;);</span>
+<span class="fc" id="L87">        final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putTimestamp&quot;, &quot;(J)V&quot;);</span>
+<span class="fc" id="L88">        final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putBin&quot;, &quot;(Lio/questdb/std/BinarySequence;)V&quot;);</span>
+<span class="fc" id="L89">        final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, &quot;putRecord&quot;, &quot;(Lio/questdb/cairo/sql/Record;)V&quot;);</span>
+
+<span class="fc" id="L91">        int copyNameIndex = asm.poolUtf8(&quot;copy&quot;);</span>
+<span class="fc" id="L92">        int copySigIndex = asm.poolUtf8(&quot;(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V&quot;);</span>
+
+<span class="fc" id="L94">        asm.finishPool();</span>
+<span class="fc" id="L95">        asm.defineClass(thisClassIndex);</span>
+<span class="fc" id="L96">        asm.interfaceCount(1);</span>
+<span class="fc" id="L97">        asm.putShort(interfaceClassIndex);</span>
+<span class="fc" id="L98">        asm.fieldCount(0);</span>
+<span class="fc" id="L99">        asm.methodCount(2);</span>
+<span class="fc" id="L100">        asm.defineDefaultConstructor();</span>
+
+<span class="fc" id="L102">        asm.startMethod(copyNameIndex, copySigIndex, 7, 5);</span>
+
+<span class="fc" id="L104">        int n = columnFilter.getColumnCount();</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L106">            int index = columnFilter.getColumnIndex(i);</span>
+<span class="fc" id="L107">            final int factor = columnFilter.getIndexFactor(index);</span>
+<span class="fc" id="L108">            index = (index * factor - 1);</span>
+<span class="fc" id="L109">            final int type = columnTypes.getColumnType(index);</span>
+<span class="fc bfc" id="L110" title="All 23 branches covered.">            switch (factor * ColumnType.tagOf(type)) {</span>
+                case ColumnType.INT:
+<span class="fc" id="L112">                    asm.aload(2);</span>
+<span class="fc" id="L113">                    asm.aload(1);</span>
+<span class="fc" id="L114">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L115">                    asm.invokeInterface(rGetInt, 1);</span>
+<span class="fc" id="L116">                    asm.invokeInterface(wPutInt, 1);</span>
+<span class="fc" id="L117">                    break;</span>
+                case ColumnType.SYMBOL:
+<span class="fc" id="L119">                    asm.aload(2);</span>
+<span class="fc" id="L120">                    asm.aload(1);</span>
+<span class="fc" id="L121">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">                    if (symAsString) {</span>
+<span class="fc" id="L123">                        asm.invokeInterface(rGetSym, 1);</span>
+<span class="fc" id="L124">                        asm.invokeInterface(wPutStr, 1);</span>
+                    } else {
+<span class="fc" id="L126">                        asm.invokeInterface(rGetInt, 1);</span>
+<span class="fc" id="L127">                        asm.invokeInterface(wPutInt, 1);</span>
+                    }
+<span class="fc" id="L129">                    break;</span>
+                case ColumnType.LONG:
+<span class="fc" id="L131">                    asm.aload(2);</span>
+<span class="fc" id="L132">                    asm.aload(1);</span>
+<span class="fc" id="L133">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L134">                    asm.invokeInterface(rGetLong, 1);</span>
+<span class="fc" id="L135">                    asm.invokeInterface(wPutLong, 2);</span>
+<span class="fc" id="L136">                    break;</span>
+                case ColumnType.DATE:
+<span class="fc" id="L138">                    asm.aload(2);</span>
+<span class="fc" id="L139">                    asm.aload(1);</span>
+<span class="fc" id="L140">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L141">                    asm.invokeInterface(rGetDate, 1);</span>
+<span class="fc" id="L142">                    asm.invokeInterface(wPutDate, 2);</span>
+<span class="fc" id="L143">                    break;</span>
+                case ColumnType.TIMESTAMP:
+<span class="fc" id="L145">                    asm.aload(2);</span>
+<span class="fc" id="L146">                    asm.aload(1);</span>
+<span class="fc" id="L147">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L148">                    asm.invokeInterface(rGetTimestamp, 1);</span>
+<span class="fc" id="L149">                    asm.invokeInterface(wPutTimestamp, 2);</span>
+<span class="fc" id="L150">                    break;</span>
+                case ColumnType.BYTE:
+<span class="fc" id="L152">                    asm.aload(2);</span>
+<span class="fc" id="L153">                    asm.aload(1);</span>
+<span class="fc" id="L154">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L155">                    asm.invokeInterface(rGetByte, 1);</span>
+<span class="fc" id="L156">                    asm.invokeInterface(wPutByte, 1);</span>
+<span class="fc" id="L157">                    break;</span>
+                case ColumnType.SHORT:
+<span class="fc" id="L159">                    asm.aload(2);</span>
+<span class="fc" id="L160">                    asm.aload(1);</span>
+<span class="fc" id="L161">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L162">                    asm.invokeInterface(rGetShort, 1);</span>
+<span class="fc" id="L163">                    asm.invokeInterface(wPutShort, 1);</span>
+<span class="fc" id="L164">                    break;</span>
+                case ColumnType.CHAR:
+<span class="fc" id="L166">                    asm.aload(2);</span>
+<span class="fc" id="L167">                    asm.aload(1);</span>
+<span class="fc" id="L168">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L169">                    asm.invokeInterface(rGetChar, 1);</span>
+<span class="fc" id="L170">                    asm.invokeInterface(wPutChar, 1);</span>
+<span class="fc" id="L171">                    break;</span>
+                case ColumnType.BOOLEAN:
+<span class="fc" id="L173">                    asm.aload(2);</span>
+<span class="fc" id="L174">                    asm.aload(1);</span>
+<span class="fc" id="L175">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L176">                    asm.invokeInterface(rGetBool, 1);</span>
+<span class="fc" id="L177">                    asm.invokeInterface(wPutBool, 1);</span>
+<span class="fc" id="L178">                    break;</span>
+                case ColumnType.FLOAT:
+<span class="fc" id="L180">                    asm.aload(2);</span>
+<span class="fc" id="L181">                    asm.aload(1);</span>
+<span class="fc" id="L182">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L183">                    asm.invokeInterface(rGetFloat, 1);</span>
+<span class="fc" id="L184">                    asm.invokeInterface(wPutFloat, 1);</span>
+<span class="fc" id="L185">                    break;</span>
+                case ColumnType.DOUBLE:
+<span class="fc" id="L187">                    asm.aload(2);</span>
+<span class="fc" id="L188">                    asm.aload(1);</span>
+<span class="fc" id="L189">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L190">                    asm.invokeInterface(rGetDouble, 1);</span>
+<span class="fc" id="L191">                    asm.invokeInterface(wPutDouble, 2);</span>
+<span class="fc" id="L192">                    break;</span>
+                case ColumnType.STRING:
+<span class="fc" id="L194">                    asm.aload(2);</span>
+<span class="fc" id="L195">                    asm.aload(1);</span>
+<span class="fc" id="L196">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L197">                    asm.invokeInterface(rGetStr, 1);</span>
+<span class="fc" id="L198">                    asm.invokeInterface(wPutStr, 1);</span>
+<span class="fc" id="L199">                    break;</span>
+                case ColumnType.BINARY:
+<span class="fc" id="L201">                    asm.aload(2);</span>
+<span class="fc" id="L202">                    asm.aload(1);</span>
+<span class="fc" id="L203">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L204">                    asm.invokeInterface(rGetBin, 1);</span>
+<span class="fc" id="L205">                    asm.invokeInterface(wPutBin, 1);</span>
+<span class="fc" id="L206">                    break;</span>
+                case ColumnType.LONG256:
+<span class="fc" id="L208">                    asm.aload(2);</span>
+<span class="fc" id="L209">                    asm.aload(1);</span>
+<span class="fc" id="L210">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L211">                    asm.invokeInterface(rGetLong256, 1);</span>
+<span class="fc" id="L212">                    asm.invokeInterface(wPutLong256, 1);</span>
+<span class="fc" id="L213">                    break;</span>
+                case ColumnType.RECORD:
+<span class="fc" id="L215">                    asm.aload(2);</span>
+<span class="fc" id="L216">                    asm.aload(1);</span>
+<span class="fc" id="L217">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L218">                    asm.invokeInterface(rGetRecord, 1);</span>
+<span class="fc" id="L219">                    asm.invokeInterface(wPutRecord, 1);</span>
+<span class="fc" id="L220">                    break;</span>
+                case -ColumnType.INT:
+<span class="fc" id="L222">                    asm.aload(2);</span>
+<span class="fc" id="L223">                    asm.iconst(Integer.BYTES);</span>
+<span class="fc" id="L224">                    asm.invokeInterface(wSkip, 1);</span>
+<span class="fc" id="L225">                    break;</span>
+                case -ColumnType.LONG:
+<span class="fc" id="L227">                    asm.aload(2);</span>
+<span class="fc" id="L228">                    asm.iconst(Long.BYTES);</span>
+<span class="fc" id="L229">                    asm.invokeInterface(wSkip, 1);</span>
+<span class="fc" id="L230">                    break;</span>
+                case ColumnType.GEOBYTE:
+<span class="fc" id="L232">                    asm.aload(2);</span>
+<span class="fc" id="L233">                    asm.aload(1);</span>
+<span class="fc" id="L234">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L235">                    asm.invokeInterface(rGetGeoByte, 1);</span>
+<span class="fc" id="L236">                    asm.invokeInterface(wPutByte, 1);</span>
+<span class="fc" id="L237">                    break;</span>
+                case ColumnType.GEOSHORT:
+<span class="fc" id="L239">                    asm.aload(2);</span>
+<span class="fc" id="L240">                    asm.aload(1);</span>
+<span class="fc" id="L241">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L242">                    asm.invokeInterface(rGetGeoShort, 1);</span>
+<span class="fc" id="L243">                    asm.invokeInterface(wPutShort, 1);</span>
+<span class="fc" id="L244">                    break;</span>
+                case ColumnType.GEOINT:
+<span class="fc" id="L246">                    asm.aload(2);</span>
+<span class="fc" id="L247">                    asm.aload(1);</span>
+<span class="fc" id="L248">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L249">                    asm.invokeInterface(rGetGeoInt, 1);</span>
+<span class="fc" id="L250">                    asm.invokeInterface(wPutInt, 1);</span>
+<span class="fc" id="L251">                    break;</span>
+                case ColumnType.GEOLONG:
+<span class="fc" id="L253">                    asm.aload(2);</span>
+<span class="fc" id="L254">                    asm.aload(1);</span>
+<span class="fc" id="L255">                    asm.iconst(getSkewedIndex(index, skewIndex));</span>
+<span class="fc" id="L256">                    asm.invokeInterface(rGetGeoLong, 1);</span>
+<span class="fc" id="L257">                    asm.invokeInterface(wPutLong, 2);</span>
+<span class="fc" id="L258">                    break;</span>
+                case ColumnType.LONG128:
+                    // fall though
+                case ColumnType.UUID:
+<span class="fc" id="L262">                    int skewedIndex = getSkewedIndex(index, skewIndex);</span>
+<span class="fc" id="L263">                    asm.aload(2);</span>
+
+<span class="fc" id="L265">                    asm.aload(1);</span>
+<span class="fc" id="L266">                    asm.iconst(skewedIndex);</span>
+<span class="fc" id="L267">                    asm.invokeInterface(rGetLong128Lo, 1);</span>
+
+<span class="fc" id="L269">                    asm.aload(1);</span>
+<span class="fc" id="L270">                    asm.iconst(skewedIndex);</span>
+<span class="fc" id="L271">                    asm.invokeInterface(rGetLong128Hi, 1);</span>
+
+<span class="fc" id="L273">                    asm.invokeInterface(wPutLong128, 4);</span>
+<span class="fc" id="L274">                    break;</span>
+                default:
+                    break;
+            }
+        }
+
+<span class="fc" id="L280">        asm.return_();</span>
+<span class="fc" id="L281">        asm.endMethodCode();</span>
+
+        // exceptions
+<span class="fc" id="L284">        asm.putShort(0);</span>
+
+        // we have to add stack map table as branch target
+        // jvm requires it
+
+        // attributes: 0 (void, no stack verification)
+<span class="fc" id="L290">        asm.putShort(0);</span>
+
+<span class="fc" id="L292">        asm.endMethod();</span>
+
+        // class attribute count
+<span class="fc" id="L295">        asm.putShort(0);</span>
+
+<span class="fc" id="L297">        return asm.newInstance();</span>
+    }
+
+    private static int getSkewedIndex(int src, @Transient @Nullable IntList skewIndex) {
+<span class="fc bfc" id="L301" title="All 2 branches covered.">        if (skewIndex == null) {</span>
+<span class="fc" id="L302">            return src;</span>
+        }
+<span class="fc" id="L304">        return skewIndex.getQuick(src);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

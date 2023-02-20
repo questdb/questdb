@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OperatorExpression.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">OperatorExpression.java</span></div><h1>OperatorExpression.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+
+public final class OperatorExpression {
+
+    public static final int BINARY = 2;
+    public static final int DOT_PRECEDENCE = 1;
+    public static final int SET = 3;
+    public static final int UNARY = 1;
+<span class="fc" id="L36">    static final ObjList&lt;OperatorExpression&gt; operators = new ObjList&lt;OperatorExpression&gt;() {{</span>
+<span class="fc" id="L37">        add(new OperatorExpression(&quot;.&quot;, DOT_PRECEDENCE, false, BINARY));</span>
+<span class="fc" id="L38">        add(new OperatorExpression(&quot;::&quot;, DOT_PRECEDENCE, true, BINARY));</span>
+<span class="fc" id="L39">        add(new OperatorExpression(&quot;*&quot;, 3, true, BINARY));</span>
+<span class="fc" id="L40">        add(new OperatorExpression(&quot;/&quot;, 3, true, BINARY));</span>
+<span class="fc" id="L41">        add(new OperatorExpression(&quot;%&quot;, 3, true, BINARY));</span>
+<span class="fc" id="L42">        add(new OperatorExpression(&quot;+&quot;, 4, true, BINARY));</span>
+<span class="fc" id="L43">        add(new OperatorExpression(&quot;-&quot;, 4, true, BINARY));</span>
+<span class="fc" id="L44">        add(new OperatorExpression(&quot;||&quot;, 5, true, BINARY));</span>
+<span class="fc" id="L45">        add(new OperatorExpression(&quot;&lt;&quot;, 6, true, BINARY));</span>
+<span class="fc" id="L46">        add(new OperatorExpression(&quot;&lt;=&quot;, 6, true, BINARY));</span>
+<span class="fc" id="L47">        add(new OperatorExpression(&quot;&gt;&quot;, 6, true, BINARY));</span>
+<span class="fc" id="L48">        add(new OperatorExpression(&quot;&gt;=&quot;, 6, true, BINARY));</span>
+<span class="fc" id="L49">        add(new OperatorExpression(&quot;=&quot;, 7, true, BINARY));</span>
+<span class="fc" id="L50">        add(new OperatorExpression(&quot;~&quot;, 7, true, BINARY));</span>
+<span class="fc" id="L51">        add(new OperatorExpression(&quot;!=&quot;, 7, true, BINARY));</span>
+<span class="fc" id="L52">        add(new OperatorExpression(&quot;&lt;&gt;&quot;, 7, true, BINARY));</span>
+<span class="fc" id="L53">        add(new OperatorExpression(&quot;!~&quot;, 7, true, BINARY));</span>
+<span class="fc" id="L54">        add(new OperatorExpression(&quot;in&quot;, 7, true, SET, false));</span>
+<span class="fc" id="L55">        add(new OperatorExpression(&quot;between&quot;, 7, true, SET, false));</span>
+<span class="fc" id="L56">        add(new OperatorExpression(&quot;&amp;&quot;, 8, true, BINARY));</span>
+<span class="fc" id="L57">        add(new OperatorExpression(&quot;^&quot;, 9, false, BINARY));</span>
+<span class="fc" id="L58">        add(new OperatorExpression(&quot;|&quot;, 10, true, BINARY));</span>
+<span class="fc" id="L59">        add(new OperatorExpression(&quot;and&quot;, 11, true, BINARY, false));</span>
+<span class="fc" id="L60">        add(new OperatorExpression(&quot;or&quot;, 11, true, BINARY, false));</span>
+<span class="fc" id="L61">        add(new OperatorExpression(&quot;not&quot;, 11, true, UNARY, false));</span>
+<span class="fc" id="L62">        add(new OperatorExpression(&quot;like&quot;, 7, true, BINARY, false));</span>
+<span class="fc" id="L63">        add(new OperatorExpression(&quot;ilike&quot;, 7, true, BINARY, false));</span>
+<span class="fc" id="L64">        add(new OperatorExpression(&quot;within&quot;, 7, true, SET, false));</span>
+<span class="fc" id="L65">    }};</span>
+
+<span class="fc" id="L67">    static final LowerCaseAsciiCharSequenceObjHashMap&lt;OperatorExpression&gt; opMap = new LowerCaseAsciiCharSequenceObjHashMap&lt;OperatorExpression&gt;() {{</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        for (int i = 0, k = operators.size(); i &lt; k; i++) {</span>
+<span class="fc" id="L69">            OperatorExpression op = operators.getQuick(i);</span>
+<span class="fc" id="L70">            put(op.token, op);</span>
+        }
+<span class="fc" id="L72">    }};</span>
+    final boolean leftAssociative;
+    final int precedence;
+    final boolean symbol;
+    final String token;
+    final int type;
+
+<span class="fc" id="L79">    private OperatorExpression(String token, int precedence, boolean leftAssociative, int type, boolean symbol) {</span>
+<span class="fc" id="L80">        this.token = token;</span>
+<span class="fc" id="L81">        this.precedence = precedence;</span>
+<span class="fc" id="L82">        this.leftAssociative = leftAssociative;</span>
+<span class="fc" id="L83">        this.type = type;</span>
+<span class="fc" id="L84">        this.symbol = symbol;</span>
+<span class="fc" id="L85">    }</span>
+
+<span class="fc" id="L87">    private OperatorExpression(String token, int precedence, boolean leftAssociative, int type) {</span>
+<span class="fc" id="L88">        this.token = token;</span>
+<span class="fc" id="L89">        this.precedence = precedence;</span>
+<span class="fc" id="L90">        this.leftAssociative = leftAssociative;</span>
+<span class="fc" id="L91">        this.type = type;</span>
+<span class="fc" id="L92">        this.symbol = true;</span>
+<span class="fc" id="L93">    }</span>
+
+    public static int getOperatorType(CharSequence name) {
+<span class="fc" id="L96">        int index = opMap.keyIndex(name);</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L98">            return opMap.valueAt(index).type;</span>
+        }
+<span class="fc" id="L100">        return 0;</span>
+    }
+
+    public static boolean isOperator(CharSequence name) {
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        return opMap.keyIndex(name) &lt; 0;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

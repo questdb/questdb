@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CopyWalSegmentUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal</a> &gt; <span class="el_source">CopyWalSegmentUtils.java</span></div><h1>CopyWalSegmentUtils.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+
+import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.WalWriter.NEW_COL_RECORD_SIZE;
+
+<span class="nc" id="L39">public class CopyWalSegmentUtils {</span>
+<span class="fc" id="L40">    private static final Log LOG = LogFactory.getLog(CopyWalSegmentUtils.class);</span>
+    private static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
+
+    public static void rollColumnToSegment(
+            FilesFacade ff,
+            long options,
+            MemoryMA primaryColumn,
+            MemoryMA secondaryColumn,
+            @Transient Path walPath,
+            int newSegment,
+            CharSequence columnName,
+            int columnType,
+            long rowOffset,
+            long rowCount,
+            LongList newColumnFiles,
+            int columnIndex
+    ) {
+<span class="fc" id="L57">        Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);</span>
+<span class="fc" id="L58">        int setPathRoot = newSegPath.length();</span>
+<span class="fc" id="L59">        dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);</span>
+<span class="fc" id="L60">        int primaryFd = openRW(ff, newSegPath, LOG, options);</span>
+<span class="fc" id="L61">        newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE, primaryFd);</span>
+
+        int secondaryFd;
+<span class="fc bfc" id="L64" title="All 2 branches covered.">        if (ColumnType.isVariableLength(columnType)) {</span>
+<span class="fc" id="L65">            iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);</span>
+<span class="fc" id="L66">            secondaryFd = openRW(ff, newSegPath, LOG, options);</span>
+<span class="fc" id="L67">            newColumnFiles.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 3, secondaryFd);</span>
+        } else {
+<span class="fc" id="L69">            secondaryFd = -1;</span>
+        }
+
+        boolean success;
+<span class="fc bfc" id="L73" title="All 2 branches covered.">        if (ColumnType.isVariableLength(columnType)) {</span>
+<span class="fc" id="L74">            success = copyVarLenFile(ff, primaryColumn, secondaryColumn, primaryFd, secondaryFd, rowOffset, rowCount, newColumnFiles, columnIndex);</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        } else if (columnType &gt; 0) {</span>
+<span class="fc" id="L76">            success = copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, columnType, newColumnFiles, columnIndex);</span>
+        } else {
+<span class="fc" id="L78">            success = copyTimestampFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, newColumnFiles, columnIndex);</span>
+        }
+
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        if (!success) {</span>
+<span class="fc" id="L82">            throw CairoException.critical(ff.errno()).put(&quot;failed to copy column file to new segment&quot; +</span>
+<span class="fc" id="L83">                            &quot; [path=&quot;).put(newSegPath)</span>
+<span class="fc" id="L84">                    .put(&quot;, column=&quot;).put(columnName)</span>
+<span class="fc" id="L85">                    .put(&quot;, rowOffset=&quot;).put(rowOffset)</span>
+<span class="fc" id="L86">                    .put(&quot;, rowCount=&quot;).put(rowCount)</span>
+<span class="fc" id="L87">                    .put(&quot;, columnType=&quot;).put(columnType).put(&quot;]&quot;);</span>
+        }
+<span class="fc" id="L89">    }</span>
+
+    private static boolean copyFixLenFile(
+            FilesFacade ff,
+            MemoryMA primaryColumn,
+            int primaryFd,
+            long rowOffset,
+            long rowCount,
+            int columnType,
+            LongList newOffsets,
+            int columnIndex
+    ) {
+<span class="fc" id="L101">        int shl = ColumnType.pow2SizeOf(columnType);</span>
+<span class="fc" id="L102">        long offset = rowOffset &lt;&lt; shl;</span>
+<span class="fc" id="L103">        long length = rowCount &lt;&lt; shl;</span>
+
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        if (success) {</span>
+<span class="fc" id="L107">            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);</span>
+<span class="fc" id="L108">            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);</span>
+        }
+<span class="fc" id="L110">        return success;</span>
+    }
+
+    private static boolean copyTimestampFile(
+            FilesFacade ff,
+            MemoryMA primaryColumn,
+            int primaryFd,
+            long rowOffset,
+            long rowCount,
+            LongList newOffsets,
+            int columnIndex
+    ) {
+        // Designated timestamp column is written as 2 long values
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex)) {</span>
+<span class="fc" id="L124">            return false;</span>
+        }
+<span class="fc" id="L126">        long size = rowCount &lt;&lt; 4;</span>
+<span class="fc" id="L127">        long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);</span>
+        try {
+<span class="fc" id="L129">            Vect.flattenIndex(srcDataTimestampAddr, rowCount);</span>
+        } finally {
+<span class="fc" id="L131">            ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);</span>
+        }
+<span class="fc" id="L133">        return true;</span>
+    }
+
+    private static boolean copyVarLenFile(
+            FilesFacade ff,
+            MemoryMA primaryColumn,
+            MemoryMA secondaryColumn,
+            int primaryFd,
+            int secondaryFd,
+            long rowOffset,
+            long rowCount,
+            LongList newOffsets,
+            int columnIndex
+    ) {
+<span class="fc" id="L147">        long indexMapSize = (rowOffset + rowCount + 1) * Long.BYTES;</span>
+<span class="fc" id="L148">        long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), indexMapSize, MEMORY_TAG);</span>
+        try {
+<span class="fc" id="L150">            long varStart = Unsafe.getUnsafe().getLong(srcIndexAddr + rowOffset * Long.BYTES);</span>
+<span class="fc" id="L151">            long varEnd = Unsafe.getUnsafe().getLong(srcIndexAddr + (rowOffset + rowCount) * Long.BYTES);</span>
+<span class="fc" id="L152">            long varCopyLen = varEnd - varStart;</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">            boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, varStart, varCopyLen) == varCopyLen;</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            if (!success) {</span>
+<span class="fc" id="L155">                return false;</span>
+            }
+
+<span class="fc" id="L158">            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, varStart);</span>
+<span class="fc" id="L159">            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, varCopyLen);</span>
+
+<span class="fc" id="L161">            long indexLen = (rowCount + 1) * Long.BYTES;</span>
+<span class="fc" id="L162">            long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MEMORY_TAG);</span>
+<span class="fc" id="L163">            ff.madvise(dstIndexAddr, indexLen, Files.POSIX_MADV_RANDOM);</span>
+
+<span class="fc" id="L165">            Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);</span>
+<span class="fc" id="L166">            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);</span>
+<span class="fc" id="L167">            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, indexLen);</span>
+
+            // All in memory calls, no need to unmap in finally
+<span class="fc" id="L170">            ff.munmap(dstIndexAddr, indexLen, MEMORY_TAG);</span>
+<span class="fc" id="L171">            return true;</span>
+        } finally {
+<span class="fc" id="L173">            ff.munmap(srcIndexAddr, indexMapSize, MEMORY_TAG);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

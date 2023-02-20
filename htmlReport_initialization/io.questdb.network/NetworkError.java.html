@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NetworkError.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.network</a> &gt; <span class="el_source">NetworkError.java</span></div><h1>NetworkError.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.network;
+
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Sinkable;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+
+<span class="fc" id="L33">public class NetworkError extends Error implements Sinkable, FlyweightMessageContainer {</span>
+<span class="fc" id="L34">    private static final ThreadLocal&lt;NetworkError&gt; tlException = new ThreadLocal&lt;&gt;(NetworkError::new);</span>
+<span class="fc" id="L35">    private final StringSink message = new StringSink();</span>
+    private int errno;
+
+    public static NetworkError instance(int errno, CharSequence message) {
+<span class="fc" id="L39">        NetworkError ex = tlException.get();</span>
+<span class="fc" id="L40">        ex.errno = errno;</span>
+<span class="fc" id="L41">        ex.message.clear();</span>
+<span class="fc" id="L42">        ex.message.put(message);</span>
+<span class="fc" id="L43">        return ex;</span>
+    }
+
+    public static NetworkError instance(int errno) {
+<span class="fc" id="L47">        NetworkError ex = tlException.get();</span>
+<span class="fc" id="L48">        ex.errno = errno;</span>
+<span class="fc" id="L49">        ex.message.clear();</span>
+<span class="fc" id="L50">        return ex;</span>
+    }
+
+    public NetworkError couldNotBindSocket(CharSequence who, int ipv4, int port) {
+<span class="fc" id="L54">        return this.put(&quot;could not bind socket [who=&quot;).put(who).put(&quot;, bindTo=&quot;).ip(ipv4).put(':').put(port).put(']');</span>
+    }
+
+    @Override
+    public CharSequence getFlyweightMessage() {
+<span class="nc" id="L59">        return message;</span>
+    }
+
+    @Override
+    public String getMessage() {
+<span class="nc" id="L64">        return &quot;[&quot; + errno + &quot;] &quot; + message;</span>
+    }
+
+    public NetworkError ip(int ipv4) {
+<span class="fc" id="L68">        Net.appendIP4(message, ipv4);</span>
+<span class="fc" id="L69">        return this;</span>
+    }
+
+    public NetworkError put(char c) {
+<span class="fc" id="L73">        message.put(c);</span>
+<span class="fc" id="L74">        return this;</span>
+    }
+
+    public NetworkError put(int value) {
+<span class="fc" id="L78">        message.put(value);</span>
+<span class="fc" id="L79">        return this;</span>
+    }
+
+    public NetworkError put(long value) {
+<span class="nc" id="L83">        message.put(value);</span>
+<span class="nc" id="L84">        return this;</span>
+    }
+
+    public NetworkError put(CharSequence cs) {
+<span class="fc" id="L88">        message.put(cs);</span>
+<span class="fc" id="L89">        return this;</span>
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+<span class="nc" id="L94">        sink.put(&quot;[errno=&quot;).put(errno).put(&quot;] &quot;).put(message);</span>
+<span class="nc" id="L95">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

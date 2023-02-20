@@ -1,0 +1,930 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SampleByFirstLastRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby</a> &gt; <span class="el_source">SampleByFirstLastRecordCursorFactory.java</span></div><h1>SampleByFirstLastRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.std.*;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
+public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final int FILTER_KEY_IS_NULL = 0;
+    private static final int FIRST_OUT_INDEX = 0;
+    private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
+    private static final int LAST_OUT_INDEX = 1;
+    private static final int TIMESTAMP_OUT_INDEX = 2;
+    private final RecordCursorFactory base;
+    private final LongList crossFrameRow;
+    private final int[] firstLastIndexByCol;
+    private final int groupBySymbolColIndex;
+    private final boolean[] isKeyColumn;
+    private final int maxSamplePeriodSize;
+    private final int pageSize;
+    private final int[] queryToFrameColumnMapping;
+    private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
+    private final SingleSymbolFilter symbolFilter;
+    private final int timestampIndex;
+<span class="fc" id="L58">    private int groupByTimestampIndex = -1;</span>
+    private DirectLongList rowIdOutAddress;
+    private DirectLongList samplePeriodAddress;
+
+    public SampleByFirstLastRecordCursorFactory(
+            RecordCursorFactory base,
+            TimestampSampler timestampSampler,
+            GenericRecordMetadata groupByMetadata,
+            ObjList&lt;QueryColumn&gt; columns,
+            RecordMetadata metadata,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos,
+            int timestampIndex,
+            SingleSymbolFilter symbolFilter,
+            int configPageSize
+    ) throws SqlException {
+<span class="fc" id="L76">        super(groupByMetadata);</span>
+<span class="fc" id="L77">        this.base = base;</span>
+<span class="fc" id="L78">        groupBySymbolColIndex = symbolFilter.getColumnIndex();</span>
+<span class="fc" id="L79">        queryToFrameColumnMapping = new int[columns.size()];</span>
+<span class="fc" id="L80">        firstLastIndexByCol = new int[columns.size()];</span>
+<span class="fc" id="L81">        isKeyColumn = new boolean[columns.size()];</span>
+<span class="fc" id="L82">        crossFrameRow = new LongList(columns.size());</span>
+<span class="fc" id="L83">        crossFrameRow.setPos(columns.size());</span>
+<span class="fc" id="L84">        this.timestampIndex = timestampIndex;</span>
+<span class="fc" id="L85">        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);</span>
+<span class="fc" id="L86">        int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);</span>
+<span class="fc bfc" id="L87" title="All 2 branches covered.">        pageSize = configPageSize &lt; 16 ? Math.max(blockSize, 16) : configPageSize;</span>
+<span class="fc" id="L88">        maxSamplePeriodSize = pageSize * 4;</span>
+<span class="fc" id="L89">        int outSize = pageSize &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT;</span>
+<span class="fc" id="L90">        rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);</span>
+<span class="fc" id="L91">        rowIdOutAddress.setPos(outSize);</span>
+<span class="fc" id="L92">        samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);</span>
+<span class="fc" id="L93">        this.symbolFilter = symbolFilter;</span>
+<span class="fc" id="L94">        sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(</span>
+                timestampSampler,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
+<span class="fc" id="L101">    }</span>
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+<span class="fc" id="L105">        return base;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L110">        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);</span>
+<span class="fc" id="L111">        int groupByIndexKey = symbolFilter.getSymbolFilterKey();</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        if (groupByIndexKey == SymbolMapReader.VALUE_NOT_FOUND) {</span>
+<span class="fc" id="L113">            Misc.free(pageFrameCursor);</span>
+<span class="fc" id="L114">            return EmptyTableRecordCursor.INSTANCE;</span>
+        }
+        try {
+<span class="fc" id="L117">            sampleByFirstLastRecordCursor.of(</span>
+                    pageFrameCursor,
+                    groupByIndexKey,
+                    executionContext
+            );
+<span class="fc" id="L122">            return sampleByFirstLastRecordCursor;</span>
+<span class="fc" id="L123">        } catch (Throwable e) {</span>
+<span class="fc" id="L124">            Misc.free(pageFrameCursor);</span>
+<span class="fc" id="L125">            throw e;</span>
+        }
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L131">        return false;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L136">        sink.type(&quot;SampleByFirstLast&quot;);</span>
+<span class="fc" id="L137">        sink.attr(&quot;keys&quot;);</span>
+<span class="fc" id="L138">        boolean first = true;</span>
+<span class="fc" id="L139">        sink.val('[');</span>
+<span class="fc bfc" id="L140" title="All 2 branches covered.">        for (int i = 0; i &lt; isKeyColumn.length; i++) {</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">            if (isKeyColumn[i]) {</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">                if (first) {</span>
+<span class="fc" id="L143">                    first = false;</span>
+                } else {
+<span class="nc" id="L145">                    sink.val(&quot;, &quot;);</span>
+                }
+<span class="fc" id="L147">                sink.putBaseColumnName(i);</span>
+            }
+        }
+<span class="fc" id="L150">        sink.val(']');</span>
+<span class="fc" id="L151">        sink.attr(&quot;values&quot;);</span>
+<span class="fc" id="L152">        first = true;</span>
+<span class="fc" id="L153">        sink.val('[');</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">        for (int i = 0; i &lt; isKeyColumn.length; i++) {</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">            if (!isKeyColumn[i]) {</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">                if (first) {</span>
+<span class="fc" id="L157">                    first = false;</span>
+                } else {
+<span class="fc" id="L159">                    sink.val(&quot;, &quot;);</span>
+                }
+<span class="fc bfc" id="L161" title="All 2 branches covered.">                sink.val(firstLastIndexByCol[i] == LAST_OUT_INDEX ? &quot;last&quot; : &quot;first&quot;).val('(');</span>
+<span class="fc" id="L162">                sink.putBaseColumnName(i);</span>
+<span class="fc" id="L163">                sink.val(')');</span>
+            }
+        }
+<span class="fc" id="L166">        sink.val(']');</span>
+<span class="fc" id="L167">        sink.child(base);</span>
+<span class="fc" id="L168">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="nc" id="L172">        return base.usesCompiledFilter();</span>
+    }
+
+    private void buildFirstLastIndex(
+            int[] firstLastIndex,
+            int[] queryToFrameColumnMapping,
+            RecordMetadata metadata,
+            ObjList&lt;QueryColumn&gt; columns,
+            int timestampIndex,
+            boolean[] isKeyColumn
+    ) throws SqlException {
+<span class="fc bfc" id="L183" title="All 2 branches covered.">        for (int i = 0, n = firstLastIndex.length; i &lt; n; i++) {</span>
+<span class="fc" id="L184">            QueryColumn column = columns.getQuick(i);</span>
+<span class="fc" id="L185">            ExpressionNode ast = column.getAst();</span>
+<span class="fc" id="L186">            int resultSetColumnType = getMetadata().getColumnType(i);</span>
+<span class="fc bfc" id="L187" title="All 2 branches covered.">            if (ast.rhs != null) {</span>
+<span class="fc bfc" id="L188" title="All 2 branches covered.">                if (SqlKeywords.isLastKeyword(ast.token)) {</span>
+<span class="fc" id="L189">                    firstLastIndex[i] = LAST_OUT_INDEX;</span>
+<span class="fc bfc" id="L190" title="All 2 branches covered.">                } else if (SqlKeywords.isFirstKeyword(ast.token)) {</span>
+<span class="fc" id="L191">                    firstLastIndex[i] = FIRST_OUT_INDEX;</span>
+                } else {
+<span class="fc" id="L193">                    throw SqlException.$(ast.position, &quot;expected first() or last() functions but got &quot;).put(ast.token);</span>
+                }
+<span class="fc" id="L195">                int underlyingColIndex = metadata.getColumnIndex(ast.rhs.token);</span>
+<span class="fc" id="L196">                queryToFrameColumnMapping[i] = underlyingColIndex;</span>
+
+<span class="fc" id="L198">                int underlyingType = metadata.getColumnType(underlyingColIndex);</span>
+<span class="pc bpc" id="L199" title="1 of 4 branches missed.">                if (underlyingType != resultSetColumnType || ColumnType.pow2SizeOf(resultSetColumnType) &gt; 3) {</span>
+<span class="fc" id="L200">                    throw SqlException.$(ast.position, &quot;column \&quot;&quot;)</span>
+<span class="fc" id="L201">                            .put(metadata.getColumnName(underlyingColIndex))</span>
+<span class="fc" id="L202">                            .put(&quot;\&quot;: first(), last() is not supported on data type &quot;)</span>
+<span class="fc" id="L203">                            .put(ColumnType.nameOf(underlyingType))</span>
+<span class="fc" id="L204">                            .put(&quot; &quot;);</span>
+                }
+<span class="fc" id="L206">            } else {</span>
+<span class="fc" id="L207">                int underlyingColIndex = metadata.getColumnIndex(ast.token);</span>
+<span class="fc" id="L208">                isKeyColumn[i] = true;</span>
+<span class="fc" id="L209">                queryToFrameColumnMapping[i] = underlyingColIndex;</span>
+<span class="fc bfc" id="L210" title="All 2 branches covered.">                if (underlyingColIndex == timestampIndex) {</span>
+<span class="fc" id="L211">                    groupByTimestampIndex = i;</span>
+                }
+            }
+        }
+<span class="fc" id="L215">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L219">        base.close();</span>
+<span class="fc" id="L220">        rowIdOutAddress = Misc.free(rowIdOutAddress);</span>
+<span class="fc" id="L221">        samplePeriodAddress = Misc.free(samplePeriodAddress);</span>
+<span class="fc" id="L222">    }</span>
+
+<span class="fc" id="L224">    private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {</span>
+        private final static int CROSS_ROW_STATE_REFS_UPDATED = 2;
+        private final static int CROSS_ROW_STATE_SAVED = 1;
+        private final static int NONE = 0;
+        private final static int STATE_DONE = 7;
+        private final static int STATE_FETCH_NEXT_DATA_FRAME = 1;
+        private final static int STATE_FETCH_NEXT_INDEX_FRAME = 3;
+        private final static int STATE_OUT_BUFFER_FULL = 4;
+        private final static int STATE_RETURN_LAST_ROW = 6;
+        private final static int STATE_SEARCH = 5;
+        private final static int STATE_START = 0;
+<span class="fc" id="L235">        private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();</span>
+        private int crossRowState;
+        private PageFrame currentFrame;
+        private long currentRow;
+<span class="fc" id="L239">        private long dataFrameHi = -1;</span>
+<span class="fc" id="L240">        private long dataFrameLo = -1;</span>
+<span class="fc" id="L241">        private long frameNextRowId = -1;</span>
+        private int groupBySymbolKey;
+        private IndexFrameCursor indexCursor;
+        private IndexFrame indexFrame;
+<span class="fc" id="L245">        private int indexFramePosition = -1;</span>
+        private boolean initialized;
+        private PageFrameCursor pageFrameCursor;
+<span class="fc" id="L248">        private long prevSamplePeriodOffset = 0;</span>
+        private int rowsFound;
+<span class="fc" id="L250">        private long samplePeriodIndexOffset = 0;</span>
+        private long samplePeriodStart;
+        private int state;
+
+        public SampleByFirstLastRecordCursor(
+                TimestampSampler timestampSampler,
+                Function timezoneNameFunc,
+                int timezoneNameFuncPos,
+                Function offsetFunc,
+                int offsetFuncPos
+<span class="fc" id="L260">        ) {</span>
+<span class="fc" id="L261">            super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);</span>
+<span class="fc" id="L262">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L266">            pageFrameCursor = Misc.free(pageFrameCursor);</span>
+<span class="fc" id="L267">        }</span>
+
+        public long getNextTimestamp() {
+<span class="fc" id="L270">            long lastTimestampLocUtc = localEpoch - tzOffset;</span>
+<span class="fc" id="L271">            long nextLastTimestampLoc = timestampSampler.nextTimestamp(localEpoch);</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">            if (nextLastTimestampLoc - tzOffset &gt;= nextDstUtc) {</span>
+<span class="fc" id="L273">                tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);</span>
+<span class="fc" id="L274">                nextDstUtc = rules.getNextDST(nextLastTimestampLoc - tzOffset);</span>
+<span class="fc bfc" id="L275" title="All 2 branches covered.">                while (nextLastTimestampLoc - tzOffset &lt;= lastTimestampLocUtc) {</span>
+<span class="fc" id="L276">                    nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);</span>
+                }
+            }
+<span class="fc" id="L279">            localEpoch = nextLastTimestampLoc;</span>
+<span class="fc" id="L280">            return localEpoch - tzOffset;</span>
+        }
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L285">            return record;</span>
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+<span class="fc" id="L290">            return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+            // This loop never returns last found sample by row.
+            // The reason is that last row() value can be changed on next data frame pass.
+            // That's why the last row values are buffered
+            // (not only row id stored but all the values needed) in crossFrameRow.
+            // Buffering values are unavoidable since row ids of last() and first() are from different data frames
+<span class="fc bfc" id="L300" title="All 2 branches covered.">            if (++currentRow &lt; rowsFound - 1) {</span>
+<span class="fc" id="L301">                record.of(currentRow);</span>
+<span class="fc" id="L302">                return true;</span>
+            }
+
+<span class="fc" id="L305">            return hasNext0();</span>
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+<span class="fc" id="L310">            return pageFrameCursor.newSymbolTable(queryToFrameColumnMapping[columnIndex]);</span>
+        }
+
+        @Override
+        public long size() {
+<span class="fc" id="L315">            return -1;</span>
+        }
+
+        public long startFrom(long timestamp) {
+            // Skip initialization if timestamp is the same as last returned
+<span class="fc bfc" id="L320" title="All 4 branches covered.">            if (!initialized || timestamp != localEpoch - tzOffset) {</span>
+                // null rules means the timezone does not have daylight time changes
+<span class="fc bfc" id="L322" title="All 2 branches covered.">                if (rules != null) {</span>
+<span class="fc" id="L323">                    tzOffset = rules.getOffset(timestamp);</span>
+                    // we really need UTC timestamp to get offset correctly
+                    // this will converge to UTC timestamp
+<span class="fc" id="L326">                    tzOffset = rules.getOffset(timestamp + tzOffset);</span>
+<span class="fc" id="L327">                    nextDstUtc = rules.getNextDST(timestamp + tzOffset);</span>
+                }
+<span class="fc bfc" id="L329" title="All 2 branches covered.">                if (fixedOffset != Long.MIN_VALUE) {</span>
+<span class="fc" id="L330">                    localEpoch = timestampSampler.round(timestamp + tzOffset - fixedOffset) + fixedOffset;</span>
+                } else {
+<span class="fc" id="L332">                    localEpoch = timestamp + tzOffset;</span>
+                }
+<span class="fc" id="L334">                initialized = true;</span>
+            }
+<span class="fc" id="L336">            return localEpoch - tzOffset;</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L341">            currentRow = rowsFound = 0;</span>
+<span class="fc" id="L342">            frameNextRowId = dataFrameLo = dataFrameHi = -1;</span>
+<span class="fc" id="L343">            state = STATE_START;</span>
+<span class="fc" id="L344">            crossRowState = NONE;</span>
+<span class="fc" id="L345">            pageFrameCursor.toTop();</span>
+<span class="fc" id="L346">        }</span>
+
+        private void checkCrossRowAfterFoundBufferIterated() {
+<span class="fc bfc" id="L349" title="All 4 branches covered.">            if (crossRowState != NONE &amp;&amp; rowsFound &gt; 1) {</span>
+                // Copy last set of first(), last() RowIds from bottom of the previous output to the top
+<span class="fc" id="L351">                long lastFoundIndex = (long) (rowsFound - 1) &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT;</span>
+<span class="fc" id="L352">                rowIdOutAddress.set(FIRST_OUT_INDEX, rowIdOutAddress.get(lastFoundIndex + FIRST_OUT_INDEX));</span>
+<span class="fc" id="L353">                rowIdOutAddress.set(LAST_OUT_INDEX, rowIdOutAddress.get(lastFoundIndex + LAST_OUT_INDEX));</span>
+<span class="fc" id="L354">                rowIdOutAddress.set(TIMESTAMP_OUT_INDEX, rowIdOutAddress.get(lastFoundIndex + TIMESTAMP_OUT_INDEX));</span>
+<span class="fc" id="L355">                crossRowState = CROSS_ROW_STATE_REFS_UPDATED;</span>
+            }
+
+<span class="fc bfc" id="L358" title="All 2 branches covered.">            if (crossRowState == CROSS_ROW_STATE_REFS_UPDATED) {</span>
+<span class="fc" id="L359">                saveFirstLastValuesToCrossFrameRowBuffer();</span>
+<span class="fc" id="L360">                crossRowState = CROSS_ROW_STATE_SAVED;</span>
+            }
+<span class="fc" id="L362">        }</span>
+
+        private void checkSaveLastValues(boolean zeroRowLastIdUpdated) {
+<span class="fc bfc" id="L365" title="All 2 branches covered.">            if (crossRowState != NONE) {</span>
+<span class="fc bfc" id="L366" title="All 2 branches covered.">                if (zeroRowLastIdUpdated) {</span>
+<span class="fc" id="L367">                    saveLastValuesToBuffer();</span>
+<span class="fc" id="L368">                    crossRowState = CROSS_ROW_STATE_SAVED;</span>
+                }
+<span class="pc bpc" id="L370" title="1 of 2 branches missed.">            } else if (rowsFound &gt; 0) {</span>
+<span class="fc" id="L371">                saveFirstLastValuesToCrossFrameRowBuffer();</span>
+<span class="fc" id="L372">                crossRowState = CROSS_ROW_STATE_SAVED;</span>
+            }
+<span class="fc" id="L374">        }</span>
+
+        private int fillSamplePeriodsUntil(long lastInDataTimestamp) {
+<span class="fc" id="L377">            long nextTs = samplePeriodStart;</span>
+<span class="fc" id="L378">            long currentTs = Long.MIN_VALUE;</span>
+<span class="fc" id="L379">            nextTs = startFrom(nextTs);</span>
+
+<span class="fc" id="L381">            samplePeriodAddress.clear();</span>
+<span class="fc bfc" id="L382" title="All 4 branches covered.">            for (int i = 0; i &lt; maxSamplePeriodSize &amp;&amp; currentTs &lt;= lastInDataTimestamp; i++) {</span>
+<span class="fc" id="L383">                currentTs = nextTs;</span>
+<span class="fc" id="L384">                nextTs = getNextTimestamp();</span>
+<span class="pc bpc" id="L385" title="1 of 2 branches missed.">                assert nextTs != currentTs : &quot;uh-oh, we may have got into an infinite loop with ts &quot; + nextTs;</span>
+<span class="fc" id="L386">                samplePeriodAddress.add(currentTs);</span>
+            }
+<span class="fc" id="L388">            return (int) samplePeriodAddress.size();</span>
+        }
+
+        // This method evaluates RecordCursor state
+        // by using state machine.
+        // Possible important states are:
+        // - START
+        // - FETCH_NEXT_DATA_FRAME
+        // - FETCH_NEXT_INDEX_FRAME
+        // - SEARCH
+        // - RETURN_LAST_ROW
+        // - DONE
+        // State machine can switch states non-linear until DONE reached.
+        private int getNextState(int state) {
+            // This method should not change this.state field
+            // but instead produce next state given incoming state parameter.
+            // This way the method is enforced to change state and less the caller to loop forever.
+<span class="pc bpc" id="L405" title="2 of 7 branches missed.">            switch (state) {</span>
+                case STATE_START:
+<span class="fc" id="L407">                    prevSamplePeriodOffset = samplePeriodIndexOffset = 0;</span>
+<span class="fc" id="L408">                    crossRowState = NONE;</span>
+<span class="fc" id="L409">                    samplePeriodStart = Numbers.LONG_NaN;</span>
+                    // Fall through to STATE_FETCH_NEXT_DATA_FRAME;
+
+                case STATE_FETCH_NEXT_DATA_FRAME:
+<span class="fc" id="L413">                    currentFrame = pageFrameCursor.next();</span>
+<span class="fc bfc" id="L414" title="All 2 branches covered.">                    if (currentFrame != null) {</span>
+<span class="fc" id="L415">                        record.switchFrame();</span>
+
+                        // Switch to new data frame
+<span class="fc" id="L418">                        frameNextRowId = dataFrameLo = currentFrame.getPartitionLo();</span>
+<span class="fc" id="L419">                        dataFrameHi = dataFrameLo + currentFrame.getPageSize(timestampIndex) / Long.BYTES;</span>
+
+                        // Re-fetch index cursor to correctly position it to frameNextRowId
+<span class="fc" id="L422">                        BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);</span>
+<span class="fc" id="L423">                        indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);</span>
+
+                        // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
+<span class="fc" id="L426">                    } else {</span>
+<span class="fc" id="L427">                        return STATE_RETURN_LAST_ROW;</span>
+                    }
+
+                case STATE_FETCH_NEXT_INDEX_FRAME:
+<span class="fc" id="L431">                    indexFrame = indexCursor.getNext();</span>
+<span class="fc" id="L432">                    indexFramePosition = 0;</span>
+
+<span class="fc" id="L434">                    long indexFrameAddress = indexFrame.getAddress();</span>
+<span class="fc bfc" id="L435" title="All 2 branches covered.">                    if (indexFrame.getSize() == 0) {</span>
+<span class="pc bpc" id="L436" title="1 of 4 branches missed.">                        if (indexFrameAddress != 0 || groupBySymbolKey != FILTER_KEY_IS_NULL) {</span>
+                            // No rows in index for this dataframe left, go to next data frame
+<span class="fc" id="L438">                            frameNextRowId = dataFrameHi;</span>
+                            // Jump back to fetch next data frame
+<span class="fc" id="L440">                            return STATE_FETCH_NEXT_DATA_FRAME;</span>
+                        }
+                        // Special case - searching with `where symbol = null` on the partition where this column has not been added
+                        // Effectively all rows in data frame are the match to the symbol filter
+                        // Fall through, search code will figure that this is special case
+                    }
+
+<span class="fc bfc" id="L447" title="All 2 branches covered.">                    if (samplePeriodStart == Numbers.LONG_NaN) {</span>
+<span class="fc bfc" id="L448" title="All 2 branches covered.">                        long rowId = indexFrameAddress &gt; 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : dataFrameLo;</span>
+<span class="fc" id="L449">                        long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;</span>
+<span class="fc" id="L450">                        samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);</span>
+<span class="fc" id="L451">                        startFrom(samplePeriodStart);</span>
+                    }
+                    // Fall to STATE_SEARCH;
+
+                case STATE_OUT_BUFFER_FULL:
+                case STATE_SEARCH:
+<span class="fc bfc" id="L457" title="All 2 branches covered.">                    int outPosition = crossRowState == NONE ? 0 : 1;</span>
+<span class="fc" id="L458">                    long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;</span>
+<span class="fc" id="L459">                    long iFrameAddress = indexFrame.getAddress();</span>
+<span class="fc" id="L460">                    long iFrameSize = indexFrame.getSize();</span>
+<span class="fc bfc" id="L461" title="All 2 branches covered.">                    long lastIndexRowId = iFrameAddress &gt; 0</span>
+<span class="fc" id="L462">                            ? Unsafe.getUnsafe().getLong(iFrameAddress + (iFrameSize - 1) * Long.BYTES)</span>
+<span class="fc" id="L463">                            : Long.MAX_VALUE;</span>
+<span class="fc" id="L464">                    long lastInDataRowId = Math.min(lastIndexRowId, dataFrameHi - 1);</span>
+<span class="fc" id="L465">                    long lastInDataTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + lastInDataRowId * Long.BYTES);</span>
+<span class="fc" id="L466">                    int samplePeriodCount = fillSamplePeriodsUntil(lastInDataTimestamp);</span>
+
+<span class="fc" id="L468">                    rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(</span>
+                            outPosition,
+                            frameNextRowId,
+                            dataFrameHi,
+                            offsetTimestampColumnAddress,
+                            dataFrameLo,
+                            iFrameAddress,
+                            iFrameSize,
+                            indexFramePosition,
+<span class="fc" id="L477">                            samplePeriodAddress.getAddress(),</span>
+                            samplePeriodCount,
+                            samplePeriodIndexOffset,
+<span class="fc" id="L480">                            rowIdOutAddress.getAddress(),</span>
+                            pageSize);
+
+<span class="fc bfc" id="L483" title="All 2 branches covered.">                    boolean firstRowLastRowIdUpdated = rowsFound &lt; 0;</span>
+<span class="fc" id="L484">                    rowsFound = Math.abs(rowsFound);</span>
+
+                    // If first row last() RowId is updated
+                    // re-copy last values to crossFrameRow
+<span class="fc" id="L488">                    checkSaveLastValues(firstRowLastRowIdUpdated);</span>
+
+<span class="fc" id="L490">                    int lastOutIndex = rowsFound &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT;</span>
+<span class="fc" id="L491">                    prevSamplePeriodOffset = samplePeriodIndexOffset;</span>
+<span class="fc" id="L492">                    indexFramePosition = (int) rowIdOutAddress.get(lastOutIndex + FIRST_OUT_INDEX);</span>
+<span class="fc" id="L493">                    frameNextRowId = rowIdOutAddress.get(lastOutIndex + LAST_OUT_INDEX);</span>
+<span class="fc" id="L494">                    samplePeriodIndexOffset = rowIdOutAddress.get(lastOutIndex + TIMESTAMP_OUT_INDEX);</span>
+<span class="fc" id="L495">                    samplePeriodStart = samplePeriodAddress.get(samplePeriodIndexOffset - prevSamplePeriodOffset);</span>
+
+                    // decide what to do next
+                    int newState;
+<span class="fc bfc" id="L499" title="All 2 branches covered.">                    if (frameNextRowId &gt;= dataFrameHi) {</span>
+                        // Data frame exhausted. Next time start from fetching new data frame
+<span class="fc" id="L501">                        newState = STATE_FETCH_NEXT_DATA_FRAME;</span>
+<span class="fc bfc" id="L502" title="All 2 branches covered.">                    } else if (indexFramePosition &gt;= iFrameSize) {</span>
+                        // Index frame exhausted. Next time start from fetching new index frame
+<span class="fc bfc" id="L504" title="All 2 branches covered.">                        newState = iFrameAddress &gt; 0 ? STATE_FETCH_NEXT_INDEX_FRAME : STATE_FETCH_NEXT_DATA_FRAME;</span>
+<span class="fc bfc" id="L505" title="All 2 branches covered.">                    } else if (rowsFound == pageSize - 1) {</span>
+                        // output rows filled the output buffers or
+<span class="fc" id="L507">                        newState = STATE_OUT_BUFFER_FULL;</span>
+<span class="fc bfc" id="L508" title="All 2 branches covered.">                    } else if (samplePeriodIndexOffset - prevSamplePeriodOffset == maxSamplePeriodSize - 1) {</span>
+                        //  search came to the end of sample by periods
+                        // re-fill periods and search again
+<span class="fc" id="L511">                        newState = STATE_SEARCH;</span>
+                    } else {
+                        // Data frame exhausted. Next time start from fetching new data frame
+<span class="fc" id="L514">                        newState = STATE_FETCH_NEXT_DATA_FRAME;</span>
+                    }
+
+<span class="fc bfc" id="L517" title="All 2 branches covered.">                    if (rowsFound &gt; 1) {</span>
+<span class="fc" id="L518">                        record.of(currentRow = 0);</span>
+<span class="fc" id="L519">                        newState = -newState;</span>
+                    }
+
+                    // No rows to iterate, return where to continue from (fetching next data or index frame)
+<span class="fc" id="L523">                    return newState;</span>
+
+                case STATE_RETURN_LAST_ROW:
+<span class="fc bfc" id="L526" title="All 2 branches covered.">                    if (crossRowState != NONE) {</span>
+<span class="fc" id="L527">                        record.of(currentRow = 0);</span>
+                        // Signal there is a row by returning negative value
+<span class="fc" id="L529">                        return -STATE_DONE;</span>
+                    }
+                    // Fall through to STATE_DONE;
+
+                case STATE_DONE:
+<span class="fc" id="L534">                    return STATE_DONE;</span>
+
+                default:
+<span class="nc" id="L537">                    throw new UnsupportedOperationException(&quot;Invalid state &quot; + state);</span>
+            }
+        }
+
+        private boolean hasNext0() {
+            // Check if values from the last found sample by row have to be saved in crossFrameRow
+<span class="fc" id="L543">            checkCrossRowAfterFoundBufferIterated();</span>
+<span class="fc" id="L544">            rowsFound = 0;</span>
+
+<span class="fc bfc" id="L546" title="All 2 branches covered.">            while (state != STATE_DONE) {</span>
+<span class="fc" id="L547">                state = getNextState(state);</span>
+<span class="fc bfc" id="L548" title="All 2 branches covered.">                if (state &lt; 0) {</span>
+<span class="fc" id="L549">                    state = -state;</span>
+<span class="fc" id="L550">                    return true;</span>
+                }
+            }
+
+<span class="fc" id="L554">            return false;</span>
+        }
+
+        private void saveFirstLastValuesToCrossFrameRowBuffer() {
+            // Copies column values of all columns to cross frame row buffer for found row with index 0
+<span class="fc bfc" id="L559" title="All 2 branches covered.">            for (int i = 0, length = firstLastIndexByCol.length; i &lt; length; i++) {</span>
+<span class="fc bfc" id="L560" title="All 2 branches covered.">                if (i == groupByTimestampIndex) {</span>
+<span class="fc" id="L561">                    long tsIndex = rowIdOutAddress.get(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset;</span>
+<span class="fc" id="L562">                    crossFrameRow.set(i, samplePeriodAddress.get(tsIndex));</span>
+<span class="fc" id="L563">                } else {</span>
+<span class="fc" id="L564">                    long rowId = rowIdOutAddress.get(firstLastIndexByCol[i]);</span>
+<span class="fc" id="L565">                    saveRowIdValueToCrossRow(rowId, i);</span>
+                }
+            }
+<span class="fc" id="L568">        }</span>
+
+        private void saveFixedColToBufferWithLongAlignment(int index, LongList crossFrameRow, int columnType, long pageAddress, long rowId) {
+<span class="pc bpc" id="L571" title="1 of 5 branches missed.">            switch (ColumnType.pow2SizeOf(columnType)) {</span>
+                case 3:
+<span class="fc" id="L573">                    crossFrameRow.set(index, Unsafe.getUnsafe().getLong(pageAddress + (rowId &lt;&lt; 3)));</span>
+<span class="fc" id="L574">                    break;</span>
+                case 2:
+<span class="fc" id="L576">                    crossFrameRow.set(index, Unsafe.getUnsafe().getInt(pageAddress + (rowId &lt;&lt; 2)));</span>
+<span class="fc" id="L577">                    break;</span>
+                case 1:
+<span class="fc" id="L579">                    crossFrameRow.set(index, Unsafe.getUnsafe().getShort(pageAddress + (rowId &lt;&lt; 1)));</span>
+<span class="fc" id="L580">                    break;</span>
+                case 0:
+<span class="fc" id="L582">                    crossFrameRow.set(index, Unsafe.getUnsafe().getByte(pageAddress + rowId));</span>
+<span class="fc" id="L583">                    break;</span>
+                default:
+<span class="nc" id="L585">                    throw new CairoException().put(&quot;first(), last() cannot be used with column type &quot;).put(ColumnType.nameOf(columnType));</span>
+            }
+<span class="fc" id="L587">        }</span>
+
+        private void saveLastValuesToBuffer() {
+            // Copies only last() column values of all columns to cross frame row buffer for found row with index 0
+<span class="fc bfc" id="L591" title="All 2 branches covered.">            for (int columnIndex = 0, length = firstLastIndexByCol.length; columnIndex &lt; length; columnIndex++) {</span>
+<span class="fc bfc" id="L592" title="All 2 branches covered.">                if (firstLastIndexByCol[columnIndex] == LAST_OUT_INDEX) {</span>
+                    // last() values only
+<span class="fc" id="L594">                    int frameColIndex = queryToFrameColumnMapping[columnIndex];</span>
+<span class="pc bpc" id="L595" title="1 of 2 branches missed.">                    assert currentFrame.getPageSize(frameColIndex) &gt; rowIdOutAddress.get(LAST_OUT_INDEX);</span>
+<span class="fc" id="L596">                    saveRowIdValueToCrossRow(rowIdOutAddress.get(LAST_OUT_INDEX), columnIndex);</span>
+                }
+            }
+<span class="fc" id="L599">        }</span>
+
+        private void saveRowIdValueToCrossRow(long rowId, int columnIndex) {
+<span class="fc" id="L602">            int columnType = getMetadata().getColumnType(columnIndex);</span>
+<span class="fc" id="L603">            int frameColIndex = queryToFrameColumnMapping[columnIndex];</span>
+<span class="fc" id="L604">            long pageAddress = currentFrame.getPageAddress(frameColIndex);</span>
+<span class="fc bfc" id="L605" title="All 2 branches covered.">            if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L606">                saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);</span>
+            } else {
+<span class="fc" id="L608">                crossFrameRow.set(columnIndex, LongNullUtils.getLongNull(columnType));</span>
+            }
+<span class="fc" id="L610">        }</span>
+
+        void of(
+                PageFrameCursor pageFrameCursor,
+                int groupBySymbolKey,
+                SqlExecutionContext sqlExecutionContext
+        ) throws SqlException {
+<span class="fc" id="L617">            this.pageFrameCursor = pageFrameCursor;</span>
+<span class="fc" id="L618">            this.groupBySymbolKey = groupBySymbolKey;</span>
+<span class="fc" id="L619">            toTop();</span>
+<span class="fc" id="L620">            parseParams(this, sqlExecutionContext);</span>
+<span class="fc" id="L621">            initialized = false;</span>
+<span class="fc" id="L622">        }</span>
+
+<span class="fc" id="L624">        private class SampleByFirstLastRecord implements Record {</span>
+<span class="fc" id="L625">            private final SampleByCrossRecord crossRecord = new SampleByCrossRecord();</span>
+<span class="fc" id="L626">            private final SampleByDataRecord dataRecord = new SampleByDataRecord();</span>
+
+            private Record currentRecord;
+
+            @Override
+            public byte getByte(int col) {
+<span class="fc" id="L632">                return currentRecord.getByte(col);</span>
+            }
+
+            @Override
+            public char getChar(int col) {
+<span class="fc" id="L637">                return currentRecord.getChar(col);</span>
+            }
+
+            @Override
+            public double getDouble(int col) {
+<span class="fc" id="L642">                return currentRecord.getDouble(col);</span>
+            }
+
+            @Override
+            public float getFloat(int col) {
+<span class="fc" id="L647">                return currentRecord.getFloat(col);</span>
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+<span class="fc" id="L652">                return currentRecord.getGeoByte(col);</span>
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+<span class="fc" id="L657">                return currentRecord.getGeoInt(col);</span>
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+<span class="fc" id="L662">                return currentRecord.getGeoLong(col);</span>
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+<span class="fc" id="L667">                return currentRecord.getGeoShort(col);</span>
+            }
+
+            @Override
+            public int getInt(int col) {
+<span class="fc" id="L672">                return currentRecord.getInt(col);</span>
+            }
+
+            @Override
+            public long getLong(int col) {
+<span class="fc" id="L677">                return currentRecord.getLong(col);</span>
+            }
+
+            @Override
+            public short getShort(int col) {
+<span class="fc" id="L682">                return currentRecord.getShort(col);</span>
+            }
+
+            @Override
+            public CharSequence getSym(int col) {
+<span class="fc" id="L687">                return currentRecord.getSym(col);</span>
+            }
+
+            @Override
+            public long getTimestamp(int col) {
+<span class="fc" id="L692">                return currentRecord.getTimestamp(col);</span>
+            }
+
+            public void of(long index) {
+<span class="fc bfc" id="L696" title="All 2 branches covered.">                if (index == 0) {</span>
+<span class="fc" id="L697">                    currentRecord = crossRecord;</span>
+                } else {
+<span class="fc" id="L699">                    currentRecord = dataRecord.of(currentRow);</span>
+                }
+<span class="fc" id="L701">            }</span>
+
+            public void switchFrame() {
+<span class="fc" id="L704">                dataRecord.switchFrame();</span>
+<span class="fc" id="L705">            }</span>
+
+<span class="fc" id="L707">            private class SampleByCrossRecord implements Record {</span>
+                @Override
+                public byte getByte(int col) {
+<span class="fc" id="L710">                    return (byte) crossFrameRow.getQuick(col);</span>
+                }
+
+                @Override
+                public char getChar(int col) {
+<span class="fc" id="L715">                    return (char) crossFrameRow.getQuick(col);</span>
+                }
+
+                @Override
+                public double getDouble(int col) {
+<span class="fc" id="L720">                    return Double.longBitsToDouble(crossFrameRow.getQuick(col));</span>
+                }
+
+                @Override
+                public float getFloat(int col) {
+<span class="fc" id="L725">                    return Float.intBitsToFloat((int) crossFrameRow.getQuick(col));</span>
+                }
+
+                @Override
+                public byte getGeoByte(int col) {
+<span class="fc" id="L730">                    return getByte(col);</span>
+                }
+
+                @Override
+                public int getGeoInt(int col) {
+<span class="fc" id="L735">                    return getInt(col);</span>
+                }
+
+                @Override
+                public long getGeoLong(int col) {
+<span class="fc" id="L740">                    return getLong(col);</span>
+                }
+
+                @Override
+                public short getGeoShort(int col) {
+<span class="fc" id="L745">                    return getShort(col);</span>
+                }
+
+                @Override
+                public int getInt(int col) {
+<span class="fc" id="L750">                    return (int) crossFrameRow.getQuick(col);</span>
+                }
+
+                @Override
+                public long getLong(int col) {
+<span class="fc" id="L755">                    return crossFrameRow.getQuick(col);</span>
+                }
+
+                @Override
+                public short getShort(int col) {
+<span class="fc" id="L760">                    return (short) crossFrameRow.getQuick(col);</span>
+                }
+
+                @Override
+                public CharSequence getSym(int col) {
+<span class="fc" id="L765">                    int symbolId = (int) crossFrameRow.getQuick(col);</span>
+<span class="fc" id="L766">                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);</span>
+                }
+
+                @Override
+                public long getTimestamp(int col) {
+<span class="fc" id="L771">                    return getLong(col);</span>
+                }
+            }
+
+<span class="fc" id="L775">            private class SampleByDataRecord implements Record {</span>
+<span class="fc" id="L776">                private final long[] pageAddresses = new long[queryToFrameColumnMapping.length];</span>
+                private long currentRow;
+
+                @Override
+                public byte getByte(int col) {
+<span class="fc" id="L781">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L782" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L783">                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));</span>
+                    } else {
+<span class="fc" id="L785">                        return 0;</span>
+                    }
+                }
+
+                @Override
+                public char getChar(int col) {
+<span class="fc" id="L791">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L792" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L793">                        return Unsafe.getUnsafe().getChar(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 1));</span>
+                    } else {
+<span class="fc" id="L795">                        return 0;</span>
+                    }
+                }
+
+                @Override
+                public double getDouble(int col) {
+<span class="fc" id="L801">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L802" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L803">                        return Unsafe.getUnsafe().getDouble(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 3));</span>
+                    } else {
+<span class="fc" id="L805">                        return Double.NaN;</span>
+                    }
+                }
+
+                @Override
+                public float getFloat(int col) {
+<span class="fc" id="L811">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L812" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L813">                        return Unsafe.getUnsafe().getFloat(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</span>
+                    } else {
+<span class="fc" id="L815">                        return Float.NaN;</span>
+                    }
+                }
+
+                @Override
+                public byte getGeoByte(int col) {
+<span class="fc" id="L821">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L822" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L823">                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));</span>
+                    } else {
+<span class="fc" id="L825">                        return GeoHashes.BYTE_NULL;</span>
+                    }
+                }
+
+                @Override
+                public int getGeoInt(int col) {
+<span class="fc" id="L831">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L832" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L833">                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</span>
+                    } else {
+<span class="fc" id="L835">                        return GeoHashes.INT_NULL;</span>
+                    }
+                }
+
+                @Override
+                public long getGeoLong(int col) {
+<span class="fc" id="L841">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L842" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L843">                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 3));</span>
+                    } else {
+<span class="fc" id="L845">                        return GeoHashes.NULL;</span>
+                    }
+                }
+
+                @Override
+                public short getGeoShort(int col) {
+<span class="fc" id="L851">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L852" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L853">                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 1));</span>
+                    } else {
+<span class="fc" id="L855">                        return GeoHashes.SHORT_NULL;</span>
+                    }
+                }
+
+                @Override
+                public int getInt(int col) {
+<span class="fc" id="L861">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L862" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L863">                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</span>
+                    } else {
+<span class="fc" id="L865">                        return Numbers.INT_NaN;</span>
+                    }
+                }
+
+                @Override
+                public long getLong(int col) {
+<span class="fc" id="L871">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L872" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L873">                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 3));</span>
+                    } else {
+<span class="fc" id="L875">                        return Numbers.LONG_NaN;</span>
+                    }
+                }
+
+                @Override
+                public short getShort(int col) {
+<span class="fc" id="L881">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L882" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L883">                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 1));</span>
+                    } else {
+<span class="fc" id="L885">                        return 0;</span>
+                    }
+                }
+
+                @Override
+                public CharSequence getSym(int col) {
+                    int symbolId;
+<span class="fc" id="L892">                    long pageAddress = pageAddresses[col];</span>
+<span class="fc bfc" id="L893" title="All 2 branches covered.">                    if (pageAddress &gt; 0) {</span>
+<span class="fc" id="L894">                        symbolId = Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) &lt;&lt; 2));</span>
+                    } else {
+<span class="fc" id="L896">                        symbolId = SymbolTable.VALUE_IS_NULL;</span>
+                    }
+<span class="fc" id="L898">                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);</span>
+                }
+
+                @Override
+                public long getTimestamp(int col) {
+<span class="fc bfc" id="L903" title="All 2 branches covered.">                    if (col == timestampIndex) {</span>
+                        // Special case - timestamp the sample by runs on
+                        // Take it from timestampOutBuff instead of column
+                        // It's the value of the beginning of the group, not where the first row found
+<span class="fc" id="L907">                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);</span>
+                    }
+<span class="fc" id="L909">                    return getLong(col);</span>
+                }
+
+                public SampleByDataRecord of(long currentRow) {
+<span class="fc" id="L913">                    this.currentRow = currentRow;</span>
+<span class="fc" id="L914">                    return this;</span>
+                }
+
+                public void switchFrame() {
+<span class="fc bfc" id="L918" title="All 2 branches covered.">                    for (int i = 0, length = pageAddresses.length; i &lt; length; i++) {</span>
+<span class="fc" id="L919">                        pageAddresses[i] = currentFrame.getPageAddress(queryToFrameColumnMapping[i]);</span>
+                    }
+<span class="fc" id="L921">                }</span>
+
+                private long getRowId(int col) {
+<span class="fc" id="L924">                    return rowIdOutAddress.get((currentRow &lt;&lt; ITEMS_PER_OUT_ARRAY_SHIFT) + col);</span>
+                }
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

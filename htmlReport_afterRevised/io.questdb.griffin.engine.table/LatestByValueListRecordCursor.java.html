@@ -1,0 +1,343 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LatestByValueListRecordCursor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">LatestByValueListRecordCursor.java</span></div><h1>LatestByValueListRecordCursor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+<span class="fc" id="L35">class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {</span>
+
+    private final int columnIndex;
+    private final Function filter;
+    private final boolean restrictedByExcludedValues;
+    private final boolean restrictedByIncludedValues;
+    private final int shrinkToCapacity;
+    private boolean areRecordsFound;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private int currentRow;
+    private IntHashSet excludedSymbolKeys;
+    private IntHashSet foundKeys;
+    private int foundSize;
+    private IntHashSet includedSymbolKeys;
+    private DirectLongList rowIds;
+
+    public LatestByValueListRecordCursor(
+            int columnIndex,
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes,
+            int shrinkToCapacity,
+            boolean restrictedByIncludedValues,
+            boolean restrictedByExcludedValues
+    ) {
+<span class="fc" id="L59">        super(columnIndexes);</span>
+<span class="fc" id="L60">        this.shrinkToCapacity = shrinkToCapacity;</span>
+<span class="fc" id="L61">        this.columnIndex = columnIndex;</span>
+<span class="fc" id="L62">        this.filter = filter;</span>
+<span class="fc" id="L63">        this.restrictedByIncludedValues = restrictedByIncludedValues;</span>
+<span class="fc" id="L64">        this.restrictedByExcludedValues = restrictedByExcludedValues;</span>
+<span class="fc bfc" id="L65" title="All 4 branches covered.">        if (restrictedByIncludedValues || restrictedByExcludedValues) {</span>
+<span class="fc" id="L66">            this.includedSymbolKeys = new IntHashSet(shrinkToCapacity);</span>
+<span class="fc" id="L67">            this.excludedSymbolKeys = new IntHashSet(shrinkToCapacity);</span>
+        }
+<span class="fc" id="L69">        this.foundKeys = new IntHashSet(shrinkToCapacity);</span>
+<span class="fc" id="L70">        this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);</span>
+<span class="fc" id="L71">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L75">        super.close();</span>
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        if (rowIds.getCapacity() &gt; shrinkToCapacity) {</span>
+<span class="fc" id="L77">            rowIds = Misc.free(rowIds);</span>
+<span class="fc" id="L78">            rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);</span>
+<span class="fc" id="L79">            foundKeys = new IntHashSet(shrinkToCapacity);</span>
+            // symbolKeys is unlikely to take too much memory
+            // because every value is associated with a value from `in (...)` WHERE filter and
+            // the list of parsed functions is of bigger size than symbolKeys hash set.
+        }
+<span class="fc" id="L84">    }</span>
+
+    public void destroy() {
+        // After close() the instance is designed to be re-usable.
+        // Destroy makes it non-reusable
+<span class="fc" id="L89">        rowIds = Misc.free(rowIds);</span>
+<span class="fc" id="L90">    }</span>
+
+    @Override
+    public boolean hasNext() {
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        if (!areRecordsFound) {</span>
+<span class="fc" id="L95">            findRecords();</span>
+<span class="fc" id="L96">            toTop();</span>
+<span class="fc" id="L97">            areRecordsFound = true;</span>
+        }
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (currentRow-- &gt; 0) {</span>
+<span class="fc" id="L100">            long rowId = rowIds.get(currentRow);</span>
+<span class="fc" id="L101">            recordAt(recordA, rowId);</span>
+<span class="fc" id="L102">            return true;</span>
+        }
+<span class="fc" id="L104">        return false;</span>
+    }
+
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L109">        this.dataFrameCursor = dataFrameCursor;</span>
+<span class="fc" id="L110">        recordA.of(dataFrameCursor.getTableReader());</span>
+<span class="fc" id="L111">        recordB.of(dataFrameCursor.getTableReader());</span>
+<span class="fc" id="L112">        circuitBreaker = executionContext.getCircuitBreaker();</span>
+<span class="fc" id="L113">        dataFrameCursor.toTop();</span>
+<span class="fc" id="L114">        foundSize = 0;</span>
+<span class="fc" id="L115">        foundKeys.clear();</span>
+<span class="fc" id="L116">        rowIds.clear();</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        if (filter != null) {</span>
+<span class="fc" id="L118">            filter.init(this, executionContext);</span>
+<span class="fc" id="L119">            filter.toTop();</span>
+        }
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        if (restrictedByIncludedValues) {</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">            if (includedSymbolKeys.size() &gt; 0) {</span>
+                // Find only restricted set of symbol keys
+<span class="fc" id="L124">                rowIds.setCapacity(includedSymbolKeys.size());</span>
+            }
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        } else if (restrictedByExcludedValues) {</span>
+            // Find all, but excluded set of symbol keys
+<span class="fc" id="L128">            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));</span>
+<span class="fc" id="L129">            int distinctSymbols = symbolTable.getSymbolCount();</span>
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">            if (symbolTable.containsNullValue()) {</span>
+<span class="nc" id="L131">                distinctSymbols++;</span>
+<span class="fc bfc" id="L132" title="All 2 branches covered.">            } else if (excludedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL)) {</span>
+                // The excluded set contains a null while the symbol table doesn't.
+                // Increment the counter to avoid miscalculation.
+<span class="fc" id="L135">                distinctSymbols++;</span>
+            }
+<span class="fc" id="L137">            distinctSymbols = Math.max(0, distinctSymbols - excludedSymbolKeys.size());</span>
+<span class="fc" id="L138">            rowIds.setCapacity(distinctSymbols);</span>
+<span class="fc" id="L139">        } else {</span>
+            // Find latest by all distinct symbol values
+<span class="fc" id="L141">            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));</span>
+<span class="fc" id="L142">            int distinctSymbols = symbolTable.getSymbolCount();</span>
+<span class="fc bfc" id="L143" title="All 2 branches covered.">            if (symbolTable.containsNullValue()) {</span>
+<span class="fc" id="L144">                distinctSymbols++;</span>
+            }
+<span class="fc" id="L146">            rowIds.setCapacity(distinctSymbols);</span>
+        }
+<span class="fc" id="L148">        areRecordsFound = false;</span>
+<span class="fc" id="L149">    }</span>
+
+    @Override
+    public long size() {
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        return areRecordsFound ? rowIds.size() : -1;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="nc" id="L158">        sink.type(&quot;FilterOnValueList&quot;).meta(&quot;on&quot;).putColumnName(columnIndex);</span>
+<span class="nc" id="L159">    }</span>
+
+    @Override
+    public void toTop() {
+<span class="fc" id="L163">        currentRow = (int) rowIds.size();</span>
+<span class="fc" id="L164">    }</span>
+
+    private void findAllNoFilter(int distinctCount) {
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">        assert filter == null;</span>
+        DataFrame frame;
+<span class="pc bpc" id="L169" title="1 of 2 branches missed.">        while ((frame = dataFrameCursor.next()) != null) {</span>
+<span class="fc" id="L170">            long rowLo = frame.getRowLo();</span>
+<span class="fc" id="L171">            long row = frame.getRowHi();</span>
+<span class="fc" id="L172">            recordA.jumpTo(frame.getPartitionIndex(), 0);</span>
+
+<span class="fc bfc" id="L174" title="All 2 branches covered.">            while (row-- &gt; rowLo) {</span>
+<span class="fc" id="L175">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L176">                recordA.setRecordIndex(row);</span>
+<span class="fc" id="L177">                int key = recordA.getInt(columnIndex);</span>
+<span class="fc bfc" id="L178" title="All 2 branches covered.">                if (foundKeys.add(key)) {</span>
+<span class="fc" id="L179">                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">                    if (++foundSize == distinctCount) {</span>
+<span class="fc" id="L181">                        return;</span>
+                    }
+                }
+<span class="fc" id="L184">            }</span>
+<span class="fc" id="L185">        }</span>
+<span class="nc" id="L186">    }</span>
+
+    private void findAllWithFilter(int distinctCount) {
+<span class="pc bpc" id="L189" title="1 of 2 branches missed.">        assert filter != null;</span>
+        DataFrame frame;
+<span class="fc bfc" id="L191" title="All 2 branches covered.">        while ((frame = dataFrameCursor.next()) != null) {</span>
+<span class="fc" id="L192">            long rowLo = frame.getRowLo();</span>
+<span class="fc" id="L193">            long row = frame.getRowHi();</span>
+<span class="fc" id="L194">            recordA.jumpTo(frame.getPartitionIndex(), 0);</span>
+
+<span class="fc bfc" id="L196" title="All 2 branches covered.">            while (row-- &gt; rowLo) {</span>
+<span class="fc" id="L197">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L198">                recordA.setRecordIndex(row);</span>
+<span class="fc" id="L199">                int key = recordA.getInt(columnIndex);</span>
+<span class="fc bfc" id="L200" title="All 4 branches covered.">                if (filter.getBool(recordA) &amp;&amp; foundKeys.add(key)) {</span>
+<span class="fc" id="L201">                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));</span>
+<span class="fc bfc" id="L202" title="All 2 branches covered.">                    if (++foundSize == distinctCount) {</span>
+<span class="fc" id="L203">                        return;</span>
+                    }
+                }
+<span class="fc" id="L206">            }</span>
+<span class="fc" id="L207">        }</span>
+<span class="fc" id="L208">    }</span>
+
+    private void findRecords() {
+        // Find all record IDs and save in rowIds in descending order.
+        // Then return row by row in ascending timestamp order
+        // since most of the time factory is supposed to return in ASC timestamp order.
+        // It can be optimised later on to not buffer row IDs and return in desc order.
+<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (restrictedByIncludedValues) {</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">            if (includedSymbolKeys.size() &gt; 0) {</span>
+                // Find only restricted set of symbol keys
+<span class="fc bfc" id="L218" title="All 2 branches covered.">                if (filter != null) {</span>
+<span class="fc" id="L219">                    findRestrictedWithFilter();</span>
+                } else {
+<span class="fc" id="L221">                    findRestrictedNoFilter();</span>
+                }
+            }
+<span class="fc bfc" id="L224" title="All 2 branches covered.">        } else if (restrictedByExcludedValues) {</span>
+            // Find all, but excluded set of symbol keys
+<span class="fc" id="L226">            int distinctSymbols = (int) rowIds.getCapacity();</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">            if (filter != null) {</span>
+<span class="fc" id="L228">                findRestrictedExcludedOnlyWithFilter(distinctSymbols);</span>
+            } else {
+<span class="fc" id="L230">                findRestrictedExcludedOnlyNoFilter(distinctSymbols);</span>
+            }
+<span class="fc" id="L232">        } else {</span>
+            // Find latest by all distinct symbol values
+<span class="fc" id="L234">            int distinctSymbols = (int) rowIds.getCapacity();</span>
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">            if (distinctSymbols &gt; 0) {</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">                if (filter != null) {</span>
+<span class="fc" id="L237">                    findAllWithFilter(distinctSymbols);</span>
+                } else {
+<span class="fc" id="L239">                    findAllNoFilter(distinctSymbols);</span>
+                }
+            }
+        }
+<span class="fc" id="L243">    }</span>
+
+    private void findRestrictedExcludedOnlyNoFilter(int distinctCount) {
+<span class="pc bpc" id="L246" title="1 of 2 branches missed.">        assert filter == null;</span>
+        DataFrame frame;
+<span class="pc bpc" id="L248" title="1 of 2 branches missed.">        while ((frame = dataFrameCursor.next()) != null) {</span>
+<span class="fc" id="L249">            long rowLo = frame.getRowLo();</span>
+<span class="fc" id="L250">            long row = frame.getRowHi();</span>
+<span class="fc" id="L251">            recordA.jumpTo(frame.getPartitionIndex(), 0);</span>
+
+<span class="fc bfc" id="L253" title="All 2 branches covered.">            while (row-- &gt; rowLo) {</span>
+<span class="fc" id="L254">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L255">                recordA.setRecordIndex(row);</span>
+<span class="fc" id="L256">                int key = recordA.getInt(columnIndex);</span>
+<span class="fc bfc" id="L257" title="All 4 branches covered.">                if (excludedSymbolKeys.excludes(key) &amp;&amp; foundKeys.add(key)) {</span>
+<span class="fc" id="L258">                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">                    if (++foundSize == distinctCount) {</span>
+<span class="fc" id="L260">                        return;</span>
+                    }
+                }
+<span class="fc" id="L263">            }</span>
+<span class="fc" id="L264">        }</span>
+<span class="nc" id="L265">    }</span>
+
+    private void findRestrictedExcludedOnlyWithFilter(int distinctCount) {
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">        assert filter != null;</span>
+        DataFrame frame;
+<span class="pc bpc" id="L270" title="1 of 2 branches missed.">        while ((frame = dataFrameCursor.next()) != null) {</span>
+<span class="fc" id="L271">            long rowLo = frame.getRowLo();</span>
+<span class="fc" id="L272">            long row = frame.getRowHi();</span>
+<span class="fc" id="L273">            recordA.jumpTo(frame.getPartitionIndex(), 0);</span>
+
+<span class="fc bfc" id="L275" title="All 2 branches covered.">            while (row-- &gt; rowLo) {</span>
+<span class="fc" id="L276">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L277">                recordA.setRecordIndex(row);</span>
+<span class="fc" id="L278">                int key = recordA.getInt(columnIndex);</span>
+<span class="pc bpc" id="L279" title="1 of 6 branches missed.">                if (filter.getBool(recordA) &amp;&amp; excludedSymbolKeys.excludes(key) &amp;&amp; foundKeys.add(key)) {</span>
+<span class="fc" id="L280">                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));</span>
+<span class="fc bfc" id="L281" title="All 2 branches covered.">                    if (++foundSize == distinctCount) {</span>
+<span class="fc" id="L282">                        return;</span>
+                    }
+                }
+<span class="fc" id="L285">            }</span>
+<span class="fc" id="L286">        }</span>
+<span class="nc" id="L287">    }</span>
+
+    private void findRestrictedNoFilter() {
+<span class="pc bpc" id="L290" title="1 of 2 branches missed.">        assert filter == null;</span>
+<span class="fc" id="L291">        int searchSize = includedSymbolKeys.size();</span>
+        DataFrame frame;
+<span class="pc bpc" id="L293" title="1 of 2 branches missed.">        while ((frame = dataFrameCursor.next()) != null) {</span>
+<span class="fc" id="L294">            long rowLo = frame.getRowLo();</span>
+<span class="fc" id="L295">            long row = frame.getRowHi();</span>
+<span class="fc" id="L296">            recordA.jumpTo(frame.getPartitionIndex(), 0);</span>
+
+<span class="fc bfc" id="L298" title="All 2 branches covered.">            while (row-- &gt; rowLo) {</span>
+<span class="fc" id="L299">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L300">                recordA.setRecordIndex(row);</span>
+<span class="fc" id="L301">                int key = recordA.getInt(columnIndex);</span>
+<span class="pc bpc" id="L302" title="1 of 6 branches missed.">                if (includedSymbolKeys.contains(key) &amp;&amp; excludedSymbolKeys.excludes(key) &amp;&amp; foundKeys.add(key)) {</span>
+<span class="fc" id="L303">                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">                    if (++foundSize == searchSize) {</span>
+<span class="fc" id="L305">                        return;</span>
+                    }
+                }
+<span class="fc" id="L308">            }</span>
+<span class="fc" id="L309">        }</span>
+<span class="nc" id="L310">    }</span>
+
+    private void findRestrictedWithFilter() {
+<span class="pc bpc" id="L313" title="1 of 2 branches missed.">        assert filter != null;</span>
+<span class="fc" id="L314">        int searchSize = includedSymbolKeys.size();</span>
+        DataFrame frame;
+<span class="fc bfc" id="L316" title="All 2 branches covered.">        while ((frame = dataFrameCursor.next()) != null) {</span>
+<span class="fc" id="L317">            long rowLo = frame.getRowLo();</span>
+<span class="fc" id="L318">            long row = frame.getRowHi();</span>
+<span class="fc" id="L319">            recordA.jumpTo(frame.getPartitionIndex(), 0);</span>
+
+<span class="fc bfc" id="L321" title="All 2 branches covered.">            while (row-- &gt; rowLo) {</span>
+<span class="fc" id="L322">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="fc" id="L323">                recordA.setRecordIndex(row);</span>
+<span class="fc" id="L324">                int key = recordA.getInt(columnIndex);</span>
+<span class="pc bpc" id="L325" title="1 of 8 branches missed.">                if (filter.getBool(recordA) &amp;&amp; includedSymbolKeys.contains(key) &amp;&amp; excludedSymbolKeys.excludes(key) &amp;&amp; foundKeys.add(key)) {</span>
+<span class="fc" id="L326">                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">                    if (++foundSize == searchSize) {</span>
+<span class="fc" id="L328">                        return;</span>
+                    }
+                }
+<span class="fc" id="L331">            }</span>
+<span class="fc" id="L332">        }</span>
+<span class="fc" id="L333">    }</span>
+
+    IntHashSet getExcludedSymbolKeys() {
+<span class="fc" id="L336">        return excludedSymbolKeys;</span>
+    }
+
+    IntHashSet getIncludedSymbolKeys() {
+<span class="fc" id="L340">        return includedSymbolKeys;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

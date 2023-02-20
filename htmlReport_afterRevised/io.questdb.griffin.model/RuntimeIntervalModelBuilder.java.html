@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RuntimeIntervalModelBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.model</a> &gt; <span class="el_source">RuntimeIntervalModelBuilder.java</span></div><h1>RuntimeIntervalModelBuilder.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.model;
+
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+
+/**
+ * Collects interval during query parsing
+ * and records them as 2 types:
+ * - static list of intervals as 2 long points [lo, hi] in staticIntervals list
+ * - dynamic list of functions.
+ * &lt;p&gt;
+ * When first interval involving function is added all data starts to be encoded in 4 longs in staticPeriods
+ * 0: lo (long)
+ * 1: hi (long)
+ * 2: operation (short), period type (short), adjustment (short), dynamicIndicator (short)
+ * 3: period (int), count (int)
+ * &lt;p&gt;
+ * and the index when it happens stored in pureStaticCount
+ */
+<span class="fc" id="L48">public class RuntimeIntervalModelBuilder implements Mutable {</span>
+<span class="fc" id="L49">    private final ObjList&lt;Function&gt; dynamicRangeList = new ObjList&lt;&gt;();</span>
+    // All data needed to re-evaluate intervals
+    // is stored in 2 lists - ListLong and List of functions
+    // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
+    // and pairs of static intervals in the end
+<span class="fc" id="L54">    private final LongList staticIntervals = new LongList();</span>
+    private long betweenBoundary;
+    private Function betweenBoundaryFunc;
+    private boolean betweenBoundarySet;
+    private boolean betweenNegated;
+<span class="fc" id="L59">    private boolean intervalApplied = false;</span>
+
+    public RuntimeIntrinsicIntervalModel build() {
+<span class="fc" id="L62">        return new RuntimeIntervalModel(new LongList(staticIntervals), new ObjList&lt;&gt;(dynamicRangeList));</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="fc" id="L67">        staticIntervals.clear();</span>
+<span class="fc" id="L68">        dynamicRangeList.clear();</span>
+<span class="fc" id="L69">        intervalApplied = false;</span>
+<span class="fc" id="L70">        clearBetweenParsing();</span>
+<span class="fc" id="L71">    }</span>
+
+    public void clearBetweenParsing() {
+<span class="fc" id="L74">        betweenBoundarySet = false;</span>
+<span class="fc" id="L75">        betweenBoundaryFunc = null;</span>
+<span class="fc" id="L76">        betweenBoundary = Numbers.LONG_NaN;</span>
+<span class="fc" id="L77">    }</span>
+
+    public boolean hasIntervalFilters() {
+<span class="fc" id="L80">        return intervalApplied;</span>
+    }
+
+    public void intersect(long lo, Function hi, short adjustment) {
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+
+<span class="fc" id="L86">        IntervalUtils.addHiLoInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);</span>
+<span class="fc" id="L87">        dynamicRangeList.add(hi);</span>
+<span class="fc" id="L88">        intervalApplied = true;</span>
+<span class="fc" id="L89">    }</span>
+
+    public void intersect(Function lo, long hi, short adjustment) {
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+
+<span class="fc" id="L94">        IntervalUtils.addHiLoInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);</span>
+<span class="fc" id="L95">        dynamicRangeList.add(lo);</span>
+<span class="fc" id="L96">        intervalApplied = true;</span>
+<span class="fc" id="L97">    }</span>
+
+    public void intersect(long lo, long hi) {
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        if (isEmptySet()) return;</span>
+<span class="fc bfc" id="L101" title="All 2 branches covered.">        if (dynamicRangeList.size() == 0) {</span>
+<span class="fc" id="L102">            staticIntervals.add(lo, hi);</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">            if (intervalApplied) {</span>
+<span class="fc" id="L104">                IntervalUtils.intersectInplace(staticIntervals, staticIntervals.size() - 2);</span>
+            }
+        } else {
+<span class="fc" id="L107">            IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);</span>
+<span class="fc" id="L108">            dynamicRangeList.add(null);</span>
+        }
+<span class="fc" id="L110">        intervalApplied = true;</span>
+<span class="fc" id="L111">    }</span>
+
+    public void intersectDynamicInterval(Function intervalStrFunction) {
+<span class="pc bpc" id="L114" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+<span class="fc" id="L115">        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);</span>
+<span class="fc" id="L116">        dynamicRangeList.add(intervalStrFunction);</span>
+<span class="fc" id="L117">        intervalApplied = true;</span>
+<span class="fc" id="L118">    }</span>
+
+    public void intersectEmpty() {
+<span class="fc" id="L121">        clear();</span>
+<span class="fc" id="L122">        intervalApplied = true;</span>
+<span class="fc" id="L123">    }</span>
+
+    public void intersectEquals(Function function) {
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+
+<span class="fc" id="L128">        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);</span>
+<span class="fc" id="L129">        dynamicRangeList.add(function);</span>
+<span class="fc" id="L130">        intervalApplied = true;</span>
+<span class="fc" id="L131">    }</span>
+
+    public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+<span class="fc" id="L135">        int size = staticIntervals.size();</span>
+<span class="fc" id="L136">        IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">        if (dynamicRangeList.size() == 0) {</span>
+<span class="fc" id="L138">            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);</span>
+<span class="fc bfc" id="L139" title="All 2 branches covered.">            if (intervalApplied) {</span>
+<span class="fc" id="L140">                IntervalUtils.intersectInplace(staticIntervals, size);</span>
+            }
+        } else {
+            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+<span class="fc" id="L144">            dynamicRangeList.add(null);</span>
+        }
+<span class="fc" id="L146">        intervalApplied = true;</span>
+<span class="fc" id="L147">    }</span>
+
+    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        if (isEmptySet()) return;</span>
+<span class="fc" id="L151">        int size = staticIntervals.size();</span>
+<span class="fc" id="L152">        IntervalUtils.parseSingleTimestamp(seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT);</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        if (dynamicRangeList.size() == 0) {</span>
+<span class="fc" id="L154">            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">            if (intervalApplied) {</span>
+<span class="fc" id="L156">                IntervalUtils.intersectInplace(staticIntervals, size);</span>
+            }
+        } else {
+            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+<span class="fc" id="L160">            dynamicRangeList.add(null);</span>
+        }
+<span class="fc" id="L162">        intervalApplied = true;</span>
+<span class="fc" id="L163">    }</span>
+
+    public boolean isEmptySet() {
+<span class="fc bfc" id="L166" title="All 4 branches covered.">        return intervalApplied &amp;&amp; staticIntervals.size() == 0;</span>
+    }
+
+    public void setBetweenBoundary(long timestamp) {
+<span class="fc bfc" id="L170" title="All 2 branches covered.">        if (!betweenBoundarySet) {</span>
+<span class="fc" id="L171">            betweenBoundary = timestamp;</span>
+<span class="fc" id="L172">            betweenBoundarySet = true;</span>
+        } else {
+<span class="fc bfc" id="L174" title="All 2 branches covered.">            if (betweenBoundaryFunc == null) {</span>
+                // Constant interval
+<span class="fc" id="L176">                long lo = Math.min(timestamp, betweenBoundary);</span>
+<span class="fc" id="L177">                long hi = Math.max(timestamp, betweenBoundary);</span>
+<span class="fc bfc" id="L178" title="All 4 branches covered.">                if (hi == Numbers.LONG_NaN || lo == Numbers.LONG_NaN) {</span>
+<span class="fc bfc" id="L179" title="All 2 branches covered.">                    if (!betweenNegated) {</span>
+<span class="fc" id="L180">                        intersectEmpty();</span>
+                    }
+                    // else {
+                    // NOT BETWEEN with NULL
+                    // to be consistent with non-designated filtering
+                    // do no filtering
+                    //  }
+                } else {
+<span class="fc bfc" id="L188" title="All 2 branches covered.">                    if (!betweenNegated) {</span>
+<span class="fc" id="L189">                        intersect(lo, hi);</span>
+                    } else {
+<span class="fc" id="L191">                        subtractInterval(lo, hi);</span>
+                    }
+                }
+<span class="fc" id="L194">            } else {</span>
+<span class="fc" id="L195">                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);</span>
+            }
+<span class="fc" id="L197">            betweenBoundarySet = false;</span>
+        }
+<span class="fc" id="L199">    }</span>
+
+    public void setBetweenBoundary(Function timestamp) {
+<span class="fc bfc" id="L202" title="All 2 branches covered.">        if (!betweenBoundarySet) {</span>
+<span class="fc" id="L203">            betweenBoundaryFunc = timestamp;</span>
+<span class="fc" id="L204">            betweenBoundarySet = true;</span>
+        } else {
+<span class="fc bfc" id="L206" title="All 2 branches covered.">            if (betweenBoundaryFunc == null) {</span>
+<span class="fc" id="L207">                intersectBetweenSemiDynamic(timestamp, betweenBoundary);</span>
+            } else {
+<span class="fc" id="L209">                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);</span>
+            }
+<span class="fc" id="L211">            betweenBoundarySet = false;</span>
+        }
+<span class="fc" id="L213">    }</span>
+
+    public void setBetweenNegated(boolean isNegated) {
+<span class="fc" id="L216">        betweenNegated = isNegated;</span>
+<span class="fc" id="L217">    }</span>
+
+    public void subtractEquals(Function function) {
+<span class="fc bfc" id="L220" title="All 2 branches covered.">        if (isEmptySet()) return;</span>
+
+<span class="fc" id="L222">        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);</span>
+<span class="fc" id="L223">        dynamicRangeList.add(function);</span>
+<span class="fc" id="L224">        intervalApplied = true;</span>
+<span class="fc" id="L225">    }</span>
+
+    public void subtractInterval(long lo, long hi) {
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+<span class="fc bfc" id="L229" title="All 2 branches covered.">        if (dynamicRangeList.size() == 0) {</span>
+<span class="fc" id="L230">            int size = staticIntervals.size();</span>
+<span class="fc" id="L231">            staticIntervals.add(lo, hi);</span>
+<span class="fc" id="L232">            IntervalUtils.invert(staticIntervals, size);</span>
+<span class="fc bfc" id="L233" title="All 2 branches covered.">            if (intervalApplied) {</span>
+<span class="fc" id="L234">                IntervalUtils.intersectInplace(staticIntervals, size);</span>
+            }
+<span class="fc" id="L236">        } else {</span>
+<span class="fc" id="L237">            IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);</span>
+<span class="fc" id="L238">            dynamicRangeList.add(null);</span>
+        }
+<span class="fc" id="L240">        intervalApplied = true;</span>
+<span class="fc" id="L241">    }</span>
+
+    public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+<span class="fc" id="L245">        int size = staticIntervals.size();</span>
+<span class="fc" id="L246">        IntervalUtils.parseIntervalEx(seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT);</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">        if (dynamicRangeList.size() == 0) {</span>
+<span class="fc" id="L248">            IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);</span>
+<span class="fc" id="L249">            IntervalUtils.invert(staticIntervals, size);</span>
+<span class="fc bfc" id="L250" title="All 2 branches covered.">            if (intervalApplied) {</span>
+<span class="fc" id="L251">                IntervalUtils.intersectInplace(staticIntervals, size);</span>
+            }
+        } else {
+            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+<span class="fc" id="L255">            dynamicRangeList.add(null);</span>
+        }
+<span class="fc" id="L257">        intervalApplied = true;</span>
+<span class="fc" id="L258">    }</span>
+
+    public void subtractRuntimeInterval(Function intervalStrFunction) {
+<span class="pc bpc" id="L261" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+<span class="fc" id="L262">        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);</span>
+<span class="fc" id="L263">        dynamicRangeList.add(intervalStrFunction);</span>
+<span class="fc" id="L264">        intervalApplied = true;</span>
+<span class="fc" id="L265">    }</span>
+
+    public void union(long lo, long hi) {
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">        if (dynamicRangeList.size() == 0) {</span>
+<span class="fc" id="L270">            staticIntervals.add(lo, hi);</span>
+<span class="pc bpc" id="L271" title="1 of 2 branches missed.">            if (intervalApplied) {</span>
+<span class="fc" id="L272">                IntervalUtils.unionInplace(staticIntervals, staticIntervals.size() - 2);</span>
+            }
+        } else {
+<span class="nc" id="L275">            throw new UnsupportedOperationException();</span>
+        }
+<span class="fc" id="L277">        intervalApplied = true;</span>
+<span class="fc" id="L278">    }</span>
+
+    private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
+<span class="pc bpc" id="L281" title="1 of 2 branches missed.">        if (isEmptySet()) return;</span>
+
+<span class="fc bfc" id="L283" title="All 2 branches covered.">        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;</span>
+<span class="fc" id="L284">        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);</span>
+<span class="fc" id="L285">        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);</span>
+<span class="fc" id="L286">        dynamicRangeList.add(funcValue1);</span>
+<span class="fc" id="L287">        dynamicRangeList.add(funcValue2);</span>
+<span class="fc" id="L288">        intervalApplied = true;</span>
+<span class="fc" id="L289">    }</span>
+
+    private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
+<span class="fc bfc" id="L292" title="All 2 branches covered.">        if (constValue == Numbers.LONG_NaN) {</span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">            if (!betweenNegated) {</span>
+<span class="fc" id="L294">                intersectEmpty();</span>
+            }
+            // else {
+            // NOT BETWEEN with NULL
+            // to be consistent with non-designated filtering
+            // do no filtering
+            // }
+<span class="fc" id="L301">            return;</span>
+        }
+
+<span class="fc bfc" id="L304" title="All 2 branches covered.">        if (isEmptySet()) return;</span>
+
+<span class="pc bpc" id="L306" title="1 of 2 branches missed.">        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;</span>
+<span class="fc" id="L307">        IntervalUtils.addHiLoInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);</span>
+<span class="fc" id="L308">        dynamicRangeList.add(funcValue);</span>
+<span class="fc" id="L309">        intervalApplied = true;</span>
+<span class="fc" id="L310">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

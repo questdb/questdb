@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractCharSequenceHashSet.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">AbstractCharSequenceHashSet.java</span></div><h1>AbstractCharSequenceHashSet.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import java.util.Arrays;
+
+public abstract class AbstractCharSequenceHashSet implements Mutable {
+    protected static final int MIN_INITIAL_CAPACITY = 16;
+<span class="fc" id="L31">    protected static final CharSequence noEntryKey = null;</span>
+    protected final double loadFactor;
+    protected int capacity;
+    protected int free;
+    protected CharSequence[] keys;
+    protected int mask;
+
+<span class="fc" id="L38">    public AbstractCharSequenceHashSet(int initialCapacity, double loadFactor) {</span>
+<span class="pc bpc" id="L39" title="2 of 4 branches missed.">        if (loadFactor &lt;= 0d || loadFactor &gt;= 1d) {</span>
+<span class="nc" id="L40">            throw new IllegalArgumentException(&quot;0 &lt; loadFactor &lt; 1&quot;);</span>
+        }
+
+<span class="fc bfc" id="L43" title="All 2 branches covered.">        free = this.capacity = initialCapacity &lt; MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);</span>
+<span class="fc" id="L44">        this.loadFactor = loadFactor;</span>
+<span class="fc" id="L45">        int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));</span>
+<span class="fc" id="L46">        keys = new CharSequence[len];</span>
+<span class="fc" id="L47">        mask = len - 1;</span>
+<span class="fc" id="L48">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L52">        Arrays.fill(keys, noEntryKey);</span>
+<span class="fc" id="L53">        free = capacity;</span>
+<span class="fc" id="L54">    }</span>
+
+    public boolean contains(CharSequence key) {
+<span class="fc bfc" id="L57" title="All 2 branches covered.">        return keyIndex(key) &lt; 0;</span>
+    }
+
+    public boolean excludes(CharSequence key) {
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        return keyIndex(key) &gt; -1;</span>
+    }
+
+    public boolean excludes(CharSequence key, int lo, int hi) {
+<span class="pc bpc" id="L65" title="1 of 2 branches missed.">        return keyIndex(key, lo, hi) &gt; -1;</span>
+    }
+
+    public CharSequence keyAt(int index) {
+<span class="nc" id="L69">        return keys[-index - 1];</span>
+    }
+
+    public int keyIndex(CharSequence key) {
+<span class="fc" id="L73">        int index = Hash.spread(Chars.hashCode(key)) &amp; mask;</span>
+
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (keys[index] == noEntryKey) {</span>
+<span class="fc" id="L76">            return index;</span>
+        }
+
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        if (Chars.equals(key, keys[index])) {</span>
+<span class="fc" id="L80">            return -index - 1;</span>
+        }
+
+<span class="fc" id="L83">        return probe(key, index);</span>
+    }
+
+    public int keyIndex(CharSequence key, int lo, int hi) {
+<span class="fc" id="L87">        int index = Hash.spread(Chars.hashCode(key, lo, hi)) &amp; mask;</span>
+
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        if (keys[index] == noEntryKey) {</span>
+<span class="fc" id="L90">            return index;</span>
+        }
+<span class="fc" id="L92">        CharSequence cs = keys[index];</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {</span>
+<span class="fc" id="L94">            return -index - 1;</span>
+        }
+<span class="fc" id="L96">        return probe(key, lo, hi, index);</span>
+    }
+
+    public int remove(CharSequence key) {
+<span class="fc" id="L100">        int index = keyIndex(key);</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">        if (index &lt; 0) {</span>
+<span class="fc" id="L102">            removeAt(index);</span>
+<span class="fc" id="L103">            return -index - 1;</span>
+        }
+<span class="nc" id="L105">        return -1;</span>
+    }
+
+    public void removeAt(int index) {
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">        if (index &lt; 0) {</span>
+<span class="fc" id="L110">            int from = -index - 1;</span>
+<span class="fc" id="L111">            erase(from);</span>
+<span class="fc" id="L112">            free++;</span>
+
+            // after we have freed up a slot
+            // consider non-empty keys directly below
+            // they may have been a direct hit but because
+            // directly hit slot wasn't empty these keys would
+            // have moved.
+            //
+            // After slot if freed these keys require re-hash
+<span class="fc" id="L121">            from = (from + 1) &amp; mask;</span>
+            for (
+<span class="fc" id="L123">                    CharSequence key = keys[from];</span>
+<span class="fc bfc" id="L124" title="All 2 branches covered.">                    key != noEntryKey;</span>
+<span class="fc" id="L125">                    from = (from + 1) &amp; mask, key = keys[from]</span>
+            ) {
+<span class="fc" id="L127">                int idealHit = Hash.spread(Chars.hashCode(key)) &amp; mask;</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">                if (idealHit != from) {</span>
+                    int to;
+<span class="fc bfc" id="L130" title="All 2 branches covered.">                    if (keys[idealHit] != noEntryKey) {</span>
+<span class="fc" id="L131">                        to = probe(key, idealHit);</span>
+                    } else {
+<span class="fc" id="L133">                        to = idealHit;</span>
+                    }
+
+<span class="fc bfc" id="L136" title="All 2 branches covered.">                    if (to &gt; -1) {</span>
+<span class="fc" id="L137">                        move(from, to);</span>
+                    }
+                }
+            }
+        }
+<span class="fc" id="L142">    }</span>
+
+    public int size() {
+<span class="fc" id="L145">        return capacity - free;</span>
+    }
+
+    private int probe(CharSequence key, int index) {
+        do {
+<span class="fc" id="L150">            index = (index + 1) &amp; mask;</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">            if (keys[index] == noEntryKey) {</span>
+<span class="fc" id="L152">                return index;</span>
+            }
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            if (Chars.equals(key, keys[index])) {</span>
+<span class="fc" id="L155">                return -index - 1;</span>
+            }
+        } while (true);
+    }
+
+    private int probe(CharSequence key, int lo, int hi, int index) {
+        do {
+<span class="fc" id="L162">            index = (index + 1) &amp; mask;</span>
+<span class="fc bfc" id="L163" title="All 2 branches covered.">            if (keys[index] == noEntryKey) {</span>
+<span class="fc" id="L164">                return index;</span>
+            }
+<span class="fc" id="L166">            CharSequence cs = keys[index];</span>
+<span class="fc bfc" id="L167" title="All 2 branches covered.">            if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {</span>
+<span class="fc" id="L168">                return -index - 1;</span>
+            }
+<span class="fc" id="L170">        } while (true);</span>
+    }
+
+    /**
+     * Erases entry in array.
+     *
+     * @param index always positive, no arithmetic required.
+     */
+    abstract protected void erase(int index);
+
+    abstract protected void move(int from, int to);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

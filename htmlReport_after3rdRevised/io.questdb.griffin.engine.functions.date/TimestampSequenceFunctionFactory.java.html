@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TimestampSequenceFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.date</a> &gt; <span class="el_source">TimestampSequenceFunctionFactory.java</span></div><h1>TimestampSequenceFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.date;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+
+<span class="fc" id="L42">public class TimestampSequenceFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L45">        return &quot;timestamp_sequence(NL)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList&lt;Function&gt; args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (args.getQuick(0).isConstant()) {</span>
+<span class="fc" id="L57">            final long start = args.getQuick(0).getTimestamp(null);</span>
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">            if (start == Numbers.LONG_NaN) {</span>
+<span class="nc" id="L59">                return TimestampConstant.NULL;</span>
+            }
+<span class="fc" id="L61">            return new TimestampSequenceFunction(start, args.getQuick(1));</span>
+        } else {
+<span class="fc" id="L63">            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1));</span>
+        }
+    }
+
+    private static class TimestampSequenceFunction extends TimestampFunction {
+        private final Function longIncrement;
+        private final long start;
+        private long next;
+
+<span class="fc" id="L72">        public TimestampSequenceFunction(long start, Function longIncrement) {</span>
+<span class="fc" id="L73">            this.start = start;</span>
+<span class="fc" id="L74">            this.next = start;</span>
+<span class="fc" id="L75">            this.longIncrement = longIncrement;</span>
+<span class="fc" id="L76">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L80">        }</span>
+
+        @Override
+        public long getTimestamp(Record rec) {
+<span class="fc" id="L84">            final long result = next;</span>
+<span class="fc" id="L85">            next += longIncrement.getLong(rec);</span>
+<span class="fc" id="L86">            return result;</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L91">            longIncrement.init(symbolTableSource, executionContext);</span>
+<span class="fc" id="L92">            next = start;</span>
+<span class="fc" id="L93">        }</span>
+
+        @Override
+        public boolean isReadThreadSafe() {
+<span class="nc" id="L97">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsRandomAccess() {
+<span class="fc" id="L102">            return false;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L107">            sink.val(&quot;timestamp_sequence(&quot;).val(start).val(',').val(longIncrement).val(')');</span>
+<span class="fc" id="L108">        }</span>
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L112">            next = start;</span>
+<span class="fc" id="L113">        }</span>
+    }
+
+    private static final class TimestampSequenceVariableFunction extends TimestampFunction {
+        private final Function longIncrement;
+        private final Function start;
+        private long next;
+
+<span class="fc" id="L121">        public TimestampSequenceVariableFunction(Function start, Function longIncrement) {</span>
+<span class="fc" id="L122">            this.start = start;</span>
+<span class="fc" id="L123">            this.next = 0;</span>
+<span class="fc" id="L124">            this.longIncrement = longIncrement;</span>
+<span class="fc" id="L125">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L129">            Misc.free(start);</span>
+<span class="fc" id="L130">            Misc.free(longIncrement);</span>
+<span class="fc" id="L131">        }</span>
+
+        @Override
+        public long getTimestamp(Record rec) {
+<span class="fc" id="L135">            final long result = next;</span>
+<span class="fc" id="L136">            next += longIncrement.getLong(rec);</span>
+<span class="fc" id="L137">            return result + start.getLong(rec);</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L142">            start.init(symbolTableSource, executionContext);</span>
+<span class="fc" id="L143">            longIncrement.init(symbolTableSource, executionContext);</span>
+<span class="fc" id="L144">            next = 0;</span>
+<span class="fc" id="L145">        }</span>
+
+        @Override
+        public boolean isReadThreadSafe() {
+<span class="nc" id="L149">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsRandomAccess() {
+<span class="fc" id="L154">            return false;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L159">            sink.val(&quot;timestamp_sequence(&quot;).val(start).val(',').val(longIncrement).val(')');</span>
+<span class="fc" id="L160">        }</span>
+
+        @Override
+        public void toTop() {
+<span class="nc" id="L164">            next = 0;</span>
+<span class="nc" id="L165">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

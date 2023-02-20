@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Metrics.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb</a> &gt; <span class="el_source">Metrics.java</span></div><h1>Metrics.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb;
+
+import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.wal.WalMetrics;
+import io.questdb.cutlass.http.processors.JsonQueryMetrics;
+import io.questdb.cutlass.pgwire.PGWireMetrics;
+import io.questdb.metrics.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
+
+public class Metrics implements Scrapable {
+    private final boolean enabled;
+    private final GCMetrics gcMetrics;
+    private final HealthMetricsImpl healthCheck;
+    private final JsonQueryMetrics jsonQuery;
+    private final MetricsRegistry metricsRegistry;
+    private final PGWireMetrics pgWire;
+<span class="fc" id="L44">    private final Runtime runtime = Runtime.getRuntime();</span>
+<span class="fc" id="L45">    private final VirtualLongGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;</span>
+<span class="fc" id="L46">    private final VirtualLongGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;</span>
+<span class="fc" id="L47">    private final VirtualLongGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;</span>
+    private final TableWriterMetrics tableWriter;
+    private final WalMetrics walMetrics;
+
+<span class="fc" id="L51">    Metrics(boolean enabled, MetricsRegistry metricsRegistry) {</span>
+<span class="fc" id="L52">        this.enabled = enabled;</span>
+<span class="fc" id="L53">        this.gcMetrics = new GCMetrics();</span>
+<span class="fc" id="L54">        this.jsonQuery = new JsonQueryMetrics(metricsRegistry);</span>
+<span class="fc" id="L55">        this.pgWire = new PGWireMetrics(metricsRegistry);</span>
+<span class="fc" id="L56">        this.healthCheck = new HealthMetricsImpl(metricsRegistry);</span>
+<span class="fc" id="L57">        this.tableWriter = new TableWriterMetrics(metricsRegistry);</span>
+<span class="fc" id="L58">        this.walMetrics = new WalMetrics(metricsRegistry);</span>
+<span class="fc" id="L59">        createMemoryGauges(metricsRegistry);</span>
+<span class="fc" id="L60">        this.metricsRegistry = metricsRegistry;</span>
+<span class="fc" id="L61">    }</span>
+
+    public static Metrics disabled() {
+<span class="fc" id="L64">        return new Metrics(false, new NullMetricsRegistry());</span>
+    }
+
+    public static Metrics enabled() {
+<span class="fc" id="L68">        return new Metrics(true, new MetricsRegistryImpl());</span>
+    }
+
+    public WalMetrics getWalMetrics() {
+<span class="fc" id="L72">        return walMetrics;</span>
+    }
+
+    public HealthMetricsImpl health() {
+<span class="fc" id="L76">        return healthCheck;</span>
+    }
+
+    public boolean isEnabled() {
+<span class="fc" id="L80">        return enabled;</span>
+    }
+
+    public JsonQueryMetrics jsonQuery() {
+<span class="fc" id="L84">        return jsonQuery;</span>
+    }
+
+    public PGWireMetrics pgWire() {
+<span class="fc" id="L88">        return pgWire;</span>
+    }
+
+    @Override
+    public void scrapeIntoPrometheus(CharSink sink) {
+<span class="fc" id="L93">        metricsRegistry.scrapeIntoPrometheus(sink);</span>
+<span class="pc bpc" id="L94" title="1 of 2 branches missed.">        if (enabled) {</span>
+<span class="fc" id="L95">            gcMetrics.scrapeIntoPrometheus(sink);</span>
+        }
+<span class="fc" id="L97">    }</span>
+
+    public TableWriterMetrics tableWriter() {
+<span class="fc" id="L100">        return tableWriter;</span>
+    }
+
+    private void createMemoryGauges(MetricsRegistry metricsRegistry) {
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        for (int i = 0; i &lt; MemoryTag.SIZE; i++) {</span>
+<span class="fc" id="L105">            metricsRegistry.newLongGauge(i);</span>
+        }
+
+<span class="fc" id="L108">        metricsRegistry.newVirtualGauge(&quot;memory_free_count&quot;, Unsafe::getFreeCount);</span>
+<span class="fc" id="L109">        metricsRegistry.newVirtualGauge(&quot;memory_mem_used&quot;, Unsafe::getMemUsed);</span>
+<span class="fc" id="L110">        metricsRegistry.newVirtualGauge(&quot;memory_malloc_count&quot;, Unsafe::getMallocCount);</span>
+<span class="fc" id="L111">        metricsRegistry.newVirtualGauge(&quot;memory_realloc_count&quot;, Unsafe::getReallocCount);</span>
+<span class="fc" id="L112">        metricsRegistry.newVirtualGauge(&quot;memory_rss&quot;, Os::getRss);</span>
+<span class="fc" id="L113">        metricsRegistry.newVirtualGauge(&quot;memory_jvm_free&quot;, jvmFreeMemRef);</span>
+<span class="fc" id="L114">        metricsRegistry.newVirtualGauge(&quot;memory_jvm_total&quot;, jvmTotalMemRef);</span>
+<span class="fc" id="L115">        metricsRegistry.newVirtualGauge(&quot;memory_jvm_max&quot;, jvmMaxMemRef);</span>
+<span class="fc" id="L116">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

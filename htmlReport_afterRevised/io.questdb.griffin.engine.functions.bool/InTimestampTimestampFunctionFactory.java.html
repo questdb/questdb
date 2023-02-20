@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InTimestampTimestampFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.bool</a> &gt; <span class="el_source">InTimestampTimestampFunctionFactory.java</span></div><h1>InTimestampTimestampFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.bool;
+
+import io.questdb.cairo.BinarySearch;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.*;
+
+<span class="fc" id="L42">public class InTimestampTimestampFunctionFactory implements FunctionFactory {</span>
+    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+        try {
+<span class="fc" id="L45">            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());</span>
+<span class="fc" id="L46">        } catch (NumericException e) {</span>
+<span class="fc" id="L47">            throw SqlException.invalidDate(position);</span>
+        }
+    }
+
+    @Override
+    public String getSignature() {
+<span class="fc" id="L53">        return &quot;in(NV)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+<span class="fc" id="L58">        boolean allConst = true;</span>
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        for (int i = 1, n = args.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L60">            Function func = args.getQuick(i);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">            switch (ColumnType.tagOf(func.getType())) {</span>
+                case ColumnType.NULL:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.LONG:
+                case ColumnType.INT:
+                case ColumnType.STRING:
+                case ColumnType.SYMBOL:
+<span class="fc" id="L68">                    break;</span>
+                default:
+<span class="fc" id="L70">                    throw SqlException.position(0).put(&quot;cannot compare TIMESTAMP with type &quot;).put(ColumnType.nameOf(func.getType()));</span>
+            }
+<span class="fc bfc" id="L72" title="All 2 branches covered.">            if (!func.isConstant()) {</span>
+<span class="fc" id="L73">                allConst = false;</span>
+<span class="fc" id="L74">                break;</span>
+            }
+        }
+
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (allConst) {</span>
+<span class="fc" id="L79">            return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));</span>
+        }
+
+<span class="fc bfc" id="L82" title="All 4 branches covered.">        if (args.size() == 2 &amp;&amp; ColumnType.isString(args.get(1).getType())) {</span>
+            // special case - one argument and it a string
+<span class="fc" id="L84">            return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));</span>
+        }
+
+        // have to copy, args is mutable
+<span class="fc" id="L88">        return new InTimestampVarFunction(new ObjList&lt;&gt;(args));</span>
+    }
+
+    private LongList parseToTs(ObjList&lt;Function&gt; args, IntList argPositions) throws SqlException {
+<span class="fc" id="L92">        LongList res = new LongList(args.size() - 1);</span>
+<span class="fc" id="L93">        res.extendAndSet(args.size() - 2, 0);</span>
+
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        for (int i = 1, n = args.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L96">            Function func = args.getQuick(i);</span>
+<span class="fc" id="L97">            long val = Numbers.LONG_NaN;</span>
+<span class="fc bfc" id="L98" title="All 3 branches covered.">            switch (ColumnType.tagOf(func.getType())) {</span>
+                case ColumnType.TIMESTAMP:
+                case ColumnType.LONG:
+                case ColumnType.INT:
+<span class="fc" id="L102">                    val = func.getTimestamp(null);</span>
+<span class="fc" id="L103">                    break;</span>
+                case ColumnType.STRING:
+                case ColumnType.SYMBOL:
+<span class="fc" id="L106">                    CharSequence tsValue = func.getStr(null);</span>
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">                    val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;</span>
+                    break;
+            }
+<span class="fc" id="L110">            res.setQuick(i - 1, val);</span>
+        }
+
+<span class="fc" id="L113">        res.sort();</span>
+<span class="fc" id="L114">        return res;</span>
+    }
+
+    private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final LongList inList;
+        private final Function tsFunc;
+
+<span class="fc" id="L121">        public InTimestampConstFunction(Function tsFunc, LongList longList) {</span>
+<span class="fc" id="L122">            this.tsFunc = tsFunc;</span>
+<span class="fc" id="L123">            this.inList = longList;</span>
+<span class="fc" id="L124">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="fc" id="L128">            return tsFunc;</span>
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L133">            long ts = tsFunc.getTimestamp(rec);</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">            if (ts == Numbers.LONG_NaN) {</span>
+<span class="fc" id="L135">                return negated;</span>
+            }
+
+<span class="fc bfc" id="L138" title="All 4 branches covered.">            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) &gt;= 0;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L143">            sink.val(tsFunc);</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">            if (negated) {</span>
+<span class="fc" id="L145">                sink.val(&quot; not&quot;);</span>
+            }
+<span class="fc" id="L147">            sink.val(&quot; in &quot;).val(inList);</span>
+<span class="fc" id="L148">        }</span>
+    }
+
+    private static class InTimestampVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
+        private final ObjList&lt;Function&gt; args;
+
+<span class="fc" id="L154">        public InTimestampVarFunction(ObjList&lt;Function&gt; args) {</span>
+<span class="fc" id="L155">            this.args = args;</span>
+<span class="fc" id="L156">        }</span>
+
+        @Override
+        public ObjList&lt;Function&gt; getArgs() {
+<span class="fc" id="L160">            return args;</span>
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L165">            long ts = args.getQuick(0).getTimestamp(rec);</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">            if (ts == Numbers.LONG_NaN) {</span>
+<span class="fc" id="L167">                return negated;</span>
+            }
+
+<span class="fc bfc" id="L170" title="All 2 branches covered.">            for (int i = 1, n = args.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L171">                Function func = args.getQuick(i);</span>
+<span class="fc" id="L172">                long val = Numbers.LONG_NaN;</span>
+<span class="fc bfc" id="L173" title="All 3 branches covered.">                switch (ColumnType.tagOf(func.getType())) {</span>
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.LONG:
+                    case ColumnType.INT:
+<span class="fc" id="L177">                        val = func.getTimestamp(rec);</span>
+<span class="fc" id="L178">                        break;</span>
+                    case ColumnType.STRING:
+<span class="fc" id="L180">                        CharSequence str = func.getStr(rec);</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NaN;</span>
+                        break;
+                }
+<span class="fc bfc" id="L184" title="All 2 branches covered.">                if (val == ts) {</span>
+<span class="pc bpc" id="L185" title="1 of 2 branches missed.">                    return !negated;</span>
+                }
+            }
+<span class="fc" id="L188">            return negated;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L193">            sink.val(args.getQuick(0));</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">            if (negated) {</span>
+<span class="fc" id="L195">                sink.val(&quot; not&quot;);</span>
+            }
+<span class="fc" id="L197">            sink.val(&quot; in &quot;);</span>
+<span class="fc" id="L198">            sink.val(args, 1);</span>
+<span class="fc" id="L199">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

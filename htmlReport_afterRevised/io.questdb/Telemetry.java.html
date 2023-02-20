@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Telemetry.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb</a> &gt; <span class="el_source">Telemetry.java</span></div><h1>Telemetry.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.QueueConsumer;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.tasks.AbstractTelemetryTask;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+
+public final class Telemetry&lt;T extends AbstractTelemetryTask&gt; implements Closeable {
+<span class="fc" id="L47">    private static final Log LOG = LogFactory.getLog(Telemetry.class);</span>
+
+    private final boolean enabled;
+    private MicrosecondClock clock;
+    private MPSequence telemetryPubSeq;
+    private RingQueue&lt;T&gt; telemetryQueue;
+    private SCSequence telemetrySubSeq;
+    private TelemetryType&lt;T&gt; telemetryType;
+    private TableWriter writer;
+
+<span class="fc" id="L57">    private final QueueConsumer&lt;T&gt; taskConsumer = this::consume;</span>
+
+<span class="fc" id="L59">    public Telemetry(TelemetryTypeBuilder&lt;T&gt; builder, CairoConfiguration configuration) {</span>
+<span class="fc" id="L60">        TelemetryType&lt;T&gt; type = builder.build(configuration);</span>
+<span class="fc" id="L61">        final TelemetryConfiguration telemetryConfiguration = type.getTelemetryConfiguration(configuration);</span>
+<span class="fc" id="L62">        enabled = telemetryConfiguration.getEnabled();</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        if (enabled) {</span>
+<span class="fc" id="L64">            this.telemetryType = type;</span>
+<span class="fc" id="L65">            clock = configuration.getMicrosecondClock();</span>
+<span class="fc" id="L66">            telemetryQueue = new RingQueue&lt;&gt;(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());</span>
+<span class="fc" id="L67">            telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());</span>
+<span class="fc" id="L68">            telemetrySubSeq = new SCSequence();</span>
+<span class="fc" id="L69">            telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);</span>
+        }
+<span class="fc" id="L71">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (writer == null) {</span>
+<span class="fc" id="L76">            return;</span>
+        }
+
+<span class="fc" id="L79">        consumeAll();</span>
+<span class="fc" id="L80">        Misc.free(telemetryQueue);</span>
+
+<span class="fc" id="L82">        telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());</span>
+<span class="fc" id="L83">        writer = Misc.free(writer);</span>
+<span class="fc" id="L84">    }</span>
+
+    public void consume(T task) {
+<span class="fc" id="L87">        task.writeTo(writer, clock.getTicks());</span>
+<span class="fc" id="L88">    }</span>
+
+    public void consumeAll() {
+<span class="pc bpc" id="L91" title="1 of 4 branches missed.">        if (enabled &amp;&amp; telemetrySubSeq.consumeAll(telemetryQueue, taskConsumer)) {</span>
+<span class="fc" id="L92">            writer.commit();</span>
+        }
+<span class="fc" id="L94">    }</span>
+
+    public void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (!enabled) {</span>
+<span class="fc" id="L98">            return;</span>
+        }
+<span class="fc" id="L100">        String tableName = telemetryType.getTableName();</span>
+<span class="fc" id="L101">        compiler.compile(telemetryType.getCreateSql(), sqlExecutionContext);</span>
+<span class="fc" id="L102">        final TableToken tableToken = engine.getTableToken(tableName);</span>
+        try {
+<span class="fc" id="L104">            writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, &quot;telemetry&quot;);</span>
+<span class="nc" id="L105">        } catch (CairoException ex) {</span>
+<span class="nc" id="L106">            LOG.error()</span>
+<span class="nc" id="L107">                    .$(&quot;could not open [table=`&quot;).utf8(tableToken.getTableName())</span>
+<span class="nc" id="L108">                    .$(&quot;`, ex=&quot;).$(ex.getFlyweightMessage())</span>
+<span class="nc" id="L109">                    .$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="nc" id="L110">                    .$(']').$();</span>
+<span class="fc" id="L111">        }</span>
+
+<span class="fc" id="L113">        telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_UP, clock.getTicks());</span>
+<span class="fc" id="L114">    }</span>
+
+    public boolean isEnabled() {
+<span class="fc" id="L117">        return enabled;</span>
+    }
+
+    public T nextTask() {
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        if (!enabled) {</span>
+<span class="fc" id="L122">            return null;</span>
+        }
+
+<span class="fc" id="L125">        long cursor = telemetryPubSeq.next();</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (cursor &lt; 0) {</span>
+<span class="fc" id="L127">            return null;</span>
+        }
+
+<span class="fc" id="L130">        return telemetryQueue.get(cursor);</span>
+    }
+
+    public void store() {
+<span class="fc" id="L134">        telemetryPubSeq.done(telemetryPubSeq.current());</span>
+<span class="fc" id="L135">    }</span>
+
+    public interface TelemetryType&lt;T extends AbstractTelemetryTask&gt; {
+        String getCreateSql();
+
+        String getTableName();
+
+        ObjectFactory&lt;T&gt; getTaskFactory();
+
+        //todo: we could tailor the config for each telemetry type
+        //we could set different queue sizes or disable telemetry per type, for example
+        default TelemetryConfiguration getTelemetryConfiguration(@NotNull CairoConfiguration configuration) {
+<span class="fc" id="L147">            return configuration.getTelemetryConfiguration();</span>
+        }
+
+        default void logStatus(TableWriter writer, short systemStatus, long micros) {
+<span class="fc" id="L151">        }</span>
+    }
+
+    public interface TelemetryTypeBuilder&lt;T extends AbstractTelemetryTask&gt; {
+        TelemetryType&lt;T&gt; build(CairoConfiguration configuration);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

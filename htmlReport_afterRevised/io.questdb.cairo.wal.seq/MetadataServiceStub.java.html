@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MetadataServiceStub.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal.seq</a> &gt; <span class="el_source">MetadataServiceStub.java</span></div><h1>MetadataServiceStub.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal.seq;
+
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.UpdateOperator;
+import io.questdb.cairo.wal.MetadataService;
+
+public interface MetadataServiceStub extends MetadataService {
+
+    @Override
+    default void addIndex(CharSequence columnName, int indexValueBlockSize) {
+<span class="nc" id="L36">        throw CairoException.critical(0).put(&quot;add index does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default AttachDetachStatus attachPartition(long partitionTimestamp) {
+<span class="nc" id="L41">        throw CairoException.critical(0).put(&quot;attach partition does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default void changeCacheFlag(int columnIndex, boolean isCacheOn) {
+<span class="nc" id="L46">        throw CairoException.critical(0).put(&quot;change cache flag does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default AttachDetachStatus detachPartition(long partitionTimestamp) {
+<span class="nc" id="L51">        throw CairoException.critical(0).put(&quot;detach partition does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default void dropIndex(CharSequence columnName) {
+<span class="nc" id="L56">        throw CairoException.critical(0).put(&quot;drop index does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default long getCommitInterval() {
+<span class="nc" id="L61">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    default long getMetaMaxUncommittedRows() {
+<span class="nc" id="L66">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    default int getPartitionBy() {
+<span class="nc" id="L71">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    default UpdateOperator getUpdateOperator() {
+<span class="nc" id="L76">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    default boolean removePartition(long partitionTimestamp) {
+<span class="nc" id="L81">        throw CairoException.critical(0).put(&quot;remove partition does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
+<span class="nc" id="L86">        throw CairoException.critical(0).put(&quot;change max uncommitted does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default void setMetaO3MaxLag(long o3MaxLagUs) {
+<span class="nc" id="L91">        throw CairoException.critical(0).put(&quot;change of o3MaxLag does not update sequencer metadata&quot;);</span>
+    }
+
+    @Override
+    default void tick() {
+        // no-op
+<span class="nc" id="L97">    }</span>
+
+    @Override
+    default void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
+<span class="nc" id="L101">        throw CairoException.critical(0).put(&quot;change commit interval does not update sequencer metadata&quot;);</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

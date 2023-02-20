@@ -1,0 +1,688 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GroupByRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby.vect</a> &gt; <span class="el_source">GroupByRecordCursorFactory.java</span></div><h1>GroupByRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby.vect;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.Worker;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.tasks.VectorAggregateTask;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
+public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+
+<span class="fc" id="L51">    private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);</span>
+
+    private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
+    private final ObjList&lt;VectorAggregateEntry&gt; activeEntries;
+    private final RecordCursorFactory base;
+    private final RostiRecordCursor cursor;
+<span class="fc" id="L57">    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();</span>
+    private final ObjectPool&lt;VectorAggregateEntry&gt; entryPool;
+    private final int keyColumnIndex;
+<span class="fc" id="L60">    private final AtomicInteger oomCounter = new AtomicInteger();</span>
+    private final long[] pRosti;
+    private final RostiAllocFacade raf;
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
+    private final ObjList&lt;VectorAggregateFunction&gt; vafList;
+    private final int workerCount;
+
+    public GroupByRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordCursorFactory base,
+            RecordMetadata metadata,
+            @Transient ColumnTypes columnTypes,
+            int workerCount,
+            @Transient ObjList&lt;VectorAggregateFunction&gt; vafList,
+            int keyColumnIndexInBase,
+            int keyColumnIndexInThisCursor,
+            @Transient IntList symbolTableSkewIndex
+    ) {
+<span class="fc" id="L78">        super(metadata);</span>
+<span class="fc" id="L79">        this.workerCount = workerCount;</span>
+<span class="fc" id="L80">        entryPool = new ObjectPool&lt;&gt;(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());</span>
+<span class="fc" id="L81">        activeEntries = new ObjList&lt;&gt;(configuration.getGroupByPoolCapacity());</span>
+        // columnTypes and functions must align in the following way:
+        // columnTypes[0] is the type of key, for now single key is supported
+        // functions.size = columnTypes.size - 1, functions do not have instance for key, only for values
+        // functions[0].type == columnTypes[1]
+        // ...
+        // functions[n].type == columnTypes[n+1]
+
+<span class="fc" id="L89">        sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();</span>
+<span class="fc" id="L90">        this.base = base;</span>
+        // first column is INT or SYMBOL
+<span class="fc" id="L92">        pRosti = new long[workerCount];</span>
+<span class="fc" id="L93">        final int vafCount = vafList.size();</span>
+<span class="fc" id="L94">        this.vafList = new ObjList&lt;&gt;(vafCount);</span>
+<span class="fc" id="L95">        raf = configuration.getRostiAllocFacade();</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L97">            long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            if (ptr == 0) {</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">                for (int k = i - 1; k &gt; -1; k--) {</span>
+<span class="fc" id="L100">                    raf.free(pRosti[k]);</span>
+                }
+<span class="fc" id="L102">                throw new OutOfMemoryError();</span>
+            }
+<span class="fc" id="L104">            pRosti[i] = ptr;</span>
+
+            // remember, single key for now
+<span class="pc bpc" id="L107" title="1 of 3 branches missed.">            switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {</span>
+                case ColumnType.INT:
+<span class="fc" id="L109">                    Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NaN);</span>
+<span class="fc" id="L110">                    break;</span>
+                case ColumnType.SYMBOL:
+<span class="fc" id="L112">                    Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);</span>
+<span class="fc" id="L113">                    break;</span>
+                default:
+            }
+
+            // configure map with default values
+            // when our execution order is sum(x) then min(y) over the same map
+            // min(y) may not find any new keys slots(they will be created by first pass with sum(x))
+            // for aggregation function to continue, such slots have to be initialized to the
+            // appropriate value for the function.
+<span class="fc bfc" id="L122" title="All 2 branches covered.">            for (int j = 0; j &lt; vafCount; j++) {</span>
+<span class="fc" id="L123">                vafList.getQuick(j).initRosti(pRosti[i]);</span>
+            }
+        }
+
+        // all maps are the same at this point
+        // check where our keys are and pull them to front
+<span class="fc" id="L129">        final long pRosti = this.pRosti[0];</span>
+<span class="fc" id="L130">        final long columnOffsets = Rosti.getValueOffsets(pRosti);</span>
+
+        // skew logic assumes single key, for multiple keys skew would be different
+
+<span class="fc" id="L134">        final IntList columnSkewIndex = new IntList();</span>
+        // key is in the middle, shift aggregates before the key one position left
+<span class="fc" id="L136">        addOffsets(columnSkewIndex, vafList, 0, keyColumnIndexInThisCursor, columnOffsets);</span>
+
+        // this is offset of the key column
+<span class="fc" id="L139">        columnSkewIndex.add(0);</span>
+
+        // add remaining aggregate columns as is
+<span class="fc" id="L142">        addOffsets(columnSkewIndex, vafList, keyColumnIndexInThisCursor, vafCount, columnOffsets);</span>
+
+<span class="fc" id="L144">        this.vafList.addAll(vafList);</span>
+<span class="fc" id="L145">        keyColumnIndex = keyColumnIndexInBase;</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">        if (symbolTableSkewIndex.size() &gt; 0) {</span>
+<span class="fc" id="L147">            final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());</span>
+<span class="fc" id="L148">            symbolSkew.addAll(symbolTableSkewIndex);</span>
+<span class="fc" id="L149">            cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);</span>
+<span class="fc" id="L150">        } else {</span>
+<span class="fc" id="L151">            cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);</span>
+        }
+<span class="fc" id="L153">    }</span>
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+<span class="fc" id="L157">        return base;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L162">        oomCounter.set(0);</span>
+        // clear maps
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        for (int i = 0, n = pRosti.length; i &lt; n; i++) {</span>
+<span class="fc" id="L165">            raf.clear(pRosti[i]);</span>
+        }
+        // clear state of aggregate functions
+<span class="fc bfc" id="L168" title="All 2 branches covered.">        for (int i = 0, n = vafList.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L169">            vafList.getQuick(i).clear();</span>
+        }
+<span class="fc" id="L171">        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);</span>
+<span class="fc" id="L172">        return cursor.of(pageFrameCursor, executionContext.getMessageBus(), executionContext.getCircuitBreaker());</span>
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L177">        return true;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L182">        sink.type(&quot;GroupBy&quot;);</span>
+<span class="fc" id="L183">        sink.meta(&quot;vectorized&quot;).val(true);</span>
+<span class="fc" id="L184">        sink.attr(&quot;keys&quot;).val(&quot;[&quot;).putBaseColumnNameNoRemap(keyColumnIndex).val(&quot;]&quot;);</span>
+<span class="fc" id="L185">        sink.optAttr(&quot;values&quot;, vafList, true);</span>
+<span class="fc" id="L186">        sink.attr(&quot;workers&quot;).val(workerCount);</span>
+<span class="fc" id="L187">        sink.child(base);</span>
+<span class="fc" id="L188">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="nc" id="L192">        return base.usesCompiledFilter();</span>
+    }
+
+    private static void addOffsets(
+            IntList columnSkewIndex,
+            @Transient ObjList&lt;VectorAggregateFunction&gt; vafList,
+            int start,
+            int end,
+            long columnOffsets
+    ) {
+<span class="fc bfc" id="L202" title="All 2 branches covered.">        for (int i = start; i &lt; end; i++) {</span>
+<span class="fc" id="L203">            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));</span>
+        }
+<span class="fc" id="L205">    }</span>
+
+    private void resetRostiMemorySize() {
+<span class="fc bfc" id="L208" title="All 2 branches covered.">        for (int i = 0, n = pRosti.length; i &lt; n; i++) {</span>
+<span class="pc bpc" id="L209" title="1 of 2 branches missed.">            if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {</span>
+<span class="nc" id="L210">                LOG.debug().$(&quot;Couldn't minimize rosti memory [i=&quot;).$(i).$(&quot;,current_size=&quot;).$(Rosti.getSize(pRosti[i])).I$();</span>
+            }
+        }
+<span class="fc" id="L213">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L217">        Misc.free(base);</span>
+<span class="fc" id="L218">        Misc.freeObjList(vafList);</span>
+<span class="fc bfc" id="L219" title="All 2 branches covered.">        for (int i = 0, n = pRosti.length; i &lt; n; i++) {</span>
+<span class="fc" id="L220">            raf.free(pRosti[i]);</span>
+        }
+<span class="fc" id="L222">    }</span>
+
+    private class RostiRecordCursor implements RecordCursor {
+        private final IntList columnSkewIndex;
+        private final RostiRecord record;
+        private final IntList symbolTableSkewIndex;
+        private MessageBus bus;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private long count;
+        private long ctrl;
+        private long ctrlStart;
+        private boolean isRostiBuilt;
+        private long pRostiBig;
+        private PageFrameCursor pageFrameCursor;
+        private RostiRecord recordB;
+        private long shift;
+        private long size;
+        private long slots;
+
+<span class="fc" id="L241">        public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex) {</span>
+<span class="fc" id="L242">            pRostiBig = pRosti;</span>
+<span class="fc" id="L243">            record = new RostiRecord();</span>
+<span class="fc" id="L244">            this.symbolTableSkewIndex = symbolTableSkewIndex;</span>
+<span class="fc" id="L245">            this.columnSkewIndex = columnSkewIndex;</span>
+<span class="fc" id="L246">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L250">            Misc.free(pageFrameCursor);</span>
+<span class="fc" id="L251">            raf.reset(pRostiBig, ROSTI_MINIMIZED_SIZE);</span>
+<span class="fc" id="L252">        }</span>
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L256">            return record;</span>
+        }
+
+        @Override
+        public Record getRecordB() {
+<span class="fc bfc" id="L261" title="All 2 branches covered.">            if (recordB != null) {</span>
+<span class="fc" id="L262">                return recordB;</span>
+            }
+<span class="fc" id="L264">            return (recordB = new RostiRecord());</span>
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+<span class="fc" id="L269">            return pageFrameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L274" title="All 2 branches covered.">            if (!isRostiBuilt) {</span>
+<span class="fc" id="L275">                buildRosti();</span>
+<span class="fc" id="L276">                isRostiBuilt = true;</span>
+            }
+<span class="fc bfc" id="L278" title="All 2 branches covered.">            while (count &lt; size) {</span>
+<span class="fc" id="L279">                byte b = Unsafe.getUnsafe().getByte(ctrl);</span>
+<span class="fc bfc" id="L280" title="All 2 branches covered.">                if ((b &amp; 0x80) != 0) {</span>
+<span class="fc" id="L281">                    ctrl++;</span>
+<span class="fc" id="L282">                    continue;</span>
+                }
+<span class="fc" id="L284">                count++;</span>
+<span class="fc" id="L285">                record.of(slots + ((ctrl - ctrlStart) &lt;&lt; shift));</span>
+<span class="fc" id="L286">                ctrl++;</span>
+<span class="fc" id="L287">                return true;</span>
+            }
+<span class="fc" id="L289">            return false;</span>
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+<span class="fc" id="L294">            return pageFrameCursor.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));</span>
+        }
+
+        public RostiRecordCursor of(PageFrameCursor pageFrameCursor, MessageBus bus, SqlExecutionCircuitBreaker circuitBreaker) {
+<span class="fc" id="L298">            this.pageFrameCursor = pageFrameCursor;</span>
+<span class="fc" id="L299">            this.bus = bus;</span>
+<span class="fc" id="L300">            this.circuitBreaker = circuitBreaker;</span>
+<span class="fc" id="L301">            isRostiBuilt = false;</span>
+<span class="fc" id="L302">            return this;</span>
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+<span class="fc" id="L307">            ((RostiRecord) record).of(atRowId);</span>
+<span class="fc" id="L308">        }</span>
+
+        @Override
+        public long size() {
+<span class="fc bfc" id="L312" title="All 2 branches covered.">            return isRostiBuilt ? size : -1;</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L317">            ctrl = ctrlStart = Rosti.getCtrl(pRostiBig);</span>
+<span class="fc" id="L318">            slots = Rosti.getSlots(pRostiBig);</span>
+<span class="fc" id="L319">            size = raf.getSize(pRostiBig);</span>
+<span class="fc" id="L320">            shift = Rosti.getSlotShift(pRostiBig);</span>
+<span class="fc" id="L321">            count = 0;</span>
+<span class="fc" id="L322">        }</span>
+
+        private void buildRosti() {
+<span class="fc" id="L325">            final int vafCount = vafList.size();</span>
+<span class="fc" id="L326">            final RingQueue&lt;VectorAggregateTask&gt; queue = bus.getVectorAggregateQueue();</span>
+<span class="fc" id="L327">            final Sequence pubSeq = bus.getVectorAggregatePubSeq();</span>
+
+<span class="fc" id="L329">            sharedCircuitBreaker.reset();</span>
+<span class="fc" id="L330">            entryPool.clear();</span>
+<span class="fc" id="L331">            activeEntries.clear();</span>
+<span class="fc" id="L332">            int queuedCount = 0;</span>
+<span class="fc" id="L333">            int ownCount = 0;</span>
+<span class="fc" id="L334">            int reclaimed = 0;</span>
+<span class="fc" id="L335">            int total = 0;</span>
+
+<span class="fc" id="L337">            doneLatch.reset();</span>
+
+            // check if this is executed via worker pool
+<span class="fc" id="L340">            final Thread thread = Thread.currentThread();</span>
+            final int workerId;
+<span class="fc bfc" id="L342" title="All 2 branches covered.">            if (thread instanceof Worker) {</span>
+<span class="fc" id="L343">                workerId = ((Worker) thread).getWorkerId();</span>
+            } else {
+<span class="fc" id="L345">                workerId = pRosti.length - 1; // avoid clashing with other worker with id=0 in tests</span>
+            }
+
+            try {
+                PageFrame frame;
+<span class="fc bfc" id="L350" title="All 2 branches covered.">                while ((frame = pageFrameCursor.next()) != null) {</span>
+<span class="fc" id="L351">                    final long keyAddress = frame.getPageAddress(keyColumnIndex);</span>
+<span class="fc bfc" id="L352" title="All 2 branches covered.">                    for (int i = 0; i &lt; vafCount; i++) {</span>
+<span class="fc" id="L353">                        final VectorAggregateFunction vaf = vafList.getQuick(i);</span>
+                        // when column index = -1 we assume that vector function does not have value
+                        // argument, and it can only derive count via memory size
+<span class="fc" id="L356">                        final int columnIndex = vaf.getColumnIndex();</span>
+                        // for functions like `count()`, that do not have arguments we are required to provide
+                        // count of rows in table in a form of &quot;pageSize &gt;&gt; shr&quot;. Since `vaf` doesn't provide column
+                        // this code used column 0. Assumption here that column 0 is fixed size.
+                        // This assumption only holds because our aggressive algorithm for &quot;top down columns&quot;, e.g.
+                        // the algorithm that forces page frame to provide only columns required by the select. At the time
+                        // of writing this code there is no way to return variable length column out of non-keyed aggregation
+                        // query. This might change if we introduce something like `first(string)`. When this happens we will
+                        // need to rethink our way of computing size for the count. This would be either type checking column
+                        // 0 and working out size differently or finding any fixed-size column and using that.
+<span class="fc bfc" id="L366" title="All 2 branches covered.">                        final long valueAddress = columnIndex &gt; -1 ? frame.getPageAddress(columnIndex) : 0;</span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">                        final int pageColIndex = columnIndex &gt; -1 ? columnIndex : 0;</span>
+<span class="fc" id="L368">                        final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);</span>
+<span class="fc" id="L369">                        final long valueAddressSize = frame.getPageSize(pageColIndex);</span>
+
+<span class="fc" id="L371">                        long seq = pubSeq.next();</span>
+<span class="fc bfc" id="L372" title="All 2 branches covered.">                        if (seq &lt; 0) {</span>
+<span class="fc" id="L373">                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();</span>
+<span class="pc bpc" id="L374" title="1 of 2 branches missed.">                            if (keyAddress == 0) {</span>
+<span class="nc" id="L375">                                vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);</span>
+                            } else {
+<span class="fc" id="L377">                                long oldSize = Rosti.getAllocMemory(pRosti[workerId]);</span>
+<span class="pc bpc" id="L378" title="1 of 2 branches missed.">                                if (!vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId)) {</span>
+<span class="nc" id="L379">                                    oomCounter.incrementAndGet();</span>
+                                }
+<span class="fc" id="L381">                                raf.updateMemoryUsage(pRosti[workerId], oldSize);</span>
+                            }
+<span class="fc" id="L383">                            ownCount++;</span>
+                        } else {
+<span class="fc" id="L385">                            final VectorAggregateEntry entry = entryPool.next();</span>
+<span class="fc bfc" id="L386" title="All 2 branches covered.">                            if (keyAddress == 0) {</span>
+<span class="fc" id="L387">                                entry.of(</span>
+                                        queuedCount++,
+                                        vaf,
+                                        null,
+                                        0,
+                                        valueAddress,
+                                        valueAddressSize,
+                                        columnSizeShr,
+                                        doneLatch,
+                                        oomCounter,
+                                        null,
+                                        sharedCircuitBreaker
+                                );
+                            } else {
+<span class="fc" id="L401">                                entry.of(</span>
+                                        queuedCount++,
+                                        vaf,
+                                        pRosti,
+                                        keyAddress,
+                                        valueAddress,
+                                        valueAddressSize,
+                                        columnSizeShr,
+                                        doneLatch,
+                                        oomCounter,
+                                        raf,
+                                        sharedCircuitBreaker
+                                );
+                            }
+<span class="fc" id="L415">                            activeEntries.add(entry);</span>
+<span class="fc" id="L416">                            queue.get(seq).entry = entry;</span>
+<span class="fc" id="L417">                            pubSeq.done(seq);</span>
+                        }
+<span class="fc" id="L419">                        total++;</span>
+                    }
+<span class="fc" id="L421">                }</span>
+<span class="fc" id="L422">            } catch (DataUnavailableException e) {</span>
+                // We're not yet done, so no need to cancel the circuit breaker. 
+<span class="fc" id="L424">                throw e;</span>
+<span class="fc" id="L425">            } catch (Throwable e) {</span>
+<span class="fc" id="L426">                sharedCircuitBreaker.cancel();</span>
+<span class="fc" id="L427">                throw e;</span>
+            } finally {
+                // all done? great start consuming the queue we just published
+                // how do we get to the end? If we consume our own queue there is chance we will be consuming
+                // aggregation tasks not related to this execution (we work in concurrent environment)
+                // To deal with that we need to have our own checklist.
+
+                // Make sure we're consuming jobs even when we failed. We cannot close &quot;rosti&quot; when there are
+                // tasks in flight.
+
+                // start at the back to reduce chance of clashing
+<span class="fc" id="L438">                reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(</span>
+                        queuedCount,
+                        reclaimed,
+                        workerId,
+                        activeEntries,
+                        doneLatch,
+                        LOG,
+                        circuitBreaker,
+                        sharedCircuitBreaker
+                );
+                // we can't reallocate rosti until tasks are complete because some other thread could be using it
+<span class="fc bfc" id="L449" title="All 2 branches covered.">                if (sharedCircuitBreaker.isCanceled()) {</span>
+<span class="fc" id="L450">                    resetRostiMemorySize();</span>
+                }
+            }
+
+<span class="fc bfc" id="L454" title="All 2 branches covered.">            if (oomCounter.get() &gt; 0) {</span>
+<span class="fc" id="L455">                resetRostiMemorySize();</span>
+<span class="fc" id="L456">                throw new OutOfMemoryError();</span>
+            }
+
+            // merge maps only when cursor was fetched successfully
+            // otherwise assume error and save CPU cycles
+<span class="fc" id="L461">            pRostiBig = pRosti[0];</span>
+            try {
+<span class="fc bfc" id="L463" title="All 2 branches covered.">                if (pRosti.length &gt; 1) {</span>
+<span class="fc" id="L464">                    LOG.debug().$(&quot;merging&quot;).$();</span>
+
+                    // due to uneven load distribution some rostis could be much bigger and some empty
+<span class="fc" id="L467">                    long size = raf.getSize(pRostiBig);</span>
+<span class="fc bfc" id="L468" title="All 2 branches covered.">                    for (int i = 1, n = pRosti.length; i &lt; n; i++) {</span>
+<span class="fc" id="L469">                        long curSize = raf.getSize(pRosti[i]);</span>
+<span class="fc bfc" id="L470" title="All 2 branches covered.">                        if (curSize &gt; size) {</span>
+<span class="fc" id="L471">                            size = curSize;</span>
+<span class="fc" id="L472">                            pRostiBig = pRosti[i];</span>
+                        }
+                    }
+
+<span class="fc bfc" id="L476" title="All 2 branches covered.">                    for (int j = 0; j &lt; vafCount; j++) {</span>
+<span class="fc" id="L477">                        final VectorAggregateFunction vaf = vafList.getQuick(j);</span>
+<span class="fc bfc" id="L478" title="All 2 branches covered.">                        for (int i = 0, n = pRosti.length; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L479" title="All 4 branches covered.">                            if (pRostiBig == pRosti[i] || raf.getSize(pRosti[i]) &lt; 1) {</span>
+<span class="fc" id="L480">                                continue;</span>
+                            }
+<span class="fc" id="L482">                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();</span>
+<span class="fc" id="L483">                            long oldSize = Rosti.getAllocMemory(pRostiBig);</span>
+<span class="fc bfc" id="L484" title="All 2 branches covered.">                            if (!vaf.merge(pRostiBig, pRosti[i])) {</span>
+<span class="fc" id="L485">                                resetRostiMemorySize();</span>
+<span class="fc" id="L486">                                throw new OutOfMemoryError();</span>
+                            }
+<span class="fc" id="L488">                            raf.updateMemoryUsage(pRostiBig, oldSize);</span>
+                        }
+
+<span class="fc" id="L491">                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();</span>
+
+                        // some wrapUp() methods can increase rosti size
+<span class="fc" id="L494">                        long oldSize = Rosti.getAllocMemory(pRostiBig);</span>
+<span class="fc bfc" id="L495" title="All 2 branches covered.">                        if (!vaf.wrapUp(pRostiBig)) {</span>
+<span class="fc" id="L496">                            resetRostiMemorySize();</span>
+<span class="fc" id="L497">                            throw new OutOfMemoryError();</span>
+                        }
+<span class="fc" id="L499">                        raf.updateMemoryUsage(pRostiBig, oldSize);</span>
+                    }
+<span class="fc" id="L501">                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();</span>
+<span class="fc bfc" id="L502" title="All 2 branches covered.">                    for (int i = 0, n = pRosti.length; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L503" title="All 2 branches covered.">                        if (pRostiBig == pRosti[i]) {</span>
+<span class="fc" id="L504">                            continue;</span>
+                        }
+
+<span class="pc bpc" id="L507" title="1 of 2 branches missed.">                        if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {</span>
+<span class="nc" id="L508">                            LOG.debug().$(&quot;couldn't minimize rosti memory [i=&quot;).$(i).$(&quot;,currentSize=&quot;).$(Rosti.getSize(pRosti[i])).I$();</span>
+                        }
+                    }
+<span class="fc" id="L511">                } else {</span>
+<span class="fc" id="L512">                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();</span>
+<span class="fc bfc" id="L513" title="All 2 branches covered.">                    for (int j = 0; j &lt; vafCount; j++) {</span>
+<span class="fc bfc" id="L514" title="All 2 branches covered.">                        if (!vafList.getQuick(j).wrapUp(pRostiBig)) {</span>
+<span class="fc" id="L515">                            resetRostiMemorySize();</span>
+<span class="fc" id="L516">                            throw new OutOfMemoryError();</span>
+                        }
+                    }
+                }
+<span class="fc" id="L520">            } catch (Throwable t) {</span>
+<span class="fc" id="L521">                resetRostiMemorySize();</span>
+<span class="fc" id="L522">                throw t;</span>
+<span class="fc" id="L523">            }</span>
+
+<span class="fc" id="L525">            toTop();</span>
+
+<span class="fc" id="L527">            LOG.info().$(&quot;done [total=&quot;).$(total)</span>
+<span class="fc" id="L528">                    .$(&quot;, ownCount=&quot;).$(ownCount)</span>
+<span class="fc" id="L529">                    .$(&quot;, reclaimed=&quot;).$(reclaimed)</span>
+<span class="fc" id="L530">                    .$(&quot;, queuedCount=&quot;).$(queuedCount).I$();</span>
+<span class="fc" id="L531">        }</span>
+
+<span class="fc" id="L533">        private class RostiRecord implements Record {</span>
+<span class="fc" id="L534">            private final Long256Impl long256A = new Long256Impl();</span>
+<span class="fc" id="L535">            private final Long256Impl long256B = new Long256Impl();</span>
+            private long pRow;
+
+            @Override
+            public BinarySequence getBin(int col) {
+<span class="nc" id="L540">                throw new UnsupportedOperationException();</span>
+            }
+
+            @Override
+            public long getBinLen(int col) {
+<span class="nc" id="L545">                throw new UnsupportedOperationException();</span>
+            }
+
+            @Override
+            public boolean getBool(int col) {
+<span class="nc" id="L550">                throw new UnsupportedOperationException();</span>
+            }
+
+            @Override
+            public byte getByte(int col) {
+<span class="nc" id="L555">                throw new UnsupportedOperationException();</span>
+            }
+
+            @Override
+            public char getChar(int col) {
+<span class="nc" id="L560">                throw new UnsupportedOperationException();</span>
+            }
+
+            @Override
+            public long getDate(int col) {
+<span class="fc" id="L565">                return getLong(col);</span>
+            }
+
+            @Override
+            public double getDouble(int col) {
+<span class="fc" id="L570">                return Unsafe.getUnsafe().getDouble(getValueOffset(col));</span>
+            }
+
+            @Override
+            public float getFloat(int col) {
+<span class="nc" id="L575">                return 0;</span>
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+<span class="nc" id="L580">                return getByte(col);</span>
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+<span class="nc" id="L585">                return getInt(col);</span>
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+<span class="nc" id="L590">                return getLong(col);</span>
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+<span class="nc" id="L595">                return getShort(col);</span>
+            }
+
+            @Override
+            public int getInt(int col) {
+<span class="fc" id="L600">                return Unsafe.getUnsafe().getInt(getValueOffset(col));</span>
+            }
+
+            @Override
+            public long getLong(int col) {
+<span class="fc" id="L605">                return Unsafe.getUnsafe().getLong(getValueOffset(col));</span>
+            }
+
+            @Override
+            public void getLong256(int col, CharSink sink) {
+<span class="fc" id="L610">                Long256Impl v = (Long256Impl) getLong256A(col);</span>
+<span class="fc" id="L611">                v.toSink(sink);</span>
+<span class="fc" id="L612">            }</span>
+
+            @Override
+            public Long256 getLong256A(int col) {
+<span class="fc" id="L616">                return getLong256Value(long256A, col);</span>
+            }
+
+            @Override
+            public Long256 getLong256B(int col) {
+<span class="fc" id="L621">                return getLong256Value(long256B, col);</span>
+            }
+
+            public Long256 getLong256Value(Long256 dst, int col) {
+<span class="fc" id="L625">                final long offset = getValueOffset(col);</span>
+<span class="fc" id="L626">                final long l0 = Unsafe.getUnsafe().getLong(offset);</span>
+<span class="fc" id="L627">                final long l1 = Unsafe.getUnsafe().getLong(offset + Long.BYTES);</span>
+<span class="fc" id="L628">                final long l2 = Unsafe.getUnsafe().getLong(offset + 2 * Long.BYTES);</span>
+<span class="fc" id="L629">                final long l3 = Unsafe.getUnsafe().getLong(offset + 3 + Long.BYTES);</span>
+<span class="fc" id="L630">                dst.setAll(l0, l1, l2, l3);</span>
+<span class="fc" id="L631">                return dst;</span>
+            }
+
+            @Override
+            public long getRowId() {
+<span class="fc" id="L636">                return pRow;</span>
+            }
+
+            @Override
+            public short getShort(int col) {
+<span class="nc" id="L641">                return 0;</span>
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+<span class="nc" id="L646">                return null;</span>
+            }
+
+            @Override
+            public void getStr(int col, CharSink sink) {
+<span class="nc" id="L651">            }</span>
+
+            @Override
+            public CharSequence getStrB(int col) {
+<span class="nc" id="L655">                return null;</span>
+            }
+
+            @Override
+            public int getStrLen(int col) {
+<span class="nc" id="L660">                return 0;</span>
+            }
+
+            @Override
+            public CharSequence getSym(int col) {
+<span class="fc" id="L665">                return pageFrameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueOf(getInt(col));</span>
+            }
+
+            @Override
+            public CharSequence getSymB(int col) {
+<span class="fc" id="L670">                return pageFrameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueBOf(getInt(col));</span>
+            }
+
+            @Override
+            public long getTimestamp(int col) {
+<span class="fc" id="L675">                return getLong(col);</span>
+            }
+
+            public void of(long pRow) {
+<span class="fc" id="L679">                this.pRow = pRow;</span>
+<span class="fc" id="L680">            }</span>
+
+            private long getValueOffset(int column) {
+<span class="fc" id="L683">                return pRow + columnSkewIndex.getQuick(column);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

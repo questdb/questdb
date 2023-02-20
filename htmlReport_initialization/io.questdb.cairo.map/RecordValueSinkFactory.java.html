@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RecordValueSinkFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.map</a> &gt; <span class="el_source">RecordValueSinkFactory.java</span></div><h1>RecordValueSinkFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.map;
+
+import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Transient;
+
+<span class="nc" id="L35">public class RecordValueSinkFactory {</span>
+
+    public static RecordValueSink getInstance(BytecodeAssembler asm, ColumnTypes columnTypes, @Transient ColumnFilter columnFilter) {
+<span class="fc" id="L38">        asm.init(RecordSink.class);</span>
+<span class="fc" id="L39">        asm.setupPool();</span>
+<span class="fc" id="L40">        int thisClassIndex = asm.poolClass(asm.poolUtf8(&quot;io/questdb/cairo/valuesink&quot;));</span>
+<span class="fc" id="L41">        int interfaceClassIndex = asm.poolClass(RecordValueSink.class);</span>
+
+<span class="fc" id="L43">        int rGetInt = asm.poolInterfaceMethod(Record.class, &quot;getInt&quot;, &quot;(I)I&quot;);</span>
+<span class="fc" id="L44">        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, &quot;getGeoInt&quot;, &quot;(I)I&quot;);</span>
+<span class="fc" id="L45">        int rGetLong = asm.poolInterfaceMethod(Record.class, &quot;getLong&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L46">        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, &quot;getGeoLong&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L47">        int rGetDate = asm.poolInterfaceMethod(Record.class, &quot;getDate&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L48">        int rGetTimestamp = asm.poolInterfaceMethod(Record.class, &quot;getTimestamp&quot;, &quot;(I)J&quot;);</span>
+<span class="fc" id="L49">        int rGetByte = asm.poolInterfaceMethod(Record.class, &quot;getByte&quot;, &quot;(I)B&quot;);</span>
+<span class="fc" id="L50">        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, &quot;getGeoByte&quot;, &quot;(I)B&quot;);</span>
+<span class="fc" id="L51">        int rGetShort = asm.poolInterfaceMethod(Record.class, &quot;getShort&quot;, &quot;(I)S&quot;);</span>
+<span class="fc" id="L52">        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, &quot;getGeoShort&quot;, &quot;(I)S&quot;);</span>
+<span class="fc" id="L53">        int rGetChar = asm.poolInterfaceMethod(Record.class, &quot;getChar&quot;, &quot;(I)C&quot;);</span>
+<span class="fc" id="L54">        int rGetBool = asm.poolInterfaceMethod(Record.class, &quot;getBool&quot;, &quot;(I)Z&quot;);</span>
+<span class="fc" id="L55">        int rGetFloat = asm.poolInterfaceMethod(Record.class, &quot;getFloat&quot;, &quot;(I)F&quot;);</span>
+<span class="fc" id="L56">        int rGetDouble = asm.poolInterfaceMethod(Record.class, &quot;getDouble&quot;, &quot;(I)D&quot;);</span>
+        //
+<span class="fc" id="L58">        int wPutInt = asm.poolInterfaceMethod(MapValue.class, &quot;putInt&quot;, &quot;(II)V&quot;);</span>
+<span class="fc" id="L59">        int wPutLong = asm.poolInterfaceMethod(MapValue.class, &quot;putLong&quot;, &quot;(IJ)V&quot;);</span>
+<span class="fc" id="L60">        int wPutByte = asm.poolInterfaceMethod(MapValue.class, &quot;putByte&quot;, &quot;(IB)V&quot;);</span>
+<span class="fc" id="L61">        int wPutShort = asm.poolInterfaceMethod(MapValue.class, &quot;putShort&quot;, &quot;(IS)V&quot;);</span>
+<span class="fc" id="L62">        int wPutChar = asm.poolInterfaceMethod(MapValue.class, &quot;putChar&quot;, &quot;(IC)V&quot;);</span>
+<span class="fc" id="L63">        int wPutBool = asm.poolInterfaceMethod(MapValue.class, &quot;putBool&quot;, &quot;(IZ)V&quot;);</span>
+<span class="fc" id="L64">        int wPutFloat = asm.poolInterfaceMethod(MapValue.class, &quot;putFloat&quot;, &quot;(IF)V&quot;);</span>
+<span class="fc" id="L65">        int wPutDouble = asm.poolInterfaceMethod(MapValue.class, &quot;putDouble&quot;, &quot;(ID)V&quot;);</span>
+<span class="fc" id="L66">        int wPutDate = asm.poolInterfaceMethod(MapValue.class, &quot;putDate&quot;, &quot;(IJ)V&quot;);</span>
+<span class="fc" id="L67">        int wPutTimestamp = asm.poolInterfaceMethod(MapValue.class, &quot;putTimestamp&quot;, &quot;(IJ)V&quot;);</span>
+
+<span class="fc" id="L69">        int copyNameIndex = asm.poolUtf8(&quot;copy&quot;);</span>
+<span class="fc" id="L70">        int copySigIndex = asm.poolUtf8(&quot;(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/map/MapValue;)V&quot;);</span>
+
+<span class="fc" id="L72">        asm.finishPool();</span>
+<span class="fc" id="L73">        asm.defineClass(thisClassIndex);</span>
+<span class="fc" id="L74">        asm.interfaceCount(1);</span>
+<span class="fc" id="L75">        asm.putShort(interfaceClassIndex);</span>
+<span class="fc" id="L76">        asm.fieldCount(0);</span>
+<span class="fc" id="L77">        asm.methodCount(2);</span>
+<span class="fc" id="L78">        asm.defineDefaultConstructor();</span>
+
+<span class="fc" id="L80">        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);</span>
+
+<span class="fc" id="L82">        int n = columnFilter.getColumnCount();</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">        for (int i = 0; i &lt; n; i++) {</span>
+
+<span class="fc" id="L85">            int index = columnFilter.getColumnIndexFactored(i);</span>
+<span class="fc" id="L86">            asm.aload(2);</span>
+<span class="fc" id="L87">            asm.iconst(i);</span>
+<span class="fc" id="L88">            asm.aload(1);</span>
+<span class="fc" id="L89">            asm.iconst(index);</span>
+
+<span class="fc" id="L91">            int columnType = columnTypes.getColumnType(index);</span>
+<span class="pc bpc" id="L92" title="2 of 15 branches missed.">            switch (ColumnType.tagOf(columnType)) {</span>
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+<span class="fc" id="L95">                    asm.invokeInterface(rGetInt, 1);</span>
+<span class="fc" id="L96">                    asm.invokeInterface(wPutInt, 2);</span>
+<span class="fc" id="L97">                    break;</span>
+                case ColumnType.GEOINT:
+<span class="fc" id="L99">                    asm.invokeInterface(rGetGeoInt, 1);</span>
+<span class="fc" id="L100">                    asm.invokeInterface(wPutInt, 2);</span>
+<span class="fc" id="L101">                    break;</span>
+                case ColumnType.LONG:
+<span class="fc" id="L103">                    asm.invokeInterface(rGetLong, 1);</span>
+<span class="fc" id="L104">                    asm.invokeInterface(wPutLong, 3);</span>
+<span class="fc" id="L105">                    break;</span>
+                case ColumnType.GEOLONG:
+<span class="fc" id="L107">                    asm.invokeInterface(rGetGeoLong, 1);</span>
+<span class="fc" id="L108">                    asm.invokeInterface(wPutLong, 3);</span>
+<span class="fc" id="L109">                    break;</span>
+                case ColumnType.DATE:
+<span class="fc" id="L111">                    asm.invokeInterface(rGetDate, 1);</span>
+<span class="fc" id="L112">                    asm.invokeInterface(wPutDate, 3);</span>
+<span class="fc" id="L113">                    break;</span>
+                case ColumnType.TIMESTAMP:
+<span class="fc" id="L115">                    asm.invokeInterface(rGetTimestamp, 1);</span>
+<span class="fc" id="L116">                    asm.invokeInterface(wPutTimestamp, 3);</span>
+<span class="fc" id="L117">                    break;</span>
+                case ColumnType.BYTE:
+<span class="fc" id="L119">                    asm.invokeInterface(rGetByte, 1);</span>
+<span class="fc" id="L120">                    asm.invokeInterface(wPutByte, 2);</span>
+<span class="fc" id="L121">                    break;</span>
+                case ColumnType.GEOBYTE:
+<span class="fc" id="L123">                    asm.invokeInterface(rGetGeoByte, 1);</span>
+<span class="fc" id="L124">                    asm.invokeInterface(wPutByte, 2);</span>
+<span class="fc" id="L125">                    break;</span>
+                case ColumnType.SHORT:
+<span class="fc" id="L127">                    asm.invokeInterface(rGetShort, 1);</span>
+<span class="fc" id="L128">                    asm.invokeInterface(wPutShort, 2);</span>
+<span class="fc" id="L129">                    break;</span>
+                case ColumnType.GEOSHORT:
+<span class="fc" id="L131">                    asm.invokeInterface(rGetGeoShort, 1);</span>
+<span class="fc" id="L132">                    asm.invokeInterface(wPutShort, 2);</span>
+<span class="fc" id="L133">                    break;</span>
+                case ColumnType.CHAR:
+<span class="nc" id="L135">                    asm.invokeInterface(rGetChar, 1);</span>
+<span class="nc" id="L136">                    asm.invokeInterface(wPutChar, 2);</span>
+<span class="nc" id="L137">                    break;</span>
+                case ColumnType.BOOLEAN:
+<span class="fc" id="L139">                    asm.invokeInterface(rGetBool, 1);</span>
+<span class="fc" id="L140">                    asm.invokeInterface(wPutBool, 2);</span>
+<span class="fc" id="L141">                    break;</span>
+                case ColumnType.FLOAT:
+<span class="fc" id="L143">                    asm.invokeInterface(rGetFloat, 1);</span>
+<span class="fc" id="L144">                    asm.invokeInterface(wPutFloat, 2);</span>
+<span class="fc" id="L145">                    break;</span>
+                case ColumnType.DOUBLE:
+<span class="fc" id="L147">                    asm.invokeInterface(rGetDouble, 1);</span>
+<span class="fc" id="L148">                    asm.invokeInterface(wPutDouble, 3);</span>
+<span class="fc" id="L149">                    break;</span>
+                default:
+<span class="nc" id="L151">                    throw new UnsupportedOperationException();</span>
+            }
+        }
+
+<span class="fc" id="L155">        asm.return_();</span>
+<span class="fc" id="L156">        asm.endMethodCode();</span>
+
+        // exceptions
+<span class="fc" id="L159">        asm.putShort(0);</span>
+
+        // we have to add stack map table as branch target
+        // jvm requires it
+
+        // attributes: 0 (void, no stack verification)
+<span class="fc" id="L165">        asm.putShort(0);</span>
+
+<span class="fc" id="L167">        asm.endMethod();</span>
+
+        // class attribute count
+<span class="fc" id="L170">        asm.putShort(0);</span>
+
+<span class="fc" id="L172">        return asm.newInstance();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

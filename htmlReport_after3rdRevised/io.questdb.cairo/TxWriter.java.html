@@ -1,0 +1,645 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TxWriter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">TxWriter.java</span></div><h1>TxWriter.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
+
+import java.io.Closeable;
+
+import static io.questdb.cairo.TableUtils.*;
+
+<span class="fc" id="L36">public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {</span>
+    private final FilesFacade ff;
+    private long baseVersion;
+    private TableWriter.ExtensionListener extensionListener;
+<span class="fc" id="L40">    private int lastRecordBaseOffset = -1;</span>
+<span class="fc" id="L41">    private long lastRecordStructureVersion = -1;</span>
+    private long prevMaxTimestamp;
+    private long prevMinTimestamp;
+<span class="fc" id="L44">    private int prevRecordBaseOffset = -2;</span>
+<span class="fc" id="L45">    private long prevRecordStructureVersion = -2;</span>
+    private long prevTransientRowCount;
+    private int readBaseOffset;
+    private long readRecordSize;
+<span class="fc" id="L49">    private long recordStructureVersion = 0;</span>
+    private MemoryCMARW txMemBase;
+    private int txPartitionCount;
+    private int writeAreaSize;
+    private int writeBaseOffset;
+
+    public TxWriter(FilesFacade ff) {
+<span class="fc" id="L56">        super(ff);</span>
+<span class="fc" id="L57">        this.ff = ff;</span>
+<span class="fc" id="L58">    }</span>
+
+    public void append() {
+<span class="fc" id="L61">        transientRowCount++;</span>
+<span class="fc" id="L62">    }</span>
+
+    public void beginPartitionSizeUpdate() {
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        if (maxTimestamp != Long.MIN_VALUE) {</span>
+            // Last partition size is usually not stored in attached partitions list
+            // but in transientRowCount only.
+            // To resolve transientRowCount after out of order partition update
+            // let's store it in attached partitions list
+            // before out of order partition update happens
+<span class="fc" id="L71">            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);</span>
+        }
+<span class="fc" id="L73">    }</span>
+
+    public void bumpStructureVersion(ObjList&lt;? extends SymbolCountProvider&gt; denseSymbolMapWriters) {
+<span class="fc" id="L76">        recordStructureVersion++;</span>
+<span class="fc" id="L77">        structureVersion.incrementAndGet();</span>
+<span class="fc" id="L78">        commit(CommitMode.NOSYNC, denseSymbolMapWriters);</span>
+<span class="fc" id="L79">    }</span>
+
+    public void bumpTruncateVersion() {
+<span class="fc" id="L82">        truncateVersion++;</span>
+<span class="fc" id="L83">    }</span>
+
+    public void cancelRow() {
+<span class="fc bfc" id="L86" title="All 4 branches covered.">        if (transientRowCount == 1 &amp;&amp; txPartitionCount &gt; 1) {</span>
+            // we have to undo creation of partition
+<span class="fc" id="L88">            txPartitionCount--;</span>
+<span class="fc" id="L89">            fixedRowCount -= prevTransientRowCount;</span>
+<span class="fc" id="L90">            transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.</span>
+<span class="fc" id="L91">            attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);</span>
+<span class="fc" id="L92">            prevTransientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);</span>
+        }
+
+<span class="fc" id="L95">        maxTimestamp = prevMaxTimestamp;</span>
+<span class="fc" id="L96">        minTimestamp = prevMinTimestamp;</span>
+<span class="fc" id="L97">        recordStructureVersion++;</span>
+<span class="fc" id="L98">    }</span>
+
+    public long cancelToMaxTimestamp() {
+<span class="fc" id="L101">        return prevMaxTimestamp;</span>
+    }
+
+    public long cancelToTransientRowCount() {
+<span class="fc" id="L105">        return prevTransientRowCount;</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="fc bfc" id="L110" title="All 2 branches covered.">        if (txMemBase != null) {</span>
+            // Never trim _txn file to size. Size of the file can only grow up.
+<span class="fc" id="L112">            txMemBase.close(false);</span>
+        }
+<span class="fc" id="L114">        recordStructureVersion = 0L;</span>
+<span class="fc" id="L115">        lastRecordStructureVersion = -1L;</span>
+<span class="fc" id="L116">        prevRecordStructureVersion = -2L;</span>
+<span class="fc" id="L117">        lastRecordBaseOffset = -1;</span>
+<span class="fc" id="L118">        prevRecordBaseOffset = -2;</span>
+<span class="fc" id="L119">    }</span>
+
+    @Override
+    public void close() {
+        try {
+<span class="fc" id="L124">            clear();</span>
+<span class="fc" id="L125">            txMemBase = null;</span>
+        } finally {
+<span class="fc" id="L127">            super.close();</span>
+        }
+<span class="fc" id="L129">    }</span>
+
+    @Override
+    public void collectValueCount(int symbolIndexInTxWriter, int count) {
+<span class="fc" id="L133">        writeTransientSymbolCount(symbolIndexInTxWriter, count);</span>
+<span class="fc" id="L134">    }</span>
+
+    public void commit(int commitMode, ObjList&lt;? extends SymbolCountProvider&gt; symbolCountProviders) {
+
+<span class="pc bpc" id="L138" title="1 of 4 branches missed.">        if (prevRecordStructureVersion == recordStructureVersion &amp;&amp; prevRecordBaseOffset &gt; 0) {</span>
+
+            // Optimisation for the case where commit appends rows to the last partition only
+            // In this case all to be changed is TX_OFFSET_MAX_TIMESTAMP_64 and TX_OFFSET_TRANSIENT_ROW_COUNT_64
+<span class="fc" id="L142">            writeBaseOffset = prevRecordBaseOffset;</span>
+<span class="fc" id="L143">            putLong(TX_OFFSET_TXN_64, ++txn);</span>
+<span class="fc" id="L144">            putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);</span>
+<span class="fc" id="L145">            putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);</span>
+<span class="fc" id="L146">            putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);</span>
+
+            // Store symbol counts. Unfortunately we cannot skip it in here
+<span class="fc" id="L149">            storeSymbolCounts(symbolCountProviders);</span>
+
+<span class="fc" id="L151">            Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L152">            txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);</span>
+
+<span class="fc" id="L154">            super.switchRecord(writeBaseOffset, writeAreaSize); // writeAreaSize should be between records</span>
+<span class="fc" id="L155">            this.readBaseOffset = writeBaseOffset;</span>
+
+<span class="fc" id="L157">            prevTransientRowCount = transientRowCount;</span>
+<span class="fc" id="L158">            prevMinTimestamp = minTimestamp;</span>
+<span class="fc" id="L159">            prevMaxTimestamp = maxTimestamp;</span>
+
+<span class="fc" id="L161">            prevRecordBaseOffset = lastRecordBaseOffset;</span>
+<span class="fc" id="L162">            lastRecordBaseOffset = writeBaseOffset;</span>
+        } else {
+            // Slow path, record structure changed
+<span class="fc" id="L165">            commitFullRecord(commitMode, symbolCountProviders);</span>
+        }
+<span class="fc" id="L167">    }</span>
+
+    public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
+<span class="fc" id="L170">        this.minTimestamp = minTimestamp;</span>
+<span class="fc" id="L171">        this.maxTimestamp = maxTimestamp;</span>
+<span class="fc" id="L172">        finishPartitionSizeUpdate();</span>
+<span class="fc" id="L173">    }</span>
+
+    public void finishPartitionSizeUpdate() {
+<span class="fc" id="L176">        recordStructureVersion++;</span>
+<span class="fc" id="L177">        int numPartitions = getPartitionCount();</span>
+<span class="fc bfc" id="L178" title="All 2 branches covered.">        transientRowCount = numPartitions &gt; 0 ? getPartitionSize(numPartitions - 1) : 0L;</span>
+<span class="fc" id="L179">        fixedRowCount = 0L;</span>
+<span class="fc" id="L180">        txPartitionCount = getPartitionCount();</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        for (int i = 0, hi = txPartitionCount - 1; i &lt; hi; i++) {</span>
+<span class="fc" id="L182">            fixedRowCount += getPartitionSize(i);</span>
+        }
+<span class="fc" id="L184">    }</span>
+
+    public int getAppendedPartitionCount() {
+<span class="fc" id="L187">        return txPartitionCount;</span>
+    }
+
+    public long getLastTxSize() {
+<span class="pc bpc" id="L191" title="1 of 2 branches missed.">        return txPartitionCount == 1 ? transientRowCount - prevTransientRowCount : transientRowCount;</span>
+    }
+
+    public boolean inTransaction() {
+<span class="fc bfc" id="L195" title="All 4 branches covered.">        return txPartitionCount &gt; 1 || transientRowCount != prevTransientRowCount;</span>
+    }
+
+    public boolean isActivePartition(long timestamp) {
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">        return getPartitionTimestampLo(maxTimestamp) == timestamp;</span>
+    }
+
+    @Override
+    public TxWriter ofRO(@Transient LPSZ path, int partitionBy) {
+<span class="nc" id="L204">        throw new IllegalStateException();</span>
+    }
+
+    public TxWriter ofRW(@Transient LPSZ path, int partitionBy) {
+<span class="fc" id="L208">        clear();</span>
+<span class="fc" id="L209">        openTxnFile(ff, path);</span>
+        try {
+<span class="fc" id="L211">            super.initRO(txMemBase, partitionBy);</span>
+<span class="fc" id="L212">            unsafeLoadAll();</span>
+<span class="fc" id="L213">        } catch (Throwable e) {</span>
+<span class="pc bpc" id="L214" title="1 of 2 branches missed.">            if (txMemBase != null) {</span>
+                // Do not truncate in case the file cannot be read
+<span class="fc" id="L216">                txMemBase.close(false);</span>
+<span class="fc" id="L217">                txMemBase = null;</span>
+            }
+<span class="fc" id="L219">            super.close();</span>
+<span class="fc" id="L220">            throw e;</span>
+<span class="fc" id="L221">        }</span>
+<span class="fc" id="L222">        return this;</span>
+    }
+
+    public void openFirstPartition(long timestamp) {
+<span class="fc" id="L226">        txPartitionCount = 1;</span>
+<span class="fc" id="L227">        updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);</span>
+<span class="fc" id="L228">    }</span>
+
+    public void removeAllPartitions() {
+<span class="fc" id="L231">        maxTimestamp = Long.MIN_VALUE;</span>
+<span class="fc" id="L232">        minTimestamp = Long.MAX_VALUE;</span>
+<span class="fc" id="L233">        prevTransientRowCount = 0;</span>
+<span class="fc" id="L234">        transientRowCount = 0;</span>
+<span class="fc" id="L235">        fixedRowCount = 0;</span>
+<span class="fc" id="L236">        attachedPartitions.clear();</span>
+<span class="fc" id="L237">        recordStructureVersion++;</span>
+<span class="fc" id="L238">        truncateVersion++;</span>
+<span class="fc" id="L239">        partitionTableVersion++;</span>
+<span class="fc" id="L240">        dataVersion++;</span>
+<span class="fc" id="L241">    }</span>
+
+    public void removeAttachedPartitions(long timestamp) {
+<span class="fc" id="L244">        recordStructureVersion++;</span>
+<span class="fc" id="L245">        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);</span>
+<span class="fc" id="L246">        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);</span>
+<span class="pc bpc" id="L247" title="1 of 2 branches missed.">        if (index &gt; -1) {</span>
+<span class="fc" id="L248">            final int size = attachedPartitions.size();</span>
+<span class="fc" id="L249">            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;</span>
+<span class="fc bfc" id="L250" title="All 2 branches covered.">            if (index &lt; lim) {</span>
+<span class="fc" id="L251">                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);</span>
+            }
+<span class="fc" id="L253">            attachedPartitions.setPos(lim);</span>
+<span class="fc" id="L254">            partitionTableVersion++;</span>
+<span class="fc" id="L255">        } else {</span>
+<span class="nc" id="L256">            assert false;</span>
+        }
+<span class="fc" id="L258">    }</span>
+
+    public void reset(
+            long fixedRowCount,
+            long transientRowCount,
+            long maxTimestamp,
+            int commitMode,
+            ObjList&lt;? extends SymbolCountProvider&gt; symbolCountProviders
+    ) {
+<span class="fc" id="L267">        recordStructureVersion++;</span>
+<span class="fc" id="L268">        this.fixedRowCount = fixedRowCount;</span>
+<span class="fc" id="L269">        this.maxTimestamp = maxTimestamp;</span>
+<span class="fc" id="L270">        this.transientRowCount = transientRowCount;</span>
+<span class="fc" id="L271">        commit(commitMode, symbolCountProviders);</span>
+<span class="fc" id="L272">    }</span>
+
+    public void resetTimestamp() {
+<span class="fc" id="L275">        recordStructureVersion++;</span>
+<span class="fc" id="L276">        prevMaxTimestamp = Long.MIN_VALUE;</span>
+<span class="fc" id="L277">        prevMinTimestamp = Long.MAX_VALUE;</span>
+<span class="fc" id="L278">        maxTimestamp = prevMaxTimestamp;</span>
+<span class="fc" id="L279">        minTimestamp = prevMinTimestamp;</span>
+<span class="fc" id="L280">    }</span>
+
+    public void setColumnVersion(long newVersion) {
+<span class="fc bfc" id="L283" title="All 2 branches covered.">        if (columnVersion != newVersion) {</span>
+<span class="fc" id="L284">            recordStructureVersion++;</span>
+<span class="fc" id="L285">            columnVersion = newVersion;</span>
+        }
+<span class="fc" id="L287">    }</span>
+
+    public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
+<span class="fc" id="L290">        this.extensionListener = extensionListener;</span>
+<span class="fc" id="L291">    }</span>
+
+    public void setMinTimestamp(long timestamp) {
+<span class="fc" id="L294">        recordStructureVersion++;</span>
+<span class="fc" id="L295">        minTimestamp = timestamp;</span>
+<span class="fc bfc" id="L296" title="All 2 branches covered.">        if (prevMinTimestamp == Long.MAX_VALUE) {</span>
+<span class="fc" id="L297">            prevMinTimestamp = minTimestamp;</span>
+        }
+<span class="fc" id="L299">    }</span>
+
+    public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
+<span class="fc" id="L302">        setPartitionReadOnlyByIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);</span>
+<span class="fc" id="L303">    }</span>
+
+    public void setPartitionReadOnlyByIndex(int index, boolean isReadOnly) {
+<span class="fc bfc" id="L306" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L307">            throw CairoException.nonCritical().put(&quot;bad partition index -1&quot;);</span>
+        }
+<span class="fc" id="L309">        int offset = index + PARTITION_MASKED_SIZE_OFFSET;</span>
+<span class="fc" id="L310">        long maskedSize = attachedPartitions.getQuick(offset);</span>
+<span class="fc" id="L311">        attachedPartitions.setQuick(offset, updatePartitionIsReadOnly(maskedSize, isReadOnly));</span>
+<span class="fc" id="L312">    }</span>
+
+    public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
+<span class="fc" id="L315">        setPartitionReadOnlyByIndex(findAttachedPartitionIndex(timestamp), isReadOnly);</span>
+<span class="fc" id="L316">    }</span>
+
+    public void setSeqTxn(long seqTxn) {
+<span class="fc" id="L319">        this.seqTxn = seqTxn;</span>
+<span class="fc" id="L320">    }</span>
+
+    public void switchPartitions(long timestamp) {
+<span class="fc" id="L323">        recordStructureVersion++;</span>
+<span class="fc" id="L324">        fixedRowCount += transientRowCount;</span>
+<span class="fc" id="L325">        prevTransientRowCount = transientRowCount;</span>
+<span class="fc" id="L326">        long partitionTimestampLo = getPartitionTimestampLo(maxTimestamp);</span>
+<span class="fc" id="L327">        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);</span>
+<span class="fc" id="L328">        updatePartitionSizeByIndex(index, transientRowCount);</span>
+
+<span class="fc" id="L330">        index += LONGS_PER_TX_ATTACHED_PARTITION;</span>
+
+<span class="fc" id="L332">        attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);</span>
+<span class="fc" id="L333">        long newTimestampLo = getPartitionTimestampLo(timestamp);</span>
+<span class="fc" id="L334">        initPartitionAt(index, newTimestampLo, 0L, txn - 1, -1L);</span>
+<span class="fc" id="L335">        transientRowCount = 0L;</span>
+<span class="fc" id="L336">        txPartitionCount++;</span>
+<span class="fc bfc" id="L337" title="All 2 branches covered.">        if (extensionListener != null) {</span>
+<span class="fc" id="L338">            extensionListener.onTableExtended(newTimestampLo);</span>
+        }
+<span class="fc" id="L340">    }</span>
+
+    public void truncate(long columnVersion) {
+<span class="fc" id="L343">        removeAllPartitions();</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">        if (!PartitionBy.isPartitioned(partitionBy)) {</span>
+<span class="fc" id="L345">            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);</span>
+<span class="fc" id="L346">            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L, columnVersion);</span>
+        }
+
+<span class="fc" id="L349">        writeAreaSize = calculateWriteSize();</span>
+<span class="fc" id="L350">        writeBaseOffset = calculateWriteOffset(writeAreaSize);</span>
+<span class="fc" id="L351">        resetTxn(</span>
+                txMemBase,
+                writeBaseOffset,
+<span class="fc" id="L354">                getSymbolColumnCount(),</span>
+                ++txn,
+                seqTxn,
+                dataVersion,
+                partitionTableVersion,
+<span class="fc" id="L359">                structureVersion.get(),</span>
+                columnVersion,
+                truncateVersion
+        );
+<span class="fc" id="L363">        finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, 0, CommitMode.NOSYNC);</span>
+<span class="fc" id="L364">    }</span>
+
+    public boolean unsafeLoadAll() {
+<span class="fc" id="L367">        super.unsafeLoadAll();</span>
+<span class="fc" id="L368">        this.baseVersion = getVersion();</span>
+<span class="pc bpc" id="L369" title="1 of 2 branches missed.">        if (baseVersion &gt;= 0) {</span>
+<span class="fc" id="L370">            this.readBaseOffset = getBaseOffset();</span>
+<span class="fc" id="L371">            this.readRecordSize = getRecordSize();</span>
+<span class="fc" id="L372">            this.prevTransientRowCount = this.transientRowCount;</span>
+<span class="fc" id="L373">            this.prevMaxTimestamp = maxTimestamp;</span>
+<span class="fc" id="L374">            this.prevMinTimestamp = minTimestamp;</span>
+<span class="fc" id="L375">            return true;</span>
+        }
+<span class="nc" id="L377">        return false;</span>
+    }
+
+    public void updateMaxTimestamp(long timestamp) {
+<span class="fc" id="L381">        prevMaxTimestamp = maxTimestamp;</span>
+<span class="pc bpc" id="L382" title="1 of 2 branches missed.">        assert timestamp &gt;= maxTimestamp;</span>
+<span class="fc" id="L383">        maxTimestamp = timestamp;</span>
+<span class="fc" id="L384">    }</span>
+
+    public void updatePartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
+<span class="fc" id="L387">        updateAttachedPartitionSizeByIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);</span>
+<span class="fc" id="L388">    }</span>
+
+    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
+<span class="fc" id="L391">        recordStructureVersion++;</span>
+<span class="fc" id="L392">        updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, txn - 1);</span>
+<span class="fc" id="L393">    }</span>
+
+    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount, long partitionNameTxn) {
+<span class="fc" id="L396">        recordStructureVersion++;</span>
+<span class="fc" id="L397">        updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, partitionNameTxn);</span>
+<span class="fc" id="L398">    }</span>
+
+    private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
+<span class="fc bfc" id="L401" title="All 2 branches covered.">        if (isReadOnly) {</span>
+<span class="fc" id="L402">            maskedSize |= 1L &lt;&lt; PARTITION_MASK_READ_ONLY_BIT_OFFSET;</span>
+        } else {
+<span class="fc" id="L404">            maskedSize &amp;= ~(1L &lt;&lt; PARTITION_MASK_READ_ONLY_BIT_OFFSET);</span>
+        }
+<span class="fc" id="L406">        return maskedSize;</span>
+    }
+
+    private int calculateWriteOffset(int areaSize) {
+<span class="fc bfc" id="L410" title="All 2 branches covered.">        boolean currentIsA = (baseVersion &amp; 1L) == 0L;</span>
+<span class="fc bfc" id="L411" title="All 2 branches covered.">        int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);</span>
+<span class="fc bfc" id="L412" title="All 2 branches covered.">        if (TX_BASE_HEADER_SIZE + areaSize &lt;= currentOffset) {</span>
+<span class="fc" id="L413">            return TX_BASE_HEADER_SIZE;</span>
+        }
+<span class="fc bfc" id="L415" title="All 2 branches covered.">        int currentSizeSymbols = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);</span>
+<span class="fc bfc" id="L416" title="All 2 branches covered.">        int currentSizePartitions = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);</span>
+<span class="fc" id="L417">        int currentSize = calculateTxRecordSize(currentSizeSymbols, currentSizePartitions);</span>
+<span class="fc" id="L418">        return currentOffset + currentSize;</span>
+    }
+
+    private int calculateWriteSize() {
+        // If by any action data is reset and table is partitioned, clear attachedPartitions
+<span class="fc bfc" id="L423" title="All 4 branches covered.">        if (maxTimestamp == Long.MIN_VALUE &amp;&amp; PartitionBy.isPartitioned(partitionBy)) {</span>
+<span class="fc" id="L424">            attachedPartitions.clear();</span>
+        }
+<span class="fc" id="L426">        return calculateTxRecordSize(symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES);</span>
+    }
+
+    private void commitFullRecord(int commitMode, ObjList&lt;? extends SymbolCountProvider&gt; symbolCountProviders) {
+<span class="fc" id="L430">        symbolColumnCount = symbolCountProviders.size();</span>
+
+<span class="fc" id="L432">        writeAreaSize = calculateWriteSize();</span>
+<span class="fc" id="L433">        writeBaseOffset = calculateWriteOffset(writeAreaSize);</span>
+<span class="fc" id="L434">        putLong(TX_OFFSET_TXN_64, ++txn);</span>
+<span class="fc" id="L435">        putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);</span>
+<span class="fc" id="L436">        putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);</span>
+<span class="fc" id="L437">        putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);</span>
+<span class="fc" id="L438">        putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);</span>
+<span class="fc" id="L439">        putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());</span>
+<span class="fc" id="L440">        putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);</span>
+<span class="fc" id="L441">        putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);</span>
+<span class="fc" id="L442">        putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);</span>
+<span class="fc" id="L443">        putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);</span>
+<span class="fc" id="L444">        putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);</span>
+<span class="fc" id="L445">        putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);</span>
+
+        // store symbol counts
+<span class="fc" id="L448">        storeSymbolCounts(symbolCountProviders);</span>
+
+        // store attached partitions
+<span class="fc" id="L451">        txPartitionCount = 1;</span>
+<span class="fc" id="L452">        saveAttachedPartitionsToTx(symbolColumnCount);</span>
+<span class="fc" id="L453">        finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES, commitMode);</span>
+
+<span class="fc" id="L455">        prevTransientRowCount = transientRowCount;</span>
+<span class="fc" id="L456">        prevMinTimestamp = minTimestamp;</span>
+<span class="fc" id="L457">        prevMaxTimestamp = maxTimestamp;</span>
+
+<span class="fc" id="L459">        prevRecordStructureVersion = lastRecordStructureVersion;</span>
+<span class="fc" id="L460">        lastRecordStructureVersion = recordStructureVersion;</span>
+<span class="fc" id="L461">        prevRecordBaseOffset = lastRecordBaseOffset;</span>
+<span class="fc" id="L462">        lastRecordBaseOffset = writeBaseOffset;</span>
+<span class="fc" id="L463">    }</span>
+
+    private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {
+<span class="fc bfc" id="L466" title="All 2 branches covered.">        boolean currentIsA = (baseVersion &amp; 1L) == 0L;</span>
+
+        // When current is A, write to B
+<span class="fc bfc" id="L469" title="All 2 branches covered.">        long offsetOffset = currentIsA ? TX_BASE_OFFSET_B_32 : TX_BASE_OFFSET_A_32;</span>
+<span class="fc bfc" id="L470" title="All 2 branches covered.">        long symbolSizeOffset = currentIsA ? TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_A_32;</span>
+<span class="fc bfc" id="L471" title="All 2 branches covered.">        long partitionsSizeOffset = currentIsA ? TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_A_32;</span>
+
+<span class="fc" id="L473">        txMemBase.putInt(offsetOffset, areaOffset);</span>
+<span class="fc" id="L474">        txMemBase.putInt(symbolSizeOffset, bytesSymbols);</span>
+<span class="fc" id="L475">        txMemBase.putInt(partitionsSizeOffset, bytesPartitions);</span>
+
+<span class="fc" id="L477">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L478">        txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);</span>
+
+<span class="fc" id="L480">        readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);</span>
+<span class="fc" id="L481">        readBaseOffset = areaOffset;</span>
+<span class="fc" id="L482">        super.switchRecord(readBaseOffset, readRecordSize);</span>
+
+<span class="fc bfc" id="L484" title="All 2 branches covered.">        if (commitMode != CommitMode.NOSYNC) {</span>
+<span class="fc bfc" id="L485" title="All 2 branches covered.">            txMemBase.sync(commitMode == CommitMode.ASYNC);</span>
+        }
+<span class="fc" id="L487">    }</span>
+
+    private long getLong(long offset) {
+<span class="pc bpc" id="L490" title="1 of 2 branches missed.">        assert offset + 8 &lt;= readRecordSize;</span>
+<span class="fc" id="L491">        return txMemBase.getLong(readBaseOffset + offset);</span>
+    }
+
+    private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize, long partitionNameTxn) {
+<span class="fc" id="L495">        int size = attachedPartitions.size();</span>
+<span class="fc" id="L496">        attachedPartitions.setPos(size + LONGS_PER_TX_ATTACHED_PARTITION);</span>
+<span class="fc bfc" id="L497" title="All 2 branches covered.">        if (index &lt; size) {</span>
+            // insert in the middle
+<span class="fc" id="L499">            attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);</span>
+<span class="fc" id="L500">            partitionTableVersion++;</span>
+<span class="fc bfc" id="L501" title="All 2 branches covered.">        } else if (extensionListener != null) {</span>
+<span class="fc" id="L502">            extensionListener.onTableExtended(partitionTimestamp);</span>
+        }
+<span class="fc" id="L504">        recordStructureVersion++;</span>
+<span class="fc" id="L505">        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1L);</span>
+<span class="fc" id="L506">    }</span>
+
+    private void openTxnFile(FilesFacade ff, LPSZ path) {
+<span class="fc bfc" id="L509" title="All 2 branches covered.">        if (ff.exists(path)) {</span>
+<span class="fc bfc" id="L510" title="All 2 branches covered.">            if (txMemBase == null) {</span>
+<span class="fc" id="L511">                txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);</span>
+            } else {
+<span class="fc" id="L513">                txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);</span>
+            }
+<span class="fc" id="L515">            return;</span>
+        }
+<span class="fc" id="L517">        throw CairoException.critical(ff.errno()).put(&quot;Cannot append. File does not exist: &quot;).put(path);</span>
+    }
+
+    private void putInt(long offset, int value) {
+<span class="pc bpc" id="L521" title="1 of 2 branches missed.">        assert offset + Integer.BYTES &lt;= writeAreaSize;</span>
+<span class="fc" id="L522">        txMemBase.putInt(writeBaseOffset + offset, value);</span>
+<span class="fc" id="L523">    }</span>
+
+    private void putLong(long offset, long value) {
+<span class="fc" id="L526">        txMemBase.putLong(writeBaseOffset + offset, value);</span>
+<span class="fc" id="L527">    }</span>
+
+    private void saveAttachedPartitionsToTx(int symbolColumnCount) {
+<span class="fc" id="L530">        final int size = attachedPartitions.size();</span>
+<span class="fc" id="L531">        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);</span>
+<span class="fc" id="L532">        putInt(partitionTableOffset, size * Long.BYTES);</span>
+        // change partition count only when we have something to save to the partition table
+<span class="fc bfc" id="L534" title="All 2 branches covered.">        if (maxTimestamp != Long.MIN_VALUE) {</span>
+<span class="fc bfc" id="L535" title="All 2 branches covered.">            for (int i = 0; i &lt; size; i++) {</span>
+<span class="fc" id="L536">                putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));</span>
+            }
+        }
+<span class="fc" id="L539">    }</span>
+
+    private void storeSymbolCounts(ObjList&lt;? extends SymbolCountProvider&gt; symbolCountProviders) {
+<span class="fc bfc" id="L542" title="All 2 branches covered.">        for (int i = 0, n = symbolCountProviders.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L543">            long offset = getSymbolWriterIndexOffset(i);</span>
+<span class="fc" id="L544">            int symCount = symbolCountProviders.getQuick(i).getSymbolCount();</span>
+<span class="fc" id="L545">            putInt(offset, symCount);</span>
+<span class="fc" id="L546">            offset += Integer.BYTES;</span>
+<span class="fc" id="L547">            putInt(offset, symCount);</span>
+        }
+<span class="fc" id="L549">    }</span>
+
+    private void updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
+<span class="fc bfc" id="L552" title="All 2 branches covered.">        if (partitionIndex &gt; -1) {</span>
+<span class="fc" id="L553">            updatePartitionSizeByIndex(partitionIndex, partitionSize);</span>
+        } else {
+<span class="fc" id="L555">            insertPartitionSizeByTimestamp(-(partitionIndex + 1), partitionTimestampLo, partitionSize, partitionNameTxn);</span>
+        }
+<span class="fc" id="L557">    }</span>
+
+    private void updateAttachedPartitionSizeByTimestamp(long timestamp, long partitionSize, long partitionNameTxn) {
+<span class="fc" id="L560">        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);</span>
+<span class="fc" id="L561">        updateAttachedPartitionSizeByIndex(findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);</span>
+<span class="fc" id="L562">    }</span>
+
+    private void updatePartitionSizeByIndex(int index, long partitionSize) {
+<span class="fc" id="L565">        int offset = index + PARTITION_MASKED_SIZE_OFFSET;</span>
+<span class="fc" id="L566">        long maskedSize = attachedPartitions.getQuick(offset);</span>
+<span class="fc bfc" id="L567" title="All 2 branches covered.">        if ((maskedSize &amp; PARTITION_SIZE_MASK) != partitionSize) {</span>
+<span class="fc" id="L568">            attachedPartitions.setQuick(offset, (maskedSize &amp; PARTITION_FLAGS_MASK) | (partitionSize));</span>
+<span class="fc" id="L569">            recordStructureVersion++;</span>
+        }
+<span class="fc" id="L571">    }</span>
+
+    private void writeTransientSymbolCount(int symbolIndex, int symCount) {
+        // This updates into current record
+<span class="fc" id="L575">        long recordOffset = getSymbolWriterTransientIndexOffset(symbolIndex);</span>
+<span class="pc bpc" id="L576" title="1 of 2 branches missed.">        assert recordOffset + Integer.BYTES &lt;= readRecordSize;</span>
+<span class="fc" id="L577">        txMemBase.putInt(readBaseOffset + recordOffset, symCount);</span>
+<span class="fc" id="L578">    }</span>
+
+    void bumpPartitionTableVersion() {
+<span class="fc" id="L581">        recordStructureVersion++;</span>
+<span class="fc" id="L582">        partitionTableVersion++;</span>
+<span class="fc" id="L583">    }</span>
+
+    // It is possible that O3 commit will create partition just before
+    // the last one, leaving last partition row count 0 when doing ic().
+    // That's when the data from the last partition is moved to in-memory lag.
+    // One way to detect this is to check if index of the &quot;last&quot; partition is not
+    // last partition in the attached partition list.
+    boolean reconcileOptimisticPartitions() {
+<span class="fc" id="L591">        int lastPartitionTsIndex = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET;</span>
+<span class="fc bfc" id="L592" title="All 4 branches covered.">        if (lastPartitionTsIndex &gt; 0 &amp;&amp; maxTimestamp &lt; attachedPartitions.getQuick(lastPartitionTsIndex)) {</span>
+<span class="fc" id="L593">            int maxTimestampPartitionIndex = getPartitionIndex(getLastPartitionTimestamp());</span>
+<span class="pc bpc" id="L594" title="1 of 2 branches missed.">            if (maxTimestampPartitionIndex &lt; getPartitionCount() - 1) {</span>
+                // accumulate value, which we have to subtract
+                // from fixedRowCount (total count of rows of non-active partitions)
+<span class="fc" id="L597">                long rowCount = 0;</span>
+<span class="fc bfc" id="L598" title="All 2 branches covered.">                for (int i = maxTimestampPartitionIndex, n = getPartitionCount() - 1; i &lt; n; i++) {</span>
+<span class="fc" id="L599">                    rowCount += getPartitionSize(i);</span>
+                }
+<span class="fc" id="L601">                attachedPartitions.setPos((maxTimestampPartitionIndex + 1) * LONGS_PER_TX_ATTACHED_PARTITION);</span>
+<span class="fc" id="L602">                recordStructureVersion++;</span>
+
+                // remove partitions
+<span class="fc" id="L605">                this.fixedRowCount -= rowCount;</span>
+<span class="fc" id="L606">                this.maxTimestamp = getMaxTimestamp();</span>
+<span class="fc" id="L607">                this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);</span>
+<span class="fc" id="L608">                return true;</span>
+            }
+        }
+<span class="fc" id="L611">        return false;</span>
+    }
+
+    void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {
+<span class="fc" id="L615">        recordStructureVersion++;</span>
+<span class="fc" id="L616">        updatePartitionSizeByTimestamp(maxTimestamp, committedTransientRowCount);</span>
+<span class="fc" id="L617">        prevMaxTimestamp = newMaxTimestamp;</span>
+<span class="fc" id="L618">        maxTimestamp = prevMaxTimestamp;</span>
+<span class="fc" id="L619">        transientRowCount = committedTransientRowCount;</span>
+<span class="fc" id="L620">    }</span>
+
+    void resetToLastPartition(long committedTransientRowCount) {
+<span class="fc" id="L623">        resetToLastPartition(committedTransientRowCount, getLong(TX_OFFSET_MAX_TIMESTAMP_64));</span>
+<span class="fc" id="L624">    }</span>
+
+    long unsafeCommittedFixedRowCount() {
+<span class="fc" id="L627">        return getLong(TX_OFFSET_FIXED_ROW_COUNT_64);</span>
+    }
+
+    long unsafeCommittedTransientRowCount() {
+<span class="fc" id="L631">        return getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);</span>
+    }
+
+    void updatePartitionColumnVersion(long partitionTimestamp) {
+<span class="fc" id="L635">        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);</span>
+<span class="fc" id="L636">        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);</span>
+<span class="fc" id="L637">    }</span>
+
+    void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
+<span class="fc" id="L640">        recordStructureVersion++;</span>
+<span class="fc" id="L641">        updatePartitionSizeByIndex(index, partitionSize);</span>
+<span class="fc" id="L642">        attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);</span>
+<span class="fc" id="L643">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

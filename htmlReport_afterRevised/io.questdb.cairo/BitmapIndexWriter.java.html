@@ -1,0 +1,539 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BitmapIndexWriter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">BitmapIndexWriter.java</span></div><h1>BitmapIndexWriter.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+
+public class BitmapIndexWriter implements Closeable, Mutable {
+<span class="fc" id="L40">    private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);</span>
+<span class="fc" id="L41">    private final Cursor cursor = new Cursor();</span>
+<span class="fc" id="L42">    private final MemoryMARW keyMem = Vm.getMARWInstance();</span>
+<span class="fc" id="L43">    private final MemoryMARW valueMem = Vm.getMARWInstance();</span>
+    private int blockCapacity;
+    private int blockValueCountMod;
+<span class="fc" id="L46">    private int keyCount = -1;</span>
+    private long seekValueBlockOffset;
+    private long seekValueCount;
+<span class="fc" id="L49">    private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;</span>
+<span class="fc" id="L50">    private long valueMemSize = -1;</span>
+
+<span class="fc" id="L52">    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {</span>
+<span class="fc" id="L53">        of(</span>
+                configuration,
+                path,
+                name,
+                columnNameTxn,
+<span class="fc" id="L58">                configuration.getDataIndexKeyAppendPageSize(),</span>
+<span class="fc" id="L59">                configuration.getDataIndexValueAppendPageSize()</span>
+        );
+<span class="fc" id="L61">    }</span>
+
+<span class="fc" id="L63">    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {</span>
+<span class="fc" id="L64">        of(configuration, path, name, columnNameTxn, keyAppendPageSize, valueAppendPageSize);</span>
+<span class="fc" id="L65">    }</span>
+
+<span class="fc" id="L67">    public BitmapIndexWriter() {</span>
+<span class="fc" id="L68">    }</span>
+
+    public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
+
+        // block value count must be power of 2
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">        assert blockValueCount == Numbers.ceilPow2(blockValueCount);</span>
+<span class="fc" id="L74">        keyMem.toTop();</span>
+<span class="fc" id="L75">        keyMem.putByte(BitmapIndexUtils.SIGNATURE);</span>
+<span class="fc" id="L76">        keyMem.putLong(1); // SEQUENCE</span>
+<span class="fc" id="L77">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L78">        keyMem.putLong(0); // VALUE MEM SIZE</span>
+<span class="fc" id="L79">        keyMem.putInt(blockValueCount); // BLOCK VALUE COUNT</span>
+<span class="fc" id="L80">        keyMem.putLong(0); // KEY COUNT</span>
+<span class="fc" id="L81">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L82">        keyMem.putLong(1); // SEQUENCE CHECK</span>
+<span class="fc" id="L83">        keyMem.putLong(0); // maxRow</span>
+<span class="fc" id="L84">        keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());</span>
+<span class="fc" id="L85">    }</span>
+
+    /**
+     * Adds key-value pair to index. If key already exists, value is appended to end of list of existing values. Otherwise,
+     * new value list is associated with the key.
+     * &lt;p&gt;
+     * Index is updated atomically as far as concurrent reading is concerned. Please refer to notes on classes that
+     * are responsible for reading bitmap indexes, such as {@link BitmapIndexBwdReader}.
+     *
+     * @param key   int key
+     * @param value long value
+     */
+    public void add(int key, long value) {
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">        assert key &gt; -1 : &quot;key must be positive integer: &quot; + key;</span>
+<span class="fc" id="L99">        final long offset = BitmapIndexUtils.getKeyEntryOffset(key);</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        if (key &lt; keyCount) {</span>
+            // when key exists we have possible outcomes in regard to the values
+            // 1. last value block has space if value cell index is not the last in block
+            // 2. value block is full, and we have to allocate a new one
+            // 3. value count is 0. This means key was created as byproduct of adding sparse key value
+            // second option is supposed to be less likely because we attempt to
+            // configure block capacity to accommodate as many values as possible
+<span class="fc" id="L107">            long valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);</span>
+<span class="fc" id="L108">            long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);</span>
+<span class="fc" id="L109">            int valueCellIndex = (int) (valueCount &amp; blockValueCountMod);</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">            if (valueCellIndex &gt; 0) {</span>
+                // this is scenario #1: key exists and there is space in last block to add value
+                // we don't need to allocate new block, just add value and update value count on key
+<span class="pc bpc" id="L113" title="1 of 2 branches missed.">                assert valueBlockOffset + blockCapacity &lt;= valueMemSize;</span>
+<span class="fc" id="L114">                appendValue(offset, valueBlockOffset, valueCount, valueCellIndex, value);</span>
+<span class="fc bfc" id="L115" title="All 2 branches covered.">            } else if (valueCount == 0) {</span>
+                // this is scenario #3: we are effectively adding a new key and creating new block
+<span class="fc" id="L117">                initValueBlockAndStoreValue(offset, value);</span>
+            } else {
+                // this is scenario #2: key exists but last block is full. We need to create new block and add value there
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">                assert valueBlockOffset + blockCapacity &lt;= valueMemSize;</span>
+<span class="fc" id="L121">                addValueBlockAndStoreValue(offset, valueBlockOffset, valueCount, value);</span>
+            }
+<span class="fc" id="L123">        } else {</span>
+            // This is a new key. Because index can have sparse keys whenever we think &quot;key exists&quot; we must deal
+            // with holes left by this branch, which allocates new key. All key entries that have been
+            // skipped during creation of new key will have been initialized with zeroes. This includes counts and
+            // block offsets.
+<span class="fc" id="L128">            initValueBlockAndStoreValue(offset, value);</span>
+            // here we also need to update key count
+            // we don't just increment key count, in case this addition creates sparse key set
+<span class="fc" id="L131">            updateKeyCount(key);</span>
+        }
+<span class="fc" id="L133">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L137">        close();</span>
+<span class="fc" id="L138">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L142" title="All 4 branches covered.">        if (keyMem.isOpen() &amp;&amp; keyCount &gt; -1) {</span>
+<span class="fc" id="L143">            keyMem.setSize(keyMemSize());</span>
+        }
+<span class="fc" id="L145">        Misc.free(keyMem);</span>
+
+<span class="pc bpc" id="L147" title="1 of 4 branches missed.">        if (valueMem.isOpen() &amp;&amp; valueMemSize &gt; -1) {</span>
+<span class="fc" id="L148">            valueMem.setSize(valueMemSize);</span>
+        }
+<span class="fc" id="L150">        Misc.free(valueMem);</span>
+<span class="fc" id="L151">    }</span>
+
+    public RowCursor getCursor(int key) {
+<span class="fc bfc" id="L154" title="All 2 branches covered.">        if (key &lt; keyCount) {</span>
+<span class="fc" id="L155">            cursor.of(key);</span>
+<span class="fc" id="L156">            return cursor;</span>
+        }
+<span class="fc" id="L158">        return EmptyRowCursor.INSTANCE;</span>
+    }
+
+    public int getKeyCount() {
+<span class="fc" id="L162">        return keyCount;</span>
+    }
+
+    public long getMaxValue() {
+<span class="fc" id="L166">        return keyMem.getLong(38L);</span>
+    }
+
+    public boolean isOpen() {
+<span class="fc" id="L170">        return keyMem.isOpen();</span>
+    }
+
+    public final void of(CairoConfiguration configuration, int keyFd, int valueFd, boolean init, int indexBlockCapacity) {
+<span class="fc" id="L174">        close();</span>
+<span class="fc" id="L175">        final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L176">        boolean kFdUnassigned = true;</span>
+<span class="fc" id="L177">        boolean vFdUnassigned = true;</span>
+<span class="fc" id="L178">        final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();</span>
+<span class="fc" id="L179">        final long valueAppendPageSize = configuration.getDataIndexValueAppendPageSize();</span>
+        try {
+<span class="fc bfc" id="L181" title="All 2 branches covered.">            if (init) {</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">                if (ff.truncate(keyFd, 0)) {</span>
+<span class="fc" id="L183">                    kFdUnassigned = false;</span>
+<span class="fc" id="L184">                    this.keyMem.of(ff, keyFd, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);</span>
+<span class="fc" id="L185">                    initKeyMemory(this.keyMem, indexBlockCapacity);</span>
+                } else {
+<span class="fc" id="L187">                    throw CairoException.critical(ff.errno()).put(&quot;Could not truncate [fd=&quot;).put(keyFd).put(']');</span>
+                }
+            } else {
+<span class="fc" id="L190">                kFdUnassigned = false;</span>
+<span class="fc" id="L191">                this.keyMem.of(ff, keyFd, null, ff.length(keyFd), MemoryTag.MMAP_INDEX_WRITER);</span>
+            }
+<span class="fc" id="L193">            long keyMemSize = this.keyMem.getAppendOffset();</span>
+            // check if key file header is present
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">            if (keyMemSize &lt; BitmapIndexUtils.KEY_FILE_RESERVED) {</span>
+<span class="nc" id="L196">                LOG.error().$(&quot;file too short [corrupt] [fd=&quot;).$(keyFd).$(']').$();</span>
+<span class="nc" id="L197">                throw CairoException.critical(0).put(&quot;Index file too short (w): [fd=&quot;).put(keyFd).put(']');</span>
+            }
+
+            // verify header signature
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {</span>
+<span class="nc" id="L202">                LOG.error().$(&quot;unknown format [corrupt] [fd=&quot;).$(keyFd).$(']').$();</span>
+<span class="nc" id="L203">                throw CairoException.critical(0).put(&quot;Unknown format: [fd=&quot;).put(keyFd).put(']');</span>
+            }
+
+            // verify key count
+<span class="fc" id="L207">            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);</span>
+<span class="pc bpc" id="L208" title="1 of 2 branches missed.">            if (keyMemSize &lt; keyMemSize()) {</span>
+<span class="nc" id="L209">                LOG.error().$(&quot;key count does not match file length [corrupt] [fd=&quot;).$(keyFd).$(&quot;, keyCount=&quot;).$(this.keyCount).$(']').$();</span>
+<span class="nc" id="L210">                throw CairoException.critical(0).put(&quot;Key count does not match file length [fd=&quot;).put(keyFd).put(']');</span>
+            }
+
+            // check if sequence is intact
+<span class="pc bpc" id="L214" title="1 of 2 branches missed.">            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {</span>
+<span class="nc" id="L215">                LOG.error().$(&quot;sequence mismatch [corrupt] at [fd=&quot;).$(keyFd).$(']').$();</span>
+<span class="nc" id="L216">                throw CairoException.critical(0).put(&quot;Sequence mismatch [fd=&quot;).put(keyFd).put(']');</span>
+            }
+
+<span class="fc" id="L219">            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);</span>
+
+<span class="fc bfc" id="L221" title="All 2 branches covered.">            if (init) {</span>
+<span class="pc bpc" id="L222" title="1 of 2 branches missed.">                if (ff.truncate(valueFd, 0)) {</span>
+<span class="fc" id="L223">                    vFdUnassigned = false;</span>
+<span class="fc" id="L224">                    this.valueMem.of(ff, valueFd, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);</span>
+<span class="fc" id="L225">                    this.valueMem.jumpTo(0);</span>
+                } else {
+<span class="nc" id="L227">                    throw CairoException.critical(ff.errno()).put(&quot;Could not truncate [fd=&quot;).put(valueFd).put(']');</span>
+                }
+            } else {
+<span class="fc" id="L230">                vFdUnassigned = false;</span>
+<span class="fc" id="L231">                this.valueMem.of(ff, valueFd, null, valueAppendPageSize, this.valueMemSize, MemoryTag.MMAP_INDEX_WRITER);</span>
+            }
+
+            // block value count is always a power of two
+            // to calculate remainder we use faster 'x &amp; (count-1)', which is equivalent to (x % count)
+<span class="fc" id="L236">            this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;</span>
+<span class="pc bpc" id="L237" title="1 of 2 branches missed.">            assert blockValueCountMod &gt; 0;</span>
+<span class="fc" id="L238">            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;</span>
+<span class="fc" id="L239">        } catch (Throwable e) {</span>
+<span class="fc" id="L240">            this.close();</span>
+<span class="fc bfc" id="L241" title="All 2 branches covered.">            if (kFdUnassigned) {</span>
+<span class="fc" id="L242">                ff.close(keyFd);</span>
+            }
+<span class="fc bfc" id="L244" title="All 2 branches covered.">            if (vFdUnassigned) {</span>
+<span class="fc" id="L245">                ff.close(valueFd);</span>
+            }
+<span class="fc" id="L247">            throw e;</span>
+<span class="fc" id="L248">        }</span>
+<span class="fc" id="L249">    }</span>
+
+    public final void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
+<span class="fc" id="L252">        close();</span>
+<span class="fc" id="L253">        final int plen = path.length();</span>
+<span class="fc" id="L254">        final FilesFacade ff = configuration.getFilesFacade();</span>
+        try {
+<span class="fc" id="L256">            boolean exists = ff.exists(BitmapIndexUtils.keyFileName(path, name, columnNameTxn));</span>
+<span class="fc" id="L257">            this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);</span>
+<span class="fc bfc" id="L258" title="All 2 branches covered.">            if (!exists) {</span>
+<span class="fc" id="L259">                LOG.error().$(path).$(&quot; not found&quot;).$();</span>
+<span class="fc" id="L260">                throw CairoException.critical(0).put(&quot;Index does not exist: &quot;).put(path);</span>
+            }
+
+<span class="fc" id="L263">            long keyMemSize = this.keyMem.getAppendOffset();</span>
+            // check if key file header is present
+<span class="fc bfc" id="L265" title="All 2 branches covered.">            if (keyMemSize &lt; BitmapIndexUtils.KEY_FILE_RESERVED) {</span>
+<span class="fc" id="L266">                LOG.error().$(&quot;file too short [corrupt] &quot;).$(path).$();</span>
+<span class="fc" id="L267">                throw CairoException.critical(0).put(&quot;Index file too short (w): &quot;).put(path);</span>
+            }
+
+            // verify header signature
+<span class="fc bfc" id="L271" title="All 2 branches covered.">            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {</span>
+<span class="fc" id="L272">                LOG.error().$(&quot;unknown format [corrupt] &quot;).$(path).$();</span>
+<span class="fc" id="L273">                throw CairoException.critical(0).put(&quot;Unknown format: &quot;).put(path);</span>
+            }
+
+            // verify key count
+<span class="fc" id="L277">            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">            if (keyMemSize &lt; keyMemSize()) {</span>
+<span class="fc" id="L279">                LOG.error().$(&quot;key count does not match file length [corrupt] of &quot;).$(path).$(&quot; [keyCount=&quot;).$(this.keyCount).$(']').$();</span>
+<span class="fc" id="L280">                throw CairoException.critical(0).put(&quot;Key count does not match file length of &quot;).put(path);</span>
+            }
+
+            // check if sequence is intact
+<span class="fc bfc" id="L284" title="All 2 branches covered.">            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {</span>
+<span class="fc" id="L285">                LOG.error().$(&quot;sequence mismatch [corrupt] at &quot;).$(path).$();</span>
+<span class="fc" id="L286">                throw CairoException.critical(0).put(&quot;Sequence mismatch on &quot;).put(path);</span>
+            }
+
+<span class="fc" id="L289">            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);</span>
+<span class="fc" id="L290">            this.valueMem.of(</span>
+                    ff,
+<span class="fc" id="L292">                    BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),</span>
+                    valueAppendPageSize,
+                    this.valueMemSize,
+                    MemoryTag.MMAP_INDEX_WRITER
+            );
+
+            // block value count is always a power of two
+            // to calculate remainder we use faster 'x &amp; (count-1)', which is equivalent to (x % count)
+<span class="fc" id="L300">            this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;</span>
+<span class="fc bfc" id="L301" title="All 2 branches covered.">            if (blockValueCountMod &lt; 1) {</span>
+<span class="fc" id="L302">                LOG.error()</span>
+<span class="fc" id="L303">                        .$(&quot;corrupt file [name=&quot;).$(path)</span>
+<span class="fc" id="L304">                        .$(&quot;, valueMemSize=&quot;).$(this.valueMemSize)</span>
+<span class="fc" id="L305">                        .$(&quot;, blockValueCountMod=&quot;).$(this.blockValueCountMod)</span>
+<span class="fc" id="L306">                        .I$();</span>
+<span class="fc" id="L307">                throw CairoException.critical(0).put(&quot;corrupt file &quot;).put(path);</span>
+            }
+<span class="fc" id="L309">            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;</span>
+<span class="fc" id="L310">        } catch (Throwable e) {</span>
+<span class="fc" id="L311">            this.close();</span>
+<span class="fc" id="L312">            throw e;</span>
+        } finally {
+<span class="fc" id="L314">            path.trimTo(plen);</span>
+        }
+<span class="fc" id="L316">    }</span>
+
+    /**
+     * Rolls values back. Remove values that are strictly greater than given maximum. Empty value blocks
+     * will also be removed as well as blank space at end of value memory.
+     *
+     * @param maxValue maximum value allowed in index.
+     */
+    public void rollbackValues(long maxValue) {
+
+<span class="fc" id="L326">        long maxValueBlockOffset = 0;</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">        for (int k = 0; k &lt; keyCount; k++) {</span>
+<span class="fc" id="L328">            long offset = BitmapIndexUtils.getKeyEntryOffset(k);</span>
+<span class="fc" id="L329">            long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);</span>
+
+            // do we have anything for the key?
+<span class="fc bfc" id="L332" title="All 2 branches covered.">            if (valueCount &gt; 0) {</span>
+<span class="fc" id="L333">                long blockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);</span>
+<span class="fc" id="L334">                BitmapIndexUtils.seekValueBlockRTL(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);</span>
+
+<span class="pc bpc" id="L336" title="1 of 4 branches missed.">                if (valueCount != seekValueCount || blockOffset != seekValueBlockOffset) {</span>
+                    // set new value count
+<span class="fc" id="L338">                    keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, seekValueCount);</span>
+
+<span class="fc bfc" id="L340" title="All 2 branches covered.">                    if (blockOffset != seekValueBlockOffset) {</span>
+<span class="fc" id="L341">                        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L342">                        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT + 16, seekValueBlockOffset);</span>
+<span class="fc" id="L343">                        Unsafe.getUnsafe().storeFence();</span>
+                    }
+<span class="fc" id="L345">                    keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, seekValueCount);</span>
+                }
+
+<span class="fc bfc" id="L348" title="All 2 branches covered.">                if (seekValueBlockOffset &gt; maxValueBlockOffset) {</span>
+<span class="fc" id="L349">                    maxValueBlockOffset = seekValueBlockOffset;</span>
+                }
+            }
+        }
+<span class="fc" id="L353">        valueMemSize = maxValueBlockOffset + blockCapacity;</span>
+<span class="fc" id="L354">        updateValueMemSize();</span>
+<span class="fc" id="L355">        setMaxValue(maxValue);</span>
+<span class="fc" id="L356">    }</span>
+
+    public void setMaxValue(long maxValue) {
+<span class="fc" id="L359">        keyMem.putLong(38L, maxValue);</span>
+<span class="fc" id="L360">    }</span>
+
+    private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
+<span class="fc" id="L363">        long newValueBlockOffset = allocateValueBlockAndStore(value);</span>
+
+        // update block linkage before we increase count
+        // this is important to index readers, which will act on value count they read
+
+        // we subtract 8 because we have just written long value
+        // update this block reference to previous block
+<span class="fc" id="L370">        valueMem.putLong(valueMemSize - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED, valueBlockOffset);</span>
+
+        // update previous block' &quot;next&quot; block reference to this block
+<span class="fc" id="L373">        valueMem.putLong(valueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED + 8, newValueBlockOffset);</span>
+
+        // update count and last value block offset for the key
+        // in atomic fashion
+        // we make sure count is always written _after_ new value block is added
+<span class="fc" id="L378">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L379">        keyMem.putLong(offset, valueCount + 1);</span>
+<span class="fc" id="L380">        Unsafe.getUnsafe().storeFence();</span>
+
+        // don't set first block offset here
+        // it would have been done when this key was first created
+
+        // write last block offset because it changed in this scenario
+<span class="fc" id="L386">        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, newValueBlockOffset);</span>
+<span class="fc" id="L387">        Unsafe.getUnsafe().storeFence();</span>
+
+        // write count check
+<span class="fc" id="L390">        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, valueCount + 1);</span>
+<span class="fc" id="L391">        Unsafe.getUnsafe().storeFence();</span>
+
+        // we are done adding value to new block of values
+<span class="fc" id="L394">    }</span>
+
+    private long allocateValueBlockAndStore(long value) {
+<span class="fc" id="L397">        long newValueBlockOffset = valueMemSize;</span>
+
+        // store our value
+<span class="fc" id="L400">        valueMem.putLong(newValueBlockOffset, value);</span>
+
+        // reserve memory for value block
+<span class="fc" id="L403">        valueMem.skip(blockCapacity);</span>
+
+        // make sure we change value memory size after jump was successful
+<span class="fc" id="L406">        valueMemSize += blockCapacity;</span>
+
+        // must update value mem size in key memory header
+        // so that index can be opened correctly next time it loads
+<span class="fc" id="L410">        updateValueMemSize();</span>
+<span class="fc" id="L411">        return newValueBlockOffset;</span>
+    }
+
+    private void appendValue(long offset, long valueBlockOffset, long valueCount, int valueCellIndex, long value) {
+        // first set value
+<span class="fc" id="L416">        valueMem.putLong(valueBlockOffset + valueCellIndex * 8L, value);</span>
+<span class="fc" id="L417">        Unsafe.getUnsafe().storeFence();</span>
+        // update count and last value block offset for the key
+        // in atomic fashion
+<span class="fc" id="L420">        keyMem.putLong(offset, valueCount + 1);</span>
+        // write count check
+<span class="fc" id="L422">        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, valueCount + 1);</span>
+<span class="fc" id="L423">    }</span>
+
+    private void initValueBlockAndStoreValue(long offset, long value) {
+<span class="fc" id="L426">        long newValueBlockOffset = allocateValueBlockAndStore(value);</span>
+
+        // don't need to update linkage, value count is less than block size
+        // index readers must not access linkage information in this case
+
+        // now update key entry in atomic fashion
+        // update count and last value block offset for the key
+        // in atomic fashion
+<span class="fc" id="L434">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L435">        keyMem.putLong(offset, 1);</span>
+<span class="fc" id="L436">        Unsafe.getUnsafe().storeFence();</span>
+
+        // first and last blocks are the same
+<span class="fc" id="L439">        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET, newValueBlockOffset);</span>
+<span class="fc" id="L440">        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET, newValueBlockOffset);</span>
+<span class="fc" id="L441">        Unsafe.getUnsafe().storeFence();</span>
+
+        // write count check
+<span class="fc" id="L444">        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, 1);</span>
+<span class="fc" id="L445">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L446">    }</span>
+
+    private long keyMemSize() {
+<span class="fc" id="L449">        return this.keyCount * BitmapIndexUtils.KEY_ENTRY_SIZE + BitmapIndexUtils.KEY_FILE_RESERVED;</span>
+    }
+
+    private void seek(long count, long offset) {
+<span class="fc" id="L453">        this.seekValueCount = count;</span>
+<span class="fc" id="L454">        this.seekValueBlockOffset = offset;</span>
+<span class="fc" id="L455">    }</span>
+
+    private void updateValueMemSize() {
+<span class="fc" id="L458">        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;</span>
+<span class="fc" id="L459">        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);</span>
+<span class="fc" id="L460">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L461">        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);</span>
+<span class="fc" id="L462">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L463">        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);</span>
+<span class="fc" id="L464">    }</span>
+
+    @TestOnly
+    long getValueMemSize() {
+<span class="fc" id="L468">        return valueMemSize;</span>
+    }
+
+    void rollbackConditionally(long row) {
+        final long currentMaxRow;
+<span class="fc bfc" id="L473" title="All 6 branches covered.">        if (row &gt; 0 &amp;&amp; ((currentMaxRow = getMaxValue()) &lt; 1 || currentMaxRow &gt; row)) {</span>
+<span class="fc" id="L474">            rollbackValues(row - 1);</span>
+        }
+<span class="fc" id="L476">    }</span>
+
+    void truncate() {
+<span class="fc" id="L479">        keyMem.truncate();</span>
+<span class="fc" id="L480">        valueMem.truncate();</span>
+<span class="fc" id="L481">        initKeyMemory(keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);</span>
+<span class="fc" id="L482">        keyCount = 0;</span>
+<span class="fc" id="L483">        valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;</span>
+<span class="fc" id="L484">    }</span>
+
+    void updateKeyCount(int key) {
+<span class="fc" id="L487">        keyCount = key + 1;</span>
+
+        // also write key count to header of key memory
+<span class="fc" id="L490">        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;</span>
+<span class="fc" id="L491">        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);</span>
+<span class="fc" id="L492">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L493">        keyMem.putInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);</span>
+<span class="fc" id="L494">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L495">        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);</span>
+<span class="fc" id="L496">    }</span>
+
+<span class="fc" id="L498">    private class Cursor implements RowCursor {</span>
+        private long valueBlockOffset;
+        private long valueCount;
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L504" title="All 2 branches covered.">            return valueCount &gt; 0;</span>
+        }
+
+        @Override
+        public long next() {
+<span class="fc" id="L509">            long cellIndex = getValueCellIndex(--valueCount);</span>
+<span class="fc" id="L510">            long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);</span>
+<span class="fc bfc" id="L511" title="All 4 branches covered.">            if (cellIndex == 0 &amp;&amp; valueCount &gt; 0) {</span>
+                // we are at edge of block right now, next value will be in previous block
+<span class="fc" id="L513">                jumpToPreviousValueBlock();</span>
+            }
+<span class="fc" id="L515">            return result;</span>
+        }
+
+        private long getPreviousBlock(long currentValueBlockOffset) {
+<span class="fc" id="L519">            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);</span>
+        }
+
+        private long getValueCellIndex(long absoluteValueIndex) {
+<span class="fc" id="L523">            return absoluteValueIndex &amp; blockValueCountMod;</span>
+        }
+
+        private void jumpToPreviousValueBlock() {
+<span class="fc" id="L527">            valueBlockOffset = getPreviousBlock(valueBlockOffset);</span>
+<span class="fc" id="L528">        }</span>
+
+        void of(int key) {
+<span class="pc bpc" id="L531" title="1 of 2 branches missed.">            assert key &gt; -1 : &quot;key must be positive integer: &quot; + key;</span>
+<span class="fc" id="L532">            long offset = BitmapIndexUtils.getKeyEntryOffset(key);</span>
+<span class="fc" id="L533">            this.valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);</span>
+<span class="pc bpc" id="L534" title="1 of 2 branches missed.">            assert valueCount &gt; -1;</span>
+<span class="fc" id="L535">            this.valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);</span>
+<span class="fc" id="L536">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

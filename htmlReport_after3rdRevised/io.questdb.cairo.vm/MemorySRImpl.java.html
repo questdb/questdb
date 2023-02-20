@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MemorySRImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.vm</a> &gt; <span class="el_source">MemorySRImpl.java</span></div><h1>MemorySRImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.vm;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
+
+// &quot;sliding&quot; read only memory that reads file descriptor used for append
+<span class="fc" id="L35">public class MemorySRImpl extends MemoryPARWImpl {</span>
+<span class="fc" id="L36">    private static final Log LOG = LogFactory.getLog(MemorySRImpl.class);</span>
+<span class="fc" id="L37">    private int fd = -1;</span>
+    private FilesFacade ff;
+    private long pageAddress;
+    private int pageIndex;
+    private MemoryMA parent;
+<span class="fc" id="L42">    private long size = 0;</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L46">        super.close();</span>
+<span class="fc" id="L47">        closeFile();</span>
+<span class="fc" id="L48">        releasePage();</span>
+<span class="fc" id="L49">    }</span>
+
+    public int getFd() {
+<span class="fc" id="L52">        return fd;</span>
+    }
+
+    @Override
+    public long getPageAddress(int page) {
+<span class="fc bfc" id="L57" title="All 2 branches covered.">        return page == pageIndex ? pageAddress : mapPage(page);</span>
+    }
+
+    @Override
+    public long getPageSize() {
+<span class="fc" id="L62">        return getExtendSegmentSize();</span>
+    }
+
+    public void of(MemoryMA parent, int memoryTag) {
+<span class="fc" id="L66">        close();</span>
+<span class="fc" id="L67">        this.memoryTag = memoryTag;</span>
+<span class="fc" id="L68">        this.ff = parent.getFilesFacade();</span>
+<span class="fc" id="L69">        this.fd = parent.getFd();</span>
+<span class="fc" id="L70">        this.parent = parent;</span>
+<span class="fc" id="L71">        this.setExtendSegmentSize(parent.getExtendSegmentSize());</span>
+<span class="fc" id="L72">        updateSize();</span>
+<span class="fc" id="L73">        this.pageIndex = -1;</span>
+<span class="fc" id="L74">        LOG.debug().$(&quot;open [fd=&quot;).$(fd).$(&quot;, size=&quot;).$(this.size).$(']').$();</span>
+<span class="fc" id="L75">    }</span>
+
+    public void updateSize() {
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">        if (parent != null) {</span>
+<span class="fc" id="L79">            this.size = pageOffset(pageIndex(parent.getAppendOffset())) + getExtendSegmentSize();</span>
+        }
+<span class="fc" id="L81">    }</span>
+
+    private void closeFile() {
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        if (fd != -1) {</span>
+<span class="fc" id="L85">            LOG.debug().$(&quot;closed [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L86">            fd = -1;</span>
+<span class="fc" id="L87">            this.size = 0;</span>
+<span class="fc" id="L88">            this.parent = null;</span>
+        }
+<span class="fc" id="L90">    }</span>
+
+    private void invalidateCurrentPage() {
+<span class="fc" id="L93">        this.pageAddress = 0;</span>
+<span class="fc" id="L94">        this.pageIndex = -1;</span>
+<span class="fc" id="L95">        clearHotPage();</span>
+<span class="fc" id="L96">    }</span>
+
+    private long mapPage(int page) {
+<span class="fc" id="L99">        releaseCurrentPage();</span>
+
+<span class="fc" id="L101">        long offset = pageOffset(page);</span>
+<span class="fc" id="L102">        long sz = size - offset;</span>
+
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (sz &gt; 0) {</span>
+            try {
+<span class="fc" id="L106">                long address = TableUtils.mapRO(ff, fd, getExtendSegmentSize(), offset, memoryTag);</span>
+<span class="fc" id="L107">                this.pageIndex = page;</span>
+<span class="fc" id="L108">                this.pageAddress = address;</span>
+<span class="fc" id="L109">                return address;</span>
+<span class="fc" id="L110">            } catch (Throwable e) {</span>
+<span class="fc" id="L111">                invalidateCurrentPage();</span>
+<span class="fc" id="L112">                throw e;</span>
+            }
+        }
+<span class="fc" id="L115">        invalidateCurrentPage();</span>
+<span class="fc" id="L116">        throw CairoException.critical(ff.errno()).put(&quot;Trying to map read-only page outside of file boundary. fd=&quot;).put(fd).put(&quot;, offset=&quot;).put(offset).put(&quot;, size=&quot;).put(this.size).put(&quot;, page=&quot;).put(sz);</span>
+    }
+
+    private void releaseCurrentPage() {
+<span class="fc bfc" id="L120" title="All 2 branches covered.">        if (pageAddress != 0) {</span>
+<span class="fc" id="L121">            ff.munmap(pageAddress, getExtendSegmentSize(), memoryTag);</span>
+<span class="fc" id="L122">            pageAddress = 0;</span>
+        }
+<span class="fc" id="L124">    }</span>
+
+    private void releasePage() {
+<span class="fc" id="L127">        releaseCurrentPage();</span>
+<span class="fc" id="L128">        invalidateCurrentPage();</span>
+<span class="fc" id="L129">    }</span>
+
+    @Override
+    protected long mapWritePage(int page, long offset) {
+<span class="fc" id="L133">        throw new UnsupportedOperationException(&quot;Cannot jump() read-only memory. Use extend() instead.&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

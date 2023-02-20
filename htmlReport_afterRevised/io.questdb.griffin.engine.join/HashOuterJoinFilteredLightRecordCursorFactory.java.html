@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HashOuterJoinFilteredLightRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.join</a> &gt; <span class="el_source">HashOuterJoinFilteredLightRecordCursorFactory.java</span></div><h1>HashOuterJoinFilteredLightRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.join;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.Misc;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
+
+/**
+ * Same as HashOuterJoinLightRecordCursorFactory but with added filtering (for non-equality
+ * or complex join conditions that use functions).
+ */
+public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractRecordCursorFactory {
+
+    private final HashOuterJoinLightRecordCursor cursor;
+    private final Function filter;
+    private final JoinContext joinContext;
+    private final RecordCursorFactory masterFactory;
+    private final RecordSink masterKeySink;
+    private final RecordCursorFactory slaveFactory;
+    private final RecordSink slaveKeySink;
+
+    public HashOuterJoinFilteredLightRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory masterFactory,
+            RecordCursorFactory slaveFactory,
+            @Transient ColumnTypes joinColumnTypes,
+            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            RecordSink masterKeySink,
+            RecordSink slaveKeySink,
+            int columnSplit,
+            @NotNull Function filter,
+            JoinContext joinContext
+    ) {
+<span class="fc" id="L72">        super(metadata);</span>
+<span class="fc" id="L73">        this.masterFactory = masterFactory;</span>
+<span class="fc" id="L74">        this.slaveFactory = slaveFactory;</span>
+<span class="fc" id="L75">        this.masterKeySink = masterKeySink;</span>
+<span class="fc" id="L76">        this.slaveKeySink = slaveKeySink;</span>
+<span class="fc" id="L77">        cursor = new HashOuterJoinLightRecordCursor(</span>
+                columnSplit,
+<span class="fc" id="L79">                NullRecordFactory.getInstance(slaveFactory.getMetadata()),</span>
+                joinColumnTypes,
+                valueTypes,
+                configuration
+        );
+<span class="fc" id="L84">        this.filter = filter;</span>
+<span class="fc" id="L85">        this.joinContext = joinContext;</span>
+<span class="fc" id="L86">    }</span>
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L90">        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);</span>
+<span class="fc" id="L91">        RecordCursor masterCursor = null;</span>
+        try {
+<span class="fc" id="L93">            masterCursor = masterFactory.getCursor(executionContext);</span>
+<span class="fc" id="L94">            cursor.of(masterCursor, slaveCursor, executionContext);</span>
+<span class="fc" id="L95">            return cursor;</span>
+<span class="nc" id="L96">        } catch (Throwable e) {</span>
+<span class="nc" id="L97">            Misc.free(slaveCursor);</span>
+<span class="nc" id="L98">            Misc.free(masterCursor);</span>
+<span class="nc" id="L99">            throw e;</span>
+        }
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+<span class="fc" id="L105">        return masterFactory.hasDescendingOrder();</span>
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L110">        return false;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L115">        sink.type(&quot;Hash Outer Join Light&quot;);</span>
+<span class="fc" id="L116">        sink.optAttr(&quot;condition&quot;, joinContext);</span>
+<span class="fc" id="L117">        sink.attr(&quot;filter&quot;).val(filter);</span>
+<span class="fc" id="L118">        sink.child(masterFactory);</span>
+<span class="fc" id="L119">        sink.child(&quot;Hash&quot;, slaveFactory);</span>
+<span class="fc" id="L120">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L124">        ((JoinRecordMetadata) getMetadata()).close();</span>
+<span class="fc" id="L125">        masterFactory.close();</span>
+<span class="fc" id="L126">        slaveFactory.close();</span>
+<span class="fc" id="L127">        cursor.close();</span>
+<span class="fc" id="L128">        filter.close();</span>
+<span class="fc" id="L129">    }</span>
+
+    private class HashOuterJoinLightRecordCursor extends AbstractJoinCursor {
+        private final Map joinKeyMap;
+        private final OuterJoinRecord record;
+        private final LongChain slaveChain;
+        private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isMapBuilt;
+        private boolean isOpen;
+        private Record masterRecord;
+        private LongChain.TreeCursor slaveChainCursor;
+        private Record slaveRecord;
+
+        public HashOuterJoinLightRecordCursor(
+                int columnSplit,
+                Record nullRecord,
+                @Transient ColumnTypes joinColumnTypes,
+                @Transient ColumnTypes valueTypes,
+                CairoConfiguration configuration
+<span class="fc" id="L148">        ) {</span>
+<span class="fc" id="L149">            super(columnSplit);</span>
+<span class="fc" id="L150">            joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);</span>
+<span class="fc" id="L151">            slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());</span>
+<span class="fc" id="L152">            record = new OuterJoinRecord(columnSplit, nullRecord);</span>
+<span class="fc" id="L153">            isOpen = true;</span>
+<span class="fc" id="L154">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc bfc" id="L158" title="All 2 branches covered.">            if (isOpen) {</span>
+<span class="fc" id="L159">                isOpen = false;</span>
+<span class="fc" id="L160">                joinKeyMap.close();</span>
+<span class="fc" id="L161">                slaveChain.close();</span>
+<span class="fc" id="L162">                super.close();</span>
+            }
+<span class="fc" id="L164">        }</span>
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L168">            return record;</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L173" title="All 2 branches covered.">            if (!isMapBuilt) {</span>
+<span class="fc" id="L174">                buildMapOfSlaveRecords();</span>
+<span class="fc" id="L175">                isMapBuilt = true;</span>
+            }
+
+<span class="fc bfc" id="L178" title="All 4 branches covered.">            if (slaveChainCursor != null &amp;&amp; slaveChainCursor.hasNext()) {</span>
+<span class="fc" id="L179">                record.hasSlave(true);</span>
+<span class="pc bpc" id="L180" title="1 of 2 branches missed.">                while (slaveChainCursor.hasNext()) {</span>
+<span class="fc" id="L181">                    slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">                    if (filter.getBool(record)) {</span>
+<span class="fc" id="L183">                        return true;</span>
+                    } else {
+<span class="fc" id="L185">                        slaveChainCursor.next();</span>
+                    }
+                }
+            }
+
+<span class="fc bfc" id="L190" title="All 2 branches covered.">            if (masterCursor.hasNext()) {</span>
+<span class="fc" id="L191">                MapKey key = joinKeyMap.withKey();</span>
+<span class="fc" id="L192">                key.put(masterRecord, masterKeySink);</span>
+<span class="fc" id="L193">                MapValue value = key.findValue();</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">                if (value != null) {</span>
+<span class="fc" id="L195">                    slaveChainCursor = slaveChain.getCursor(value.getLong(0));</span>
+<span class="fc" id="L196">                    record.hasSlave(true);</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">                    while (slaveChainCursor.hasNext()) {</span>
+<span class="fc" id="L198">                        slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());</span>
+<span class="fc bfc" id="L199" title="All 2 branches covered.">                        if (filter.getBool(record)) {</span>
+<span class="fc" id="L200">                            return true;</span>
+                        }
+                    }
+                }
+<span class="fc" id="L204">                slaveChainCursor = null;</span>
+<span class="fc" id="L205">                record.hasSlave(false);</span>
+<span class="fc" id="L206">                return true;</span>
+            }
+
+<span class="fc" id="L209">            return false;</span>
+        }
+
+        @Override
+        public long size() {
+<span class="fc" id="L214">            return -1L;</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L219">            filter.toTop();</span>
+<span class="fc" id="L220">            masterCursor.toTop();</span>
+<span class="fc" id="L221">            slaveChainCursor = null;</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">            if (!isMapBuilt) {</span>
+<span class="fc" id="L223">                slaveCursor.toTop();</span>
+<span class="fc" id="L224">                joinKeyMap.clear();</span>
+<span class="fc" id="L225">                slaveChain.clear();</span>
+            }
+<span class="fc" id="L227">        }</span>
+
+        private void buildMapOfSlaveRecords() {
+<span class="fc" id="L230">            final Record record = slaveCursor.getRecord();</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">            while (slaveCursor.hasNext()) {</span>
+<span class="fc" id="L232">                circuitBreaker.statefulThrowExceptionIfTripped();</span>
+
+<span class="fc" id="L234">                MapKey key = joinKeyMap.withKey();</span>
+<span class="fc" id="L235">                key.put(record, slaveKeySink);</span>
+<span class="fc" id="L236">                MapValue value = key.createValue();</span>
+<span class="fc bfc" id="L237" title="All 2 branches covered.">                if (value.isNew()) {</span>
+<span class="fc" id="L238">                    final long offset = slaveChain.put(record.getRowId(), -1);</span>
+<span class="fc" id="L239">                    value.putLong(0, offset);</span>
+<span class="fc" id="L240">                    value.putLong(1, offset);</span>
+<span class="fc" id="L241">                } else {</span>
+<span class="fc" id="L242">                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));</span>
+                }
+<span class="fc" id="L244">            }</span>
+<span class="fc" id="L245">        }</span>
+
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+<span class="fc bfc" id="L248" title="All 2 branches covered.">            if (!isOpen) {</span>
+<span class="fc" id="L249">                isOpen = true;</span>
+<span class="fc" id="L250">                slaveChain.reopen();</span>
+<span class="fc" id="L251">                joinKeyMap.reopen();</span>
+            }
+<span class="fc" id="L253">            this.masterCursor = masterCursor;</span>
+<span class="fc" id="L254">            this.slaveCursor = slaveCursor;</span>
+<span class="fc" id="L255">            this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();</span>
+<span class="fc" id="L256">            masterRecord = masterCursor.getRecord();</span>
+<span class="fc" id="L257">            slaveRecord = slaveCursor.getRecordB();</span>
+<span class="fc" id="L258">            record.of(masterRecord, slaveRecord);</span>
+<span class="fc" id="L259">            slaveChainCursor = null;</span>
+<span class="fc" id="L260">            isMapBuilt = false;</span>
+<span class="fc" id="L261">            filter.init(this, sqlExecutionContext);</span>
+<span class="fc" id="L262">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RecordAsAFieldRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.join</a> &gt; <span class="el_source">RecordAsAFieldRecordCursorFactory.java</span></div><h1>RecordAsAFieldRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.join;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+
+public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final RecordCursorFactory base;
+    private final RecordAsAFieldRecordCursor cursor;
+
+    public RecordAsAFieldRecordCursorFactory(RecordCursorFactory base, CharSequence columnAlias) {
+<span class="fc" id="L46">        super(new GenericRecordMetadata());</span>
+<span class="fc" id="L47">        this.base = base;</span>
+<span class="fc" id="L48">        cursor = new RecordAsAFieldRecordCursor(base.recordCursorSupportsRandomAccess());</span>
+<span class="fc" id="L49">        GenericRecordMetadata metadata = (GenericRecordMetadata) getMetadata();</span>
+<span class="fc" id="L50">        metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD, base.getMetadata()));</span>
+<span class="fc" id="L51">    }</span>
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L55">        RecordCursor cursor1 = base.getCursor(executionContext);</span>
+        try {
+<span class="fc" id="L57">            cursor.of(cursor1, executionContext);</span>
+<span class="fc" id="L58">            return cursor;</span>
+<span class="nc" id="L59">        } catch (Throwable th) {</span>
+<span class="nc" id="L60">            cursor1.close();</span>
+<span class="nc" id="L61">            throw th;</span>
+        }
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="nc" id="L67">        return base.recordCursorSupportsRandomAccess();</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="nc" id="L72">        sink.type(&quot;RecordAsAField&quot;);</span>
+<span class="nc" id="L73">        sink.child(base);</span>
+<span class="nc" id="L74">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="nc" id="L78">        return base.usesCompiledFilter();</span>
+    }
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L83">        Misc.free(base);</span>
+<span class="fc" id="L84">    }</span>
+
+<span class="fc" id="L86">    private static final class RecordAsAFieldRecord implements Record {</span>
+        private Record base;
+
+        @Override
+        public Record getRecord(int col) {
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">            assert col == 0;</span>
+<span class="fc" id="L92">            return base;</span>
+        }
+    }
+
+    private static final class RecordAsAFieldRecordCursor implements DelegatingRecordCursor {
+<span class="fc" id="L97">        private final RecordAsAFieldRecord record = new RecordAsAFieldRecord();</span>
+        private final RecordAsAFieldRecord recordB;
+        private RecordCursor base;
+
+<span class="fc" id="L101">        public RecordAsAFieldRecordCursor(boolean baseSupportsRandomAccess) {</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">            recordB = baseSupportsRandomAccess ? new RecordAsAFieldRecord() : null;</span>
+<span class="fc" id="L103">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L107">            Misc.free(base);</span>
+<span class="fc" id="L108">        }</span>
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L112">            return record;</span>
+        }
+
+        @Override
+        public Record getRecordB() {
+<span class="nc bnc" id="L117" title="All 2 branches missed.">            if (recordB != null) {</span>
+<span class="nc" id="L118">                return recordB;</span>
+            }
+<span class="nc" id="L120">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc" id="L125">            return base.hasNext();</span>
+        }
+
+        @Override
+        public void of(RecordCursor base, SqlExecutionContext executionContext) {
+<span class="fc" id="L130">            this.base = base;</span>
+<span class="fc" id="L131">            record.base = base.getRecord();</span>
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">            if (recordB != null) {</span>
+<span class="nc" id="L133">                recordB.base = base.getRecordB();</span>
+            }
+<span class="fc" id="L135">        }</span>
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+<span class="nc" id="L139">            base.recordAt(((RecordAsAFieldRecord) record).base, atRowId);</span>
+<span class="nc" id="L140">        }</span>
+
+        @Override
+        public long size() {
+<span class="fc" id="L144">            return base.size();</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L149">            base.toTop();</span>
+<span class="fc" id="L150">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

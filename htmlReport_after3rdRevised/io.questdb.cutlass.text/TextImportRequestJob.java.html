@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TextImportRequestJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.text</a> &gt; <span class="el_source">TextImportRequestJob.java</span></div><h1>TextImportRequestJob.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.text;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+
+import static io.questdb.cutlass.text.TextImportTask.getPhaseName;
+import static io.questdb.cutlass.text.TextImportTask.getStatusName;
+
+public class TextImportRequestJob extends SynchronizedJob implements Closeable {
+<span class="fc" id="L52">    private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);</span>
+    private final MicrosecondClock clock;
+    private final CairoEngine engine;
+    private final int logRetentionDays;
+<span class="fc" id="L56">    private final LongList partitionsToRemove = new LongList();</span>
+    private final RingQueue&lt;TextImportRequestTask&gt; requestQueue;
+    private final Sequence requestSubSeq;
+    private final TableToken statusTableToken;
+<span class="fc" id="L60">    private final StringSink stringSink = new StringSink();</span>
+    private final TextImportExecutionContext textImportExecutionContext;
+    private ParallelCsvFileImporter parallelImporter;
+    private Path path;
+    private SerialCsvFileImporter serialImporter;
+    private SqlCompiler sqlCompiler;
+    private SqlExecutionContextImpl sqlExecutionContext;
+    private TextImportRequestTask task;
+    private TableWriter writer;
+<span class="fc" id="L69">    private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;</span>
+
+    public TextImportRequestJob(
+            final CairoEngine engine,
+            int workerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache
+<span class="fc" id="L75">    ) throws SqlException {</span>
+<span class="fc" id="L76">        this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();</span>
+<span class="fc" id="L77">        this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();</span>
+<span class="fc" id="L78">        this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);</span>
+<span class="fc" id="L79">        this.serialImporter = new SerialCsvFileImporter(engine);</span>
+
+<span class="fc" id="L81">        CairoConfiguration configuration = engine.getConfiguration();</span>
+<span class="fc" id="L82">        this.clock = configuration.getMicrosecondClock();</span>
+
+<span class="fc" id="L84">        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);</span>
+<span class="fc" id="L85">        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);</span>
+<span class="fc" id="L86">        this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);</span>
+<span class="fc" id="L87">        final String statusTableName = configuration.getSystemTableNamePrefix() + &quot;text_import_log&quot;;</span>
+<span class="fc" id="L88">        this.sqlCompiler.compile(</span>
+                &quot;CREATE TABLE IF NOT EXISTS \&quot;&quot; + statusTableName + &quot;\&quot; (&quot; +
+                        &quot;ts timestamp, &quot; + // 0
+                        &quot;id string, &quot; + // 1
+                        &quot;table symbol, &quot; + // 2
+                        &quot;file symbol, &quot; + // 3
+                        &quot;phase symbol, &quot; + // 4
+                        &quot;status symbol, &quot; + // 5
+                        &quot;message string,&quot; + // 6
+                        &quot;rows_handled long,&quot; + // 7
+                        &quot;rows_imported long,&quot; + // 8
+                        &quot;errors long&quot; + // 9
+                        &quot;) timestamp(ts) partition by DAY&quot;,
+                sqlExecutionContext
+        );
+<span class="fc" id="L103">        this.statusTableToken = engine.getTableToken(statusTableName);</span>
+<span class="fc" id="L104">        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, &quot;QuestDB system&quot;);</span>
+<span class="fc" id="L105">        this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();</span>
+<span class="fc" id="L106">        this.textImportExecutionContext = engine.getTextImportExecutionContext();</span>
+<span class="fc" id="L107">        this.path = new Path();</span>
+<span class="fc" id="L108">        this.engine = engine;</span>
+<span class="fc" id="L109">        enforceLogRetention();</span>
+<span class="fc" id="L110">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L114">        this.parallelImporter = Misc.free(parallelImporter);</span>
+<span class="fc" id="L115">        this.serialImporter = Misc.free(serialImporter);</span>
+<span class="fc" id="L116">        this.writer = Misc.free(this.writer);</span>
+<span class="fc" id="L117">        this.sqlCompiler = Misc.free(sqlCompiler);</span>
+<span class="fc" id="L118">        this.sqlExecutionContext = Misc.free(sqlExecutionContext);</span>
+<span class="fc" id="L119">        this.path = Misc.free(path);</span>
+<span class="fc" id="L120">    }</span>
+
+    private void updateStatus(
+            byte phase,
+            byte status,
+            final CharSequence msg,
+            long rowsHandled,
+            long rowsImported,
+            long errors
+    ) {
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">        if (writer != null) {</span>
+<span class="fc" id="L131">            stringSink.clear();</span>
+<span class="fc" id="L132">            Numbers.appendHex(stringSink, task.getImportId(), true);</span>
+            try {
+<span class="fc" id="L134">                TableWriter.Row row = writer.newRow(clock.getTicks());</span>
+<span class="fc" id="L135">                row.putStr(1, stringSink);</span>
+<span class="fc" id="L136">                row.putSym(2, task.getTableName());</span>
+<span class="fc" id="L137">                row.putSym(3, task.getFileName());</span>
+<span class="fc" id="L138">                row.putSym(4, TextImportTask.getPhaseName(phase));</span>
+<span class="fc" id="L139">                row.putSym(5, TextImportTask.getStatusName(status));</span>
+<span class="fc" id="L140">                row.putStr(6, msg);</span>
+<span class="fc" id="L141">                row.putLong(7, rowsHandled);</span>
+<span class="fc" id="L142">                row.putLong(8, rowsImported);</span>
+<span class="fc" id="L143">                row.putLong(9, errors);</span>
+<span class="fc" id="L144">                row.append();</span>
+<span class="fc" id="L145">                writer.commit();</span>
+<span class="nc" id="L146">            } catch (Throwable th) {</span>
+<span class="nc" id="L147">                LOG.error()</span>
+<span class="nc" id="L148">                        .$(&quot;could not update status table [importId=&quot;).$hexPadded(task.getImportId())</span>
+<span class="nc" id="L149">                        .$(&quot;, statusTableName=&quot;).$(statusTableToken)</span>
+<span class="nc" id="L150">                        .$(&quot;, tableName=&quot;).$(task.getTableName())</span>
+<span class="nc" id="L151">                        .$(&quot;, fileName=&quot;).$(task.getFileName())</span>
+<span class="nc" id="L152">                        .$(&quot;, phase=&quot;).$(getPhaseName(phase))</span>
+<span class="nc" id="L153">                        .$(&quot;, status=&quot;).$(getStatusName(phase))</span>
+<span class="nc" id="L154">                        .$(&quot;, msg=&quot;).$(msg)</span>
+<span class="nc" id="L155">                        .$(&quot;, rowsHandled=&quot;).$(rowsHandled)</span>
+<span class="nc" id="L156">                        .$(&quot;, rowsImported=&quot;).$(rowsImported)</span>
+<span class="nc" id="L157">                        .$(&quot;, errors=&quot;).$(errors)</span>
+<span class="nc" id="L158">                        .$(&quot;, error=`&quot;).$(th).$('`')</span>
+<span class="nc" id="L159">                        .I$();</span>
+<span class="nc" id="L160">                writer = Misc.free(writer);</span>
+<span class="fc" id="L161">            }</span>
+
+            // if we closed the writer, we need to reopen it again
+<span class="pc bpc" id="L164" title="1 of 2 branches missed.">            if (writer == null) {</span>
+                try {
+<span class="nc" id="L166">                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableToken, &quot;QuestDB system&quot;);</span>
+<span class="nc" id="L167">                } catch (Throwable e) {</span>
+<span class="nc" id="L168">                    LOG.error()</span>
+<span class="nc" id="L169">                            .$(&quot;could not re-open writer [table=&quot;).$(statusTableToken)</span>
+<span class="nc" id="L170">                            .$(&quot;, error=`&quot;).$(e).$('`')</span>
+<span class="nc" id="L171">                            .I$();</span>
+<span class="nc" id="L172">                }</span>
+            }
+        }
+<span class="fc" id="L175">    }</span>
+
+    private boolean useParallelImport() {
+<span class="fc" id="L178">        TableToken tableToken = engine.getTableTokenIfExists(task.getTableName());</span>
+<span class="fc bfc" id="L179" title="All 2 branches covered.">        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, tableToken) != TableUtils.TABLE_EXISTS) {</span>
+<span class="fc bfc" id="L180" title="All 4 branches covered.">            return task.getPartitionBy() &gt;= 0 &amp;&amp; task.getPartitionBy() != PartitionBy.NONE;</span>
+        }
+<span class="fc" id="L182">        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {</span>
+<span class="fc" id="L183">            return PartitionBy.isPartitioned(reader.getPartitionedBy());</span>
+        }
+    }
+
+    void enforceLogRetention() {
+<span class="pc bpc" id="L188" title="1 of 2 branches missed.">        if (writer != null) {</span>
+<span class="fc bfc" id="L189" title="All 2 branches covered.">            if (logRetentionDays &lt; 1) {</span>
+<span class="fc" id="L190">                writer.truncate();</span>
+<span class="fc" id="L191">                return;</span>
+            }
+<span class="fc bfc" id="L193" title="All 2 branches covered.">            if (writer.getPartitionCount() &gt; 0) {</span>
+<span class="fc" id="L194">                partitionsToRemove.clear();</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">                for (int i = writer.getPartitionCount() - logRetentionDays - 1; i &gt; -1; i--) {</span>
+<span class="fc" id="L196">                    partitionsToRemove.add(writer.getPartitionTimestamp(i));</span>
+                }
+
+<span class="fc bfc" id="L199" title="All 2 branches covered.">                for (int i = 0, sz = partitionsToRemove.size(); i &lt; sz; i++) {</span>
+<span class="fc" id="L200">                    writer.removePartition(partitionsToRemove.getQuick(i));</span>
+                }
+            }
+        }
+<span class="fc" id="L204">    }</span>
+
+    @Override
+    protected boolean runSerially() {
+<span class="fc" id="L208">        long cursor = requestSubSeq.next();</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">        if (cursor &gt; -1) {</span>
+<span class="fc" id="L210">            task = requestQueue.get(cursor);</span>
+            try {
+<span class="fc bfc" id="L212" title="All 2 branches covered.">                if (useParallelImport()) {</span>
+<span class="fc" id="L213">                    parallelImporter.of(</span>
+<span class="fc" id="L214">                            task.getTableName(),</span>
+<span class="fc" id="L215">                            task.getFileName(),</span>
+<span class="fc" id="L216">                            task.getImportId(),</span>
+<span class="fc" id="L217">                            task.getPartitionBy(),</span>
+<span class="fc" id="L218">                            task.getDelimiter(),</span>
+<span class="fc" id="L219">                            task.getTimestampColumnName(),</span>
+<span class="fc" id="L220">                            task.getTimestampFormat(),</span>
+<span class="fc" id="L221">                            task.isHeaderFlag(),</span>
+<span class="fc" id="L222">                            textImportExecutionContext.getCircuitBreaker(),</span>
+<span class="fc" id="L223">                            task.getAtomicity()</span>
+                    );
+<span class="fc" id="L225">                    parallelImporter.setStatusReporter(updateStatusRef);</span>
+<span class="fc" id="L226">                    parallelImporter.process();</span>
+                } else {
+<span class="fc" id="L228">                    serialImporter.of(</span>
+<span class="fc" id="L229">                            task.getTableName(),</span>
+<span class="fc" id="L230">                            task.getFileName(),</span>
+<span class="fc" id="L231">                            task.getImportId(),</span>
+<span class="fc" id="L232">                            task.getDelimiter(),</span>
+<span class="fc" id="L233">                            task.getTimestampColumnName(),</span>
+<span class="fc" id="L234">                            task.getTimestampFormat(),</span>
+<span class="fc" id="L235">                            task.isHeaderFlag(),</span>
+<span class="fc" id="L236">                            textImportExecutionContext.getCircuitBreaker(),</span>
+<span class="fc" id="L237">                            task.getAtomicity()</span>
+                    );
+<span class="fc" id="L239">                    serialImporter.setStatusReporter(updateStatusRef);</span>
+<span class="fc" id="L240">                    serialImporter.process();</span>
+                }
+<span class="fc" id="L242">            } catch (TextImportException e) {</span>
+<span class="fc" id="L243">                updateStatus(</span>
+                        TextImportTask.NO_PHASE,
+<span class="fc bfc" id="L245" title="All 2 branches covered.">                        e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED,</span>
+<span class="fc" id="L246">                        e.getMessage(),</span>
+                        0,
+                        0,
+                        0
+                );
+            } finally {
+<span class="fc" id="L252">                requestSubSeq.done(cursor);</span>
+<span class="fc" id="L253">                textImportExecutionContext.resetActiveImportId();</span>
+            }
+<span class="fc" id="L255">            enforceLogRetention();</span>
+<span class="fc" id="L256">            return true;</span>
+        }
+<span class="fc" id="L258">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

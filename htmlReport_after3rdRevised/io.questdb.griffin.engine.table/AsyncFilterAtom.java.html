@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AsyncFilterAtom.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.table</a> &gt; <span class="el_source">AsyncFilterAtom.java</span></div><h1>AsyncFilterAtom.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.LongAdder;
+
+public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
+
+<span class="fc" id="L44">    public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();</span>
+
+    private final Function filter;
+    private final ObjList&lt;Function&gt; perWorkerFilters;
+    private final AtomicIntegerArray perWorkerLocks;
+    private final IntList preTouchColumnTypes;
+    // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
+    private final Rnd rnd;
+    private boolean preTouchEnabled;
+
+    public AsyncFilterAtom(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Function filter,
+            @Nullable ObjList&lt;Function&gt; perWorkerFilters,
+            @Nullable IntList preTouchColumnTypes
+<span class="fc" id="L59">    ) {</span>
+<span class="fc" id="L60">        this.rnd = new Rnd(</span>
+<span class="fc" id="L61">                configuration.getNanosecondClock().getTicks(),</span>
+<span class="fc" id="L62">                configuration.getMicrosecondClock().getTicks()</span>
+        );
+<span class="fc" id="L64">        this.filter = filter;</span>
+<span class="fc" id="L65">        this.perWorkerFilters = perWorkerFilters;</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (perWorkerFilters != null) {</span>
+<span class="fc" id="L67">            perWorkerLocks = new AtomicIntegerArray(perWorkerFilters.size());</span>
+        } else {
+<span class="fc" id="L69">            perWorkerLocks = null;</span>
+        }
+<span class="fc" id="L71">        this.preTouchColumnTypes = preTouchColumnTypes;</span>
+<span class="fc" id="L72">    }</span>
+
+    public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (perWorkerFilters == null) {</span>
+<span class="fc" id="L76">            return -1;</span>
+        }
+<span class="fc bfc" id="L78" title="All 4 branches covered.">        if (workerId == -1 &amp;&amp; owner) {</span>
+            // Owner thread is free to use the original filter anytime.
+<span class="fc" id="L80">            return -1;</span>
+        }
+<span class="fc" id="L82">        final int size = perWorkerFilters.size();</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">        workerId = workerId == -1 ? rnd.nextInt(size) : workerId;</span>
+        while (true) {
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">            for (int i = 0; i &lt; size; i++) {</span>
+<span class="fc" id="L86">                int id = (i + workerId) % size;</span>
+<span class="fc bfc" id="L87" title="All 2 branches covered.">                if (perWorkerLocks.compareAndSet(id, 0, 1)) {</span>
+<span class="fc" id="L88">                    return id;</span>
+                }
+            }
+<span class="nc" id="L91">            circuitBreaker.statefulThrowExceptionIfTripped();</span>
+<span class="nc" id="L92">            Os.pause();</span>
+        }
+    }
+
+    @Override
+    public void close() {
+<span class="fc" id="L98">        Misc.free(filter);</span>
+<span class="fc" id="L99">        Misc.freeObjList(perWorkerFilters);</span>
+<span class="fc" id="L100">    }</span>
+
+    public Function getFilter(int filterId) {
+<span class="fc bfc" id="L103" title="All 2 branches covered.">        if (filterId == -1) {</span>
+<span class="fc" id="L104">            return filter;</span>
+        }
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">        assert perWorkerFilters != null;</span>
+<span class="fc" id="L107">        return perWorkerFilters.getQuick(filterId);</span>
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L112">        filter.init(symbolTableSource, executionContext);</span>
+<span class="fc bfc" id="L113" title="All 2 branches covered.">        if (perWorkerFilters != null) {</span>
+<span class="fc" id="L114">            final boolean current = executionContext.getCloneSymbolTables();</span>
+<span class="fc" id="L115">            executionContext.setCloneSymbolTables(true);</span>
+            try {
+<span class="fc" id="L117">                Function.init(perWorkerFilters, symbolTableSource, executionContext);</span>
+            } finally {
+<span class="fc" id="L119">                executionContext.setCloneSymbolTables(current);</span>
+            }
+        }
+<span class="fc" id="L122">        preTouchEnabled = executionContext.isColumnPreTouchEnabled();</span>
+<span class="fc" id="L123">    }</span>
+
+    @Override
+    public void initCursor() {
+<span class="fc" id="L127">        filter.initCursor();</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        if (perWorkerFilters != null) {</span>
+            // Initialize all per-worker filters on the query owner thread to avoid
+            // DataUnavailableException thrown on worker threads when filtering.
+<span class="fc" id="L131">            Function.initCursor(perWorkerFilters);</span>
+        }
+<span class="fc" id="L133">    }</span>
+
+    /**
+     * Pre-touches column values for the filtered rows, if the feature is configured.
+     * &lt;p&gt;
+     * The idea is to access the memory to page fault and, thus, warm up the pages
+     * in parallel, on multiple threads, instead of relying on the &quot;query owner&quot; thread
+     * to do it later serially.
+     *
+     * @param record record to use
+     * @param rows   rows to pre-touch
+     */
+    public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
+<span class="fc bfc" id="L146" title="All 4 branches covered.">        if (!preTouchEnabled || preTouchColumnTypes == null) {</span>
+<span class="fc" id="L147">            return;</span>
+        }
+        // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
+<span class="fc" id="L150">        long sum = 0;</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">        for (long p = 0; p &lt; rows.size(); p++) {</span>
+<span class="fc" id="L152">            long r = rows.get(p);</span>
+<span class="fc" id="L153">            record.setRowIndex(r);</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            for (int i = 0; i &lt; preTouchColumnTypes.size(); i++) {</span>
+<span class="fc" id="L155">                int columnType = preTouchColumnTypes.getQuick(i);</span>
+<span class="fc bfc" id="L156" title="All 16 branches covered.">                switch (ColumnType.tagOf(columnType)) {</span>
+                    case ColumnType.BOOLEAN:
+<span class="fc bfc" id="L158" title="All 2 branches covered.">                        sum += record.getBool(i) ? 1 : 0;</span>
+<span class="fc" id="L159">                        break;</span>
+                    case ColumnType.BYTE:
+<span class="fc" id="L161">                        sum += record.getByte(i);</span>
+<span class="fc" id="L162">                        break;</span>
+                    case ColumnType.SHORT:
+<span class="fc" id="L164">                        sum += record.getShort(i);</span>
+<span class="fc" id="L165">                        break;</span>
+                    case ColumnType.INT:
+                    case ColumnType.SYMBOL: // We're interested in pre-touching pages, so we read the symbol key only.
+<span class="fc" id="L168">                        sum += record.getInt(i);</span>
+<span class="fc" id="L169">                        break;</span>
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+<span class="fc" id="L173">                        sum += record.getLong(i);</span>
+<span class="fc" id="L174">                        break;</span>
+                    case ColumnType.FLOAT:
+<span class="fc" id="L176">                        sum += record.getFloat(i);</span>
+<span class="fc" id="L177">                        break;</span>
+                    case ColumnType.DOUBLE:
+<span class="fc" id="L179">                        sum += record.getDouble(i);</span>
+<span class="fc" id="L180">                        break;</span>
+                    case ColumnType.LONG256:
+<span class="fc" id="L182">                        Long256 l256 = record.getLong256A(i);</span>
+<span class="fc" id="L183">                        sum += l256.getLong0();</span>
+<span class="fc" id="L184">                        sum += l256.getLong1();</span>
+<span class="fc" id="L185">                        sum += l256.getLong2();</span>
+<span class="fc" id="L186">                        sum += l256.getLong3();</span>
+<span class="fc" id="L187">                        break;</span>
+                    case ColumnType.GEOBYTE:
+<span class="fc" id="L189">                        sum += record.getGeoByte(i);</span>
+<span class="fc" id="L190">                        break;</span>
+                    case ColumnType.GEOSHORT:
+<span class="fc" id="L192">                        sum += record.getGeoShort(i);</span>
+<span class="fc" id="L193">                        break;</span>
+                    case ColumnType.GEOINT:
+<span class="fc" id="L195">                        sum += record.getGeoInt(i);</span>
+<span class="fc" id="L196">                        break;</span>
+                    case ColumnType.GEOLONG:
+<span class="fc" id="L198">                        sum += record.getGeoLong(i);</span>
+<span class="fc" id="L199">                        break;</span>
+                    case ColumnType.STRING:
+<span class="fc" id="L201">                        CharSequence cs = record.getStr(i);</span>
+<span class="pc bpc" id="L202" title="1 of 4 branches missed.">                        if (cs != null &amp;&amp; cs.length() &gt; 0) {</span>
+                            // Touch the first page of the string contents only.
+<span class="fc" id="L204">                            sum += cs.charAt(0);</span>
+                        }
+                        break;
+                    case ColumnType.BINARY:
+<span class="fc" id="L208">                        BinarySequence bs = record.getBin(i);</span>
+<span class="pc bpc" id="L209" title="1 of 4 branches missed.">                        if (bs != null &amp;&amp; bs.length() &gt; 0) {</span>
+                            // Touch the first page of the binary contents only.
+<span class="fc" id="L211">                            sum += bs.byteAt(0);</span>
+                        }
+                        break;
+                    case ColumnType.UUID:
+<span class="fc" id="L215">                        sum += record.getLong128Hi(i);</span>
+<span class="fc" id="L216">                        sum += record.getLong128Lo(i);</span>
+                        break;
+                }
+            }
+        }
+        // Flush the accumulated sum to the black hole.
+<span class="fc" id="L222">        PRE_TOUCH_BLACK_HOLE.add(sum);</span>
+<span class="fc" id="L223">    }</span>
+
+    public void releaseFilter(int filterId) {
+<span class="fc bfc" id="L226" title="All 2 branches covered.">        if (filterId == -1) {</span>
+<span class="fc" id="L227">            return;</span>
+        }
+<span class="fc" id="L229">        perWorkerLocks.set(filterId, 0);</span>
+<span class="fc" id="L230">    }</span>
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L234">        sink.val(filter);</span>
+<span class="fc" id="L235">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

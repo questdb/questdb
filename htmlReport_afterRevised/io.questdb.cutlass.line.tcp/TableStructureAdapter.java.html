@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableStructureAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.tcp</a> &gt; <span class="el_source">TableStructureAdapter.java</span></div><h1>TableStructureAdapter.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.tcp;
+
+import io.questdb.cairo.*;
+import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
+
+import static io.questdb.std.Chars.utf8ToUtf16;
+
+class TableStructureAdapter implements TableStructure {
+    private static final String DEFAULT_TIMESTAMP_FIELD = &quot;timestamp&quot;;
+<span class="fc" id="L39">    private static final ThreadLocal&lt;StringSink&gt; tempSink = new ThreadLocal&lt;&gt;(StringSink::new);</span>
+    private final CairoConfiguration cairoConfiguration;
+    private final DefaultColumnTypes defaultColumnTypes;
+    private final int defaultPartitionBy;
+<span class="fc" id="L43">    private final ObjList&lt;LineTcpParser.ProtoEntity&gt; entities = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L44">    private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();</span>
+    private CharSequence tableName;
+<span class="fc" id="L46">    private int timestampIndex = -1;</span>
+
+<span class="fc" id="L48">    public TableStructureAdapter(CairoConfiguration configuration, DefaultColumnTypes defaultColumnTypes, int defaultPartitionBy) {</span>
+<span class="fc" id="L49">        this.cairoConfiguration = configuration;</span>
+<span class="fc" id="L50">        this.defaultColumnTypes = defaultColumnTypes;</span>
+<span class="fc" id="L51">        this.defaultPartitionBy = defaultPartitionBy;</span>
+<span class="fc" id="L52">    }</span>
+
+    @Override
+    public int getColumnCount() {
+<span class="fc" id="L56">        final int size = entities.size();</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">        return timestampIndex == -1 ? size + 1 : size;</span>
+    }
+
+    @Override
+    public CharSequence getColumnName(int columnIndex) {
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">        assert columnIndex &lt; getColumnCount();</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        if (columnIndex == getTimestampIndex()) {</span>
+<span class="fc" id="L64">            return DEFAULT_TIMESTAMP_FIELD;</span>
+        }
+<span class="fc" id="L66">        CharSequence colName = entities.get(columnIndex).getName().toString();</span>
+<span class="pc bpc" id="L67" title="1 of 2 branches missed.">        if (TableUtils.isValidColumnName(colName, cairoConfiguration.getMaxFileNameLength())) {</span>
+<span class="fc" id="L68">            return colName;</span>
+        }
+<span class="nc" id="L70">        throw CairoException.nonCritical().put(&quot;column name contains invalid characters [colName=&quot;).put(colName).put(']');</span>
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (columnIndex == getTimestampIndex()) {</span>
+<span class="fc" id="L76">            return ColumnType.TIMESTAMP;</span>
+        }
+<span class="fc" id="L78">        return defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];</span>
+    }
+
+    @Override
+    public int getIndexBlockCapacity(int columnIndex) {
+<span class="fc" id="L83">        return 0;</span>
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+<span class="fc" id="L88">        return cairoConfiguration.getMaxUncommittedRows();</span>
+    }
+
+    @Override
+    public long getO3MaxLag() {
+<span class="fc" id="L93">        return cairoConfiguration.getO3MaxLag();</span>
+    }
+
+    @Override
+    public int getPartitionBy() {
+<span class="fc" id="L98">        return defaultPartitionBy;</span>
+    }
+
+    @Override
+    public boolean getSymbolCacheFlag(int columnIndex) {
+<span class="fc" id="L103">        return cairoConfiguration.getDefaultSymbolCacheFlag();</span>
+    }
+
+    @Override
+    public int getSymbolCapacity(int columnIndex) {
+<span class="fc" id="L108">        return cairoConfiguration.getDefaultSymbolCapacity();</span>
+    }
+
+    @Override
+    public CharSequence getTableName() {
+<span class="fc" id="L113">        return tableName;</span>
+    }
+
+    @Override
+    public int getTimestampIndex() {
+<span class="fc bfc" id="L118" title="All 2 branches covered.">        return timestampIndex == -1 ? entities.size() : timestampIndex;</span>
+    }
+
+    @Override
+    public boolean isIndexed(int columnIndex) {
+<span class="fc" id="L123">        return false;</span>
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+<span class="fc" id="L128">        return false;</span>
+    }
+
+    @Override
+    public boolean isWalEnabled() {
+<span class="fc bfc" id="L133" title="All 4 branches covered.">        return cairoConfiguration.getWalEnabledDefault() &amp;&amp; PartitionBy.isPartitioned(getPartitionBy());</span>
+    }
+
+    TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
+<span class="fc" id="L137">        this.tableName = tableName;</span>
+<span class="fc" id="L138">        entityNamesUtf16.clear();</span>
+<span class="fc" id="L139">        entities.clear();</span>
+<span class="fc" id="L140">        timestampIndex = -1;</span>
+<span class="fc" id="L141">        final boolean hasNonAsciiChars = parser.hasNonAsciiChars();</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        for (int i = 0; i &lt; parser.getEntityCount(); i++) {</span>
+<span class="fc" id="L143">            final LineTcpParser.ProtoEntity entity = parser.getEntity(i);</span>
+<span class="fc" id="L144">            final DirectByteCharSequence colNameUtf8 = entity.getName();</span>
+<span class="fc" id="L145">            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink.get(), hasNonAsciiChars);</span>
+<span class="fc" id="L146">            int index = entityNamesUtf16.keyIndex(colNameUtf16);</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">            if (index &gt; -1) {</span>
+<span class="fc" id="L148">                entityNamesUtf16.addAt(index, colNameUtf16.toString());</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">                if (Chars.equals(colNameUtf16, DEFAULT_TIMESTAMP_FIELD)) {</span>
+<span class="fc" id="L150">                    timestampIndex = entities.size();</span>
+                }
+<span class="fc" id="L152">                entities.add(entity);</span>
+            }
+        }
+<span class="fc" id="L155">        return this;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

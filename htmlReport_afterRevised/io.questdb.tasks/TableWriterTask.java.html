@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableWriterTask.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.tasks</a> &gt; <span class="el_source">TableWriterTask.java</span></div><h1>TableWriterTask.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.tasks;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.std.Chars;
+import io.questdb.std.Unsafe;
+
+import java.io.Closeable;
+
+public class TableWriterTask implements Closeable {
+    public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_UNUSED = 1;
+    public static final int CMD_UPDATE_TABLE = 3;
+
+    public static final int TSK_BEGIN = 64;
+    public static final int TSK_COMPLETE = 65;
+
+    private final long data;
+    private final long dataSize;
+    private long appendLim;
+    private long appendPtr;
+    private AsyncWriterCommand cmd;
+    private long instance;
+    private long ip;
+    private long tableId;
+    private TableToken tableToken;
+    private int type;
+
+<span class="fc" id="L54">    public TableWriterTask(long data, long dataSize) {</span>
+<span class="fc" id="L55">        this.data = data;</span>
+<span class="fc" id="L56">        this.dataSize = dataSize;</span>
+<span class="fc" id="L57">        reset();</span>
+<span class="fc" id="L58">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L62">        appendPtr = 0;</span>
+<span class="fc" id="L63">        appendLim = 0;</span>
+<span class="fc" id="L64">    }</span>
+
+    public AsyncWriterCommand getAsyncWriterCommand() {
+<span class="fc" id="L67">        return cmd;</span>
+    }
+
+    public long getData() {
+<span class="fc" id="L71">        return data;</span>
+    }
+
+    public long getDataSize() {
+<span class="fc" id="L75">        return dataSize;</span>
+    }
+
+    public long getInstance() {
+<span class="fc" id="L79">        return instance;</span>
+    }
+
+    public long getIp() {
+<span class="nc" id="L83">        return ip;</span>
+    }
+
+    public long getTableId() {
+<span class="fc" id="L87">        return tableId;</span>
+    }
+
+    public TableToken getTableToken() {
+<span class="fc" id="L91">        return tableToken;</span>
+    }
+
+    public int getType() {
+<span class="fc" id="L95">        return type;</span>
+    }
+
+    public void of(
+            int type,
+            long tableId,
+            TableToken tableToken
+    ) {
+<span class="fc" id="L103">        this.tableId = tableId;</span>
+<span class="fc" id="L104">        this.tableToken = tableToken;</span>
+<span class="fc" id="L105">        this.type = type;</span>
+<span class="fc" id="L106">        this.appendPtr = data;</span>
+<span class="fc" id="L107">        this.ip = 0L;</span>
+<span class="fc" id="L108">    }</span>
+
+    public void putByte(byte c) {
+<span class="nc" id="L111">        checkCapacity(Byte.BYTES);</span>
+<span class="nc" id="L112">        Unsafe.getUnsafe().putByte(appendPtr++, c);</span>
+<span class="nc" id="L113">    }</span>
+
+    public void putInt(int value) {
+<span class="fc" id="L116">        checkCapacity(Integer.BYTES);</span>
+<span class="fc" id="L117">        Unsafe.getUnsafe().putInt(appendPtr, value);</span>
+<span class="fc" id="L118">        appendPtr += Integer.BYTES;</span>
+<span class="fc" id="L119">    }</span>
+
+    public void putLong(long value) {
+<span class="fc" id="L122">        checkCapacity(Long.BYTES);</span>
+<span class="fc" id="L123">        Unsafe.getUnsafe().putLong(appendPtr, value);</span>
+<span class="fc" id="L124">        appendPtr += Long.BYTES;</span>
+<span class="fc" id="L125">    }</span>
+
+    public void putShort(short value) {
+<span class="fc" id="L128">        checkCapacity(Short.BYTES);</span>
+<span class="fc" id="L129">        Unsafe.getUnsafe().putShort(appendPtr, value);</span>
+<span class="fc" id="L130">        appendPtr += Short.BYTES;</span>
+<span class="fc" id="L131">    }</span>
+
+    public void putStr(CharSequence value) {
+<span class="fc" id="L134">        int len = value.length();</span>
+<span class="fc" id="L135">        final int byteLen = len * 2 + Integer.BYTES;</span>
+<span class="fc" id="L136">        checkCapacity(byteLen);</span>
+<span class="fc" id="L137">        Unsafe.getUnsafe().putInt(appendPtr, len);</span>
+<span class="fc" id="L138">        Chars.copyStrChars(value, 0, len, appendPtr + Integer.BYTES);</span>
+<span class="fc" id="L139">        appendPtr += byteLen;</span>
+<span class="fc" id="L140">    }</span>
+
+    public void setAsyncWriterCommand(AsyncWriterCommand cmd) {
+<span class="fc" id="L143">        this.cmd = cmd;</span>
+<span class="fc" id="L144">    }</span>
+
+    public void setInstance(long instance) {
+<span class="fc" id="L147">        this.instance = instance;</span>
+<span class="fc" id="L148">    }</span>
+
+    public void setIp(long ip) {
+<span class="nc" id="L151">        this.ip = ip;</span>
+<span class="nc" id="L152">    }</span>
+
+    public void setTableId(long tableId) {
+<span class="nc" id="L155">        this.tableId = tableId;</span>
+<span class="nc" id="L156">    }</span>
+
+    private void checkCapacity(long byteCount) {
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        if (appendPtr + byteCount &gt; appendLim) {</span>
+<span class="fc" id="L160">            throw CairoException.critical(0).put(&quot;async command/event queue buffer overflow&quot;);</span>
+        }
+<span class="fc" id="L162">    }</span>
+
+    private void reset() {
+<span class="fc" id="L165">        appendPtr = data;</span>
+<span class="fc" id="L166">        appendLim = data + dataSize;</span>
+<span class="fc" id="L167">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

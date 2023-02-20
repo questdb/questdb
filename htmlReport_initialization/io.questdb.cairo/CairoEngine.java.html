@@ -1,0 +1,911 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CairoEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">CairoEngine.java</span></div><h1>CairoEngine.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
+import io.questdb.Telemetry;
+import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.cairo.pool.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cutlass.text.TextImportExecutionContext;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.TelemetryWalTask;
+import io.questdb.tasks.WalTxnNotificationTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class CairoEngine implements Closeable, WriterSource {
+    public static final String BUSY_READER = &quot;busyReader&quot;;
+<span class="fc" id="L65">    private static final Log LOG = LogFactory.getLog(CairoEngine.class);</span>
+<span class="fc" id="L66">    private final AtomicLong asyncCommandCorrelationId = new AtomicLong();</span>
+    private final CairoConfiguration configuration;
+    private final EngineMaintenanceJob engineMaintenanceJob;
+    private final MessageBusImpl messageBus;
+    private final MetadataPool metadataPool;
+    private final Metrics metrics;
+    private final ReaderPool readerPool;
+    private final IDGenerator tableIdGenerator;
+    private final TableNameRegistry tableNameRegistry;
+    private final TableSequencerAPI tableSequencerAPI;
+    private final Telemetry&lt;TelemetryTask&gt; telemetry;
+    private final Telemetry&lt;TelemetryWalTask&gt; telemetryWal;
+    private final TextImportExecutionContext textImportExecutionContext;
+    // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
+<span class="fc" id="L80">    private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);</span>
+    private final WalWriterPool walWriterPool;
+    private final WriterPool writerPool;
+
+
+    // Kept for embedded API purposes. The second constructor (the one with metrics)
+    // should be preferred for internal use.
+    public CairoEngine(CairoConfiguration configuration) {
+<span class="fc" id="L88">        this(configuration, Metrics.disabled());</span>
+<span class="fc" id="L89">    }</span>
+
+<span class="fc" id="L91">    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {</span>
+<span class="fc" id="L92">        this.configuration = configuration;</span>
+<span class="fc" id="L93">        this.textImportExecutionContext = new TextImportExecutionContext(configuration);</span>
+<span class="fc" id="L94">        this.metrics = metrics;</span>
+<span class="fc" id="L95">        this.tableSequencerAPI = new TableSequencerAPI(this, configuration);</span>
+<span class="fc" id="L96">        this.messageBus = new MessageBusImpl(configuration);</span>
+<span class="fc" id="L97">        this.writerPool = new WriterPool(this.getConfiguration(), this.getMessageBus(), metrics);</span>
+<span class="fc" id="L98">        this.readerPool = new ReaderPool(configuration, messageBus);</span>
+<span class="fc" id="L99">        this.metadataPool = new MetadataPool(configuration, this);</span>
+<span class="fc" id="L100">        this.walWriterPool = new WalWriterPool(configuration, this);</span>
+<span class="fc" id="L101">        this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);</span>
+<span class="fc" id="L102">        this.telemetry = new Telemetry&lt;&gt;(TelemetryTask.TELEMETRY, configuration);</span>
+<span class="fc" id="L103">        this.telemetryWal = new Telemetry&lt;&gt;(TelemetryWalTask.WAL_TELEMETRY, configuration);</span>
+<span class="fc" id="L104">        this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);</span>
+        try {
+<span class="fc" id="L106">            this.tableIdGenerator.open();</span>
+<span class="fc" id="L107">        } catch (Throwable e) {</span>
+<span class="fc" id="L108">            close();</span>
+<span class="fc" id="L109">            throw e;</span>
+<span class="fc" id="L110">        }</span>
+        // Recover snapshot, if necessary.
+        try {
+<span class="fc" id="L113">            DatabaseSnapshotAgent.recoverSnapshot(this);</span>
+<span class="nc" id="L114">        } catch (Throwable e) {</span>
+<span class="nc" id="L115">            close();</span>
+<span class="nc" id="L116">            throw e;</span>
+<span class="fc" id="L117">        }</span>
+        // Migrate database files.
+        try {
+<span class="fc" id="L120">            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);</span>
+<span class="nc" id="L121">        } catch (Throwable e) {</span>
+<span class="nc" id="L122">            close();</span>
+<span class="nc" id="L123">            throw e;</span>
+<span class="fc" id="L124">        }</span>
+
+        // Convert tables to WAL/non-WAL, if necessary.
+        final ObjList&lt;TableToken&gt; convertedTables;
+        try {
+<span class="fc" id="L129">            convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI);</span>
+<span class="nc" id="L130">        } catch (Throwable e) {</span>
+<span class="nc" id="L131">            close();</span>
+<span class="nc" id="L132">            throw e;</span>
+<span class="fc" id="L133">        }</span>
+
+        try {
+<span class="fc bfc" id="L136" title="All 2 branches covered.">            tableNameRegistry = configuration.isReadOnlyInstance() ?</span>
+<span class="fc" id="L137">                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);</span>
+<span class="fc" id="L138">            tableNameRegistry.reloadTableNameCache(convertedTables);</span>
+<span class="fc" id="L139">        } catch (Throwable e) {</span>
+<span class="fc" id="L140">            close();</span>
+<span class="fc" id="L141">            throw e;</span>
+<span class="fc" id="L142">        }</span>
+
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (convertedTables != null) {</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">            for (int i = 0, n = convertedTables.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L146">                final TableToken token = convertedTables.get(i);</span>
+<span class="fc" id="L147">                try (TableWriter writer = getWriter(AllowAllCairoSecurityContext.INSTANCE, token, &quot;tableTypeConversion&quot;)) {</span>
+<span class="fc" id="L148">                    writer.commitSeqTxn(0);</span>
+                }
+            }
+        }
+<span class="fc" id="L152">    }</span>
+
+    @TestOnly
+    public boolean clear() {
+<span class="fc" id="L156">        boolean b1 = readerPool.releaseAll();</span>
+<span class="fc" id="L157">        boolean b2 = writerPool.releaseAll();</span>
+<span class="fc" id="L158">        boolean b3 = tableSequencerAPI.releaseAll();</span>
+<span class="fc" id="L159">        boolean b4 = metadataPool.releaseAll();</span>
+<span class="fc" id="L160">        boolean b5 = walWriterPool.releaseAll();</span>
+<span class="fc" id="L161">        messageBus.reset();</span>
+<span class="fc" id="L162">        return b1 &amp; b2 &amp; b3 &amp; b4 &amp; b5;</span>
+    }
+
+    @Override
+    public void close() {
+<span class="fc" id="L167">        Misc.free(writerPool);</span>
+<span class="fc" id="L168">        Misc.free(readerPool);</span>
+<span class="fc" id="L169">        Misc.free(metadataPool);</span>
+<span class="fc" id="L170">        Misc.free(walWriterPool);</span>
+<span class="fc" id="L171">        Misc.free(tableIdGenerator);</span>
+<span class="fc" id="L172">        Misc.free(messageBus);</span>
+<span class="fc" id="L173">        Misc.free(tableSequencerAPI);</span>
+<span class="fc" id="L174">        Misc.free(telemetry);</span>
+<span class="fc" id="L175">        Misc.free(telemetryWal);</span>
+<span class="fc" id="L176">        Misc.free(tableNameRegistry);</span>
+<span class="fc" id="L177">    }</span>
+
+    @TestOnly
+    public void closeNameRegistry() {
+<span class="fc" id="L181">        tableNameRegistry.close();</span>
+<span class="fc" id="L182">    }</span>
+
+    public TableToken createTable(
+            CairoSecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock
+    ) {
+<span class="fc" id="L192">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L193">        CharSequence tableName = struct.getTableName();</span>
+<span class="fc" id="L194">        validNameOrThrow(tableName);</span>
+
+<span class="fc" id="L196">        int tableId = (int) tableIdGenerator.getNextId();</span>
+<span class="fc" id="L197">        TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        if (tableToken == null) {</span>
+<span class="fc bfc" id="L199" title="All 2 branches covered.">            if (ifNotExists) {</span>
+<span class="fc" id="L200">                return null;</span>
+            }
+<span class="fc" id="L202">            throw EntryUnavailableException.instance(&quot;table exists&quot;);</span>
+        }
+
+        try {
+<span class="fc" id="L206">            String lockedReason = lock(securityContext, tableToken, &quot;createTable&quot;);</span>
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">            if (null == lockedReason) {</span>
+<span class="fc" id="L208">                boolean tableCreated = false;</span>
+                try {
+<span class="fc" id="L210">                    int status = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());</span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">                    if (status != TableUtils.TABLE_DOES_NOT_EXIST) {</span>
+<span class="fc" id="L212">                        throw CairoException.nonCritical().put(&quot;name is reserved [table=&quot;).put(tableName).put(']');</span>
+                    }
+<span class="fc" id="L214">                    createTableUnsafe(</span>
+                            securityContext,
+                            mem,
+                            path,
+                            struct,
+                            tableToken,
+                            tableId
+                    );
+<span class="fc" id="L222">                    tableCreated = true;</span>
+                } finally {
+<span class="fc bfc" id="L224" title="All 2 branches covered.">                    if (!keepLock) {</span>
+<span class="fc" id="L225">                        unlockTableUnsafe(tableToken, null, tableCreated);</span>
+<span class="fc" id="L226">                        LOG.info().$(&quot;unlocked [table=`&quot;).$(tableToken).$(&quot;`]&quot;).$();</span>
+                    }
+                }
+<span class="fc" id="L229">                tableNameRegistry.registerName(tableToken);</span>
+<span class="fc" id="L230">            } else {</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">                if (!ifNotExists) {</span>
+<span class="nc" id="L232">                    throw EntryUnavailableException.instance(lockedReason);</span>
+                }
+            }
+<span class="fc" id="L235">        } catch (Throwable th) {</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            if (struct.isWalEnabled()) {</span>
+                // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
+<span class="fc" id="L238">                tableSequencerAPI.dropTable(tableToken, true);</span>
+            }
+<span class="fc" id="L240">            throw th;</span>
+        } finally {
+<span class="fc" id="L242">            tableNameRegistry.unlockTableName(tableToken);</span>
+        }
+<span class="fc" id="L244">        return tableToken;</span>
+    }
+
+    // caller has to acquire the lock before this method is called and release the lock after the call
+    public void createTableUnsafe(
+            CairoSecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            TableStructure struct,
+            TableToken tableToken,
+            int tableId
+    ) {
+<span class="fc" id="L256">        securityContext.checkWritePermission();</span>
+
+        // only create the table after it has been registered
+<span class="fc" id="L259">        final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L260">        final CharSequence root = configuration.getRoot();</span>
+<span class="fc" id="L261">        final int mkDirMode = configuration.getMkDirMode();</span>
+<span class="fc" id="L262">        TableUtils.createTable(</span>
+                ff,
+                root,
+                mkDirMode,
+                mem,
+                path,
+<span class="fc" id="L268">                tableToken.getDirName(),</span>
+                struct,
+                ColumnType.VERSION,
+                tableId
+        );
+<span class="fc bfc" id="L273" title="All 2 branches covered.">        if (struct.isWalEnabled()) {</span>
+<span class="fc" id="L274">            tableSequencerAPI.registerTable(tableId, struct, tableToken);</span>
+        }
+<span class="fc" id="L276">    }</span>
+
+    public void drop(
+            CairoSecurityContext securityContext,
+            Path path,
+            TableToken tableToken
+    ) {
+<span class="fc" id="L283">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L284">        verifyTableToken(tableToken);</span>
+<span class="fc bfc" id="L285" title="All 2 branches covered.">        if (tableToken.isWal()) {</span>
+<span class="pc bpc" id="L286" title="1 of 2 branches missed.">            if (tableNameRegistry.dropTable(tableToken)) {</span>
+<span class="fc" id="L287">                tableSequencerAPI.dropTable(tableToken, false);</span>
+            } else {
+<span class="nc" id="L289">                LOG.info().$(&quot;table is already dropped [table=&quot;).$(tableToken)</span>
+<span class="nc" id="L290">                        .$(&quot;, dirName=&quot;).$(tableToken.getDirName()).I$();</span>
+            }
+        } else {
+<span class="fc" id="L293">            CharSequence lockedReason = lock(securityContext, tableToken, &quot;removeTable&quot;);</span>
+<span class="fc bfc" id="L294" title="All 2 branches covered.">            if (null == lockedReason) {</span>
+                try {
+<span class="fc" id="L296">                    path.of(configuration.getRoot()).concat(tableToken).$();</span>
+                    int errno;
+<span class="pc bpc" id="L298" title="1 of 2 branches missed.">                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {</span>
+<span class="nc" id="L299">                        LOG.error().$(&quot;drop failed [tableName='&quot;).$(tableToken).$(&quot;', error=&quot;).$(errno).I$();</span>
+<span class="nc" id="L300">                        throw CairoException.critical(errno).put(&quot;could not remove table [name=&quot;).put(tableToken)</span>
+<span class="nc" id="L301">                                .put(&quot;, dirName=&quot;).put(tableToken.getDirName()).put(']');</span>
+                    }
+                } finally {
+<span class="fc" id="L304">                    unlockTableUnsafe(tableToken, null, false);</span>
+                }
+
+<span class="fc" id="L307">                tableNameRegistry.dropTable(tableToken);</span>
+<span class="fc" id="L308">                return;</span>
+            }
+<span class="fc" id="L310">            throw CairoException.nonCritical().put(&quot;Could not lock '&quot;).put(tableToken).put(&quot;' [reason='&quot;).put(lockedReason).put(&quot;']&quot;);</span>
+        }
+<span class="fc" id="L312">    }</span>
+
+    public TableWriter getBackupWriter(
+            CairoSecurityContext securityContext,
+            TableToken tableToken,
+            CharSequence backupDirName
+    ) {
+<span class="fc" id="L319">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L320">        verifyTableToken(tableToken);</span>
+
+        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
+<span class="fc" id="L323">        return new TableWriter(</span>
+                configuration,
+                tableToken,
+                messageBus,
+                null,
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                backupDirName,
+<span class="fc" id="L331">                Metrics.disabled()</span>
+        );
+    }
+
+    @TestOnly
+    public int getBusyReaderCount() {
+<span class="fc" id="L337">        return readerPool.getBusyCount();</span>
+    }
+
+    @TestOnly
+    public int getBusyWriterCount() {
+<span class="fc" id="L342">        return writerPool.getBusyCount();</span>
+    }
+
+    public long getCommandCorrelationId() {
+<span class="fc" id="L346">        return asyncCommandCorrelationId.incrementAndGet();</span>
+    }
+
+    public CairoConfiguration getConfiguration() {
+<span class="fc" id="L350">        return configuration;</span>
+    }
+
+    public Job getEngineMaintenanceJob() {
+<span class="fc" id="L354">        return engineMaintenanceJob;</span>
+    }
+
+    public MessageBus getMessageBus() {
+<span class="fc" id="L358">        return messageBus;</span>
+    }
+
+    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, TableToken tableToken) {
+<span class="fc" id="L362">        verifyTableToken(tableToken);</span>
+        try {
+<span class="fc" id="L364">            return metadataPool.get(tableToken);</span>
+<span class="fc" id="L365">        } catch (CairoException e) {</span>
+<span class="fc" id="L366">            tryRepairTable(securityContext, tableToken, e);</span>
+        }
+<span class="fc" id="L368">        return metadataPool.get(tableToken);</span>
+    }
+
+    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, TableToken tableToken, long structureVersion) {
+<span class="fc" id="L372">        verifyTableToken(tableToken);</span>
+        try {
+<span class="fc" id="L374">            final TableRecordMetadata metadata = metadataPool.get(tableToken);</span>
+<span class="pc bpc" id="L375" title="1 of 4 branches missed.">            if (structureVersion != TableUtils.ANY_TABLE_VERSION &amp;&amp; metadata.getStructureVersion() != structureVersion) {</span>
+<span class="fc" id="L376">                final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(tableToken, metadata.getTableId(), metadata.getTableId(), structureVersion, metadata.getStructureVersion());</span>
+<span class="fc" id="L377">                metadata.close();</span>
+<span class="fc" id="L378">                throw ex;</span>
+            }
+<span class="fc" id="L380">            return metadata;</span>
+<span class="nc" id="L381">        } catch (CairoException e) {</span>
+<span class="nc" id="L382">            tryRepairTable(securityContext, tableToken, e);</span>
+        }
+<span class="nc" id="L384">        return metadataPool.get(tableToken);</span>
+    }
+
+    public Metrics getMetrics() {
+<span class="fc" id="L388">        return metrics;</span>
+    }
+
+    @TestOnly
+    public PoolListener getPoolListener() {
+<span class="fc" id="L393">        return this.writerPool.getPoolListener();</span>
+    }
+
+    public TableReader getReader(CairoSecurityContext securityContext, TableToken tableToken) {
+<span class="fc" id="L397">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L398">        return readerPool.get(tableToken);</span>
+    }
+
+    public TableReader getReader(
+            CairoSecurityContext securityContext,
+            TableToken tableToken,
+            long version
+    ) {
+<span class="fc" id="L406">        TableToken newTableToken = tableNameRegistry.getTableToken(tableToken.getTableName());</span>
+<span class="fc bfc" id="L407" title="All 2 branches covered.">        if (newTableToken == null) {</span>
+<span class="fc" id="L408">            throw CairoException.tableDoesNotExist(tableToken.getTableName());</span>
+        }
+<span class="fc" id="L410">        final int tableId = tableToken.getTableId();</span>
+<span class="pc bpc" id="L411" title="1 of 4 branches missed.">        if (tableId &gt; -1 &amp;&amp; newTableToken.getTableId() != tableId) {</span>
+<span class="fc" id="L412">            throw TableReferenceOutOfDateException.of(tableToken, tableId, newTableToken.getTableId(), version, -1);</span>
+        }
+
+<span class="fc" id="L415">        TableReader reader = readerPool.get(tableToken);</span>
+<span class="pc bpc" id="L416" title="1 of 6 branches missed.">        if ((version &gt; -1 &amp;&amp; reader.getVersion() != version)</span>
+<span class="pc bpc" id="L417" title="1 of 2 branches missed.">                || tableId &gt; -1 &amp;&amp; reader.getMetadata().getTableId() != tableId) {</span>
+<span class="fc" id="L418">            TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(tableToken, tableId, reader.getMetadata().getTableId(), version, reader.getVersion());</span>
+<span class="fc" id="L419">            reader.close();</span>
+<span class="fc" id="L420">            throw ex;</span>
+        }
+<span class="fc" id="L422">        return reader;</span>
+    }
+
+    public Map&lt;CharSequence, AbstractMultiTenantPool.Entry&lt;ReaderPool.R&gt;&gt; getReaderPoolEntries() {
+<span class="fc" id="L426">        return readerPool.entries();</span>
+    }
+
+    public TableReader getReaderWithRepair(CairoSecurityContext securityContext, TableToken tableToken) {
+        try {
+<span class="fc" id="L431">            return getReader(securityContext, tableToken);</span>
+<span class="fc" id="L432">        } catch (CairoException e) {</span>
+            // Cannot open reader on existing table is pretty bad.
+            // In some messed states, for example after _meta file swap failure Reader cannot be opened
+            // but writer can be. Opening writer fixes the table mess.
+<span class="nc" id="L436">            tryRepairTable(securityContext, tableToken, e);</span>
+        }
+        try {
+<span class="nc" id="L439">            return getReader(securityContext, tableToken);</span>
+<span class="nc" id="L440">        } catch (CairoException e) {</span>
+<span class="nc" id="L441">            LOG.critical()</span>
+<span class="nc" id="L442">                    .$(&quot;could not open reader [table=&quot;).$(tableToken)</span>
+<span class="nc" id="L443">                    .$(&quot;, errno=&quot;).$(e.getErrno())</span>
+<span class="nc" id="L444">                    .$(&quot;, error=&quot;).$(e.getMessage()).I$();</span>
+<span class="nc" id="L445">            throw e;</span>
+        }
+    }
+
+    public int getStatus(
+            CairoSecurityContext securityContext,
+            Path path,
+            TableToken tableToken
+    ) {
+<span class="fc bfc" id="L454" title="All 2 branches covered.">        if (tableToken == TableNameRegistry.LOCKED_TOKEN) {</span>
+<span class="fc" id="L455">            return TableUtils.TABLE_RESERVED;</span>
+        }
+<span class="fc bfc" id="L457" title="All 4 branches covered.">        if (tableToken == null || !tableToken.equals(tableNameRegistry.getTableToken(tableToken.getTableName()))) {</span>
+<span class="fc" id="L458">            return TableUtils.TABLE_DOES_NOT_EXIST;</span>
+        }
+<span class="fc" id="L460">        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());</span>
+    }
+
+    public IDGenerator getTableIdGenerator() {
+<span class="fc" id="L464">        return tableIdGenerator;</span>
+    }
+
+    public TableSequencerAPI getTableSequencerAPI() {
+<span class="fc" id="L468">        return tableSequencerAPI;</span>
+    }
+
+    public TableToken getTableToken(final CharSequence tableName) {
+<span class="fc" id="L472">        TableToken tableToken = tableNameRegistry.getTableToken(tableName);</span>
+<span class="fc bfc" id="L473" title="All 2 branches covered.">        if (tableToken == null) {</span>
+<span class="fc" id="L474">            throw CairoException.tableDoesNotExist(tableName);</span>
+        }
+<span class="pc bpc" id="L476" title="1 of 2 branches missed.">        if (tableToken == TableNameRegistry.LOCKED_TOKEN) {</span>
+<span class="nc" id="L477">            throw CairoException.nonCritical().put(&quot;table name is reserved [table=&quot;).put(tableName).put(&quot;]&quot;);</span>
+        }
+<span class="fc" id="L479">        return tableToken;</span>
+    }
+
+    public TableToken getTableToken(final CharSequence tableName, int lo, int hi) {
+<span class="nc" id="L483">        StringSink sink = Misc.getThreadLocalBuilder();</span>
+<span class="nc" id="L484">        sink.put(tableName, lo, hi);</span>
+<span class="nc" id="L485">        return getTableToken(sink);</span>
+    }
+
+    public TableToken getTableTokenByDirName(String dirName, int tableId) {
+<span class="fc" id="L489">        return tableNameRegistry.getTableToken(dirName, tableId);</span>
+    }
+
+    public TableToken getTableTokenIfExists(CharSequence tableName) {
+<span class="fc" id="L493">        return tableNameRegistry.getTableToken(tableName);</span>
+    }
+
+    public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
+<span class="fc" id="L497">        StringSink sink = Misc.getThreadLocalBuilder();</span>
+<span class="fc" id="L498">        sink.put(tableName, lo, hi);</span>
+<span class="fc" id="L499">        return tableNameRegistry.getTableToken(sink);</span>
+    }
+
+    public void getTableTokens(ObjList&lt;TableToken&gt; bucket, boolean includeDropped) {
+<span class="fc" id="L503">        tableNameRegistry.getTableTokens(bucket, includeDropped);</span>
+<span class="fc" id="L504">    }</span>
+
+    @Override
+    public TableWriterAPI getTableWriterAPI(
+            CairoSecurityContext securityContext,
+            TableToken tableToken,
+            @Nullable String lockReason
+    ) {
+<span class="fc" id="L512">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L513">        verifyTableToken(tableToken);</span>
+
+<span class="fc bfc" id="L515" title="All 2 branches covered.">        if (!tableToken.isWal()) {</span>
+<span class="fc" id="L516">            return writerPool.get(tableToken, lockReason, true);</span>
+
+        }
+<span class="fc" id="L519">        return walWriterPool.get(tableToken);</span>
+    }
+
+    public Telemetry&lt;TelemetryTask&gt; getTelemetry() {
+<span class="fc" id="L523">        return telemetry;</span>
+    }
+
+    public Telemetry&lt;TelemetryWalTask&gt; getTelemetryWal() {
+<span class="fc" id="L527">        return telemetryWal;</span>
+    }
+
+    public TextImportExecutionContext getTextImportExecutionContext() {
+<span class="fc" id="L531">        return textImportExecutionContext;</span>
+    }
+
+    public long getUnpublishedWalTxnCount() {
+<span class="fc" id="L535">        return unpublishedWalTxnCount.get();</span>
+    }
+
+    public TableToken getUpdatedTableToken(TableToken tableToken) {
+<span class="fc" id="L539">        return tableNameRegistry.getTokenByDirName(tableToken.getDirName());</span>
+    }
+
+    // For testing only
+    @TestOnly
+    public WalReader getWalReader(
+            @SuppressWarnings(&quot;unused&quot;) CairoSecurityContext securityContext,
+            TableToken tableToken,
+            CharSequence walName,
+            int segmentId,
+            long walRowCount
+    ) {
+<span class="pc bpc" id="L551" title="1 of 2 branches missed.">        if (tableToken.isWal()) {</span>
+<span class="fc" id="L552">            return new WalReader(configuration, tableToken, walName, segmentId, walRowCount);</span>
+        }
+
+<span class="nc" id="L555">        throw CairoException.nonCritical().put(&quot;WAL reader is not supported for table &quot;).put(tableToken);</span>
+    }
+
+    @TestOnly
+    public @NotNull WalWriter getWalWriter(CairoSecurityContext securityContext, TableToken tableToken) {
+<span class="fc" id="L560">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L561">        verifyTableToken(tableToken);</span>
+<span class="pc bpc" id="L562" title="1 of 2 branches missed.">        return walWriterPool.get(tableToken);</span>
+    }
+
+    public TableWriter getWriter(
+            CairoSecurityContext securityContext,
+            TableToken tableToken,
+            String lockReason
+    ) {
+<span class="fc" id="L570">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L571">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L572">        return writerPool.get(tableToken, lockReason, true);</span>
+    }
+
+    public TableWriter getWriterOrPublishCommand(
+            CairoSecurityContext securityContext,
+            TableToken tableToken,
+            @NotNull AsyncWriterCommand asyncWriterCommand
+    ) {
+<span class="fc" id="L580">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L581">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L582">        return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);</span>
+    }
+
+    public TableWriter getWriterUnsafe(TableToken tableToken, String lockReason, boolean logBusy) {
+<span class="fc" id="L586">        return writerPool.get(tableToken, lockReason, logBusy);</span>
+    }
+
+    public boolean isTableDropped(TableToken tableToken) {
+<span class="fc" id="L590">        return tableNameRegistry.isTableDropped(tableToken);</span>
+    }
+
+    public boolean isWalTable(TableToken tableToken) {
+<span class="fc" id="L594">        return tableToken.isWal();</span>
+    }
+
+    public String lock(
+            CairoSecurityContext securityContext,
+            TableToken tableToken,
+            String lockReason
+    ) {
+<span class="pc bpc" id="L602" title="1 of 2 branches missed.">        assert null != lockReason;</span>
+<span class="fc" id="L603">        securityContext.checkWritePermission();</span>
+        // busy metadata is same as busy reader from user perspective
+<span class="fc" id="L605">        String lockedReason = BUSY_READER;</span>
+<span class="pc bpc" id="L606" title="1 of 2 branches missed.">        if (metadataPool.lock(tableToken)) {</span>
+<span class="fc" id="L607">            lockedReason = writerPool.lock(tableToken, lockReason);</span>
+<span class="fc bfc" id="L608" title="All 2 branches covered.">            if (lockedReason == null) {</span>
+                // not locked
+<span class="fc bfc" id="L610" title="All 2 branches covered.">                if (readerPool.lock(tableToken)) {</span>
+<span class="fc" id="L611">                    LOG.info().$(&quot;locked [table=`&quot;).utf8(tableToken.getDirName()).$(&quot;`, thread=&quot;).$(Thread.currentThread().getId()).I$();</span>
+<span class="fc" id="L612">                    return null;</span>
+                }
+<span class="fc" id="L614">                writerPool.unlock(tableToken);</span>
+<span class="fc" id="L615">                lockedReason = BUSY_READER;</span>
+            }
+<span class="fc" id="L617">            metadataPool.unlock(tableToken);</span>
+        }
+<span class="fc" id="L619">        return lockedReason;</span>
+    }
+
+    public boolean lockReaders(TableToken tableToken) {
+<span class="fc" id="L623">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L624">        return readerPool.lock(tableToken);</span>
+    }
+
+    public boolean lockReadersByTableToken(TableToken tableToken) {
+<span class="fc" id="L628">        return readerPool.lock(tableToken);</span>
+    }
+
+    public TableToken lockTableName(CharSequence tableName, boolean isWal) {
+<span class="fc" id="L632">        validNameOrThrow(tableName);</span>
+<span class="fc" id="L633">        int tableId = (int) getTableIdGenerator().getNextId();</span>
+<span class="fc" id="L634">        return lockTableName(tableName, tableId, isWal);</span>
+    }
+
+    @Nullable
+    public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
+<span class="fc" id="L639">        String tableNameStr = Chars.toString(tableName);</span>
+<span class="fc" id="L640">        final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);</span>
+<span class="fc" id="L641">        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);</span>
+    }
+
+    public CharSequence lockWriter(CairoSecurityContext securityContext, TableToken tableToken, String lockReason) {
+<span class="fc" id="L645">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L646">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L647">        return writerPool.lock(tableToken, lockReason);</span>
+    }
+
+    public void notifyWalTxnCommitted(TableToken tableToken, long txn) {
+<span class="fc" id="L651">        final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();</span>
+        while (true) {
+<span class="fc" id="L653">            long cursor = pubSeq.next();</span>
+<span class="fc bfc" id="L654" title="All 2 branches covered.">            if (cursor &gt; -1L) {</span>
+<span class="fc" id="L655">                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);</span>
+<span class="fc" id="L656">                task.of(tableToken, txn);</span>
+<span class="fc" id="L657">                pubSeq.done(cursor);</span>
+<span class="fc" id="L658">                return;</span>
+<span class="fc bfc" id="L659" title="All 2 branches covered.">            } else if (cursor == -1L) {</span>
+<span class="fc" id="L660">                LOG.debug().$(&quot;cannot publish WAL notifications, queue is full [current=&quot;)</span>
+<span class="fc" id="L661">                        .$(pubSeq.current()).$(&quot;, table=&quot;).utf8(tableToken.getDirName())</span>
+<span class="fc" id="L662">                        .I$();</span>
+                // queue overflow, throw away notification and notify a job to rescan all tables
+<span class="fc" id="L664">                notifyWalTxnRepublisher();</span>
+<span class="fc" id="L665">                return;</span>
+            }
+<span class="fc" id="L667">        }</span>
+    }
+
+    public void notifyWalTxnRepublisher() {
+<span class="fc" id="L671">        unpublishedWalTxnCount.incrementAndGet();</span>
+<span class="fc" id="L672">    }</span>
+
+    public void registerTableToken(TableToken tableToken) {
+<span class="fc" id="L675">        tableNameRegistry.registerName(tableToken);</span>
+<span class="fc" id="L676">    }</span>
+
+    @TestOnly
+    public boolean releaseAllReaders() {
+<span class="fc" id="L680">        boolean b1 = metadataPool.releaseAll();</span>
+<span class="fc" id="L681">        return readerPool.releaseAll() &amp; b1;</span>
+    }
+
+    @TestOnly
+    public void releaseAllWriters() {
+<span class="fc" id="L686">        writerPool.releaseAll();</span>
+<span class="fc" id="L687">    }</span>
+
+    public boolean releaseInactive() {
+<span class="fc" id="L690">        boolean useful = writerPool.releaseInactive();</span>
+<span class="fc" id="L691">        useful |= readerPool.releaseInactive();</span>
+<span class="fc" id="L692">        useful |= tableSequencerAPI.releaseInactive();</span>
+<span class="fc" id="L693">        useful |= metadataPool.releaseInactive();</span>
+<span class="fc" id="L694">        useful |= walWriterPool.releaseInactive();</span>
+<span class="fc" id="L695">        return useful;</span>
+    }
+
+    @TestOnly
+    public void releaseInactiveTableSequencers() {
+<span class="fc" id="L700">        walWriterPool.releaseInactive();</span>
+<span class="fc" id="L701">        tableSequencerAPI.releaseInactive();</span>
+<span class="fc" id="L702">    }</span>
+
+    public void releaseReadersByTableToken(TableToken tableToken) {
+<span class="fc" id="L705">        readerPool.unlock(tableToken);</span>
+<span class="fc" id="L706">    }</span>
+
+    @TestOnly
+    public void reloadTableNames() {
+<span class="fc" id="L710">        reloadTableNames(null);</span>
+<span class="fc" id="L711">    }</span>
+
+    @TestOnly
+    public void reloadTableNames(ObjList&lt;TableToken&gt; convertedTables) {
+<span class="fc" id="L715">        tableNameRegistry.reloadTableNameCache(convertedTables);</span>
+<span class="fc" id="L716">    }</span>
+
+    public int removeDirectory(@Transient Path path, CharSequence dir) {
+<span class="fc" id="L719">        path.of(configuration.getRoot()).concat(dir);</span>
+<span class="fc" id="L720">        final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L721">        return ff.rmdir(path.slash$());</span>
+    }
+
+    public void removeTableToken(TableToken tableName) {
+<span class="fc" id="L725">        tableNameRegistry.purgeToken(tableName);</span>
+<span class="fc" id="L726">    }</span>
+
+    public TableToken rename(
+            CairoSecurityContext securityContext,
+            Path path,
+            MemoryMARW memory,
+            CharSequence tableName,
+            Path otherPath,
+            CharSequence newName
+    ) {
+<span class="fc" id="L736">        securityContext.checkWritePermission();</span>
+
+<span class="fc" id="L738">        validNameOrThrow(tableName);</span>
+<span class="fc" id="L739">        validNameOrThrow(newName);</span>
+
+<span class="fc" id="L741">        TableToken tableToken = getTableToken(tableName);</span>
+        final TableToken newTableToken;
+<span class="pc bpc" id="L743" title="1 of 2 branches missed.">        if (tableToken != null) {</span>
+<span class="fc bfc" id="L744" title="All 2 branches covered.">            if (tableToken.isWal()) {</span>
+<span class="fc" id="L745">                newTableToken = tableNameRegistry.rename(tableName, newName, tableToken);</span>
+<span class="fc" id="L746">                TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);</span>
+<span class="fc" id="L747">                tableSequencerAPI.renameWalTable(tableToken, newTableToken);</span>
+<span class="fc" id="L748">                return newTableToken;</span>
+            } else {
+<span class="fc" id="L750">                String lockedReason = lock(securityContext, tableToken, &quot;renameTable&quot;);</span>
+<span class="fc bfc" id="L751" title="All 2 branches covered.">                if (null == lockedReason) {</span>
+                    try {
+<span class="fc" id="L753">                        newTableToken = rename0(path, tableToken, tableName, otherPath, newName);</span>
+<span class="fc" id="L754">                        TableUtils.overwriteTableNameFile(path.of(configuration.getRoot()).concat(newTableToken), memory, configuration.getFilesFacade(), newTableToken);</span>
+                    } finally {
+<span class="fc" id="L756">                        unlock(securityContext, tableToken, null, false);</span>
+                    }
+<span class="fc" id="L758">                    tableNameRegistry.dropTable(tableToken);</span>
+                } else {
+<span class="fc" id="L760">                    LOG.error().$(&quot;cannot lock and rename [from='&quot;).$(tableName).$(&quot;', to='&quot;).$(newName).$(&quot;', reason='&quot;).$(lockedReason).$(&quot;']&quot;).$();</span>
+<span class="fc" id="L761">                    throw EntryUnavailableException.instance(lockedReason);</span>
+                }
+<span class="fc" id="L763">                return newTableToken;</span>
+            }
+        } else {
+<span class="nc" id="L766">            LOG.error().$('\'').utf8(tableName).$(&quot;' does not exist. Rename failed.&quot;).$();</span>
+<span class="nc" id="L767">            throw CairoException.nonCritical().put(&quot;Rename failed. Table '&quot;).put(tableName).put(&quot;' does not exist&quot;);</span>
+        }
+    }
+
+    @TestOnly
+    public void resetNameRegistryMemory() {
+<span class="fc" id="L773">        tableNameRegistry.resetMemory();</span>
+<span class="fc" id="L774">    }</span>
+
+    @TestOnly
+    public void setPoolListener(PoolListener poolListener) {
+<span class="fc" id="L778">        this.metadataPool.setPoolListener(poolListener);</span>
+<span class="fc" id="L779">        this.writerPool.setPoolListener(poolListener);</span>
+<span class="fc" id="L780">        this.readerPool.setPoolListener(poolListener);</span>
+<span class="fc" id="L781">        this.walWriterPool.setPoolListener(poolListener);</span>
+<span class="fc" id="L782">    }</span>
+
+    @TestOnly
+    public void setReaderListener(ReaderPool.ReaderListener readerListener) {
+<span class="fc" id="L786">        readerPool.setTableReaderListener(readerListener);</span>
+<span class="fc" id="L787">    }</span>
+
+    public void unlock(
+            @SuppressWarnings(&quot;unused&quot;) CairoSecurityContext securityContext,
+            TableToken tableToken,
+            @Nullable TableWriter writer,
+            boolean newTable
+    ) {
+<span class="fc" id="L795">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L796">        unlockTableUnsafe(tableToken, writer, newTable);</span>
+<span class="fc" id="L797">        LOG.info().$(&quot;unlocked [table=`&quot;).$(tableToken).$(&quot;`]&quot;).$();</span>
+<span class="fc" id="L798">    }</span>
+
+    public void unlockReaders(TableToken tableToken) {
+<span class="fc" id="L801">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L802">        readerPool.unlock(tableToken);</span>
+<span class="fc" id="L803">    }</span>
+
+    public void unlockTableName(TableToken tableToken) {
+<span class="fc" id="L806">        tableNameRegistry.unlockTableName(tableToken);</span>
+<span class="fc" id="L807">    }</span>
+
+    public void unlockWriter(CairoSecurityContext securityContext, TableToken tableToken) {
+<span class="fc" id="L810">        securityContext.checkWritePermission();</span>
+<span class="fc" id="L811">        verifyTableToken(tableToken);</span>
+<span class="fc" id="L812">        writerPool.unlock(tableToken);</span>
+<span class="fc" id="L813">    }</span>
+
+    private TableToken rename0(Path path, TableToken srcTableToken, CharSequence tableName, Path otherPath, CharSequence to) {
+<span class="fc" id="L816">        final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L817">        final CharSequence root = configuration.getRoot();</span>
+
+<span class="fc" id="L819">        path.of(root).concat(srcTableToken).$();</span>
+<span class="fc" id="L820">        TableToken dstTableToken = lockTableName(to, srcTableToken.getTableId(), false);</span>
+
+<span class="pc bpc" id="L822" title="1 of 4 branches missed.">        if (dstTableToken == null || ff.exists(otherPath.of(root).concat(dstTableToken).$())) {</span>
+<span class="pc bpc" id="L823" title="1 of 2 branches missed.">            if (dstTableToken != null) {</span>
+<span class="nc" id="L824">                tableNameRegistry.unlockTableName(dstTableToken);</span>
+            }
+<span class="fc" id="L826">            LOG.error().$(&quot;rename target exists [from='&quot;).utf8(tableName).$(&quot;', to='&quot;).utf8(otherPath.$()).I$();</span>
+<span class="fc" id="L827">            throw CairoException.nonCritical().put(&quot;Rename target exists&quot;);</span>
+        }
+
+        try {
+<span class="fc bfc" id="L831" title="All 2 branches covered.">            if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {</span>
+<span class="fc" id="L832">                int error = ff.errno();</span>
+<span class="fc" id="L833">                LOG.error().$(&quot;could not rename [from='&quot;).utf8(path).$(&quot;', to='&quot;).utf8(otherPath).$(&quot;', error=&quot;).$(error).I$();</span>
+<span class="fc" id="L834">                throw CairoException.critical(error)</span>
+<span class="fc" id="L835">                        .put(&quot;could not rename [from='&quot;).put(path)</span>
+<span class="fc" id="L836">                        .put(&quot;', to='&quot;).put(otherPath)</span>
+<span class="fc" id="L837">                        .put(&quot;', error=&quot;).put(error);</span>
+            }
+<span class="fc" id="L839">            tableNameRegistry.registerName(dstTableToken);</span>
+<span class="fc" id="L840">            return dstTableToken;</span>
+        } finally {
+<span class="fc" id="L842">            tableNameRegistry.unlockTableName(dstTableToken);</span>
+        }
+    }
+
+    private void tryRepairTable(
+            CairoSecurityContext securityContext,
+            TableToken tableToken,
+            RuntimeException rethrow
+    ) {
+        try {
+<span class="fc" id="L852">            securityContext.checkWritePermission();</span>
+<span class="fc" id="L853">            writerPool.get(tableToken, &quot;repair&quot;, false).close();</span>
+<span class="nc" id="L854">        } catch (EntryUnavailableException e) {</span>
+            // This is fine, writer is busy. Throw back origin error.
+<span class="nc" id="L856">            throw rethrow;</span>
+<span class="fc" id="L857">        } catch (Throwable th) {</span>
+<span class="fc" id="L858">            LOG.critical()</span>
+<span class="fc" id="L859">                    .$(&quot;could not repair before reading [dirName=&quot;).utf8(tableToken.getDirName())</span>
+<span class="fc" id="L860">                    .$(&quot; ,error=&quot;).$(th.getMessage()).I$();</span>
+<span class="fc" id="L861">            throw rethrow;</span>
+<span class="fc" id="L862">        }</span>
+<span class="fc" id="L863">    }</span>
+
+    private void unlockTableUnsafe(TableToken tableToken, TableWriter writer, boolean newTable) {
+<span class="fc" id="L866">        readerPool.unlock(tableToken);</span>
+<span class="fc" id="L867">        writerPool.unlock(tableToken, writer, newTable);</span>
+<span class="fc" id="L868">        metadataPool.unlock(tableToken);</span>
+<span class="fc" id="L869">    }</span>
+
+    private void validNameOrThrow(CharSequence tableName) {
+<span class="fc bfc" id="L872" title="All 2 branches covered.">        if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {</span>
+<span class="fc" id="L873">            throw CairoException.nonCritical()</span>
+<span class="fc" id="L874">                    .put(&quot;invalid table name [table=&quot;).putAsPrintable(tableName)</span>
+<span class="fc" id="L875">                    .put(']');</span>
+        }
+<span class="fc" id="L877">    }</span>
+
+    private void verifyTableToken(TableToken tableToken) {
+<span class="fc" id="L880">        TableToken newTableToken = tableNameRegistry.getTableToken(tableToken.getTableName());</span>
+<span class="fc bfc" id="L881" title="All 2 branches covered.">        if (newTableToken == null) {</span>
+<span class="fc" id="L882">            throw CairoException.tableDoesNotExist(tableToken.getTableName());</span>
+        }
+<span class="fc bfc" id="L884" title="All 2 branches covered.">        if (!newTableToken.equals(tableToken)) {</span>
+<span class="fc" id="L885">            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), newTableToken.getTableId(), newTableToken.getTableId(), -1);</span>
+        }
+<span class="fc" id="L887">    }</span>
+
+    private class EngineMaintenanceJob extends SynchronizedJob {
+
+        private final long checkInterval;
+        private final MicrosecondClock clock;
+<span class="fc" id="L893">        private long last = 0;</span>
+
+<span class="fc" id="L895">        public EngineMaintenanceJob(CairoConfiguration configuration) {</span>
+<span class="fc" id="L896">            this.clock = configuration.getMicrosecondClock();</span>
+<span class="fc" id="L897">            this.checkInterval = configuration.getIdleCheckInterval() * 1000;</span>
+<span class="fc" id="L898">        }</span>
+
+        @Override
+        protected boolean runSerially() {
+<span class="fc" id="L902">            long t = clock.getTicks();</span>
+<span class="fc bfc" id="L903" title="All 2 branches covered.">            if (last + checkInterval &lt; t) {</span>
+<span class="fc" id="L904">                last = t;</span>
+<span class="fc" id="L905">                return releaseInactive();</span>
+            }
+<span class="fc" id="L907">            return false;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

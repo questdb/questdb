@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WorkerPool.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.mp</a> &gt; <span class="el_source">WorkerPool.java</span></div><h1>WorkerPool.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp;
+
+import io.questdb.log.Log;
+import io.questdb.metrics.HealthMetrics;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class WorkerPool implements Closeable {
+<span class="fc" id="L40">    private static final HealthMetrics DISABLED = new HealthMetrics() {</span>
+        @Override
+        public void incrementUnhandledErrors() {
+<span class="fc" id="L43">        }</span>
+
+        @Override
+        public long unhandledErrorsCount() {
+<span class="nc" id="L47">            return 0;</span>
+        }
+    };
+<span class="fc" id="L50">    private final AtomicBoolean closed = new AtomicBoolean();</span>
+    private final boolean daemons;
+<span class="fc" id="L52">    private final ObjList&lt;Closeable&gt; freeOnExit = new ObjList&lt;&gt;();</span>
+    private final boolean haltOnError;
+    private final SOCountDownLatch halted;
+    private final HealthMetrics metrics;
+    private final String poolName;
+<span class="fc" id="L57">    private final AtomicBoolean running = new AtomicBoolean();</span>
+    private final long sleepMs;
+    private final long sleepThreshold;
+<span class="fc" id="L60">    private final SOCountDownLatch started = new SOCountDownLatch(1);</span>
+    private final ObjList&lt;ObjList&lt;Closeable&gt;&gt; threadLocalCleaners;
+    private final int[] workerAffinity;
+    private final int workerCount;
+    private final ObjList&lt;ObjHashSet&lt;Job&gt;&gt; workerJobs;
+<span class="fc" id="L65">    private final ObjList&lt;Worker&gt; workers = new ObjList&lt;&gt;();</span>
+    private final long yieldThreshold;
+
+    public WorkerPool(WorkerPoolConfiguration configuration) {
+<span class="fc" id="L69">        this(configuration, DISABLED);</span>
+<span class="fc" id="L70">    }</span>
+
+<span class="fc" id="L72">    public WorkerPool(WorkerPoolConfiguration configuration, HealthMetrics metrics) {</span>
+<span class="fc" id="L73">        this.workerCount = configuration.getWorkerCount();</span>
+<span class="fc" id="L74">        int[] workerAffinity = configuration.getWorkerAffinity();</span>
+<span class="pc bpc" id="L75" title="1 of 4 branches missed.">        if (workerAffinity != null &amp;&amp; workerAffinity.length &gt; 0) {</span>
+<span class="fc" id="L76">            this.workerAffinity = workerAffinity;</span>
+        } else {
+<span class="fc" id="L78">            this.workerAffinity = Misc.getWorkerAffinity(workerCount);</span>
+        }
+<span class="fc" id="L80">        this.halted = new SOCountDownLatch(workerCount);</span>
+<span class="fc" id="L81">        this.haltOnError = configuration.haltOnError();</span>
+<span class="fc" id="L82">        this.daemons = configuration.isDaemonPool();</span>
+<span class="fc" id="L83">        this.poolName = configuration.getPoolName();</span>
+<span class="fc" id="L84">        this.yieldThreshold = configuration.getYieldThreshold();</span>
+<span class="fc" id="L85">        this.sleepThreshold = configuration.getSleepThreshold();</span>
+<span class="fc" id="L86">        this.sleepMs = configuration.getSleepTimeout();</span>
+<span class="fc" id="L87">        this.metrics = metrics;</span>
+
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">        assert this.workerAffinity.length == workerCount;</span>
+
+<span class="fc" id="L91">        this.workerJobs = new ObjList&lt;&gt;(workerCount);</span>
+<span class="fc" id="L92">        this.threadLocalCleaners = new ObjList&lt;&gt;(workerCount);</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L94">            workerJobs.add(new ObjHashSet&lt;&gt;());</span>
+<span class="fc" id="L95">            threadLocalCleaners.add(new ObjList&lt;&gt;());</span>
+        }
+<span class="fc" id="L97">    }</span>
+
+    /**
+     * Assigns job instance to all workers. Job member variables
+     * could be accessed by multiple threads at the same time. Jobs cannot
+     * be added after pool is started.
+     *
+     * @param job instance of job
+     */
+    public void assign(Job job) {
+<span class="pc bpc" id="L107" title="2 of 4 branches missed.">        assert !running.get() &amp;&amp; !closed.get();</span>
+
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L110">            workerJobs.getQuick(i).add(job);</span>
+        }
+<span class="fc" id="L112">    }</span>
+
+    public void assign(int worker, Job job) {
+<span class="pc bpc" id="L115" title="4 of 8 branches missed.">        assert worker &gt; -1 &amp;&amp; worker &lt; workerCount &amp;&amp; !running.get() &amp;&amp; !closed.get();</span>
+<span class="fc" id="L116">        workerJobs.getQuick(worker).add(job);</span>
+<span class="fc" id="L117">    }</span>
+
+    public void assignThreadLocalCleaner(int worker, Closeable cleaner) {
+<span class="pc bpc" id="L120" title="4 of 8 branches missed.">        assert worker &gt; -1 &amp;&amp; worker &lt; workerCount &amp;&amp; !running.get() &amp;&amp; !closed.get();</span>
+<span class="fc" id="L121">        threadLocalCleaners.getQuick(worker).add(cleaner);</span>
+<span class="fc" id="L122">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L126">        halt();</span>
+<span class="fc" id="L127">    }</span>
+
+    public void freeOnExit(Closeable closeable) {
+<span class="pc bpc" id="L130" title="2 of 4 branches missed.">        assert !running.get() &amp;&amp; !closed.get();</span>
+
+<span class="fc" id="L132">        freeOnExit.add(closeable);</span>
+<span class="fc" id="L133">    }</span>
+
+    public String getPoolName() {
+<span class="fc" id="L136">        return poolName;</span>
+    }
+
+    public int getWorkerCount() {
+<span class="fc" id="L140">        return workerCount;</span>
+    }
+
+    public void halt() {
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (closed.compareAndSet(false, true)) {</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">            if (running.compareAndSet(true, false)) {</span>
+<span class="fc" id="L146">                started.await();</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">                for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L148">                    workers.getQuick(i).halt();</span>
+                }
+<span class="fc" id="L150">                halted.await();</span>
+            }
+<span class="fc" id="L152">            workers.clear(); // Worker is not closable</span>
+<span class="fc" id="L153">            Misc.freeObjListAndClear(freeOnExit);</span>
+        }
+<span class="fc" id="L155">    }</span>
+
+    @TestOnly
+    public void pause() {
+<span class="pc bpc" id="L159" title="1 of 2 branches missed.">        if (running.compareAndSet(true, false)) {</span>
+<span class="fc" id="L160">            started.await();</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">            for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L162">                workers.getQuick(i).halt();</span>
+            }
+<span class="fc" id="L164">            halted.await();</span>
+        }
+<span class="fc" id="L166">        workers.clear();</span>
+<span class="fc" id="L167">    }</span>
+
+    public void start() {
+<span class="fc" id="L170">        start(null);</span>
+<span class="fc" id="L171">    }</span>
+
+    public void start(@Nullable Log log) {
+<span class="pc bpc" id="L174" title="2 of 4 branches missed.">        if (!closed.get() &amp;&amp; running.compareAndSet(false, true)) {</span>
+
+            // very common cleaner
+            // it is setup from start() to make sure it is called last
+            // some other thread local cleaners are liable to access thread local Path instances
+<span class="fc" id="L179">            setupPathCleaner();</span>
+
+<span class="fc bfc" id="L181" title="All 2 branches covered.">            for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L182">                final int index = i;</span>
+<span class="fc" id="L183">                Worker worker = new Worker(</span>
+<span class="fc" id="L184">                        workerJobs.getQuick(i),</span>
+                        halted,
+                        workerAffinity[i],
+                        log,
+                        (ex) -&gt; {
+<span class="fc" id="L189">                            Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index));</span>
+<span class="fc bfc" id="L190" title="All 2 branches covered.">                            if (log != null) {</span>
+<span class="fc" id="L191">                                log.info().$(&quot;cleaned worker [name=&quot;).$(poolName)</span>
+<span class="fc" id="L192">                                        .$(&quot;, worker=&quot;).$(index)</span>
+<span class="fc" id="L193">                                        .$(&quot;, total=&quot;).$(workerCount)</span>
+<span class="fc" id="L194">                                        .I$();</span>
+                            }
+<span class="fc" id="L196">                        },</span>
+                        haltOnError,
+                        i,
+                        poolName,
+                        yieldThreshold,
+                        sleepThreshold,
+                        sleepMs,
+                        metrics
+                );
+<span class="fc" id="L205">                worker.setDaemon(daemons);</span>
+<span class="fc" id="L206">                workers.add(worker);</span>
+<span class="fc" id="L207">                worker.start();</span>
+            }
+<span class="fc bfc" id="L209" title="All 2 branches covered.">            if (log != null) {</span>
+<span class="fc" id="L210">                log.info().$(&quot;worker pool started [pool=&quot;).$(poolName).I$();</span>
+            }
+<span class="fc" id="L212">            started.countDown();</span>
+        }
+<span class="fc" id="L214">    }</span>
+
+    private void setupPathCleaner() {
+<span class="fc bfc" id="L217" title="All 2 branches covered.">        for (int i = 0; i &lt; workerCount; i++) {</span>
+<span class="fc" id="L218">            threadLocalCleaners.getQuick(i).add(Path.THREAD_LOCAL_CLEANER);</span>
+        }
+<span class="fc" id="L220">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

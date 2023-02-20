@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Kqueue.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.network</a> &gt; <span class="el_source">Kqueue.java</span></div><h1>Kqueue.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.network;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+
+import java.io.Closeable;
+
+public final class Kqueue implements Closeable {
+<span class="fc" id="L36">    private static final Log LOG = LogFactory.getLog(Kqueue.class);</span>
+
+    private final int bufferSize;
+    private final int capacity;
+    private final long changeList;
+    private final long eventList;
+    private final int kq;
+    private final KqueueFacade kqf;
+    private long readAddress;
+    private long writeAddress;
+
+<span class="fc" id="L47">    public Kqueue(KqueueFacade kqf, int capacity) {</span>
+<span class="fc" id="L48">        this.kqf = kqf;</span>
+<span class="fc" id="L49">        this.capacity = capacity;</span>
+<span class="fc" id="L50">        this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;</span>
+<span class="fc" id="L51">        this.changeList = this.writeAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+<span class="fc" id="L52">        this.eventList = this.readAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+<span class="fc" id="L53">        this.kq = kqf.kqueue();</span>
+<span class="pc bpc" id="L54" title="1 of 2 branches missed.">        if (kq &lt; 0) {</span>
+<span class="nc" id="L55">            throw NetworkError.instance(kqf.getNetworkFacade().errno(), &quot;could not create kqueue&quot;);</span>
+        }
+<span class="fc" id="L57">        Files.bumpFileCount(this.kq);</span>
+<span class="fc" id="L58">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L62">        kqf.getNetworkFacade().close(kq, LOG);</span>
+<span class="fc" id="L63">        Unsafe.free(this.changeList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+<span class="fc" id="L64">        Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);</span>
+<span class="fc" id="L65">    }</span>
+
+    public long getData() {
+<span class="fc" id="L68">        return Unsafe.getUnsafe().getLong(readAddress + KqueueAccessor.DATA_OFFSET);</span>
+    }
+
+    public int getFd() {
+<span class="fc" id="L72">        return (int) Unsafe.getUnsafe().getLong(readAddress + KqueueAccessor.FD_OFFSET);</span>
+    }
+
+    public int getFilter() {
+<span class="fc" id="L76">        return Unsafe.getUnsafe().getShort(readAddress + KqueueAccessor.FILTER_OFFSET);</span>
+    }
+
+    public int listen(int sfd) {
+<span class="fc" id="L80">        writeAddress = changeList;</span>
+<span class="fc" id="L81">        commonFd(sfd, 0);</span>
+<span class="fc" id="L82">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);</span>
+<span class="fc" id="L83">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_ADD);</span>
+<span class="fc" id="L84">        return register(1);</span>
+    }
+
+    public int poll() {
+<span class="fc" id="L88">        return kqf.kevent(kq, 0, 0, eventList, capacity);</span>
+    }
+
+    public void readFD(int fd, long data) {
+<span class="fc" id="L92">        commonFd(fd, data);</span>
+<span class="fc" id="L93">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);</span>
+<span class="fc" id="L94">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, (short) (KqueueAccessor.EV_ADD | KqueueAccessor.EV_ONESHOT));</span>
+<span class="fc" id="L95">    }</span>
+
+    public int register(int n) {
+<span class="fc" id="L98">        return kqf.kevent(kq, changeList, n, 0, 0);</span>
+    }
+
+    public void removeFD(int fd) {
+<span class="fc" id="L102">        commonFd(fd, 0);</span>
+<span class="fc" id="L103">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);</span>
+<span class="fc" id="L104">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);</span>
+<span class="fc" id="L105">    }</span>
+
+    public int removeListen(int sfd) {
+<span class="fc" id="L108">        writeAddress = changeList;</span>
+<span class="fc" id="L109">        commonFd(sfd, 0);</span>
+<span class="fc" id="L110">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);</span>
+<span class="fc" id="L111">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);</span>
+<span class="fc" id="L112">        return register(1);</span>
+    }
+
+    public void setReadOffset(int offset) {
+<span class="fc" id="L116">        this.readAddress = eventList + offset;</span>
+<span class="fc" id="L117">    }</span>
+
+    public void setWriteOffset(int offset) {
+<span class="fc" id="L120">        this.writeAddress = changeList + offset;</span>
+<span class="fc" id="L121">    }</span>
+
+    public void writeFD(int fd, long data) {
+<span class="fc" id="L124">        commonFd(fd, data);</span>
+<span class="fc" id="L125">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_WRITE);</span>
+<span class="fc" id="L126">        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, (short) (KqueueAccessor.EV_ADD | KqueueAccessor.EV_ONESHOT));</span>
+<span class="fc" id="L127">    }</span>
+
+    private void commonFd(int fd, long data) {
+<span class="fc" id="L130">        Unsafe.getUnsafe().putLong(writeAddress + KqueueAccessor.FD_OFFSET, fd);</span>
+<span class="fc" id="L131">        Unsafe.getUnsafe().putLong(writeAddress + KqueueAccessor.DATA_OFFSET, data);</span>
+<span class="fc" id="L132">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

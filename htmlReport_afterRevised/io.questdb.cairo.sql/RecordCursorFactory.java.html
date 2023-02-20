@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.sql</a> &gt; <span class="el_source">RecordCursorFactory.java</span></div><h1>RecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.sql;
+
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
+
+import java.io.Closeable;
+
+/**
+ * Factory for creating a SQL execution plan.
+ * Queries may be executed more than once without changing execution plan.
+ * &lt;p&gt;
+ * Interfaces which extend Closeable are not optionally-closeable.
+ * close() method must be called after other calls are complete.
+ * &lt;p&gt;
+ * Example:
+ * &lt;p&gt;
+ * final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+ * try (SqlCompiler compiler = new SqlCompiler(engine)) {
+ * try (RecordCursorFactory factory = compiler.compile(&quot;abc&quot;, ctx).getRecordCursorFactory()) {
+ * try (RecordCursor cursor = factory.getCursor(ctx)) {
+ * final Record record = cursor.getRecord();
+ * while (cursor.hasNext()) {
+ * // access 'record' instance for field values
+ * }
+ * }
+ * }
+ * }
+ */
+public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
+    @Override
+    default void close() {
+<span class="nc" id="L63">    }</span>
+
+    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+<span class="fc" id="L66">        return null;</span>
+    }
+
+    default PageFrameSequence&lt;?&gt; execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+<span class="nc" id="L70">        return null;</span>
+    }
+
+    default boolean followedLimitAdvice() {
+<span class="fc" id="L74">        return false;</span>
+    }
+
+    /**
+     * True if record cursor factory followed order by advice and doesn't require sorting.
+     *
+     * @return true if record cursor factory followed order by advice and doesn't require sorting
+     */
+    default boolean followedOrderByAdvice() {
+<span class="fc" id="L83">        return false;</span>
+    }
+
+    // Factories, such as union all do not conform to the assumption
+    // that key read from symbol column map to symbol values unambiguously.
+    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
+    // key 1 at row 100 it might map to 'BBB'.
+    // Such factories cannot be used in multi-threaded execution and cannot be tested
+    // via `testSymbolAPI()` call.
+    default boolean fragmentedSymbolTables() {
+<span class="fc" id="L93">        return false;</span>
+    }
+
+    default String getBaseColumnName(int idx) {
+<span class="fc" id="L97">        return getBaseFactory().getMetadata().getColumnName(idx);</span>
+    }
+
+    /**
+     * Method is necessary for cases where row cursor uses index from table reader while record cursor can reorder columns (e.g. DataFrameRecordCursorFactory)
+     *
+     * @param idx idx of column
+     * @return name of base column (no remapping)
+     */
+    default String getBaseColumnNameNoRemap(int idx) {
+<span class="fc" id="L107">        return getBaseColumnName(idx);</span>
+    }
+
+    default RecordCursorFactory getBaseFactory() {
+<span class="nc" id="L111">        throw new UnsupportedOperationException(&quot;Unsupported for: &quot; + getClass());</span>
+    }
+
+    /* used for describing query execution plan */
+
+    /**
+     * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
+     * The calling code must not hold on to copies of the cursor.
+     * &lt;p&gt;
+     * The new cursor will have refreshed its view of the data. If new data was added to table(s)
+     * the cursor will pick it up.
+     *
+     * @param executionContext name of a SQL execution context
+     * @return instance of cursor
+     * @throws SqlException when cursor cannot be produced due a deferred SQL syntax error
+     */
+    default RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="nc" id="L128">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Metadata of the SQL result. It includes column names, indexes and types.
+     *
+     * @return metadata
+     */
+    RecordMetadata getMetadata();
+
+    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+<span class="nc" id="L139">        return null;</span>
+    }
+
+    default boolean hasDescendingOrder() {
+<span class="fc" id="L143">        return false;</span>
+    }
+
+    /* Returns true if this factory handles limit M , N clause already and false otherwise .
+     *  If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).   */
+    default boolean implementsLimit() {
+<span class="fc" id="L149">        return false;</span>
+    }
+
+    boolean recordCursorSupportsRandomAccess();
+
+    default boolean supportPageFrameCursor() {
+<span class="fc" id="L155">        return false;</span>
+    }
+
+    default boolean supportsUpdateRowId(TableToken tableName) {
+<span class="nc" id="L159">        return false;</span>
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+<span class="nc" id="L164">        sink.type(getClass().getName());</span>
+<span class="nc" id="L165">    }</span>
+
+    default void toSink(CharSink sink) {
+<span class="nc" id="L168">        throw new UnsupportedOperationException(&quot;Unsupported for: &quot; + getClass());</span>
+    }
+
+    default boolean usesCompiledFilter() {
+<span class="fc" id="L172">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

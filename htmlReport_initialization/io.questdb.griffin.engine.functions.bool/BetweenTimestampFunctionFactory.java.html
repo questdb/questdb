@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BetweenTimestampFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.bool</a> &gt; <span class="el_source">BetweenTimestampFunctionFactory.java</span></div><h1>BetweenTimestampFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.bool;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+
+<span class="fc" id="L41">public class BetweenTimestampFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L44">        return &quot;between(NNN)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList&lt;Function&gt; args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+<span class="fc" id="L55">        Function arg = args.getQuick(0);</span>
+<span class="fc" id="L56">        Function fromFn = args.getQuick(1);</span>
+<span class="fc" id="L57">        Function toFn = args.getQuick(2);</span>
+
+<span class="fc bfc" id="L59" title="All 4 branches covered.">        if (fromFn.isConstant() &amp;&amp; toFn.isConstant()) {</span>
+<span class="fc" id="L60">            long fromFnTimestamp = fromFn.getTimestamp(null);</span>
+<span class="fc" id="L61">            long toFnTimestamp = toFn.getTimestamp(null);</span>
+
+<span class="fc bfc" id="L63" title="All 4 branches covered.">            if (fromFnTimestamp == Numbers.LONG_NaN || toFnTimestamp == Numbers.LONG_NaN) {</span>
+<span class="fc" id="L64">                return BooleanConstant.FALSE;</span>
+            }
+<span class="fc" id="L66">            return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);</span>
+        }
+<span class="fc" id="L68">        return new VarBetweenFunction(arg, fromFn, toFn);</span>
+    }
+
+    private static class ConstFunc extends BooleanFunction implements UnaryFunction {
+        private final long from;
+        private final Function left;
+        private final long to;
+
+<span class="fc" id="L76">        public ConstFunc(Function left, long from, long to) {</span>
+<span class="fc" id="L77">            this.left = left;</span>
+<span class="fc" id="L78">            this.from = Math.min(from, to);</span>
+<span class="fc" id="L79">            this.to = Math.max(from, to);</span>
+<span class="fc" id="L80">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="fc" id="L84">            return left;</span>
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L89">            long timestamp = left.getTimestamp(rec);</span>
+<span class="pc bpc" id="L90" title="1 of 2 branches missed.">            if (timestamp == Numbers.LONG_NaN) return false;</span>
+
+<span class="pc bpc" id="L92" title="1 of 4 branches missed.">            return from &lt;= timestamp &amp;&amp; timestamp &lt;= to;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L97">            sink.val(left).val(&quot; between &quot;).val(from).val(&quot; and &quot;).val(to);</span>
+<span class="fc" id="L98">        }</span>
+    }
+
+    private static class VarBetweenFunction extends BooleanFunction implements TernaryFunction {
+        private final Function arg;
+        private final Function from;
+        private final Function to;
+
+<span class="fc" id="L106">        public VarBetweenFunction(Function left, Function from, Function to) {</span>
+<span class="fc" id="L107">            this.arg = left;</span>
+<span class="fc" id="L108">            this.from = from;</span>
+<span class="fc" id="L109">            this.to = to;</span>
+<span class="fc" id="L110">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L114">            long value = arg.getTimestamp(rec);</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">            if (value == Numbers.LONG_NaN) {</span>
+<span class="nc" id="L116">                return false;</span>
+            }
+
+<span class="fc" id="L119">            long fromTs = from.getTimestamp(rec);</span>
+<span class="fc bfc" id="L120" title="All 2 branches covered.">            if (fromTs == Numbers.LONG_NaN) {</span>
+<span class="fc" id="L121">                return false;</span>
+            }
+
+<span class="fc" id="L124">            long toTs = to.getTimestamp(rec);</span>
+<span class="fc bfc" id="L125" title="All 2 branches covered.">            if (toTs == Numbers.LONG_NaN) {</span>
+<span class="fc" id="L126">                return false;</span>
+            }
+
+<span class="fc bfc" id="L129" title="All 4 branches covered.">            return Math.min(fromTs, toTs) &lt;= value &amp;&amp; value &lt;= Math.max(fromTs, toTs);</span>
+        }
+
+        @Override
+        public Function getCenter() {
+<span class="fc" id="L134">            return arg;</span>
+        }
+
+        @Override
+        public Function getLeft() {
+<span class="fc" id="L139">            return from;</span>
+        }
+
+        @Override
+        public Function getRight() {
+<span class="fc" id="L144">            return to;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L149">            sink.val(arg).val(&quot; between &quot;).val(from).val(&quot; and &quot;).val(to);</span>
+<span class="fc" id="L150">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

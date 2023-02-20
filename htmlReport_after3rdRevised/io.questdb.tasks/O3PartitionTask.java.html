@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>O3PartitionTask.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.tasks</a> &gt; <span class="el_source">O3PartitionTask.java</span></div><h1>O3PartitionTask.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.tasks;
+
+import io.questdb.cairo.O3Basket;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.str.Path;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
+<span class="fc" id="L37">public class O3PartitionTask {</span>
+    private long colTopSinkAddr;
+    private AtomicInteger columnCounter;
+    private ObjList&lt;MemoryMA&gt; columns;
+    private boolean last;
+    private long maxTimestamp; // table's max timestamp
+    private O3Basket o3Basket;
+    private ReadOnlyObjList&lt;? extends MemoryCR&gt; o3Columns;
+    private long oooTimestampMax;
+    private long oooTimestampMin;
+    private int partitionBy;
+    private long partitionTimestamp;
+    private Path pathToTable;
+    private long sortedTimestampsAddr;
+    private long srcDataMax;
+    private long srcNameTxn;
+    private long srcOooHi;
+    private long srcOooLo;
+    private long srcOooMax;
+    private TableWriter tableWriter;
+    private long txn;
+
+    public long getColTopSinkAddr() {
+<span class="fc" id="L60">        return colTopSinkAddr;</span>
+    }
+
+    public AtomicInteger getColumnCounter() {
+<span class="fc" id="L64">        return columnCounter;</span>
+    }
+
+    public ObjList&lt;MemoryMA&gt; getColumns() {
+<span class="fc" id="L68">        return columns;</span>
+    }
+
+    public long getMaxTimestamp() {
+<span class="fc" id="L72">        return maxTimestamp;</span>
+    }
+
+    public O3Basket getO3Basket() {
+<span class="fc" id="L76">        return o3Basket;</span>
+    }
+
+    public ReadOnlyObjList&lt;? extends MemoryCR&gt; getO3Columns() {
+<span class="fc" id="L80">        return o3Columns;</span>
+    }
+
+    public long getOooTimestampMax() {
+<span class="fc" id="L84">        return oooTimestampMax;</span>
+    }
+
+    public long getOooTimestampMin() {
+<span class="fc" id="L88">        return oooTimestampMin;</span>
+    }
+
+    public int getPartitionBy() {
+<span class="fc" id="L92">        return partitionBy;</span>
+    }
+
+    public long getPartitionTimestamp() {
+<span class="fc" id="L96">        return partitionTimestamp;</span>
+    }
+
+    public Path getPathToTable() {
+<span class="fc" id="L100">        return pathToTable;</span>
+    }
+
+    public long getSortedTimestampsAddr() {
+<span class="fc" id="L104">        return sortedTimestampsAddr;</span>
+    }
+
+    public long getSrcDataMax() {
+<span class="fc" id="L108">        return srcDataMax;</span>
+    }
+
+    public long getSrcNameTxn() {
+<span class="fc" id="L112">        return srcNameTxn;</span>
+    }
+
+    public long getSrcOooHi() {
+<span class="fc" id="L116">        return srcOooHi;</span>
+    }
+
+    public long getSrcOooLo() {
+<span class="fc" id="L120">        return srcOooLo;</span>
+    }
+
+    public long getSrcOooMax() {
+<span class="fc" id="L124">        return srcOooMax;</span>
+    }
+
+    public TableWriter getTableWriter() {
+<span class="fc" id="L128">        return tableWriter;</span>
+    }
+
+    public long getTxn() {
+<span class="fc" id="L132">        return txn;</span>
+    }
+
+    public boolean isLast() {
+<span class="fc" id="L136">        return last;</span>
+    }
+
+    public void of(
+            Path path,
+            int partitionBy,
+            ObjList&lt;MemoryMA&gt; columns,
+            ReadOnlyObjList&lt;? extends MemoryCR&gt; o3Columns,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long partitionTimestamp,
+            long maxTimestamp,
+            long srcDataMax,
+            long srcNameTxn,
+            boolean last,
+            long txn,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            AtomicInteger columnCounter,
+            O3Basket o3Basket,
+            long colTopSinkAddr
+    ) {
+<span class="fc" id="L161">        this.pathToTable = path;</span>
+<span class="fc" id="L162">        this.txn = txn;</span>
+<span class="fc" id="L163">        this.srcOooLo = srcOooLo;</span>
+<span class="fc" id="L164">        this.srcOooHi = srcOooHi;</span>
+<span class="fc" id="L165">        this.srcOooMax = srcOooMax;</span>
+<span class="fc" id="L166">        this.oooTimestampMin = oooTimestampMin;</span>
+<span class="fc" id="L167">        this.oooTimestampMax = oooTimestampMax;</span>
+<span class="fc" id="L168">        this.partitionTimestamp = partitionTimestamp;</span>
+<span class="fc" id="L169">        this.maxTimestamp = maxTimestamp;</span>
+<span class="fc" id="L170">        this.srcDataMax = srcDataMax;</span>
+<span class="fc" id="L171">        this.srcNameTxn = srcNameTxn;</span>
+<span class="fc" id="L172">        this.last = last;</span>
+<span class="fc" id="L173">        this.sortedTimestampsAddr = sortedTimestampsAddr;</span>
+<span class="fc" id="L174">        this.partitionBy = partitionBy;</span>
+<span class="fc" id="L175">        this.columns = columns;</span>
+<span class="fc" id="L176">        this.o3Columns = o3Columns;</span>
+<span class="fc" id="L177">        this.tableWriter = tableWriter;</span>
+<span class="fc" id="L178">        this.columnCounter = columnCounter;</span>
+<span class="fc" id="L179">        this.o3Basket = o3Basket;</span>
+<span class="fc" id="L180">        this.colTopSinkAddr = colTopSinkAddr;</span>
+<span class="fc" id="L181">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

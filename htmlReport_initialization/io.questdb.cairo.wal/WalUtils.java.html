@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WalUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal</a> &gt; <span class="el_source">WalUtils.java</span></div><h1>WalUtils.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal;
+
+<span class="nc" id="L27">public class WalUtils {</span>
+    public static final String CONVERT_FILE_NAME = &quot;_convert&quot;;
+    public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
+    public static final int DROP_TABLE_WALID = -2;
+    public static final String EVENT_FILE_NAME = &quot;_event&quot;;
+    public static final String EVENT_INDEX_FILE_NAME = &quot;_event.i&quot;;
+    public static final int METADATA_WALID = -1;
+    public static final String SEQ_DIR = &quot;txn_seq&quot;;
+    public static final String SEQ_DIR_DEPRECATED = &quot;seq&quot;;
+    public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
+    public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_COLUMN_COUNT = SEQ_META_OFFSET_STRUCTURE_VERSION + Long.BYTES;
+    public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = SEQ_META_OFFSET_COLUMN_COUNT + Integer.BYTES;
+    public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
+    public static final long SEQ_META_SUSPENDED = SEQ_META_TABLE_ID + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
+    public static final String TABLE_REGISTRY_NAME_FILE = &quot;tables.d&quot;;
+    public static final String TXNLOG_FILE_NAME = &quot;_txnlog&quot;;
+    public static final String TXNLOG_FILE_NAME_META_INX = &quot;_txnlog.meta.i&quot;;
+    public static final String TXNLOG_FILE_NAME_META_VAR = &quot;_txnlog.meta.d&quot;;
+    public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
+    public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
+    public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
+    public static final int WAL_FORMAT_VERSION = 0;
+    public static final String WAL_INDEX_FILE_NAME = &quot;_wal_index.d&quot;;
+    public static final String WAL_NAME_BASE = &quot;wal&quot;;
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

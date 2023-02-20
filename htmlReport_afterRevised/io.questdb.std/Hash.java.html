@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Hash.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">Hash.java</span></div><h1>Hash.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.str.ByteCharSequence;
+import io.questdb.std.str.DirectByteCharSequence;
+
+public final class Hash {
+
+    private static final long M2 = 0x7a646e4d;
+    private static final int SPREAD_HASH_BITS = 0x7fffffff;
+
+    private Hash() {
+    }
+
+    /**
+     * Restricts hashCode() of the underlying char sequence to be no greater than max.
+     *
+     * @param seq char sequence
+     * @param max max value of hashCode()
+     * @return power of 2 integer
+     */
+    public static int boundedHash(CharSequence seq, int max) {
+<span class="pc bpc" id="L47" title="1 of 2 branches missed.">        return seq == null ? -1 : (Chars.hashCode(seq) &amp; 0xFFFFFFF) &amp; max;</span>
+    }
+
+    /**
+     * Hash function based on Knuth's multiplicative method.
+     * It provides good distribution even for a sequence of keys.
+     *
+     * @param k the long for which the hash will be calculated
+     * @return the hash
+     */
+    public static long fastLongMix(long k) {
+        // phi = 2^64 / goldenRatio
+<span class="fc" id="L59">        final long phi = 0x9E3779B97F4A7C15L;</span>
+<span class="fc" id="L60">        long h = k * phi;</span>
+<span class="fc" id="L61">        h ^= h &gt;&gt;&gt; 32;</span>
+<span class="fc" id="L62">        return h ^ (h &gt;&gt;&gt; 16);</span>
+    }
+
+    public static int hash(long key1, long key2) {
+<span class="fc" id="L66">        return (int) fastLongMix(fastLongMix(key1) + key2);</span>
+    }
+
+    /**
+     * Same as {@link #hashMem32(long, long)}, but with direct UTF8 char sequence
+     * instead of direct unsafe access.
+     */
+    public static int hashMem32(DirectByteCharSequence seq) {
+<span class="fc" id="L74">        return hashMem32(seq.getLo(), seq.length());</span>
+    }
+
+    /**
+     * Same as {@link #hashMem32(long, long)}, but with on-heap char sequence
+     * instead of direct unsafe access.
+     */
+    public static int hashMem32(ByteCharSequence seq) {
+<span class="fc" id="L82">        final int len = seq.length();</span>
+<span class="fc" id="L83">        long h = 0;</span>
+<span class="fc" id="L84">        int i = 0;</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        for (; i + 7 &lt; len; i += 8) {</span>
+<span class="fc" id="L86">            h = h * M2 + seq.longAt(i);</span>
+        }
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        if (i + 3 &lt; len) {</span>
+<span class="fc" id="L89">            h = h * M2 + seq.intAt(i);</span>
+<span class="fc" id="L90">            i += 4;</span>
+        }
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        for (; i &lt; len; i++) {</span>
+<span class="fc" id="L93">            h = h * M2 + seq.byteAt(i);</span>
+        }
+<span class="fc" id="L95">        h *= M2;</span>
+<span class="fc" id="L96">        return (int) h ^ (int) (h &gt;&gt;&gt; 32);</span>
+    }
+
+    /**
+     * Calculates positive integer hash of memory pointer using a polynomial
+     * hash function.
+     * &lt;p&gt;
+     * The function is a modified version of the function from
+     * &lt;a href=&quot;https://vanilla-java.github.io/2018/08/15/Looking-at-randomness-and-performance-for-hash-codes.html&quot;&gt;this article&lt;/a&gt;
+     * by Peter Lawrey.
+     *
+     * @param p   memory pointer
+     * @param len memory length in bytes
+     * @return hash code
+     */
+    public static int hashMem32(long p, long len) {
+<span class="fc" id="L112">        long h = 0;</span>
+<span class="fc" id="L113">        int i = 0;</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        for (; i + 7 &lt; len; i += 8) {</span>
+<span class="fc" id="L115">            h = h * M2 + Unsafe.getUnsafe().getLong(p + i);</span>
+        }
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        if (i + 3 &lt; len) {</span>
+<span class="fc" id="L118">            h = h * M2 + Unsafe.getUnsafe().getInt(p + i);</span>
+<span class="fc" id="L119">            i += 4;</span>
+        }
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        for (; i &lt; len; i++) {</span>
+<span class="fc" id="L122">            h = h * M2 + Unsafe.getUnsafe().getByte(p + i);</span>
+        }
+<span class="fc" id="L124">        h *= M2;</span>
+<span class="fc" id="L125">        return (int) h ^ (int) (h &gt;&gt;&gt; 32);</span>
+    }
+
+    /**
+     * Same as {@link #hashMem32(long, long)}, but with MemoryR instead of direct
+     * unsafe access.
+     */
+    public static int hashMem32(long p, long len, MemoryR mem) {
+<span class="fc" id="L133">        long h = 0;</span>
+<span class="fc" id="L134">        int i = 0;</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">        for (; i + 7 &lt; len; i += 8) {</span>
+<span class="fc" id="L136">            h = h * M2 + mem.getLong(p + i);</span>
+        }
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        if (i + 3 &lt; len) {</span>
+<span class="fc" id="L139">            h = h * M2 + mem.getInt(p + i);</span>
+<span class="fc" id="L140">            i += 4;</span>
+        }
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        for (; i &lt; len; i++) {</span>
+<span class="fc" id="L143">            h = h * M2 + mem.getByte(p + i);</span>
+        }
+<span class="fc" id="L145">        h *= M2;</span>
+<span class="fc" id="L146">        return (int) h ^ (int) (h &gt;&gt;&gt; 32);</span>
+    }
+
+    /**
+     * (copied from ConcurrentHashMap)
+     * Spreads (XORs) higher bits of hash to lower and also forces top
+     * bit to 0. Because the table uses power-of-two masking, sets of
+     * hashes that vary only in bits above the current mask will
+     * always collide. (Among known examples are sets of Float keys
+     * holding consecutive whole numbers in small tables.)  So we
+     * apply a transform that spreads the impact of higher bits
+     * downward. There is a trade-off between speed, utility, and
+     * quality of bit-spreading. Because many common sets of hashes
+     * are already reasonably distributed (so don't benefit from
+     * spreading), and because we use trees to handle large sets of
+     * collisions in bins, we just XOR some shifted bits in the
+     * cheapest possible way to reduce systematic lossage, as well as
+     * to incorporate impact of the highest bits that would otherwise
+     * never be used in index calculations because of table bounds.
+     *
+     * @param h hash code
+     * @return adjusted hash code
+     */
+    public static int spread(int h) {
+<span class="fc" id="L170">        return (h ^ (h &gt;&gt;&gt; 16)) &amp; SPREAD_HASH_BITS;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IOUringAccessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">IOUringAccessor.java</span></div><h1>IOUringAccessor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+<span class="nc" id="L27">public class IOUringAccessor {</span>
+
+    static final short CQE_RES_OFFSET;
+    static final short CQE_USER_DATA_OFFSET;
+    static final short CQ_CQES_OFFSET;
+    static final short CQ_KHEAD_OFFSET;
+    static final short CQ_KRING_ENTRIES_OFFSET;
+    static final short CQ_KRING_MASK_OFFSET;
+    static final short CQ_KTAIL_OFFSET;
+    static final byte IORING_OP_NOP = 0;
+    static final byte IORING_OP_READ = 22;
+    static final short RING_FD_OFFSET;
+    static final short SIZEOF_CQE;
+    static final short SIZEOF_SQE;
+    static final short SQE_ADDR_OFFSET;
+    static final short SQE_FD_OFFSET;
+    static final short SQE_LEN_OFFSET;
+    static final short SQE_OFF_OFFSET;
+    static final short SQE_OPCODE_OFFSET;
+    static final short SQE_USER_DATA_OFFSET;
+    static final short SQ_KHEAD_OFFSET;
+    static final short SQ_KRING_ENTRIES_OFFSET;
+    static final short SQ_KRING_MASK_OFFSET;
+    static final short SQ_KTAIL_OFFSET;
+    static final short SQ_SQES_OFFSET;
+    static final short SQ_SQE_HEAD_OFFSET;
+    static final short SQ_SQE_TAIL_OFFSET;
+
+    static native void close(long ptr);
+
+    static native long create(int capacity);
+
+    static native short getCqCqesOffset();
+
+    static native short getCqKheadOffset();
+
+    static native short getCqKringEntriesOffset();
+
+    static native short getCqKringMaskOffset();
+
+    static native short getCqKtailOffset();
+
+    static native short getCqOffset();
+
+    static native short getCqeResOffset();
+
+    static native short getCqeSize();
+
+    static native short getCqeUserDataOffset();
+
+    static native short getRingFdOffset();
+
+    static native short getSqKheadOffset();
+
+    static native short getSqKringEntriesOffset();
+
+    static native short getSqKringMaskOffset();
+
+    static native short getSqKtailOffset();
+
+    static native short getSqOffset();
+
+    static native short getSqSqeHeadOffset();
+
+    static native short getSqSqeTailOffset();
+
+    static native short getSqSqesOffset();
+
+    static native short getSqeAddrOffset();
+
+    static native short getSqeFDOffset();
+
+    static native short getSqeLenOffset();
+
+    static native short getSqeOffOffset();
+
+    static native short getSqeOpcodeOffset();
+
+    static native short getSqeSize();
+
+    static native short getSqeUserDataOffset();
+
+    static native String kernelVersion();
+
+    static native int submit(long ptr);
+
+    static native int submitAndWait(long ptr, int waitNr);
+
+    static {
+<span class="nc" id="L116">        RING_FD_OFFSET = getRingFdOffset();</span>
+
+<span class="nc" id="L118">        final short sqOffset = getSqOffset();</span>
+<span class="nc" id="L119">        SQ_KHEAD_OFFSET = (short) (sqOffset + getSqKheadOffset());</span>
+<span class="nc" id="L120">        SQ_KTAIL_OFFSET = (short) (sqOffset + getSqKtailOffset());</span>
+<span class="nc" id="L121">        SQ_KRING_MASK_OFFSET = (short) (sqOffset + getSqKringMaskOffset());</span>
+<span class="nc" id="L122">        SQ_KRING_ENTRIES_OFFSET = (short) (sqOffset + getSqKringEntriesOffset());</span>
+<span class="nc" id="L123">        SQ_SQES_OFFSET = (short) (sqOffset + getSqSqesOffset());</span>
+<span class="nc" id="L124">        SQ_SQE_HEAD_OFFSET = (short) (sqOffset + getSqSqeHeadOffset());</span>
+<span class="nc" id="L125">        SQ_SQE_TAIL_OFFSET = (short) (sqOffset + getSqSqeTailOffset());</span>
+
+<span class="nc" id="L127">        SIZEOF_SQE = getSqeSize();</span>
+<span class="nc" id="L128">        SQE_OPCODE_OFFSET = getSqeOpcodeOffset();</span>
+<span class="nc" id="L129">        SQE_FD_OFFSET = getSqeFDOffset();</span>
+<span class="nc" id="L130">        SQE_OFF_OFFSET = getSqeOffOffset();</span>
+<span class="nc" id="L131">        SQE_ADDR_OFFSET = getSqeAddrOffset();</span>
+<span class="nc" id="L132">        SQE_LEN_OFFSET = getSqeLenOffset();</span>
+<span class="nc" id="L133">        SQE_USER_DATA_OFFSET = getSqeUserDataOffset();</span>
+
+<span class="nc" id="L135">        final short cqOffset = getCqOffset();</span>
+<span class="nc" id="L136">        CQ_KHEAD_OFFSET = (short) (cqOffset + getCqKheadOffset());</span>
+<span class="nc" id="L137">        CQ_KTAIL_OFFSET = (short) (cqOffset + getCqKtailOffset());</span>
+<span class="nc" id="L138">        CQ_KRING_MASK_OFFSET = (short) (cqOffset + getCqKringMaskOffset());</span>
+<span class="nc" id="L139">        CQ_KRING_ENTRIES_OFFSET = (short) (sqOffset + getCqKringEntriesOffset());</span>
+<span class="nc" id="L140">        CQ_CQES_OFFSET = (short) (cqOffset + getCqCqesOffset());</span>
+
+<span class="nc" id="L142">        SIZEOF_CQE = getCqeSize();</span>
+<span class="nc" id="L143">        CQE_USER_DATA_OFFSET = getCqeUserDataOffset();</span>
+<span class="nc" id="L144">        CQE_RES_OFFSET = getCqeResOffset();</span>
+<span class="nc" id="L145">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

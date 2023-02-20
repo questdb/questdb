@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SortedLightRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.orderby</a> &gt; <span class="el_source">SortedLightRecordCursorFactory.java</span></div><h1>SortedLightRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.orderby;
+
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.RecordComparator;
+
+public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final RecordCursorFactory base;
+    private final SortedLightRecordCursor cursor;
+    private final ListColumnFilter sortColumnFilter;
+
+    public SortedLightRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory base,
+            RecordComparator comparator,
+            ListColumnFilter sortColumnFilter
+    ) {
+<span class="fc" id="L50">        super(metadata);</span>
+<span class="fc" id="L51">        LongTreeChain chain = new LongTreeChain(</span>
+<span class="fc" id="L52">                configuration.getSqlSortKeyPageSize(),</span>
+<span class="fc" id="L53">                configuration.getSqlSortKeyMaxPages(),</span>
+                configuration
+<span class="fc" id="L55">                        .getSqlSortLightValuePageSize(),</span>
+<span class="fc" id="L56">                configuration.getSqlSortLightValueMaxPages());</span>
+<span class="fc" id="L57">        this.base = base;</span>
+<span class="fc" id="L58">        this.cursor = new SortedLightRecordCursor(chain, comparator);</span>
+<span class="fc" id="L59">        this.sortColumnFilter = sortColumnFilter;</span>
+<span class="fc" id="L60">    }</span>
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+<span class="fc" id="L64">        return base;</span>
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L69">        RecordCursor baseCursor = base.getCursor(executionContext);</span>
+        try {
+<span class="fc" id="L71">            cursor.of(baseCursor, executionContext);</span>
+<span class="fc" id="L72">            return cursor;</span>
+<span class="nc" id="L73">        } catch (Throwable ex) {</span>
+<span class="nc" id="L74">            baseCursor.close();</span>
+<span class="nc" id="L75">            cursor.close();</span>
+<span class="nc" id="L76">            throw ex;</span>
+        }
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L82">        return true;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L87">        sink.type(&quot;Sort light&quot;);</span>
+<span class="fc" id="L88">        addSortKeys(sink, sortColumnFilter);</span>
+<span class="fc" id="L89">        sink.child(base);</span>
+<span class="fc" id="L90">    }</span>
+
+    @Override
+    public boolean usesCompiledFilter() {
+<span class="fc" id="L94">        return base.usesCompiledFilter();</span>
+    }
+
+    static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
+<span class="fc" id="L98">        sink.attr(&quot;keys&quot;).val('[');</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        for (int i = 0, n = filter.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L100">            int colIdx = filter.get(i);</span>
+<span class="fc bfc" id="L101" title="All 2 branches covered.">            int col = (colIdx &gt; 0 ? colIdx : -colIdx) - 1;</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">            if (i &gt; 0) {</span>
+<span class="fc" id="L103">                sink.val(&quot;, &quot;);</span>
+            }
+<span class="fc" id="L105">            sink.putBaseColumnName(col);</span>
+<span class="fc bfc" id="L106" title="All 2 branches covered.">            if (colIdx &lt; 0) {</span>
+<span class="fc" id="L107">                sink.val(&quot; &quot;).val(&quot;desc&quot;);</span>
+            }
+        }
+<span class="fc" id="L110">        sink.val(']');</span>
+<span class="fc" id="L111">    }</span>
+
+    @Override
+    protected void _close() {
+<span class="fc" id="L115">        base.close();</span>
+<span class="fc" id="L116">        cursor.close();</span>
+<span class="fc" id="L117">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

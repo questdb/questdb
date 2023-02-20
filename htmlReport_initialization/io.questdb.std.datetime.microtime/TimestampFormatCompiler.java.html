@@ -1,0 +1,1955 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TimestampFormatCompiler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std.datetime.microtime</a> &gt; <span class="el_source">TimestampFormatCompiler.java</span></div><h1>TimestampFormatCompiler.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std.datetime.microtime;
+
+
+import io.questdb.std.*;
+import io.questdb.std.datetime.AbstractDateFormat;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.CharSink;
+
+public class TimestampFormatCompiler {
+    static final int OP_AM_PM = 14;
+    static final int OP_DAY_GREEDY = 139;
+    static final int OP_DAY_NAME_LONG = 12;
+    static final int OP_DAY_NAME_SHORT = 11;
+    static final int OP_DAY_OF_WEEK = 13;
+    static final int OP_DAY_OF_YEAR = 36;
+    static final int OP_DAY_ONE_DIGIT = 9;
+    static final int OP_DAY_TWO_DIGITS = 10;
+    static final int OP_ERA = 1;
+    static final int OP_HOUR_12_GREEDY = 142;
+    static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
+    static final int OP_HOUR_12_ONE_DIGIT = 17;
+    static final int OP_HOUR_12_ONE_DIGIT_ONE_BASED = 18;
+    static final int OP_HOUR_12_TWO_DIGITS = 34;
+    static final int OP_HOUR_12_TWO_DIGITS_ONE_BASED = 35;
+    static final int OP_HOUR_24_GREEDY = 140;
+    static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
+    static final int OP_HOUR_24_ONE_DIGIT = 15;
+    static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
+    static final int OP_HOUR_24_TWO_DIGITS = 32;
+    static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
+    static final int OP_ISO_WEEK_OF_YEAR = 38;
+    static final int OP_MICROS_GREEDY3 = 149;
+    static final int OP_MICROS_GREEDY6 = 51;
+    static final int OP_MICROS_ONE_DIGIT = 39;
+    static final int OP_MICROS_THREE_DIGITS = 49;
+    static final int OP_MILLIS_GREEDY = 146;
+    static final int OP_MILLIS_ONE_DIGIT = 21;
+    static final int OP_MILLIS_THREE_DIGITS = 31;
+    static final int OP_MINUTE_GREEDY = 144;
+    static final int OP_MINUTE_ONE_DIGIT = 19;
+    static final int OP_MINUTE_TWO_DIGITS = 29;
+    static final int OP_MONTH_GREEDY = 135;
+    static final int OP_MONTH_LONG_NAME = 8;
+    static final int OP_MONTH_ONE_DIGIT = 5;
+    static final int OP_MONTH_SHORT_NAME = 7;
+    static final int OP_MONTH_TWO_DIGITS = 6;
+    static final int OP_NANOS_GREEDY = 147;
+    static final int OP_NANOS_GREEDY9 = 52;
+    static final int OP_NANOS_ONE_DIGIT = 40;
+    static final int OP_NANOS_THREE_DIGITS = 50;
+    static final int OP_SECOND_GREEDY = 145;
+    static final int OP_SECOND_ONE_DIGIT = 20;
+    static final int OP_SECOND_TWO_DIGITS = 30;
+    static final int OP_TIME_ZONE_GMT_BASED = 22;
+    static final int OP_TIME_ZONE_ISO_8601_1 = 26;
+    static final int OP_TIME_ZONE_ISO_8601_2 = 27;
+    static final int OP_TIME_ZONE_ISO_8601_3 = 28;
+    static final int OP_TIME_ZONE_LONG = 24;
+    static final int OP_TIME_ZONE_RFC_822 = 25;
+    static final int OP_TIME_ZONE_SHORT = 23;
+    static final int OP_WEEK_OF_YEAR = 37;
+    static final int OP_YEAR_FOUR_DIGITS = 4;
+    static final int OP_YEAR_GREEDY = 132;
+    static final int OP_YEAR_ISO_FOUR_DIGITS = 41;
+    static final int OP_YEAR_ONE_DIGIT = 2;
+    static final int OP_YEAR_THREE_DIGITS = 148;
+    static final int OP_YEAR_TWO_DIGITS = 3;
+    static final ObjList&lt;String&gt; opList;
+    static final CharSequenceIntHashMap opMap;
+    private static final int FA_DAY = 5;
+    private static final int FA_DAY_OF_WEEK = 10;
+    private static final int FA_DAY_OF_YEAR = 14;
+    private static final int FA_HOUR = 4;
+    private static final int FA_ISO_WEEK_OF_YEAR = 13;
+    private static final int FA_ISO_YEAR = 9;
+    private static final int FA_LEAP = 8;
+    private static final int FA_LOCAL_DATETIME = 1;
+    private static final int FA_LOCAL_LOCALE = 3;
+    private static final int FA_LOCAL_SINK = 5;
+    private static final int FA_LOCAL_TIMEZONE = 4;
+    private static final int FA_MILLIS_MICROS = 11;
+    private static final int FA_MINUTE = 3;
+    private static final int FA_MONTH = 6;
+    private static final int FA_SECOND = 2;
+    private static final int FA_SECOND_MICROS = 15;
+    private static final int FA_SECOND_MILLIS = 1;
+    private static final int FA_WEEK_OF_YEAR = 12;
+    private static final int FA_YEAR = 7;
+    private static final int FORMAT_METHOD_STACK_START = 6;
+    private static final int LOCAL_DAY = 5;
+    private static final int LOCAL_ERA = 19;
+    private static final int LOCAL_HOUR = 8;
+    private static final int LOCAL_HOUR_TYPE = 18;
+    private static final int LOCAL_MICROS = 20;
+    private static final int LOCAL_MILLIS = 11;
+    private static final int LOCAL_MINUTE = 9;
+    private static final int LOCAL_MONTH = 6;
+    private static final int LOCAL_OFFSET = 16;
+    private static final int LOCAL_POS = 12;
+    private static final int LOCAL_SECOND = 10;
+    private static final int LOCAL_TEMP_LONG = 13;
+    private static final int LOCAL_TIMEZONE = 15;
+    private static final int LOCAL_WEEK = 21;
+    private static final int LOCAL_YEAR = 7;
+    private static final int P_HI = 3;
+    private static final int P_INPUT_STR = 1;
+    private static final int P_LO = 2;
+    private static final int P_LOCALE = 4;
+<span class="fc" id="L134">    private final BytecodeAssembler asm = new BytecodeAssembler();</span>
+<span class="fc" id="L135">    private final IntList delimiterIndexes = new IntList();</span>
+<span class="fc" id="L136">    private final ObjList&lt;String&gt; delimiters = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L137">    private final int[] fmtAttributeIndex = new int[32];</span>
+<span class="fc" id="L138">    private final LongList frameOffsets = new LongList();</span>
+<span class="fc" id="L139">    private final GenericLexer lexer = new GenericLexer(2048);</span>
+<span class="fc" id="L140">    private final IntList ops = new IntList();</span>
+
+<span class="fc" id="L142">    public TimestampFormatCompiler() {</span>
+<span class="fc bfc" id="L143" title="All 2 branches covered.">        for (int i = 0, n = opList.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L144">            lexer.defineSymbol(opList.getQuick(i));</span>
+        }
+<span class="fc" id="L146">    }</span>
+
+    public DateFormat compile(CharSequence pattern) {
+<span class="fc" id="L149">        return compile(pattern, false);</span>
+    }
+
+    public DateFormat compile(CharSequence pattern, boolean generic) {
+<span class="fc" id="L153">        return compile(pattern, 0, pattern.length(), generic);</span>
+    }
+
+    public DateFormat compile(CharSequence pattern, int lo, int hi, boolean generic) {
+<span class="fc" id="L157">        this.lexer.of(pattern, lo, hi);</span>
+
+        IntList ops;
+        ObjList&lt;String&gt; delimiters;
+
+<span class="fc bfc" id="L162" title="All 2 branches covered.">        if (generic) {</span>
+<span class="fc" id="L163">            ops = new IntList();</span>
+<span class="fc" id="L164">            delimiters = new ObjList&lt;&gt;();</span>
+        } else {
+<span class="fc" id="L166">            ops = this.ops;</span>
+<span class="fc" id="L167">            delimiters = this.delimiters;</span>
+<span class="fc" id="L168">            ops.clear();</span>
+<span class="fc" id="L169">            delimiters.clear();</span>
+        }
+
+<span class="fc bfc" id="L172" title="All 2 branches covered.">        while (this.lexer.hasNext()) {</span>
+<span class="fc" id="L173">            final CharSequence cs = lexer.next();</span>
+<span class="fc" id="L174">            final int op = opMap.get(cs);</span>
+<span class="fc bfc" id="L175" title="All 3 branches covered.">            switch (op) {</span>
+                case -1:
+<span class="fc" id="L177">                    makeLastOpGreedy(ops);</span>
+<span class="fc" id="L178">                    delimiters.add(Chars.toString(cs));</span>
+<span class="fc" id="L179">                    ops.add(-(delimiters.size()));</span>
+<span class="fc" id="L180">                    break;</span>
+                case OP_AM_PM:
+                case OP_TIME_ZONE_SHORT:
+<span class="fc" id="L183">                    makeLastOpGreedy(ops);</span>
+                    // fall thru
+                default:
+<span class="fc" id="L186">                    ops.add(op);</span>
+                    break;
+            }
+<span class="fc" id="L189">        }</span>
+
+        // make last operation &quot;greedy&quot;
+<span class="fc" id="L192">        makeLastOpGreedy(ops);</span>
+<span class="fc bfc" id="L193" title="All 2 branches covered.">        return generic ? new GenericTimestampFormat(ops, delimiters) : compile(ops, delimiters);</span>
+    }
+
+    private static void addOp(String op, int opDayTwoDigits) {
+<span class="fc" id="L197">        opMap.put(op, opDayTwoDigits);</span>
+<span class="fc" id="L198">        opList.add(op);</span>
+<span class="fc" id="L199">    }</span>
+
+    private void addTempToPos(int decodeLenIndex) {
+<span class="fc" id="L202">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L203">        decodeInt(decodeLenIndex);</span>
+<span class="fc" id="L204">        asm.iadd();</span>
+<span class="fc" id="L205">        asm.istore(LOCAL_POS);</span>
+<span class="fc" id="L206">    }</span>
+
+    private void assembleFormatMethod(
+            IntList ops,
+            ObjList&lt;String&gt; delimiters,
+            int getWeekdayIndex,
+            int getShortWeekdayIndex,
+            int getMonthIndex,
+            int getShortMonthIndex,
+            int appendEraIndex,
+            int appendAmPmIndex,
+            int appendHour12Index,
+            int appendHour12PaddedIndex,
+            int appendHour121Index,
+            int appendHour121PaddedIndex,
+            int getYearIndex,
+            int getIsoYearIndex,
+            int isLeapYearIndex,
+            int getMonthOfYearIndex,
+            int getDayOfMonthIndex,
+            int getHourOfDayIndex,
+            int getMinuteOfHourIndex,
+            int getSecondOfMinuteIndex,
+            int getMillisOfSecondIndex,
+            int getMicrosOfMilliIndex,
+            int getMicrosOfSecondIndex,
+            int getDayOfWeekIndex,
+            int append00000Index,
+            int append00Index,
+            int append0Index,
+            int appendYear000Index,
+            int appendYear00Index,
+            int appendYear0Index,
+            int appendYearIndex,
+            int sinkPutIntIndex,
+            int sinkPutStrIndex,
+            int sinkPutChrIndex,
+            int formatNameIndex,
+            int formatSigIndex,
+            int getDayOfYearIndex,
+            int getWeekOfYearIndex,
+            int getWeekIndex
+    ) {
+<span class="fc" id="L249">        int formatAttributes = computeFormatAttributes(ops);</span>
+<span class="fc" id="L250">        asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));</span>
+
+<span class="fc" id="L252">        assembleFormatMethodStack(</span>
+                formatAttributes,
+                getYearIndex,
+                getIsoYearIndex,
+                isLeapYearIndex,
+                getMonthOfYearIndex,
+                getDayOfMonthIndex,
+                getHourOfDayIndex,
+                getMinuteOfHourIndex,
+                getSecondOfMinuteIndex,
+                getMillisOfSecondIndex,
+                getMicrosOfMilliIndex,
+                getMicrosOfSecondIndex,
+                getDayOfWeekIndex,
+                getDayOfYearIndex,
+                getWeekOfYearIndex,
+                getWeekIndex
+        );
+
+<span class="fc bfc" id="L271" title="All 2 branches covered.">        for (int i = 0, n = ops.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L272">            int op = ops.getQuick(i);</span>
+<span class="fc bfc" id="L273" title="All 40 branches covered.">            switch (op) {</span>
+                // AM/PM
+                case TimestampFormatCompiler.OP_AM_PM:
+<span class="fc" id="L276">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L277">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L278">                    asm.aload(FA_LOCAL_LOCALE);</span>
+<span class="fc" id="L279">                    asm.invokeStatic(appendAmPmIndex);</span>
+<span class="fc" id="L280">                    break;</span>
+                // MICROS3
+                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+<span class="fc" id="L284">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L285">                    asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);</span>
+<span class="fc" id="L286">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L287">                    asm.pop();</span>
+<span class="fc" id="L288">                    break;</span>
+                // MICROS6 &amp; NANOS9 are formatted the same
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+<span class="fc" id="L292">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L293">                    asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);</span>
+<span class="fc" id="L294">                    asm.invokeStatic(append00000Index);</span>
+<span class="fc" id="L295">                    break;</span>
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+<span class="fc" id="L297">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L298">                    asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);</span>
+<span class="fc" id="L299">                    asm.invokeStatic(append00Index);</span>
+<span class="fc" id="L300">                    break;</span>
+                // NANOS
+                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+<span class="fc" id="L304">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L305">                    asm.iconst(0);</span>
+<span class="fc" id="L306">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L307">                    asm.pop();</span>
+<span class="fc" id="L308">                    break;</span>
+                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+<span class="fc" id="L310">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L311">                    asm.iconst(0);</span>
+<span class="fc" id="L312">                    asm.invokeStatic(append00Index);</span>
+<span class="fc" id="L313">                    break;</span>
+                // MILLIS
+                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+<span class="fc" id="L317">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L318">                    asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);</span>
+<span class="fc" id="L319">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L320">                    asm.pop();</span>
+<span class="fc" id="L321">                    break;</span>
+                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+<span class="fc" id="L323">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L324">                    asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);</span>
+<span class="fc" id="L325">                    asm.invokeStatic(append00Index);</span>
+<span class="fc" id="L326">                    break;</span>
+                // SECOND
+                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+<span class="fc" id="L330">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L331">                    asm.iload(fmtAttributeIndex[FA_SECOND]);</span>
+<span class="fc" id="L332">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L333">                    asm.pop();</span>
+<span class="fc" id="L334">                    break;</span>
+                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+<span class="fc" id="L336">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L337">                    asm.iload(fmtAttributeIndex[FA_SECOND]);</span>
+<span class="fc" id="L338">                    asm.invokeStatic(append0Index);</span>
+<span class="fc" id="L339">                    break;</span>
+                // MINUTE
+                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+<span class="fc" id="L343">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L344">                    asm.iload(fmtAttributeIndex[FA_MINUTE]);</span>
+<span class="fc" id="L345">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L346">                    asm.pop();</span>
+<span class="fc" id="L347">                    break;</span>
+                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+<span class="fc" id="L349">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L350">                    asm.iload(fmtAttributeIndex[FA_MINUTE]);</span>
+<span class="fc" id="L351">                    asm.invokeStatic(append0Index);</span>
+<span class="fc" id="L352">                    break;</span>
+                // HOUR (0-11)
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+<span class="fc" id="L356">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L357">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L358">                    asm.invokeStatic(appendHour12Index);</span>
+<span class="fc" id="L359">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+<span class="fc" id="L362">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L363">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L364">                    asm.invokeStatic(appendHour12PaddedIndex);</span>
+<span class="fc" id="L365">                    break;</span>
+
+                // HOUR (1-12)
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+<span class="fc" id="L370">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L371">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L372">                    asm.invokeStatic(appendHour121Index);</span>
+<span class="fc" id="L373">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L376">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L377">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L378">                    asm.invokeStatic(appendHour121PaddedIndex);</span>
+<span class="fc" id="L379">                    break;</span>
+                // HOUR (0-23)
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+<span class="fc" id="L383">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L384">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L385">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L386">                    asm.pop();</span>
+<span class="fc" id="L387">                    break;</span>
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+<span class="fc" id="L389">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L390">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L391">                    asm.invokeStatic(append0Index);</span>
+<span class="fc" id="L392">                    break;</span>
+
+                // HOUR (1 - 24)
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+<span class="fc" id="L397">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L398">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L399">                    asm.iconst(1);</span>
+<span class="fc" id="L400">                    asm.iadd();</span>
+<span class="fc" id="L401">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L402">                    asm.pop();</span>
+<span class="fc" id="L403">                    break;</span>
+
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L406">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L407">                    asm.iload(fmtAttributeIndex[FA_HOUR]);</span>
+<span class="fc" id="L408">                    asm.iconst(1);</span>
+<span class="fc" id="L409">                    asm.iadd();</span>
+<span class="fc" id="L410">                    asm.invokeStatic(append0Index);</span>
+<span class="fc" id="L411">                    break;</span>
+                // DAY
+                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_DAY_GREEDY:
+<span class="fc" id="L415">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L416">                    asm.iload(fmtAttributeIndex[FA_DAY]);</span>
+<span class="fc" id="L417">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L418">                    asm.pop();</span>
+<span class="fc" id="L419">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+<span class="fc" id="L421">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L422">                    asm.iload(fmtAttributeIndex[FA_DAY]);</span>
+<span class="fc" id="L423">                    asm.invokeStatic(append0Index);</span>
+<span class="fc" id="L424">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+<span class="fc" id="L426">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L427">                    asm.aload(FA_LOCAL_LOCALE);</span>
+<span class="fc" id="L428">                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);</span>
+<span class="fc" id="L429">                    asm.invokeVirtual(getWeekdayIndex);</span>
+<span class="fc" id="L430">                    asm.invokeInterface(sinkPutStrIndex, 1);</span>
+<span class="fc" id="L431">                    asm.pop();</span>
+<span class="fc" id="L432">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+<span class="fc" id="L434">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L435">                    asm.aload(FA_LOCAL_LOCALE);</span>
+<span class="fc" id="L436">                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);</span>
+<span class="fc" id="L437">                    asm.invokeVirtual(getShortWeekdayIndex);</span>
+<span class="fc" id="L438">                    asm.invokeInterface(sinkPutStrIndex, 1);</span>
+<span class="fc" id="L439">                    asm.pop();</span>
+<span class="fc" id="L440">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+<span class="fc" id="L442">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L443">                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);</span>
+<span class="fc" id="L444">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L445">                    asm.pop();</span>
+<span class="fc" id="L446">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+<span class="fc" id="L448">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L449">                    asm.iload(fmtAttributeIndex[FA_DAY_OF_YEAR]);</span>
+<span class="fc" id="L450">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L451">                    asm.pop();</span>
+<span class="fc" id="L452">                    break;</span>
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+<span class="fc" id="L454">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L455">                    asm.iload(fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR]);</span>
+<span class="fc" id="L456">                    asm.invokeStatic(append0Index);</span>
+<span class="fc" id="L457">                    break;</span>
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+<span class="fc" id="L459">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L460">                    asm.iload(fmtAttributeIndex[FA_WEEK_OF_YEAR]);</span>
+<span class="fc" id="L461">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L462">                    asm.pop();</span>
+<span class="fc" id="L463">                    break;</span>
+                // MONTH
+                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+<span class="fc" id="L467">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L468">                    asm.iload(fmtAttributeIndex[FA_MONTH]);</span>
+<span class="fc" id="L469">                    asm.invokeInterface(sinkPutIntIndex, 1);</span>
+<span class="fc" id="L470">                    asm.pop();</span>
+<span class="fc" id="L471">                    break;</span>
+                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+<span class="fc" id="L473">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L474">                    asm.iload(fmtAttributeIndex[FA_MONTH]);</span>
+<span class="fc" id="L475">                    asm.invokeStatic(append0Index);</span>
+<span class="fc" id="L476">                    break;</span>
+                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+<span class="fc" id="L478">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L479">                    asm.aload(FA_LOCAL_LOCALE);</span>
+<span class="fc" id="L480">                    asm.iload(fmtAttributeIndex[FA_MONTH]);</span>
+<span class="fc" id="L481">                    asm.iconst(1);</span>
+<span class="fc" id="L482">                    asm.isub();</span>
+<span class="fc" id="L483">                    asm.invokeVirtual(getShortMonthIndex);</span>
+<span class="fc" id="L484">                    asm.invokeInterface(sinkPutStrIndex, 1);</span>
+<span class="fc" id="L485">                    asm.pop();</span>
+<span class="fc" id="L486">                    break;</span>
+                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+<span class="fc" id="L488">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L489">                    asm.aload(FA_LOCAL_LOCALE);</span>
+<span class="fc" id="L490">                    asm.iload(fmtAttributeIndex[FA_MONTH]);</span>
+<span class="fc" id="L491">                    asm.iconst(1);</span>
+<span class="fc" id="L492">                    asm.isub();</span>
+<span class="fc" id="L493">                    asm.invokeVirtual(getMonthIndex);</span>
+<span class="fc" id="L494">                    asm.invokeInterface(sinkPutStrIndex, 1);</span>
+<span class="fc" id="L495">                    asm.pop();</span>
+<span class="fc" id="L496">                    break;</span>
+                // YEAR
+                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+<span class="fc" id="L500">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L501">                    asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L502">                    asm.invokeStatic(appendYearIndex);</span>
+<span class="fc" id="L503">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+<span class="fc" id="L505">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L506">                    asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L507">                    asm.iconst(100);</span>
+<span class="fc" id="L508">                    asm.irem();</span>
+<span class="fc" id="L509">                    asm.invokeStatic(appendYear0Index);</span>
+<span class="fc" id="L510">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+<span class="fc" id="L512">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L513">                    asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L514">                    asm.iconst(1000);</span>
+<span class="fc" id="L515">                    asm.irem();</span>
+<span class="fc" id="L516">                    asm.invokeStatic(appendYear00Index);</span>
+<span class="fc" id="L517">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+<span class="fc" id="L519">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L520">                    asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L521">                    asm.invokeStatic(appendYear000Index);</span>
+<span class="fc" id="L522">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+<span class="fc" id="L524">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L525">                    asm.iload(fmtAttributeIndex[FA_ISO_YEAR]);</span>
+<span class="fc" id="L526">                    asm.invokeStatic(appendYear000Index);</span>
+<span class="fc" id="L527">                    break;</span>
+                // ERA
+                case TimestampFormatCompiler.OP_ERA:
+<span class="fc" id="L530">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L531">                    asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L532">                    asm.aload(FA_LOCAL_LOCALE);</span>
+<span class="fc" id="L533">                    asm.invokeStatic(appendEraIndex);</span>
+<span class="fc" id="L534">                    break;</span>
+
+                // TIMEZONE
+                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
+                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
+                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
+<span class="fc" id="L544">                    asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L545">                    asm.aload(FA_LOCAL_TIMEZONE);</span>
+<span class="fc" id="L546">                    asm.invokeInterface(sinkPutStrIndex, 1);</span>
+<span class="fc" id="L547">                    break;</span>
+                // SEPARATORS
+                default:
+<span class="pc bpc" id="L550" title="1 of 2 branches missed.">                    if (op &lt; 0) {</span>
+<span class="fc" id="L551">                        String delimiter = delimiters.getQuick(-op - 1);</span>
+<span class="fc bfc" id="L552" title="All 2 branches covered.">                        if (delimiter.length() &gt; 1) {</span>
+<span class="fc" id="L553">                            asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L554">                            asm.ldc(delimiterIndexes.getQuick(-op - 1));</span>
+<span class="fc" id="L555">                            asm.invokeInterface(sinkPutStrIndex, 1);</span>
+                        } else {
+<span class="fc" id="L557">                            asm.aload(FA_LOCAL_SINK);</span>
+<span class="fc" id="L558">                            asm.iconst(delimiter.charAt(0));</span>
+<span class="fc" id="L559">                            asm.invokeInterface(sinkPutChrIndex, 1);</span>
+                        }
+<span class="fc" id="L561">                        asm.pop();</span>
+                    }
+                    break;
+            }
+        }
+
+<span class="fc" id="L567">        asm.return_();</span>
+<span class="fc" id="L568">        asm.endMethodCode();</span>
+<span class="fc" id="L569">        asm.putShort(0);</span>
+<span class="fc" id="L570">        asm.putShort(0);</span>
+<span class="fc" id="L571">        asm.endMethod();</span>
+<span class="fc" id="L572">    }</span>
+
+    private void assembleFormatMethodStack(
+            int formatAttributes,
+            int getYearIndex,
+            int getIsoYearIndex,
+            int isLeapYearIndex,
+            int getMonthOfYearIndex,
+            int getDayOfMonthIndex,
+            int getHourOfDayIndex,
+            int getMinuteOfHourIndex,
+            int getSecondOfMinuteIndex,
+            int getMillisOfSecondIndex,
+            int getMicrosOfMilliIndex,
+            int getMicrosOfSecondIndex,
+            int getDayOfWeekIndex,
+            int getDayOfYearIndex,
+            int getWeekOfYearIndex,
+            int getWeekIndex) {
+<span class="fc" id="L591">        int index = FORMAT_METHOD_STACK_START;</span>
+<span class="fc bfc" id="L592" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {</span>
+<span class="fc" id="L593">            fmtAttributeIndex[FA_YEAR] = index++;</span>
+        }
+
+<span class="fc bfc" id="L596" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_ISO_YEAR, getIsoYearIndex, index)) {</span>
+<span class="fc" id="L597">            fmtAttributeIndex[FA_ISO_YEAR] = index++;</span>
+        }
+
+<span class="fc bfc" id="L600" title="All 2 branches covered.">        if ((formatAttributes &amp; (1 &lt;&lt; FA_LEAP)) != 0) {</span>
+<span class="fc" id="L601">            asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L602">            asm.invokeStatic(isLeapYearIndex);</span>
+<span class="fc" id="L603">            asm.istore(index);</span>
+<span class="fc" id="L604">            fmtAttributeIndex[FA_LEAP] = index++;</span>
+        }
+
+<span class="fc bfc" id="L607" title="All 2 branches covered.">        if ((formatAttributes &amp; (1 &lt;&lt; FA_MONTH)) != 0) {</span>
+<span class="fc" id="L608">            asm.lload(FA_LOCAL_DATETIME);</span>
+<span class="fc" id="L609">            asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L610">            asm.iload(fmtAttributeIndex[FA_LEAP]);</span>
+<span class="fc" id="L611">            asm.invokeStatic(getMonthOfYearIndex);</span>
+<span class="fc" id="L612">            asm.istore(index);</span>
+<span class="fc" id="L613">            fmtAttributeIndex[FA_MONTH] = index++;</span>
+        }
+
+<span class="fc bfc" id="L616" title="All 2 branches covered.">        if ((formatAttributes &amp; (1 &lt;&lt; FA_DAY)) != 0) {</span>
+<span class="fc" id="L617">            asm.lload(FA_LOCAL_DATETIME);</span>
+<span class="fc" id="L618">            asm.iload(fmtAttributeIndex[FA_YEAR]);</span>
+<span class="fc" id="L619">            asm.iload(fmtAttributeIndex[FA_MONTH]);</span>
+<span class="fc" id="L620">            asm.iload(fmtAttributeIndex[FA_LEAP]);</span>
+<span class="fc" id="L621">            asm.invokeStatic(getDayOfMonthIndex);</span>
+<span class="fc" id="L622">            asm.istore(index);</span>
+<span class="fc" id="L623">            fmtAttributeIndex[FA_DAY] = index++;</span>
+        }
+
+<span class="fc bfc" id="L626" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_HOUR, getHourOfDayIndex, index)) {</span>
+<span class="fc" id="L627">            fmtAttributeIndex[FA_HOUR] = index++;</span>
+        }
+
+<span class="fc bfc" id="L630" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_MINUTE, getMinuteOfHourIndex, index)) {</span>
+<span class="fc" id="L631">            fmtAttributeIndex[FA_MINUTE] = index++;</span>
+        }
+
+<span class="fc bfc" id="L634" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_SECOND, getSecondOfMinuteIndex, index)) {</span>
+<span class="fc" id="L635">            fmtAttributeIndex[FA_SECOND] = index++;</span>
+        }
+
+<span class="fc bfc" id="L638" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_SECOND_MILLIS, getMillisOfSecondIndex, index)) {</span>
+<span class="fc" id="L639">            fmtAttributeIndex[FA_SECOND_MILLIS] = index++;</span>
+        }
+
+<span class="fc bfc" id="L642" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_MILLIS_MICROS, getMicrosOfMilliIndex, index)) {</span>
+<span class="fc" id="L643">            fmtAttributeIndex[FA_MILLIS_MICROS] = index++;</span>
+        }
+
+<span class="fc bfc" id="L646" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_SECOND_MICROS, getMicrosOfSecondIndex, index)) {</span>
+<span class="fc" id="L647">            fmtAttributeIndex[FA_SECOND_MICROS] = index++;</span>
+        }
+
+<span class="fc bfc" id="L650" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_DAY_OF_WEEK, getDayOfWeekIndex, index)) {</span>
+<span class="fc" id="L651">            fmtAttributeIndex[FA_DAY_OF_WEEK] = index;</span>
+        }
+
+<span class="fc bfc" id="L654" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_DAY_OF_YEAR, getDayOfYearIndex, index)) {</span>
+<span class="fc" id="L655">            fmtAttributeIndex[FA_DAY_OF_YEAR] = index;</span>
+        }
+
+<span class="fc bfc" id="L658" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_ISO_WEEK_OF_YEAR, getWeekIndex, index)) {</span>
+<span class="fc" id="L659">            fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR] = index;</span>
+        }
+
+<span class="fc bfc" id="L662" title="All 2 branches covered.">        if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_YEAR, getWeekOfYearIndex, index)) {</span>
+<span class="fc" id="L663">            fmtAttributeIndex[FA_WEEK_OF_YEAR] = index;</span>
+        }
+
+<span class="fc" id="L666">    }</span>
+
+    private void assembleParseMethod(
+            IntList ops,
+            ObjList&lt;String&gt; delimiters,
+            int thisClassIndex,
+            int stackMapTableIndex,
+            int dateLocaleClassIndex,
+            int charSequenceClassIndex,
+            int minLongIndex,
+            int minMillisIndex,
+            int matchWeekdayIndex,
+            int matchMonthIndex,
+            int matchZoneIndex,
+            int matchAMPMIndex,
+            int matchEraIndex,
+            int parseIntSafelyIndex,
+            int parseInt000GreedyIndex,
+            int parseLong000000GreedyIndex,
+            int parseNanosAsMicrosGreedyIndex,
+            int decodeLenIndex,
+            int decodeIntIndex,
+            int assertRemainingIndex,
+            int assertNoTailIndex,
+            int parseIntIndex,
+            int assertStringIndex,
+            int assertCharIndex,
+            int computeIndex,
+            int adjustYearIndex,
+            int parseYearGreedyIndex,
+            int parseOffsetIndex,
+            int parseNameIndex,
+            int parseSigIndex,
+            IntList delimIndices,
+            int charAtIndex
+    ) {
+
+<span class="fc" id="L703">        int stackState = computeParseMethodStack(ops);</span>
+
+        // public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException
+<span class="fc" id="L706">        asm.startMethod(parseNameIndex, parseSigIndex, 15, 22);</span>
+
+        // define stack variables
+        // when pattern is not used a default value must be assigned
+
+<span class="fc bfc" id="L711" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_DAY)) == 0) {</span>
+            // int day = 1
+<span class="fc" id="L713">            asm.iconst(1);</span>
+<span class="fc" id="L714">            asm.istore(LOCAL_DAY);</span>
+        }
+
+<span class="pc bpc" id="L717" title="1 of 2 branches missed.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_WEEK)) == 0) {</span>
+            // int week = -1
+<span class="fc" id="L719">            asm.iconst(-1);</span>
+<span class="fc" id="L720">            asm.istore(LOCAL_WEEK);</span>
+        }
+
+<span class="fc bfc" id="L723" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_MONTH)) == 0) {</span>
+            // int month = 1
+<span class="fc" id="L725">            asm.iconst(1);</span>
+<span class="fc" id="L726">            asm.istore(LOCAL_MONTH);</span>
+        }
+
+<span class="fc bfc" id="L729" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_YEAR)) == 0) {</span>
+            // int year = 1970
+<span class="fc" id="L731">            asm.iconst(1970);</span>
+<span class="fc" id="L732">            asm.istore(LOCAL_YEAR);</span>
+        }
+
+<span class="fc bfc" id="L735" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_HOUR)) == 0) {</span>
+            // int hour = 0
+<span class="fc" id="L737">            asm.iconst(0);</span>
+<span class="fc" id="L738">            asm.istore(LOCAL_HOUR);</span>
+        }
+
+<span class="fc bfc" id="L741" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_MINUTE)) == 0) {</span>
+            // int minute = 0;
+<span class="fc" id="L743">            asm.iconst(0);</span>
+<span class="fc" id="L744">            asm.istore(LOCAL_MINUTE);</span>
+        }
+
+<span class="fc bfc" id="L747" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_SECOND)) == 0) {</span>
+            // int second = 0
+<span class="fc" id="L749">            asm.iconst(0);</span>
+<span class="fc" id="L750">            asm.istore(LOCAL_SECOND);</span>
+        }
+
+<span class="fc bfc" id="L753" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_MILLIS)) == 0) {</span>
+            // int millis = 0
+<span class="fc" id="L755">            asm.iconst(0);</span>
+<span class="fc" id="L756">            asm.istore(LOCAL_MILLIS);</span>
+        }
+
+        // int pos = lo
+<span class="fc" id="L760">        asm.iload(P_LO);</span>
+<span class="fc" id="L761">        asm.istore(LOCAL_POS);</span>
+
+        // int timezone = -1
+<span class="fc" id="L764">        asm.iconst(-1);</span>
+<span class="fc" id="L765">        asm.istore(LOCAL_TIMEZONE);</span>
+
+        // long offset = Long.MIN_VALUE
+<span class="fc" id="L768">        asm.ldc2_w(minLongIndex);</span>
+<span class="fc" id="L769">        asm.lstore(LOCAL_OFFSET);</span>
+
+<span class="fc" id="L771">        asm.iconst(TimestampFormatUtils.HOUR_24);</span>
+<span class="fc" id="L772">        asm.istore(LOCAL_HOUR_TYPE);</span>
+
+<span class="fc bfc" id="L774" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_ERA)) == 0) {</span>
+<span class="fc" id="L775">            asm.iconst(1);</span>
+<span class="fc" id="L776">            asm.istore(LOCAL_ERA);</span>
+        }
+
+<span class="fc bfc" id="L779" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_TEMP_LONG)) == 0) {</span>
+<span class="fc" id="L780">            asm.lconst_0();</span>
+<span class="fc" id="L781">            asm.lstore(LOCAL_TEMP_LONG);</span>
+        }
+
+<span class="fc bfc" id="L784" title="All 2 branches covered.">        if ((stackState &amp; (1 &lt;&lt; LOCAL_MICROS)) == 0) {</span>
+<span class="fc" id="L785">            asm.iconst(0);</span>
+<span class="fc" id="L786">            asm.istore(LOCAL_MICROS);</span>
+        }
+
+<span class="fc" id="L789">        frameOffsets.clear();</span>
+<span class="fc bfc" id="L790" title="All 2 branches covered.">        for (int i = 0, n = ops.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L791">            int op = ops.getQuick(i);</span>
+<span class="fc bfc" id="L792" title="All 49 branches covered.">            switch (op) {</span>
+                // AM/PM
+                case OP_AM_PM:
+<span class="fc" id="L795">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L796">                    invokeMatch(matchAMPMIndex);</span>
+<span class="fc" id="L797">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L798">                    asm.istore(LOCAL_HOUR_TYPE);</span>
+<span class="fc" id="L799">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L800">                    break;</span>
+                case OP_MICROS_ONE_DIGIT:
+<span class="fc" id="L802">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</span>
+<span class="fc" id="L803">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MICROS);</span>
+<span class="fc" id="L804">                    break;</span>
+                case OP_MICROS_THREE_DIGITS:
+<span class="fc" id="L806">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</span>
+<span class="fc" id="L807">                    parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MICROS);</span>
+<span class="fc" id="L808">                    break;</span>
+                case OP_MICROS_GREEDY3:
+<span class="fc" id="L810">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</span>
+<span class="fc" id="L811">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L812">                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);</span>
+<span class="fc" id="L813">                    break;</span>
+                case OP_MICROS_GREEDY6:
+<span class="fc" id="L815">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</span>
+<span class="fc" id="L816">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L817">                    invokeParseIntSafelyAndStore(parseLong000000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);</span>
+<span class="fc" id="L818">                    break;</span>
+                case OP_NANOS_GREEDY9:
+<span class="fc" id="L820">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MICROS);</span>
+<span class="fc" id="L821">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L822">                    invokeParseIntSafelyAndStore(parseNanosAsMicrosGreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);</span>
+<span class="fc" id="L823">                    break;</span>
+                case OP_NANOS_ONE_DIGIT:
+<span class="fc" id="L825">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);</span>
+<span class="fc" id="L826">                    break;</span>
+                case OP_NANOS_THREE_DIGITS:
+<span class="fc" id="L828">                    parseDigits(assertRemainingIndex, parseIntIndex, 3, -1);</span>
+<span class="fc" id="L829">                    break;</span>
+                case OP_NANOS_GREEDY:
+<span class="fc" id="L831">                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, -1);</span>
+<span class="fc" id="L832">                    break;</span>
+                case OP_MILLIS_ONE_DIGIT:
+<span class="fc" id="L834">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MILLIS);</span>
+<span class="fc" id="L835">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MILLIS);</span>
+<span class="fc" id="L836">                    break;</span>
+                case OP_MILLIS_THREE_DIGITS:
+<span class="fc" id="L838">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MILLIS);</span>
+<span class="fc" id="L839">                    parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MILLIS);</span>
+<span class="fc" id="L840">                    break;</span>
+                case OP_MILLIS_GREEDY:
+<span class="fc" id="L842">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MILLIS);</span>
+<span class="fc" id="L843">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L844">                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);</span>
+<span class="fc" id="L845">                    break;</span>
+                case OP_SECOND_ONE_DIGIT:
+<span class="fc" id="L847">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_SECOND);</span>
+<span class="fc" id="L848">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_SECOND);</span>
+<span class="fc" id="L849">                    break;</span>
+                case OP_SECOND_TWO_DIGITS:
+<span class="fc" id="L851">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_SECOND);</span>
+<span class="fc" id="L852">                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_SECOND);</span>
+<span class="fc" id="L853">                    break;</span>
+                case OP_SECOND_GREEDY:
+<span class="fc" id="L855">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_SECOND);</span>
+<span class="fc" id="L856">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L857">                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_SECOND);</span>
+<span class="fc" id="L858">                    break;</span>
+                case OP_MINUTE_ONE_DIGIT:
+<span class="fc" id="L860">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MINUTE);</span>
+<span class="fc" id="L861">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MINUTE);</span>
+<span class="fc" id="L862">                    break;</span>
+                case OP_MINUTE_TWO_DIGITS:
+<span class="fc" id="L864">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MINUTE);</span>
+<span class="fc" id="L865">                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MINUTE);</span>
+<span class="fc" id="L866">                    break;</span>
+
+                case OP_MINUTE_GREEDY:
+<span class="fc" id="L869">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MINUTE);</span>
+<span class="fc" id="L870">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L871">                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MINUTE);</span>
+<span class="fc" id="L872">                    break;</span>
+                // HOUR (0-11)
+                case OP_HOUR_12_ONE_DIGIT:
+<span class="fc" id="L875">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L876">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);</span>
+<span class="fc" id="L877">                    setHourType(stackState);</span>
+<span class="fc" id="L878">                    break;</span>
+                case OP_HOUR_12_TWO_DIGITS:
+<span class="fc" id="L880">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L881">                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);</span>
+<span class="fc" id="L882">                    setHourType(stackState);</span>
+<span class="fc" id="L883">                    break;</span>
+
+                case OP_HOUR_12_GREEDY:
+<span class="fc" id="L886">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L887">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L888">                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);</span>
+<span class="fc" id="L889">                    setHourType(stackState);</span>
+<span class="fc" id="L890">                    break;</span>
+                // HOUR (1-12)
+                case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<span class="fc" id="L893">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L894">                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);</span>
+<span class="fc" id="L895">                    setHourType(stackState);</span>
+<span class="fc" id="L896">                    break;</span>
+
+                case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L899">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L900">                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);</span>
+<span class="fc" id="L901">                    setHourType(stackState);</span>
+<span class="fc" id="L902">                    break;</span>
+
+                case OP_HOUR_12_GREEDY_ONE_BASED:
+<span class="fc" id="L905">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L906">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+
+<span class="fc" id="L908">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L909">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L910">                    asm.iload(P_HI);</span>
+<span class="fc" id="L911">                    asm.invokeStatic(parseIntSafelyIndex);</span>
+<span class="fc" id="L912">                    asm.lstore(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L913">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L914">                    asm.iconst(1);</span>
+<span class="fc" id="L915">                    asm.isub();</span>
+<span class="fc" id="L916">                    asm.istore(LOCAL_HOUR);</span>
+<span class="fc" id="L917">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L918">                    setHourType(stackState);</span>
+<span class="fc" id="L919">                    break;</span>
+                // HOUR (0-23)
+                case OP_HOUR_24_ONE_DIGIT:
+<span class="fc" id="L922">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L923">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);</span>
+<span class="fc" id="L924">                    break;</span>
+
+                case OP_HOUR_24_TWO_DIGITS:
+<span class="fc" id="L927">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L928">                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);</span>
+<span class="fc" id="L929">                    break;</span>
+
+                case OP_HOUR_24_GREEDY:
+<span class="fc" id="L932">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L933">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L934">                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);</span>
+<span class="fc" id="L935">                    break;</span>
+                // HOUR (1 - 24)
+                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<span class="fc" id="L938">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L939">                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);</span>
+<span class="fc" id="L940">                    break;</span>
+
+                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L943">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L944">                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);</span>
+<span class="fc" id="L945">                    break;</span>
+
+                case OP_HOUR_24_GREEDY_ONE_BASED:
+<span class="fc" id="L948">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L949">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+
+<span class="fc" id="L951">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L952">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L953">                    asm.iload(P_HI);</span>
+<span class="fc" id="L954">                    asm.invokeStatic(parseIntSafelyIndex);</span>
+<span class="fc" id="L955">                    asm.lstore(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L956">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L957">                    asm.iconst(1);</span>
+<span class="fc" id="L958">                    asm.isub();</span>
+<span class="fc" id="L959">                    asm.istore(LOCAL_HOUR);</span>
+<span class="fc" id="L960">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L961">                    break;</span>
+                // DAY
+                case OP_DAY_ONE_DIGIT:
+<span class="fc" id="L964">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_DAY);</span>
+<span class="fc" id="L965">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_DAY);</span>
+<span class="fc" id="L966">                    break;</span>
+                case OP_DAY_TWO_DIGITS:
+<span class="fc" id="L968">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_DAY);</span>
+<span class="fc" id="L969">                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_DAY);</span>
+<span class="fc" id="L970">                    break;</span>
+                case OP_DAY_GREEDY:
+<span class="fc" id="L972">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_DAY);</span>
+<span class="fc" id="L973">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L974">                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_DAY);</span>
+<span class="fc" id="L975">                    break;</span>
+                case OP_DAY_NAME_LONG:
+                case OP_DAY_NAME_SHORT:
+<span class="fc" id="L978">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L979">                    invokeMatch(matchWeekdayIndex);</span>
+<span class="fc" id="L980">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L981">                    break;</span>
+                case OP_ISO_WEEK_OF_YEAR:
+<span class="fc" id="L983">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_WEEK);</span>
+<span class="fc" id="L984">                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_WEEK);</span>
+<span class="fc" id="L985">                    break;</span>
+                case OP_WEEK_OF_YEAR:
+                case OP_DAY_OF_YEAR:
+<span class="fc" id="L988">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L989">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L990">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L991">                    asm.iload(P_HI);</span>
+<span class="fc" id="L992">                    asm.invokeStatic(parseIntSafelyIndex);</span>
+<span class="fc" id="L993">                    asm.lstore(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L994">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L995">                    break;</span>
+                case OP_DAY_OF_WEEK:
+<span class="fc" id="L997">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L998">                    asm.iload(P_HI);</span>
+<span class="fc" id="L999">                    asm.invokeStatic(assertRemainingIndex);</span>
+
+<span class="fc" id="L1001">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1002">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1003">                    asm.iinc(LOCAL_POS, 1);</span>
+<span class="fc" id="L1004">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1005">                    asm.invokeStatic(parseIntIndex);</span>
+<span class="fc" id="L1006">                    asm.pop();</span>
+<span class="fc" id="L1007">                    break;</span>
+
+                case OP_MONTH_ONE_DIGIT:
+<span class="fc" id="L1010">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</span>
+<span class="fc" id="L1011">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MONTH);</span>
+<span class="fc" id="L1012">                    break;</span>
+                case OP_MONTH_TWO_DIGITS:
+<span class="fc" id="L1014">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</span>
+<span class="fc" id="L1015">                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MONTH);</span>
+<span class="fc" id="L1016">                    break;</span>
+                case OP_MONTH_GREEDY:
+<span class="fc" id="L1018">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</span>
+<span class="fc" id="L1019">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1020">                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MONTH);</span>
+<span class="fc" id="L1021">                    break;</span>
+
+                case OP_MONTH_SHORT_NAME:
+                case OP_MONTH_LONG_NAME:
+<span class="fc" id="L1025">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_MONTH);</span>
+<span class="fc" id="L1026">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+
+<span class="fc" id="L1028">                    invokeMatch(matchMonthIndex);</span>
+<span class="fc" id="L1029">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L1030">                    asm.iconst(1);</span>
+<span class="fc" id="L1031">                    asm.iadd();</span>
+<span class="fc" id="L1032">                    asm.istore(LOCAL_MONTH);</span>
+<span class="fc" id="L1033">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L1034">                    break;</span>
+
+                case OP_YEAR_ONE_DIGIT:
+<span class="fc" id="L1037">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</span>
+<span class="fc" id="L1038">                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_YEAR);</span>
+<span class="fc" id="L1039">                    break;</span>
+                case OP_YEAR_TWO_DIGITS:
+<span class="fc" id="L1041">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</span>
+
+<span class="fc" id="L1043">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1044">                    asm.iconst(1);</span>
+<span class="fc" id="L1045">                    asm.iadd();</span>
+<span class="fc" id="L1046">                    asm.iload(P_HI);</span>
+<span class="fc" id="L1047">                    asm.invokeStatic(assertRemainingIndex);</span>
+
+<span class="fc" id="L1049">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1050">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1051">                    asm.iinc(LOCAL_POS, 2);</span>
+<span class="fc" id="L1052">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1053">                    asm.invokeStatic(parseIntIndex);</span>
+<span class="fc" id="L1054">                    asm.invokeStatic(adjustYearIndex);</span>
+<span class="fc" id="L1055">                    asm.istore(LOCAL_YEAR);</span>
+<span class="fc" id="L1056">                    break;</span>
+                case OP_YEAR_THREE_DIGITS:
+<span class="fc" id="L1058">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</span>
+
+<span class="fc" id="L1060">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1061">                    asm.iconst(2);</span>
+<span class="fc" id="L1062">                    asm.iadd();</span>
+<span class="fc" id="L1063">                    asm.iload(P_HI);</span>
+<span class="fc" id="L1064">                    asm.invokeStatic(assertRemainingIndex);</span>
+
+<span class="fc" id="L1066">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1067">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1068">                    asm.iinc(LOCAL_POS, 3);</span>
+<span class="fc" id="L1069">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1070">                    asm.invokeStatic(parseIntIndex);</span>
+<span class="fc" id="L1071">                    asm.istore(LOCAL_YEAR);</span>
+<span class="fc" id="L1072">                    break;</span>
+                case OP_YEAR_ISO_FOUR_DIGITS:
+                case OP_YEAR_FOUR_DIGITS: {
+<span class="fc" id="L1075">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1076">                    asm.iload(P_HI);</span>
+<span class="fc" id="L1077">                    int b1 = asm.if_icmpge();</span>
+<span class="fc" id="L1078">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1079">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1080">                    asm.invokeInterface(charAtIndex, 1); //charAt</span>
+<span class="fc" id="L1081">                    asm.iconst('-');</span>
+<span class="fc" id="L1082">                    int b2 = asm.if_icmpne();</span>
+<span class="fc" id="L1083">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1084">                    asm.iconst(4);</span>
+<span class="fc" id="L1085">                    asm.iadd();</span>
+<span class="fc" id="L1086">                    asm.iload(P_HI);</span>
+<span class="fc" id="L1087">                    asm.invokeStatic(assertRemainingIndex);</span>
+<span class="fc" id="L1088">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1089">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1090">                    asm.iconst(1);</span>
+<span class="fc" id="L1091">                    asm.iadd();</span>
+<span class="fc" id="L1092">                    asm.iinc(LOCAL_POS, 5);</span>
+<span class="fc" id="L1093">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1094">                    asm.invokeStatic(parseIntIndex);</span>
+<span class="fc" id="L1095">                    asm.ineg();</span>
+<span class="fc" id="L1096">                    asm.istore(LOCAL_YEAR);</span>
+<span class="fc" id="L1097">                    int b3 = asm.goto_();</span>
+
+<span class="fc" id="L1099">                    int p = asm.position();</span>
+<span class="fc" id="L1100">                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</span>
+<span class="fc" id="L1101">                    asm.setJmp(b1, p);</span>
+<span class="fc" id="L1102">                    asm.setJmp(b2, p);</span>
+
+<span class="fc" id="L1104">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1105">                    asm.iconst(3);</span>
+<span class="fc" id="L1106">                    asm.iadd();</span>
+<span class="fc" id="L1107">                    asm.iload(P_HI);</span>
+<span class="fc" id="L1108">                    asm.invokeStatic(assertRemainingIndex);</span>
+
+<span class="fc" id="L1110">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1111">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1112">                    asm.iinc(LOCAL_POS, 4);</span>
+<span class="fc" id="L1113">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1114">                    asm.invokeStatic(parseIntIndex);</span>
+<span class="fc" id="L1115">                    asm.istore(LOCAL_YEAR);</span>
+
+<span class="fc" id="L1117">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</span>
+
+<span class="fc" id="L1119">                    p = asm.position();</span>
+<span class="fc" id="L1120">                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</span>
+<span class="fc" id="L1121">                    asm.setJmp(b3, p);</span>
+                }
+<span class="fc" id="L1123">                break;</span>
+                case OP_YEAR_GREEDY:
+<span class="fc" id="L1125">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_YEAR);</span>
+<span class="fc" id="L1126">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+
+<span class="fc" id="L1128">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1129">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1130">                    asm.iload(P_HI);</span>
+<span class="fc" id="L1131">                    asm.invokeStatic(parseYearGreedyIndex);</span>
+<span class="fc" id="L1132">                    asm.lstore(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1133">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L1134">                    asm.istore(LOCAL_YEAR);</span>
+<span class="fc" id="L1135">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L1136">                    break;</span>
+                case OP_ERA:
+<span class="fc" id="L1138">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_ERA);</span>
+
+<span class="fc" id="L1140">                    invokeMatch(matchEraIndex);</span>
+<span class="fc" id="L1141">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L1142">                    asm.istore(LOCAL_ERA);</span>
+<span class="fc" id="L1143">                    addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L1144">                    break;</span>
+                case OP_TIME_ZONE_SHORT:
+                case OP_TIME_ZONE_GMT_BASED:
+                case OP_TIME_ZONE_ISO_8601_1:
+                case OP_TIME_ZONE_ISO_8601_2:
+                case OP_TIME_ZONE_ISO_8601_3:
+                case OP_TIME_ZONE_LONG:
+                case OP_TIME_ZONE_RFC_822:
+<span class="fc" id="L1152">                    stackState &amp;= ~(1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+
+<span class="fc" id="L1154">                    asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1155">                    asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1156">                    asm.iload(P_HI);</span>
+<span class="fc" id="L1157">                    asm.invokeStatic(parseOffsetIndex);</span>
+<span class="fc" id="L1158">                    asm.lstore(LOCAL_TEMP_LONG);</span>
+
+<span class="fc" id="L1160">                    asm.lload(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1161">                    asm.ldc2_w(minLongIndex);</span>
+<span class="fc" id="L1162">                    asm.lcmp();</span>
+<span class="fc" id="L1163">                    int branch1 = asm.ifne();</span>
+
+                    //
+<span class="fc" id="L1166">                    invokeMatch(matchZoneIndex);</span>
+                    //
+<span class="fc" id="L1168">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L1169">                    asm.istore(LOCAL_TIMEZONE);</span>
+<span class="fc" id="L1170">                    int branch2 = asm.goto_();</span>
+
+<span class="fc" id="L1172">                    int p = asm.position();</span>
+<span class="fc" id="L1173">                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</span>
+<span class="fc" id="L1174">                    asm.setJmp(branch1, p);</span>
+
+<span class="fc" id="L1176">                    decodeInt(decodeIntIndex);</span>
+<span class="fc" id="L1177">                    asm.i2l();</span>
+<span class="fc" id="L1178">                    asm.ldc2_w(minMillisIndex);</span>
+<span class="fc" id="L1179">                    asm.lmul();</span>
+<span class="fc" id="L1180">                    asm.lstore(LOCAL_OFFSET);</span>
+<span class="fc" id="L1181">                    p = asm.position();</span>
+<span class="fc" id="L1182">                    frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</span>
+<span class="fc" id="L1183">                    asm.setJmp(branch2, p);</span>
+
+<span class="fc" id="L1185">                    addTempToPos(decodeLenIndex);</span>
+
+<span class="fc" id="L1187">                    break;</span>
+                default:
+<span class="fc" id="L1189">                    String delimiter = delimiters.getQuick(-op - 1);</span>
+<span class="fc" id="L1190">                    int len = delimiter.length();</span>
+<span class="fc bfc" id="L1191" title="All 2 branches covered.">                    if (len == 1) {</span>
+<span class="fc" id="L1192">                        asm.iconst(delimiter.charAt(0));</span>
+<span class="fc" id="L1193">                        asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1194">                        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1195">                        asm.iinc(LOCAL_POS, 1);</span>
+<span class="fc" id="L1196">                        asm.iload(P_HI);</span>
+<span class="fc" id="L1197">                        asm.invokeStatic(assertCharIndex);</span>
+                    } else {
+<span class="fc" id="L1199">                        asm.ldc(delimIndices.getQuick(-op - 1));</span>
+<span class="fc" id="L1200">                        asm.iconst(len);</span>
+<span class="fc" id="L1201">                        asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1202">                        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1203">                        asm.iload(P_HI);</span>
+<span class="fc" id="L1204">                        asm.invokeStatic(assertStringIndex);</span>
+<span class="fc" id="L1205">                        asm.istore(LOCAL_POS);</span>
+                    }
+                    break;
+            }
+        }
+
+        // check that there is no tail
+<span class="fc" id="L1212">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1213">        asm.iload(P_HI);</span>
+<span class="fc" id="L1214">        asm.invokeStatic(assertNoTailIndex);</span>
+<span class="fc" id="L1215">        asm.aload(P_LOCALE);</span>
+<span class="fc" id="L1216">        asm.iload(LOCAL_ERA);</span>
+<span class="fc" id="L1217">        asm.iload(LOCAL_YEAR);</span>
+<span class="fc" id="L1218">        asm.iload(LOCAL_MONTH);</span>
+<span class="fc" id="L1219">        asm.iload(LOCAL_WEEK);</span>
+<span class="fc" id="L1220">        asm.iload(LOCAL_DAY);</span>
+<span class="fc" id="L1221">        asm.iload(LOCAL_HOUR);</span>
+<span class="fc" id="L1222">        asm.iload(LOCAL_MINUTE);</span>
+<span class="fc" id="L1223">        asm.iload(LOCAL_SECOND);</span>
+<span class="fc" id="L1224">        asm.iload(LOCAL_MILLIS);</span>
+<span class="fc" id="L1225">        asm.iload(LOCAL_MICROS);</span>
+<span class="fc" id="L1226">        asm.iload(LOCAL_TIMEZONE);</span>
+<span class="fc" id="L1227">        asm.lload(LOCAL_OFFSET);</span>
+<span class="fc" id="L1228">        asm.iload(LOCAL_HOUR_TYPE);</span>
+<span class="fc" id="L1229">        asm.invokeStatic(computeIndex);</span>
+<span class="fc" id="L1230">        asm.lreturn();</span>
+<span class="fc" id="L1231">        asm.endMethodCode();</span>
+
+        // exceptions
+<span class="fc" id="L1234">        asm.putShort(0);</span>
+        // attributes
+<span class="fc" id="L1236">        int n = frameOffsets.size();</span>
+<span class="fc bfc" id="L1237" title="All 2 branches covered.">        asm.putShort(n &gt; 0 ? 1 : 0);</span>
+<span class="fc bfc" id="L1238" title="All 2 branches covered.">        if (n &gt; 0) {</span>
+<span class="fc" id="L1239">            asm.startStackMapTables(stackMapTableIndex, n);</span>
+
+<span class="fc" id="L1241">            int prevStackState = 0;</span>
+<span class="fc" id="L1242">            int start = asm.getCodeStart();</span>
+
+<span class="fc bfc" id="L1244" title="All 2 branches covered.">            for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L1245">                long l = frameOffsets.getQuick(i);</span>
+<span class="fc" id="L1246">                int offset = Numbers.decodeHighInt(l);</span>
+<span class="fc" id="L1247">                int ss = Numbers.decodeLowInt(l);</span>
+
+<span class="fc bfc" id="L1249" title="All 4 branches covered.">                if (i == 0 || prevStackState != ss) {</span>
+<span class="fc" id="L1250">                    asm.full_frame(offset - start);</span>
+                    // 19 local variables
+<span class="fc" id="L1252">                    int countPos = asm.position();</span>
+<span class="fc" id="L1253">                    int count = 20; // TOTAL COUNT of local variables</span>
+<span class="fc" id="L1254">                    asm.putShort(0);</span>
+
+<span class="fc" id="L1256">                    asm.putITEM_Object(thisClassIndex);</span>
+<span class="fc" id="L1257">                    asm.putITEM_Object(charSequenceClassIndex);</span>
+<span class="fc" id="L1258">                    asm.putITEM_Integer();</span>
+<span class="fc" id="L1259">                    asm.putITEM_Integer();</span>
+<span class="fc" id="L1260">                    asm.putITEM_Object(dateLocaleClassIndex);</span>
+
+<span class="fc bfc" id="L1262" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_DAY)) == 0) {</span>
+<span class="fc" id="L1263">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1265">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="fc bfc" id="L1268" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_MONTH)) == 0) {</span>
+<span class="fc" id="L1269">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1271">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="fc bfc" id="L1274" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_YEAR)) == 0) {</span>
+<span class="fc" id="L1275">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1277">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="fc bfc" id="L1280" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_HOUR)) == 0) {</span>
+<span class="fc" id="L1281">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1283">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="fc bfc" id="L1286" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_MINUTE)) == 0) {</span>
+<span class="fc" id="L1287">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1289">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="fc bfc" id="L1292" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_SECOND)) == 0) {</span>
+<span class="fc" id="L1293">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1295">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="fc bfc" id="L1298" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_MILLIS)) == 0) {</span>
+<span class="fc" id="L1299">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1301">                        asm.putITEM_Top();</span>
+                    }
+
+                    // LOCAL_POS is always set
+<span class="fc" id="L1305">                    asm.putITEM_Integer();</span>
+
+<span class="fc bfc" id="L1307" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_TEMP_LONG)) == 0) {</span>
+<span class="fc" id="L1308">                        asm.putITEM_Long();</span>
+                    } else {
+<span class="fc" id="L1310">                        asm.putITEM_Top();</span>
+<span class="fc" id="L1311">                        asm.putITEM_Top();</span>
+<span class="fc" id="L1312">                        count++;</span>
+                    }
+
+                    // LOCAL_TIMEZONE is always set
+<span class="fc" id="L1316">                    asm.putITEM_Integer();</span>
+
+                    // LOCAL_OFFSET
+<span class="fc" id="L1319">                    asm.putITEM_Long();</span>
+
+                    // LOCAL_HOUR_TYPE
+<span class="fc" id="L1322">                    asm.putITEM_Integer();</span>
+
+<span class="fc bfc" id="L1324" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_ERA)) == 0) {</span>
+<span class="fc" id="L1325">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1327">                        asm.putITEM_Top();</span>
+                    }
+
+                    // MICROS
+<span class="fc bfc" id="L1331" title="All 2 branches covered.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_MICROS)) == 0) {</span>
+<span class="fc" id="L1332">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="fc" id="L1334">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="pc bpc" id="L1337" title="1 of 2 branches missed.">                    if ((ss &amp; (1 &lt;&lt; LOCAL_WEEK)) == 0) {</span>
+<span class="fc" id="L1338">                        asm.putITEM_Integer();</span>
+                    } else {
+<span class="nc" id="L1340">                        asm.putITEM_Top();</span>
+                    }
+
+<span class="fc" id="L1343">                    asm.putShort(countPos, count);</span>
+
+                    // 0 stack
+<span class="fc" id="L1346">                    asm.putShort(0);</span>
+<span class="fc" id="L1347">                    prevStackState = ss;</span>
+<span class="fc" id="L1348">                } else {</span>
+<span class="fc" id="L1349">                    asm.same_frame(offset - start);</span>
+                }
+<span class="fc" id="L1351">                start = offset + 1;</span>
+            }
+<span class="fc" id="L1353">            asm.endStackMapTables();</span>
+        }
+
+<span class="fc" id="L1356">        asm.endMethod();</span>
+<span class="fc" id="L1357">    }</span>
+
+    /**
+     * Bytecode is assembled from fragments of switch() statement in GenericDateFormat. Compilation removes loop/switch
+     * and does not include code that wouldn't be relevant for the given pattern. Main performance benefit however comes
+     * from removing redundant local variable initialization code. For example year has to be defaulted to 1970 when
+     * it isn't present in the pattern and does not have to be defaulted at all when it is.
+     */
+    private DateFormat compile(IntList ops, ObjList&lt;String&gt; delimiters) {
+<span class="fc" id="L1366">        asm.init(DateFormat.class);</span>
+<span class="fc" id="L1367">        asm.setupPool();</span>
+<span class="fc" id="L1368">        int thisClassIndex = asm.poolClass(asm.poolUtf8(&quot;io/questdb/std/datetime/TimestampFormatAsm&quot;));</span>
+<span class="fc" id="L1369">        int stackMapTableIndex = asm.poolUtf8(&quot;StackMapTable&quot;);</span>
+<span class="fc" id="L1370">        int superclassIndex = asm.poolClass(AbstractDateFormat.class);</span>
+<span class="fc" id="L1371">        int dateLocaleClassIndex = asm.poolClass(DateLocale.class);</span>
+<span class="fc" id="L1372">        int charSequenceClassIndex = asm.poolClass(CharSequence.class);</span>
+<span class="fc" id="L1373">        int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);</span>
+<span class="fc" id="L1374">        int minMillisIndex = asm.poolLongConst(Timestamps.MINUTE_MICROS);</span>
+
+<span class="fc" id="L1376">        int superIndex = asm.poolMethod(superclassIndex, &quot;&lt;init&gt;&quot;, &quot;()V&quot;);</span>
+<span class="fc" id="L1377">        int matchWeekdayIndex = asm.poolMethod(DateLocale.class, &quot;matchWeekday&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1378">        int matchMonthIndex = asm.poolMethod(DateLocale.class, &quot;matchMonth&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1379">        int matchZoneIndex = asm.poolMethod(DateLocale.class, &quot;matchZone&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1380">        int matchAMPMIndex = asm.poolMethod(DateLocale.class, &quot;matchAMPM&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1381">        int matchEraIndex = asm.poolMethod(DateLocale.class, &quot;matchEra&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1382">        int getWeekdayIndex = asm.poolMethod(DateLocale.class, &quot;getWeekday&quot;, &quot;(I)Ljava/lang/String;&quot;);</span>
+<span class="fc" id="L1383">        int getShortWeekdayIndex = asm.poolMethod(DateLocale.class, &quot;getShortWeekday&quot;, &quot;(I)Ljava/lang/String;&quot;);</span>
+<span class="fc" id="L1384">        int getMonthIndex = asm.poolMethod(DateLocale.class, &quot;getMonth&quot;, &quot;(I)Ljava/lang/String;&quot;);</span>
+<span class="fc" id="L1385">        int getShortMonthIndex = asm.poolMethod(DateLocale.class, &quot;getShortMonth&quot;, &quot;(I)Ljava/lang/String;&quot;);</span>
+
+<span class="fc" id="L1387">        int parseIntSafelyIndex = asm.poolMethod(Numbers.class, &quot;parseIntSafely&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1388">        int parseInt000GreedyIndex = asm.poolMethod(Numbers.class, &quot;parseInt000Greedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1389">        int parseLong000000GreedyIndex = asm.poolMethod(Numbers.class, &quot;parseLong000000Greedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1390">        int parseNanosAsMicrosGreedyIndex = asm.poolMethod(Timestamps.class, &quot;parseNanosAsMicrosGreedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1391">        int decodeLenIndex = asm.poolMethod(Numbers.class, &quot;decodeHighInt&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1392">        int decodeIntIndex = asm.poolMethod(Numbers.class, &quot;decodeLowInt&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1393">        int parseIntIndex = asm.poolMethod(Numbers.class, &quot;parseInt&quot;, &quot;(Ljava/lang/CharSequence;II)I&quot;);</span>
+
+<span class="fc" id="L1395">        int assertRemainingIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertRemaining&quot;, &quot;(II)V&quot;);</span>
+<span class="fc" id="L1396">        int assertNoTailIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertNoTail&quot;, &quot;(II)V&quot;);</span>
+<span class="fc" id="L1397">        int assertStringIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertString&quot;, &quot;(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I&quot;);</span>
+<span class="fc" id="L1398">        int assertCharIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;assertChar&quot;, &quot;(CLjava/lang/CharSequence;II)V&quot;);</span>
+<span class="fc" id="L1399">        int computeIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;compute&quot;, &quot;(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIIIJI)J&quot;);</span>
+<span class="fc" id="L1400">        int adjustYearIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;adjustYear&quot;, &quot;(I)I&quot;);</span>
+<span class="fc" id="L1401">        int parseYearGreedyIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;parseYearGreedy&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1402">        int appendEraIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendEra&quot;, &quot;(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V&quot;);</span>
+<span class="fc" id="L1403">        int appendAmPmIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendAmPm&quot;, &quot;(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V&quot;);</span>
+<span class="fc" id="L1404">        int appendHour12Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour12&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1405">        int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour12Padded&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1406">        int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour121&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1407">        int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendHour121Padded&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1408">        int append00000Index = asm.poolMethod(TimestampFormatUtils.class, &quot;append00000&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1409">        int append00Index = asm.poolMethod(TimestampFormatUtils.class, &quot;append00&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1410">        int append0Index = asm.poolMethod(TimestampFormatUtils.class, &quot;append0&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1411">        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear000&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1412">        int appendYear00Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear00&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1413">        int appendYear0Index = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear0&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+<span class="fc" id="L1414">        int appendYearIndex = asm.poolMethod(TimestampFormatUtils.class, &quot;appendYear&quot;, &quot;(Lio/questdb/std/str/CharSink;I)V&quot;);</span>
+
+<span class="fc" id="L1416">        int parseOffsetIndex = asm.poolMethod(Timestamps.class, &quot;parseOffset&quot;, &quot;(Ljava/lang/CharSequence;II)J&quot;);</span>
+<span class="fc" id="L1417">        int getYearIndex = asm.poolMethod(Timestamps.class, &quot;getYear&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1418">        int getIsoYearIndex = asm.poolMethod(Timestamps.class, &quot;getIsoYear&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1419">        int isLeapYearIndex = asm.poolMethod(Timestamps.class, &quot;isLeapYear&quot;, &quot;(I)Z&quot;);</span>
+<span class="fc" id="L1420">        int getMonthOfYearIndex = asm.poolMethod(Timestamps.class, &quot;getMonthOfYear&quot;, &quot;(JIZ)I&quot;);</span>
+<span class="fc" id="L1421">        int getDayOfMonthIndex = asm.poolMethod(Timestamps.class, &quot;getDayOfMonth&quot;, &quot;(JIIZ)I&quot;);</span>
+<span class="fc" id="L1422">        int getHourOfDayIndex = asm.poolMethod(Timestamps.class, &quot;getHourOfDay&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1423">        int getMinuteOfHourIndex = asm.poolMethod(Timestamps.class, &quot;getMinuteOfHour&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1424">        int getSecondOfMinuteIndex = asm.poolMethod(Timestamps.class, &quot;getSecondOfMinute&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1425">        int getMillisOfSecondIndex = asm.poolMethod(Timestamps.class, &quot;getMillisOfSecond&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1426">        int getMicrosOfMilliIndex = asm.poolMethod(Timestamps.class, &quot;getMicrosOfMilli&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1427">        int getMicrosOfSecondIndex = asm.poolMethod(Timestamps.class, &quot;getMicrosOfSecond&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1428">        int getDayOfWeekIndex = asm.poolMethod(Timestamps.class, &quot;getDayOfWeekSundayFirst&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1429">        int getDayOfYearIndex = asm.poolMethod(Timestamps.class, &quot;getDayOfYear&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1430">        int getWeekIndex = asm.poolMethod(Timestamps.class, &quot;getWeek&quot;, &quot;(J)I&quot;);</span>
+<span class="fc" id="L1431">        int getWeekOfYearIndex = asm.poolMethod(Timestamps.class, &quot;getWeekOfYear&quot;, &quot;(J)I&quot;);</span>
+
+<span class="fc" id="L1433">        int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, &quot;put&quot;, &quot;(I)Lio/questdb/std/str/CharSink;&quot;);</span>
+<span class="fc" id="L1434">        int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, &quot;put&quot;, &quot;(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;&quot;);</span>
+<span class="fc" id="L1435">        int sinkPutChrIndex = asm.poolInterfaceMethod(CharSink.class, &quot;put&quot;, &quot;(C)Lio/questdb/std/str/CharSink;&quot;);</span>
+
+<span class="fc" id="L1437">        int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, &quot;charAt&quot;, &quot;(I)C&quot;);</span>
+
+<span class="fc" id="L1439">        int parseNameIndex = asm.poolUtf8(&quot;parse&quot;);</span>
+<span class="fc" id="L1440">        int parseSigIndex = asm.poolUtf8(&quot;(Ljava/lang/CharSequence;IILio/questdb/std/datetime/DateLocale;)J&quot;);</span>
+<span class="fc" id="L1441">        int formatNameIndex = asm.poolUtf8(&quot;format&quot;);</span>
+<span class="fc" id="L1442">        int formatSigIndex = asm.poolUtf8(&quot;(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V&quot;);</span>
+
+        // pool only delimiters over 1 char in length
+        // when delimiter is 1 char we would use shorter code path
+        // that doesn't require constant
+<span class="fc" id="L1447">        delimiterIndexes.clear();</span>
+<span class="fc bfc" id="L1448" title="All 2 branches covered.">        for (int i = 0, n = delimiters.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L1449">            String delimiter = delimiters.getQuick(i);</span>
+<span class="fc bfc" id="L1450" title="All 2 branches covered.">            if (delimiter.length() &gt; 1) {</span>
+<span class="fc" id="L1451">                delimiterIndexes.add(asm.poolStringConst(asm.poolUtf8(delimiter)));</span>
+            } else {
+                // keep indexes in both lists the same
+<span class="fc" id="L1454">                delimiterIndexes.add(-1);</span>
+            }
+        }
+
+<span class="fc" id="L1458">        asm.finishPool();</span>
+
+<span class="fc" id="L1460">        asm.defineClass(thisClassIndex, superclassIndex);</span>
+<span class="fc" id="L1461">        asm.interfaceCount(0);</span>
+<span class="fc" id="L1462">        asm.fieldCount(0);</span>
+<span class="fc" id="L1463">        asm.methodCount(3);</span>
+<span class="fc" id="L1464">        asm.defineDefaultConstructor(superIndex);</span>
+
+<span class="fc" id="L1466">        assembleParseMethod(</span>
+                ops,
+                delimiters,
+                thisClassIndex,
+                stackMapTableIndex,
+                dateLocaleClassIndex,
+                charSequenceClassIndex,
+                minLongIndex,
+                minMillisIndex,
+                matchWeekdayIndex,
+                matchMonthIndex,
+                matchZoneIndex,
+                matchAMPMIndex,
+                matchEraIndex,
+                parseIntSafelyIndex,
+                parseInt000GreedyIndex,
+                parseLong000000GreedyIndex,
+                parseNanosAsMicrosGreedyIndex,
+                decodeLenIndex,
+                decodeIntIndex,
+                assertRemainingIndex,
+                assertNoTailIndex,
+                parseIntIndex,
+                assertStringIndex,
+                assertCharIndex,
+                computeIndex,
+                adjustYearIndex,
+                parseYearGreedyIndex,
+                parseOffsetIndex,
+                parseNameIndex,
+                parseSigIndex,
+                delimiterIndexes,
+                charAtIndex
+        );
+
+<span class="fc" id="L1501">        assembleFormatMethod(</span>
+                ops,
+                delimiters,
+                getWeekdayIndex,
+                getShortWeekdayIndex,
+                getMonthIndex,
+                getShortMonthIndex,
+                appendEraIndex,
+                appendAmPmIndex,
+                appendHour12Index,
+                appendHour12PaddedIndex,
+                appendHour121Index,
+                appendHour121PaddedIndex,
+                getYearIndex,
+                getIsoYearIndex,
+                isLeapYearIndex,
+                getMonthOfYearIndex,
+                getDayOfMonthIndex,
+                getHourOfDayIndex,
+                getMinuteOfHourIndex,
+                getSecondOfMinuteIndex,
+                getMillisOfSecondIndex,
+                getMicrosOfMilliIndex,
+                getMicrosOfSecondIndex,
+                getDayOfWeekIndex,
+                append00000Index,
+                append00Index,
+                append0Index,
+                appendYear000Index,
+                appendYear00Index,
+                appendYear0Index,
+                appendYearIndex,
+                sinkPutIntIndex,
+                sinkPutStrIndex,
+                sinkPutChrIndex,
+                formatNameIndex,
+                formatSigIndex,
+                getDayOfYearIndex,
+                getWeekOfYearIndex,
+                getWeekIndex
+        );
+
+        // class attribute count
+<span class="fc" id="L1544">        asm.putShort(0);</span>
+
+<span class="fc" id="L1546">        return asm.newInstance();</span>
+    }
+
+    private int computeFormatAttributes(IntList ops) {
+<span class="fc" id="L1550">        int attributes = 0;</span>
+<span class="fc bfc" id="L1551" title="All 2 branches covered.">        for (int i = 0, n = ops.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L1552" title="All 17 branches covered.">            switch (ops.getQuick(i)) {</span>
+                // AM/PM
+                case TimestampFormatCompiler.OP_AM_PM:
+<span class="fc" id="L1555">                    attributes |= (1 &lt;&lt; FA_HOUR);</span>
+<span class="fc" id="L1556">                    break;</span>
+                // MICROS
+                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+<span class="fc" id="L1561">                    attributes |= (1 &lt;&lt; FA_MILLIS_MICROS);</span>
+<span class="fc" id="L1562">                    break;</span>
+                // formatting method for MICROS6 and NANOS9 is the same
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+<span class="fc" id="L1566">                    attributes |= (1 &lt;&lt; FA_SECOND_MICROS);</span>
+<span class="fc" id="L1567">                    break;</span>
+
+                // NANOS we are parsing microsecond resolution time, it does not
+                // have nanos, therefore we do not need to store value on stack, it is constant 0
+
+                // MILLIS
+                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
+<span class="fc" id="L1576">                    attributes |= (1 &lt;&lt; FA_SECOND_MILLIS);</span>
+<span class="fc" id="L1577">                    break;</span>
+                // SECOND
+                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
+<span class="fc" id="L1582">                    attributes |= (1 &lt;&lt; FA_SECOND);</span>
+<span class="fc" id="L1583">                    break;</span>
+                // MINUTE
+                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
+<span class="fc" id="L1588">                    attributes |= (1 &lt;&lt; FA_MINUTE);</span>
+<span class="fc" id="L1589">                    break;</span>
+                // HOUR
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L1603">                    attributes |= (1 &lt;&lt; FA_HOUR);</span>
+<span class="fc" id="L1604">                    break;</span>
+
+                // DAY OF MONTH
+                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_DAY_GREEDY:
+                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
+<span class="fc" id="L1610">                    attributes |= (1 &lt;&lt; FA_DAY);</span>
+<span class="fc" id="L1611">                    attributes |= (1 &lt;&lt; FA_MONTH);</span>
+<span class="fc" id="L1612">                    attributes |= (1 &lt;&lt; FA_YEAR);</span>
+<span class="fc" id="L1613">                    attributes |= (1 &lt;&lt; FA_LEAP);</span>
+<span class="fc" id="L1614">                    break;</span>
+                // DAY OF WEEK
+                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
+<span class="fc" id="L1619">                    attributes |= (1 &lt;&lt; FA_DAY_OF_WEEK);</span>
+<span class="fc" id="L1620">                    break;</span>
+                case TimestampFormatCompiler.OP_DAY_OF_YEAR:
+<span class="fc" id="L1622">                    attributes |= (1 &lt;&lt; FA_DAY_OF_YEAR);</span>
+<span class="fc" id="L1623">                    break;</span>
+                case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
+<span class="fc" id="L1625">                    attributes |= (1 &lt;&lt; FA_WEEK_OF_YEAR);</span>
+<span class="fc" id="L1626">                    break;</span>
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+<span class="fc" id="L1628">                    attributes |= (1 &lt;&lt; FA_ISO_WEEK_OF_YEAR);</span>
+<span class="fc" id="L1629">                    break;</span>
+                // MONTH
+                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
+<span class="fc" id="L1636">                    attributes |= (1 &lt;&lt; FA_MONTH);</span>
+<span class="fc" id="L1637">                    attributes |= (1 &lt;&lt; FA_YEAR);</span>
+<span class="fc" id="L1638">                    attributes |= (1 &lt;&lt; FA_LEAP);</span>
+<span class="fc" id="L1639">                    break;</span>
+                // YEAR
+                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
+<span class="fc" id="L1646">                    attributes |= (1 &lt;&lt; FA_YEAR);</span>
+<span class="fc" id="L1647">                    break;</span>
+                case TimestampFormatCompiler.OP_YEAR_ISO_FOUR_DIGITS:
+<span class="fc" id="L1649">                    attributes |= (1 &lt;&lt; FA_ISO_YEAR);</span>
+<span class="fc" id="L1650">                    break;</span>
+                // ERA
+                case TimestampFormatCompiler.OP_ERA:
+<span class="fc" id="L1653">                    attributes |= (1 &lt;&lt; FA_YEAR);</span>
+<span class="fc" id="L1654">                    break;</span>
+                default:
+                    break;
+            }
+        }
+<span class="fc" id="L1659">        return attributes;</span>
+    }
+
+    /*
+     * For each operation code in given operation list determine which stack slots can be left uninitialized. Set bits
+     * in the result integer will represent these stack slots. Bits positions are values of LOCAL_ constants.
+     */
+    private int computeParseMethodStack(IntList ops) {
+<span class="fc" id="L1667">        int result = 0;</span>
+<span class="fc bfc" id="L1668" title="All 2 branches covered.">        for (int i = 0, n = ops.size(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L1669" title="All 21 branches covered.">            switch (ops.getQuick(i)) {</span>
+                case OP_AM_PM:
+<span class="fc" id="L1671">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1672">                    break;</span>
+                case OP_MICROS_GREEDY3:
+<span class="fc" id="L1674">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                    // fall through
+                case OP_MICROS_ONE_DIGIT:
+                case OP_MICROS_THREE_DIGITS:
+                case OP_MICROS_GREEDY6:
+<span class="fc" id="L1679">                    result |= (1 &lt;&lt; LOCAL_MICROS);</span>
+<span class="fc" id="L1680">                    break;</span>
+                case OP_MILLIS_GREEDY:
+<span class="fc" id="L1682">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                    // fall through
+                case OP_MILLIS_ONE_DIGIT:
+                case OP_MILLIS_THREE_DIGITS:
+<span class="fc" id="L1686">                    result |= (1 &lt;&lt; LOCAL_MILLIS);</span>
+<span class="fc" id="L1687">                    break;</span>
+                case OP_SECOND_GREEDY:
+<span class="fc" id="L1689">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                    // fall through
+                case OP_SECOND_ONE_DIGIT:
+                case OP_SECOND_TWO_DIGITS:
+<span class="fc" id="L1693">                    result |= (1 &lt;&lt; LOCAL_SECOND);</span>
+<span class="fc" id="L1694">                    break;</span>
+                case OP_MINUTE_GREEDY:
+<span class="fc" id="L1696">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                case OP_MINUTE_ONE_DIGIT:
+                case OP_MINUTE_TWO_DIGITS:
+<span class="fc" id="L1699">                    result |= (1 &lt;&lt; LOCAL_MINUTE);</span>
+<span class="fc" id="L1700">                    break;</span>
+                // HOUR (0-11)
+                case OP_HOUR_12_GREEDY:
+                case OP_HOUR_12_GREEDY_ONE_BASED:
+                case OP_HOUR_24_GREEDY:
+                case OP_HOUR_24_GREEDY_ONE_BASED:
+<span class="fc" id="L1706">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                case OP_HOUR_12_ONE_DIGIT:
+                case OP_HOUR_12_TWO_DIGITS:
+                case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case OP_HOUR_24_ONE_DIGIT:
+                case OP_HOUR_24_TWO_DIGITS:
+                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+<span class="fc" id="L1715">                    result |= (1 &lt;&lt; LOCAL_HOUR);</span>
+<span class="fc" id="L1716">                    break;</span>
+                // DAY
+                case OP_DAY_GREEDY:
+<span class="fc" id="L1719">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                case OP_DAY_ONE_DIGIT:
+                case OP_DAY_TWO_DIGITS:
+<span class="fc" id="L1722">                    result |= (1 &lt;&lt; LOCAL_DAY);</span>
+<span class="fc" id="L1723">                    break;</span>
+                case OP_DAY_NAME_LONG:
+                case OP_DAY_NAME_SHORT:
+<span class="fc" id="L1726">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1727">                    break;</span>
+                case OP_MONTH_GREEDY:
+                case OP_MONTH_SHORT_NAME:
+                case OP_MONTH_LONG_NAME:
+<span class="fc" id="L1731">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                case OP_MONTH_ONE_DIGIT:
+                case OP_MONTH_TWO_DIGITS:
+<span class="fc" id="L1734">                    result |= (1 &lt;&lt; LOCAL_MONTH);</span>
+<span class="fc" id="L1735">                    break;</span>
+                case OP_YEAR_GREEDY:
+<span class="fc" id="L1737">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+                case OP_YEAR_ONE_DIGIT:
+                case OP_YEAR_TWO_DIGITS:
+                case OP_YEAR_THREE_DIGITS:
+                case OP_YEAR_FOUR_DIGITS:
+                case OP_YEAR_ISO_FOUR_DIGITS:
+<span class="fc" id="L1743">                    result |= (1 &lt;&lt; LOCAL_YEAR);</span>
+<span class="fc" id="L1744">                    break;</span>
+                case OP_ERA:
+<span class="fc" id="L1746">                    result |= (1 &lt;&lt; LOCAL_ERA);</span>
+<span class="fc" id="L1747">                    break;</span>
+                case OP_TIME_ZONE_SHORT:
+                case OP_TIME_ZONE_GMT_BASED:
+                case OP_TIME_ZONE_ISO_8601_1:
+                case OP_TIME_ZONE_ISO_8601_2:
+                case OP_TIME_ZONE_ISO_8601_3:
+                case OP_TIME_ZONE_LONG:
+                case OP_TIME_ZONE_RFC_822:
+<span class="fc" id="L1755">                    result |= (1 &lt;&lt; LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1756">                    break;</span>
+                default:
+                    break;
+
+            }
+        }
+<span class="fc" id="L1762">        return result;</span>
+    }
+
+    private void decodeInt(int decodeIntIndex) {
+<span class="fc" id="L1766">        asm.lload(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1767">        asm.invokeStatic(decodeIntIndex);</span>
+<span class="fc" id="L1768">    }</span>
+
+    private boolean invokeConvertMillis(int formatAttributes, int bit, int funcIndex, int stackIndex) {
+<span class="fc bfc" id="L1771" title="All 2 branches covered.">        if ((formatAttributes &amp; (1 &lt;&lt; bit)) != 0) {</span>
+<span class="fc" id="L1772">            asm.lload(FA_LOCAL_DATETIME);</span>
+<span class="fc" id="L1773">            asm.invokeStatic(funcIndex);</span>
+<span class="fc" id="L1774">            asm.istore(stackIndex);</span>
+<span class="fc" id="L1775">            return true;</span>
+        }
+<span class="fc" id="L1777">        return false;</span>
+    }
+
+    private void invokeMatch(int matchIndex) {
+<span class="fc" id="L1781">        asm.aload(P_LOCALE);</span>
+<span class="fc" id="L1782">        asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1783">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1784">        asm.iload(P_HI);</span>
+<span class="fc" id="L1785">        asm.invokeVirtual(matchIndex);</span>
+<span class="fc" id="L1786">        asm.lstore(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1787">    }</span>
+
+    private void invokeParseIntSafelyAndStore(int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int target) {
+<span class="fc" id="L1790">        asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1791">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1792">        asm.iload(P_HI);</span>
+<span class="fc" id="L1793">        asm.invokeStatic(parseIntSafelyIndex);</span>
+<span class="fc" id="L1794">        asm.lstore(LOCAL_TEMP_LONG);</span>
+<span class="fc" id="L1795">        decodeInt(decodeIntIndex);</span>
+<span class="fc bfc" id="L1796" title="All 2 branches covered.">        if (target &gt; -1) {</span>
+<span class="fc" id="L1797">            asm.istore(target);</span>
+        } else {
+<span class="fc" id="L1799">            asm.pop();</span>
+        }
+<span class="fc" id="L1801">        addTempToPos(decodeLenIndex);</span>
+<span class="fc" id="L1802">    }</span>
+
+    private int makeGreedy(int oldOp) {
+<span class="fc bfc" id="L1805" title="All 13 branches covered.">        switch (oldOp) {</span>
+            case OP_YEAR_ONE_DIGIT:
+<span class="fc" id="L1807">                return OP_YEAR_GREEDY;</span>
+            case OP_MONTH_ONE_DIGIT:
+<span class="fc" id="L1809">                return OP_MONTH_GREEDY;</span>
+            case OP_DAY_ONE_DIGIT:
+<span class="fc" id="L1811">                return OP_DAY_GREEDY;</span>
+            case OP_HOUR_24_ONE_DIGIT:
+<span class="fc" id="L1813">                return OP_HOUR_24_GREEDY;</span>
+            case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+<span class="fc" id="L1815">                return OP_HOUR_24_GREEDY_ONE_BASED;</span>
+            case OP_HOUR_12_ONE_DIGIT:
+<span class="fc" id="L1817">                return OP_HOUR_12_GREEDY;</span>
+            case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+<span class="fc" id="L1819">                return OP_HOUR_12_GREEDY_ONE_BASED;</span>
+            case OP_MINUTE_ONE_DIGIT:
+<span class="fc" id="L1821">                return OP_MINUTE_GREEDY;</span>
+            case OP_SECOND_ONE_DIGIT:
+<span class="fc" id="L1823">                return OP_SECOND_GREEDY;</span>
+            case OP_MILLIS_ONE_DIGIT:
+<span class="fc" id="L1825">                return OP_MILLIS_GREEDY;</span>
+            case OP_MICROS_ONE_DIGIT:
+<span class="fc" id="L1827">                return OP_MICROS_GREEDY3;</span>
+            case OP_NANOS_ONE_DIGIT:
+<span class="fc" id="L1829">                return OP_NANOS_GREEDY;</span>
+            default:
+<span class="fc" id="L1831">                return oldOp;</span>
+        }
+    }
+
+    private void makeLastOpGreedy(IntList compiled) {
+<span class="fc" id="L1836">        int lastOpIndex = compiled.size() - 1;</span>
+<span class="fc bfc" id="L1837" title="All 2 branches covered.">        if (lastOpIndex &gt; -1) {</span>
+<span class="fc" id="L1838">            int oldOp = compiled.getQuick(lastOpIndex);</span>
+<span class="fc bfc" id="L1839" title="All 2 branches covered.">            if (oldOp &gt; 0) {</span>
+<span class="fc" id="L1840">                int newOp = makeGreedy(oldOp);</span>
+<span class="fc bfc" id="L1841" title="All 2 branches covered.">                if (newOp != oldOp) {</span>
+<span class="fc" id="L1842">                    compiled.setQuick(lastOpIndex, newOp);</span>
+                }
+            }
+        }
+<span class="fc" id="L1846">    }</span>
+
+    private void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, int target) {
+<span class="fc" id="L1849">        asm.iload(LOCAL_POS);</span>
+<span class="fc bfc" id="L1850" title="All 2 branches covered.">        if (digitCount &gt; 1) {</span>
+<span class="fc" id="L1851">            asm.iconst(digitCount - 1);</span>
+<span class="fc" id="L1852">            asm.iadd();</span>
+        }
+<span class="fc" id="L1854">        asm.iload(P_HI);</span>
+<span class="fc" id="L1855">        asm.invokeStatic(assertRemainingIndex);</span>
+
+<span class="fc" id="L1857">        asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1858">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1859">        asm.iinc(LOCAL_POS, digitCount);</span>
+<span class="fc" id="L1860">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1861">        asm.invokeStatic(parseIntIndex);</span>
+<span class="fc bfc" id="L1862" title="All 2 branches covered.">        if (target &gt; -1) {</span>
+<span class="fc" id="L1863">            asm.istore(target);</span>
+        } else {
+<span class="fc" id="L1865">            asm.pop();</span>
+        }
+<span class="fc" id="L1867">    }</span>
+
+    private void parseDigitsSub1(int assertRemainingIndex, int parseIntIndex, int digitCount) {
+<span class="fc" id="L1870">        asm.iload(LOCAL_POS);</span>
+<span class="fc bfc" id="L1871" title="All 2 branches covered.">        if (digitCount &gt; 1) {</span>
+<span class="fc" id="L1872">            asm.iconst(digitCount - 1);</span>
+<span class="fc" id="L1873">            asm.iadd();</span>
+        }
+<span class="fc" id="L1875">        asm.iload(P_HI);</span>
+<span class="fc" id="L1876">        asm.invokeStatic(assertRemainingIndex);</span>
+
+<span class="fc" id="L1878">        asm.aload(P_INPUT_STR);</span>
+<span class="fc" id="L1879">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1880">        asm.iinc(LOCAL_POS, digitCount);</span>
+<span class="fc" id="L1881">        asm.iload(LOCAL_POS);</span>
+<span class="fc" id="L1882">        asm.invokeStatic(parseIntIndex);</span>
+<span class="fc" id="L1883">        asm.iconst(1);</span>
+<span class="fc" id="L1884">        asm.isub();</span>
+<span class="fc" id="L1885">        asm.istore(TimestampFormatCompiler.LOCAL_HOUR);</span>
+<span class="fc" id="L1886">    }</span>
+
+    private void parseTwoDigits(int assertRemainingIndex, int parseIntIndex, int target) {
+<span class="fc" id="L1889">        parseDigits(assertRemainingIndex, parseIntIndex, 2, target);</span>
+<span class="fc" id="L1890">    }</span>
+
+    private void setHourType(int stackState) {
+<span class="fc" id="L1893">        asm.iload(LOCAL_HOUR_TYPE);</span>
+<span class="fc" id="L1894">        asm.iconst(TimestampFormatUtils.HOUR_24);</span>
+<span class="fc" id="L1895">        int branch = asm.if_icmpne();</span>
+<span class="fc" id="L1896">        asm.iconst(TimestampFormatUtils.HOUR_AM);</span>
+<span class="fc" id="L1897">        asm.istore(LOCAL_HOUR_TYPE);</span>
+<span class="fc" id="L1898">        int p = asm.position();</span>
+<span class="fc" id="L1899">        frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));</span>
+<span class="fc" id="L1900">        asm.setJmp(branch, p);</span>
+<span class="fc" id="L1901">    }</span>
+
+    static {
+<span class="fc" id="L1904">        opMap = new CharSequenceIntHashMap();</span>
+<span class="fc" id="L1905">        opList = new ObjList&lt;&gt;();</span>
+
+<span class="fc" id="L1907">        addOp(&quot;G&quot;, OP_ERA);</span>
+<span class="fc" id="L1908">        addOp(&quot;y&quot;, OP_YEAR_ONE_DIGIT);</span>
+<span class="fc" id="L1909">        addOp(&quot;yy&quot;, OP_YEAR_TWO_DIGITS);</span>
+<span class="fc" id="L1910">        addOp(&quot;yyy&quot;, OP_YEAR_THREE_DIGITS);</span>
+<span class="fc" id="L1911">        addOp(&quot;yyyy&quot;, OP_YEAR_FOUR_DIGITS);</span>
+<span class="fc" id="L1912">        addOp(&quot;YYYY&quot;, OP_YEAR_ISO_FOUR_DIGITS);</span>
+<span class="fc" id="L1913">        addOp(&quot;M&quot;, OP_MONTH_ONE_DIGIT);</span>
+<span class="fc" id="L1914">        addOp(&quot;MM&quot;, OP_MONTH_TWO_DIGITS);</span>
+<span class="fc" id="L1915">        addOp(&quot;MMM&quot;, OP_MONTH_SHORT_NAME);</span>
+<span class="fc" id="L1916">        addOp(&quot;MMMM&quot;, OP_MONTH_LONG_NAME);</span>
+<span class="fc" id="L1917">        addOp(&quot;d&quot;, OP_DAY_ONE_DIGIT);</span>
+<span class="fc" id="L1918">        addOp(&quot;dd&quot;, OP_DAY_TWO_DIGITS);</span>
+<span class="fc" id="L1919">        addOp(&quot;E&quot;, OP_DAY_NAME_SHORT);</span>
+<span class="fc" id="L1920">        addOp(&quot;EE&quot;, OP_DAY_NAME_LONG);</span>
+<span class="fc" id="L1921">        addOp(&quot;u&quot;, OP_DAY_OF_WEEK);</span>
+<span class="fc" id="L1922">        addOp(&quot;D&quot;, OP_DAY_OF_YEAR);</span>
+<span class="fc" id="L1923">        addOp(&quot;w&quot;, OP_WEEK_OF_YEAR);</span>
+<span class="fc" id="L1924">        addOp(&quot;ww&quot;, OP_ISO_WEEK_OF_YEAR);</span>
+<span class="fc" id="L1925">        addOp(&quot;a&quot;, OP_AM_PM);</span>
+<span class="fc" id="L1926">        addOp(&quot;H&quot;, OP_HOUR_24_ONE_DIGIT);</span>
+<span class="fc" id="L1927">        addOp(&quot;HH&quot;, OP_HOUR_24_TWO_DIGITS);</span>
+<span class="fc" id="L1928">        addOp(&quot;k&quot;, OP_HOUR_24_ONE_DIGIT_ONE_BASED);</span>
+<span class="fc" id="L1929">        addOp(&quot;kk&quot;, OP_HOUR_24_TWO_DIGITS_ONE_BASED);</span>
+<span class="fc" id="L1930">        addOp(&quot;K&quot;, OP_HOUR_12_ONE_DIGIT);</span>
+<span class="fc" id="L1931">        addOp(&quot;KK&quot;, OP_HOUR_12_TWO_DIGITS);</span>
+<span class="fc" id="L1932">        addOp(&quot;h&quot;, OP_HOUR_12_ONE_DIGIT_ONE_BASED);</span>
+<span class="fc" id="L1933">        addOp(&quot;hh&quot;, OP_HOUR_12_TWO_DIGITS_ONE_BASED);</span>
+<span class="fc" id="L1934">        addOp(&quot;m&quot;, OP_MINUTE_ONE_DIGIT);</span>
+<span class="fc" id="L1935">        addOp(&quot;mm&quot;, OP_MINUTE_TWO_DIGITS);</span>
+<span class="fc" id="L1936">        addOp(&quot;s&quot;, OP_SECOND_ONE_DIGIT);</span>
+<span class="fc" id="L1937">        addOp(&quot;ss&quot;, OP_SECOND_TWO_DIGITS);</span>
+<span class="fc" id="L1938">        addOp(&quot;S&quot;, OP_MILLIS_ONE_DIGIT);</span>
+<span class="fc" id="L1939">        addOp(&quot;SSS&quot;, OP_MILLIS_THREE_DIGITS);</span>
+<span class="fc" id="L1940">        addOp(&quot;N&quot;, OP_NANOS_ONE_DIGIT);</span>
+<span class="fc" id="L1941">        addOp(&quot;NNN&quot;, OP_NANOS_THREE_DIGITS);</span>
+<span class="fc" id="L1942">        addOp(&quot;z&quot;, OP_TIME_ZONE_SHORT);</span>
+<span class="fc" id="L1943">        addOp(&quot;zz&quot;, OP_TIME_ZONE_GMT_BASED);</span>
+<span class="fc" id="L1944">        addOp(&quot;zzz&quot;, OP_TIME_ZONE_LONG);</span>
+<span class="fc" id="L1945">        addOp(&quot;Z&quot;, OP_TIME_ZONE_RFC_822);</span>
+<span class="fc" id="L1946">        addOp(&quot;x&quot;, OP_TIME_ZONE_ISO_8601_1);</span>
+<span class="fc" id="L1947">        addOp(&quot;xx&quot;, OP_TIME_ZONE_ISO_8601_2);</span>
+<span class="fc" id="L1948">        addOp(&quot;xxx&quot;, OP_TIME_ZONE_ISO_8601_3);</span>
+<span class="fc" id="L1949">        addOp(&quot;U&quot;, OP_MICROS_ONE_DIGIT);</span>
+<span class="fc" id="L1950">        addOp(&quot;UUU&quot;, OP_MICROS_THREE_DIGITS);</span>
+<span class="fc" id="L1951">        addOp(&quot;U+&quot;, OP_MICROS_GREEDY6);</span>
+<span class="fc" id="L1952">        addOp(&quot;N+&quot;, OP_NANOS_GREEDY9);</span>
+<span class="fc" id="L1953">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

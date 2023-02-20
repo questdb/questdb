@@ -1,0 +1,1172 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CompiledFilterIRSerializer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.jit</a> &gt; <span class="el_source">CompiledFilterIRSerializer.java</span></div><h1>CompiledFilterIRSerializer.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+package io.questdb.jit;
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.*;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.*;
+
+import java.util.Arrays;
+
+/**
+ * Intermediate representation (IR) serializer for filters (think, WHERE clause)
+ * to be used in SQL JIT compiler.
+ *
+ * &lt;pre&gt;
+ * IR instruction format:
+ * | opcode | options | payload |
+ * | int    | int     | long    |
+ * &lt;/pre&gt;
+ */
+<span class="fc" id="L51">public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {</span>
+
+    static final int ADD = 14;  // a + b
+    static final int AND = 6;   // a &amp;&amp; b
+    static final int DIV = 17;  // a / b
+    static final int EQ = 8;   // a == b
+    static final int F4_TYPE = 3;
+    static final int F8_TYPE = 5;
+    static final int GE = 13;  // a &gt;= b
+    static final int GT = 12;  // a &gt;  b
+    // Options:
+    // Data types
+    static final int I1_TYPE = 0;
+    static final int I2_TYPE = 1;
+    static final int I4_TYPE = 2;
+    static final int I8_TYPE = 4;
+    // Constants
+    static final int IMM = 1;
+    static final int LE = 11;  // a &lt;= b
+    static final int LT = 10;  // a &lt;  b
+    // Columns
+    static final int MEM = 2;
+    static final int MUL = 16;  // a * b
+    static final int NE = 9;   // a != b
+    // Operator codes
+    static final int NEG = 4;   // -a
+    static final int NOT = 5;   // !a
+    static final int OR = 7;   // a || b
+    // Opcodes:
+    // Return code. Breaks the loop
+    static final int RET = 0; // ret
+    static final int SUB = 15;  // a - b
+    // Stub value for opcodes and options
+    static final int UNDEFINED_CODE = -1;
+    // Bind variables and deferred symbols
+    static final int VAR = 3;
+    // contains &lt;memory_offset, constant_node&gt; pairs for backfilling purposes
+<span class="fc" id="L88">    private final LongObjHashMap&lt;ExpressionNode&gt; backfillNodes = new LongObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L89">    private final PredicateContext predicateContext = new PredicateContext();</span>
+<span class="fc" id="L90">    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();</span>
+    private ObjList&lt;Function&gt; bindVarFunctions;
+    private SqlExecutionContext executionContext;
+    // internal flag used to forcefully enable scalar mode based on filter's contents
+    private boolean forceScalarMode;
+    private MemoryCARW memory;
+<span class="fc" id="L96">    private final LongObjHashMap.LongObjConsumer&lt;ExpressionNode&gt; backfillNodeConsumer = this::backfillNode;</span>
+    private RecordMetadata metadata;
+    private PageFrameCursor pageFrameCursor;
+
+    @Override
+    public void clear() {
+<span class="fc" id="L102">        memory = null;</span>
+<span class="fc" id="L103">        metadata = null;</span>
+<span class="fc" id="L104">        pageFrameCursor = null;</span>
+<span class="fc" id="L105">        forceScalarMode = false;</span>
+<span class="fc" id="L106">        predicateContext.clear();</span>
+<span class="fc" id="L107">        backfillNodes.clear();</span>
+<span class="fc" id="L108">    }</span>
+
+    @Override
+    public boolean descend(ExpressionNode node) throws SqlException {
+<span class="fc bfc" id="L112" title="All 2 branches covered.">        if (node.token == null) {</span>
+<span class="fc" id="L113">            throw SqlException.position(node.position)</span>
+<span class="fc" id="L114">                    .put(&quot;non-null token expected: &quot;)</span>
+<span class="fc" id="L115">                    .put(node.token);</span>
+        }
+
+        // Check if we're at the start of an arithmetic expression
+<span class="fc" id="L119">        predicateContext.onNodeDescended(node);</span>
+
+        // Look ahead for negative const
+<span class="fc bfc" id="L122" title="All 6 branches covered.">        if (node.type == ExpressionNode.OPERATION &amp;&amp; node.paramCount == 1 &amp;&amp; Chars.equals(node.token, &quot;-&quot;)) {</span>
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;</span>
+<span class="pc bpc" id="L124" title="1 of 6 branches missed.">            if (nextNode != null &amp;&amp; nextNode.paramCount == 0 &amp;&amp; nextNode.type == ExpressionNode.CONSTANT) {</span>
+                // Store negation node for later backfilling
+<span class="fc" id="L126">                serializeConstantStub(node);</span>
+<span class="fc" id="L127">                return false;</span>
+            }
+        }
+
+<span class="fc" id="L131">        return true;</span>
+    }
+
+    public CompiledFilterIRSerializer of(
+            MemoryCARW memory,
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            PageFrameCursor pageFrameCursor,
+            ObjList&lt;Function&gt; bindVarFunctions
+    ) {
+<span class="fc" id="L141">        this.memory = memory;</span>
+<span class="fc" id="L142">        this.executionContext = executionContext;</span>
+<span class="fc" id="L143">        this.metadata = metadata;</span>
+<span class="fc" id="L144">        this.pageFrameCursor = pageFrameCursor;</span>
+<span class="fc" id="L145">        this.bindVarFunctions = bindVarFunctions;</span>
+<span class="fc" id="L146">        return this;</span>
+    }
+
+    /**
+     * Writes IR of the filter described by the given expression tree to memory.
+     *
+     * @param node       filter expression tree's root node.
+     * @param scalar     set use only scalar instruction set execution hint in the returned options.
+     * @param debug      set enable debug flag in the returned options.
+     * @param nullChecks a flag for JIT, allowing or disallowing generation of null check
+     * @return JIT compiler options stored in a single int in the following way:
+     * &lt;ul&gt;
+     * &lt;li&gt;1 LSB - debug flag&lt;/li&gt;
+     * &lt;li&gt;2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B&lt;/li&gt;
+     * &lt;li&gt;4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes&lt;/li&gt;
+     * &lt;li&gt;6 LSB - flag to include null checks for column values into compiled filter&lt;/li&gt;
+     * &lt;/ul&gt;
+     * &lt;p&gt;
+     * Examples:
+     * &lt;ul&gt;
+     * &lt;li&gt;00000000 00000000 00000000 00010100 - 4B, mixed types, debug off, null checks disabled&lt;/li&gt;
+     * &lt;li&gt;00000000 00000000 00000000 00100111 - 8B, scalar, debug on, null checks enabled&lt;/li&gt;
+     * &lt;/ul&gt;
+     * @throws SqlException thrown when IR serialization failed.
+     */
+    public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+<span class="fc" id="L172">        traverseAlgo.traverse(node, this);</span>
+<span class="fc" id="L173">        putOperator(RET);</span>
+
+<span class="fc" id="L175">        TypesObserver typesObserver = predicateContext.globalTypesObserver;</span>
+<span class="fc bfc" id="L176" title="All 2 branches covered.">        int options = debug ? 1 : 0;</span>
+<span class="fc" id="L177">        int typeSize = typesObserver.maxSize();</span>
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">        if (typeSize &gt; 0) {</span>
+            // typeSize is 2^n, so number of trailing zeros is equal to log2
+<span class="fc" id="L180">            int log2 = Integer.numberOfTrailingZeros(typeSize);</span>
+<span class="fc" id="L181">            options = options | (log2 &lt;&lt; 1);</span>
+        }
+<span class="fc bfc" id="L183" title="All 4 branches covered.">        if (!scalar &amp;&amp; !forceScalarMode) {</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">            int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;</span>
+<span class="fc" id="L185">            options = options | (executionHint &lt;&lt; 3);</span>
+        }
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        options = options | ((nullChecks ? 1 : 0) &lt;&lt; 5);</span>
+
+<span class="fc" id="L190">        return options;</span>
+    }
+
+    @Override
+    public void visit(ExpressionNode node) throws SqlException {
+<span class="fc" id="L195">        int argCount = node.paramCount;</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">        if (argCount == 0) {</span>
+<span class="fc bfc" id="L197" title="All 4 branches covered.">            switch (node.type) {</span>
+                case ExpressionNode.LITERAL:
+<span class="fc" id="L199">                    serializeColumn(node.position, node.token);</span>
+<span class="fc" id="L200">                    break;</span>
+                case ExpressionNode.BIND_VARIABLE:
+<span class="fc" id="L202">                    serializeBindVariable(node);</span>
+<span class="fc" id="L203">                    break;</span>
+                case ExpressionNode.CONSTANT:
+                    // Write stub values to be backfilled later
+<span class="fc" id="L206">                    serializeConstantStub(node);</span>
+<span class="fc" id="L207">                    break;</span>
+                default:
+<span class="fc" id="L209">                    throw SqlException.position(node.position)</span>
+<span class="fc" id="L210">                            .put(&quot;unsupported token: &quot;)</span>
+<span class="fc" id="L211">                            .put(node.token);</span>
+            }
+        } else {
+<span class="fc" id="L214">            serializeOperator(node.position, node.token, argCount);</span>
+        }
+
+<span class="fc" id="L217">        boolean predicateLeft = predicateContext.onNodeVisited(node);</span>
+
+<span class="fc bfc" id="L219" title="All 2 branches covered.">        if (predicateLeft) {</span>
+            // We're out of a predicate
+
+            // Force scalar mode if the predicate had byte or short arithmetic operations.
+            // That's because SIMD mode uses byte/short-sized overflows for arithmetic
+            // calculations instead of implicit upcast to int done by *.sql.Function classes.
+<span class="fc bfc" id="L225" title="All 2 branches covered.">            forceScalarMode |=</span>
+<span class="fc bfc" id="L226" title="All 2 branches covered.">                    predicateContext.hasArithmeticOperations &amp;&amp; predicateContext.localTypesObserver.maxSize() &lt;= 2;</span>
+
+            // Then backfill constants and symbol bind variables and clean up
+            try {
+<span class="fc" id="L230">                backfillNodes.forEach(backfillNodeConsumer);</span>
+<span class="fc" id="L231">                backfillNodes.clear();</span>
+<span class="fc" id="L232">            } catch (SqlWrapperException e) {</span>
+<span class="fc" id="L233">                throw e.wrappedException;</span>
+<span class="fc" id="L234">            }</span>
+        }
+<span class="fc" id="L236">    }</span>
+
+    private static byte bindVariableTypeCode(int columnTypeTag) {
+<span class="pc bpc" id="L239" title="1 of 7 branches missed.">        switch (columnTypeTag) {</span>
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+<span class="fc" id="L243">                return I1_TYPE;</span>
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.CHAR:
+<span class="fc" id="L247">                return I2_TYPE;</span>
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+            case ColumnType.STRING: // symbol variables are represented with string type
+<span class="fc" id="L251">                return I4_TYPE;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L253">                return F4_TYPE;</span>
+            case ColumnType.LONG:
+            case ColumnType.GEOLONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L258">                return I8_TYPE;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L260">                return F8_TYPE;</span>
+            default:
+<span class="nc" id="L262">                return UNDEFINED_CODE;</span>
+        }
+    }
+
+    private static int columnTypeCode(int columnTypeTag) {
+<span class="fc bfc" id="L267" title="All 7 branches covered.">        switch (columnTypeTag) {</span>
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+<span class="fc" id="L271">                return I1_TYPE;</span>
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.CHAR:
+<span class="fc" id="L275">                return I2_TYPE;</span>
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+            case ColumnType.SYMBOL:
+<span class="fc" id="L279">                return I4_TYPE;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L281">                return F4_TYPE;</span>
+            case ColumnType.LONG:
+            case ColumnType.GEOLONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L286">                return I8_TYPE;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L288">                return F8_TYPE;</span>
+            default:
+<span class="fc" id="L290">                return UNDEFINED_CODE;</span>
+        }
+    }
+
+    private static boolean isArithmeticOperation(ExpressionNode node) {
+<span class="fc" id="L295">        final CharSequence token = node.token;</span>
+<span class="fc bfc" id="L296" title="All 2 branches covered.">        if (node.paramCount &lt; 2) {</span>
+<span class="fc" id="L297">            return false;</span>
+        }
+<span class="fc bfc" id="L299" title="All 2 branches covered.">        if (Chars.equals(token, &quot;+&quot;)) {</span>
+<span class="fc" id="L300">            return true;</span>
+        }
+<span class="fc bfc" id="L302" title="All 2 branches covered.">        if (Chars.equals(token, &quot;-&quot;)) {</span>
+<span class="fc" id="L303">            return true;</span>
+        }
+<span class="fc bfc" id="L305" title="All 2 branches covered.">        if (Chars.equals(token, &quot;*&quot;)) {</span>
+<span class="fc" id="L306">            return true;</span>
+        }
+<span class="fc" id="L308">        return Chars.equals(token, &quot;/&quot;);</span>
+    }
+
+    private static boolean isTopLevelOperation(ExpressionNode node) {
+<span class="fc" id="L312">        final CharSequence token = node.token;</span>
+<span class="fc bfc" id="L313" title="All 2 branches covered.">        if (SqlKeywords.isNotKeyword(token)) {</span>
+<span class="fc" id="L314">            return true;</span>
+        }
+<span class="fc bfc" id="L316" title="All 2 branches covered.">        if (node.paramCount &lt; 2) {</span>
+<span class="fc" id="L317">            return false;</span>
+        }
+<span class="fc bfc" id="L319" title="All 2 branches covered.">        if (Chars.equals(token, &quot;=&quot;)) {</span>
+<span class="fc" id="L320">            return true;</span>
+        }
+<span class="fc bfc" id="L322" title="All 4 branches covered.">        if (Chars.equals(token, &quot;&lt;&gt;&quot;) || Chars.equals(token, &quot;!=&quot;)) {</span>
+<span class="fc" id="L323">            return true;</span>
+        }
+<span class="fc bfc" id="L325" title="All 2 branches covered.">        if (Chars.equals(token, &quot;&lt;&quot;)) {</span>
+<span class="fc" id="L326">            return true;</span>
+        }
+<span class="fc bfc" id="L328" title="All 2 branches covered.">        if (Chars.equals(token, &quot;&lt;=&quot;)) {</span>
+<span class="fc" id="L329">            return true;</span>
+        }
+<span class="fc bfc" id="L331" title="All 2 branches covered.">        if (Chars.equals(token, &quot;&gt;&quot;)) {</span>
+<span class="fc" id="L332">            return true;</span>
+        }
+<span class="fc" id="L334">        return Chars.equals(token, &quot;&gt;=&quot;);</span>
+    }
+
+    private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
+<span class="fc" id="L338">        int position = node.position;</span>
+<span class="fc" id="L339">        CharSequence token = node.token;</span>
+<span class="fc" id="L340">        boolean negate = false;</span>
+        // Check for negation case
+<span class="fc bfc" id="L342" title="All 2 branches covered.">        if (node.type == ExpressionNode.OPERATION) {</span>
+<span class="pc bpc" id="L343" title="1 of 2 branches missed.">            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;</span>
+<span class="pc bpc" id="L344" title="1 of 2 branches missed.">            if (nextNode != null) {</span>
+<span class="fc" id="L345">                position = nextNode.position;</span>
+<span class="fc" id="L346">                token = nextNode.token;</span>
+<span class="fc" id="L347">                negate = true;</span>
+            }
+        }
+
+<span class="fc" id="L351">        serializeConstant(offset, position, token, negate);</span>
+<span class="fc" id="L352">    }</span>
+
+    private void backfillNode(long key, ExpressionNode value) {
+        try {
+<span class="pc bpc" id="L356" title="1 of 3 branches missed.">            switch (value.type) {</span>
+                case ExpressionNode.CONSTANT:
+                case ExpressionNode.OPERATION: // constant negation case
+<span class="fc" id="L359">                    backfillConstant(key, value);</span>
+<span class="fc" id="L360">                    break;</span>
+                case ExpressionNode.BIND_VARIABLE:
+<span class="fc" id="L362">                    backfillSymbolBindVariable(key, value);</span>
+<span class="fc" id="L363">                    break;</span>
+                default:
+<span class="nc" id="L365">                    throw SqlException.position(value.position)</span>
+<span class="nc" id="L366">                            .put(&quot;unexpected backfill token: &quot;)</span>
+<span class="nc" id="L367">                            .put(value.token);</span>
+            }
+<span class="fc" id="L369">        } catch (SqlException e) {</span>
+<span class="fc" id="L370">            throw new SqlWrapperException(e);</span>
+<span class="fc" id="L371">        }</span>
+<span class="fc" id="L372">    }</span>
+
+    private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
+<span class="pc bpc" id="L375" title="1 of 2 branches missed.">        if (predicateContext.symbolColumnIndex == -1) {</span>
+<span class="nc" id="L376">            throw SqlException.position(node.position)</span>
+<span class="nc" id="L377">                    .put(&quot;symbol column index is missing for bind variable: &quot;)</span>
+<span class="nc" id="L378">                    .put(node.token);</span>
+        }
+
+<span class="fc" id="L381">        Function varFunction = getBindVariableFunction(node.position, node.token);</span>
+
+<span class="fc" id="L383">        final int columnType = varFunction.getType();</span>
+        // Treat string bind variable to be of symbol type
+<span class="pc bpc" id="L385" title="1 of 2 branches missed.">        if (columnType != ColumnType.STRING) {</span>
+<span class="nc" id="L386">            throw SqlException.position(node.position)</span>
+<span class="nc" id="L387">                    .put(&quot;unexpected symbol bind variable type: &quot;)</span>
+<span class="nc" id="L388">                    .put(ColumnType.nameOf(columnType));</span>
+        }
+
+<span class="fc" id="L391">        int typeCode = bindVariableTypeCode(columnType);</span>
+<span class="pc bpc" id="L392" title="1 of 2 branches missed.">        if (typeCode == UNDEFINED_CODE) {</span>
+<span class="nc" id="L393">            throw SqlException.position(node.position)</span>
+<span class="nc" id="L394">                    .put(&quot;unsupported bind variable type: &quot;)</span>
+<span class="nc" id="L395">                    .put(ColumnType.nameOf(columnType));</span>
+        }
+
+<span class="fc" id="L398">        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, predicateContext.symbolColumnIndex));</span>
+<span class="fc" id="L399">        int index = bindVarFunctions.size() - 1;</span>
+
+<span class="fc" id="L401">        putOperand(offset, VAR, typeCode, index);</span>
+<span class="fc" id="L402">    }</span>
+
+    private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
+        Function varFunction;
+
+<span class="fc bfc" id="L407" title="All 2 branches covered.">        if (token.charAt(0) == ':') {</span>
+            // name bind variable case
+<span class="fc" id="L409">            Function bindFunction = getBindVariableService().getFunction(token);</span>
+<span class="pc bpc" id="L410" title="1 of 2 branches missed.">            if (bindFunction == null) {</span>
+<span class="nc" id="L411">                throw SqlException.position(position).put(&quot;failed to find function for bind variable: &quot;).put(token);</span>
+            }
+<span class="fc" id="L413">            varFunction = new NamedParameterLinkFunction(Chars.toString(token), bindFunction.getType());</span>
+<span class="fc" id="L414">        } else {</span>
+            // indexed bind variable case
+            try {
+<span class="fc" id="L417">                final int variableIndex = Numbers.parseInt(token, 1, token.length());</span>
+<span class="pc bpc" id="L418" title="1 of 2 branches missed.">                if (variableIndex &lt; 1) {</span>
+<span class="nc" id="L419">                    throw SqlException.$(position, &quot;invalid bind variable index [value=&quot;).put(variableIndex).put(']');</span>
+                }
+<span class="fc" id="L421">                Function bindFunction = getBindVariableService().getFunction(variableIndex - 1);</span>
+<span class="pc bpc" id="L422" title="1 of 2 branches missed.">                if (bindFunction == null) {</span>
+<span class="nc" id="L423">                    throw SqlException.position(position).put(&quot;failed to find function for bind variable: &quot;).put(token);</span>
+                }
+<span class="fc" id="L425">                varFunction = new IndexedParameterLinkFunction(</span>
+                        variableIndex - 1,
+<span class="fc" id="L427">                        bindFunction.getType(),</span>
+                        position);
+
+<span class="nc" id="L430">            } catch (NumericException e) {</span>
+<span class="nc" id="L431">                throw SqlException.$(position, &quot;invalid bind variable index [value=&quot;).put(token).put(']');</span>
+<span class="fc" id="L432">            }</span>
+        }
+
+<span class="fc" id="L435">        return varFunction;</span>
+    }
+
+    private BindVariableService getBindVariableService() throws SqlException {
+<span class="fc" id="L439">        final BindVariableService bindVariableService = executionContext.getBindVariableService();</span>
+<span class="pc bpc" id="L440" title="1 of 2 branches missed.">        if (bindVariableService == null) {</span>
+<span class="nc" id="L441">            throw SqlException.$(0, &quot;bind variable service is not provided&quot;);</span>
+        }
+<span class="fc" id="L443">        return bindVariableService;</span>
+    }
+
+    private boolean isBooleanColumn(ExpressionNode node) {
+<span class="fc bfc" id="L447" title="All 2 branches covered.">        if (node.type != ExpressionNode.LITERAL) {</span>
+<span class="fc" id="L448">            return false;</span>
+        }
+<span class="fc" id="L450">        int index = metadata.getColumnIndexQuiet(node.token);</span>
+<span class="pc bpc" id="L451" title="1 of 2 branches missed.">        if (index == -1) {</span>
+<span class="nc" id="L452">            return false;</span>
+        }
+<span class="fc" id="L454">        final int columnType = metadata.getColumnType(index);</span>
+<span class="fc" id="L455">        final int columnTypeTag = ColumnType.tagOf(columnType);</span>
+<span class="fc bfc" id="L456" title="All 2 branches covered.">        return columnTypeTag == ColumnType.BOOLEAN;</span>
+    }
+
+    private boolean isTopLevelBooleanColumn(ExpressionNode node) {
+<span class="fc bfc" id="L460" title="All 4 branches covered.">        if (node.type == ExpressionNode.LITERAL &amp;&amp; isBooleanColumn(node)) {</span>
+<span class="fc" id="L461">            return true;</span>
+        }
+        // Lookahead for &quot;not boolean_column&quot; case
+<span class="fc" id="L464">        final CharSequence token = node.token;</span>
+<span class="fc bfc" id="L465" title="All 2 branches covered.">        if (SqlKeywords.isNotKeyword(token)) {</span>
+<span class="pc bpc" id="L466" title="1 of 2 branches missed.">            ExpressionNode columnNode = node.lhs != null ? node.lhs : node.rhs;</span>
+<span class="pc bpc" id="L467" title="1 of 4 branches missed.">            return columnNode != null &amp;&amp; isBooleanColumn(columnNode);</span>
+        }
+<span class="fc" id="L469">        return false;</span>
+    }
+
+    private void putDoubleOperand(long offset, int type, double payload) {
+<span class="fc" id="L473">        memory.putInt(offset, CompiledFilterIRSerializer.IMM);</span>
+<span class="fc" id="L474">        memory.putInt(offset + Integer.BYTES, type);</span>
+<span class="fc" id="L475">        memory.putDouble(offset + 2 * Integer.BYTES, payload);</span>
+<span class="fc" id="L476">    }</span>
+
+    private void putOperand(int opcode, int type, long payload) {
+<span class="fc" id="L479">        memory.putInt(opcode);</span>
+<span class="fc" id="L480">        memory.putInt(type);</span>
+<span class="fc" id="L481">        memory.putLong(payload);</span>
+<span class="fc" id="L482">    }</span>
+
+    private void putOperand(long offset, int opcode, int type, long payload) {
+<span class="fc" id="L485">        memory.putInt(offset, opcode);</span>
+<span class="fc" id="L486">        memory.putInt(offset + Integer.BYTES, type);</span>
+<span class="fc" id="L487">        memory.putLong(offset + 2 * Integer.BYTES, payload);</span>
+<span class="fc" id="L488">    }</span>
+
+    private void putOperator(int opcode) {
+<span class="fc" id="L491">        memory.putInt(opcode);</span>
+        // pad unused fields with zeros
+<span class="fc" id="L493">        memory.putInt(0);</span>
+<span class="fc" id="L494">        memory.putLong(0L);</span>
+<span class="fc" id="L495">    }</span>
+
+    private void serializeBindVariable(final ExpressionNode node) throws SqlException {
+<span class="pc bpc" id="L498" title="1 of 2 branches missed.">        if (!predicateContext.isActive()) {</span>
+<span class="nc" id="L499">            throw SqlException.position(node.position)</span>
+<span class="nc" id="L500">                    .put(&quot;bind variable outside of predicate: &quot;)</span>
+<span class="nc" id="L501">                    .put(node.token);</span>
+        }
+
+<span class="fc" id="L504">        Function varFunction = getBindVariableFunction(node.position, node.token);</span>
+
+<span class="fc" id="L506">        final int columnType = varFunction.getType();</span>
+        // Treat string bind variable to be of symbol type
+<span class="fc bfc" id="L508" title="All 2 branches covered.">        if (columnType == ColumnType.STRING) {</span>
+            // We're going to backfill this variable later since we may
+            // not have symbol column index at this point
+<span class="fc" id="L511">            long offset = memory.getAppendOffset();</span>
+<span class="fc" id="L512">            backfillNodes.put(offset, node);</span>
+<span class="fc" id="L513">            putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);</span>
+<span class="fc" id="L514">            return;</span>
+        }
+
+<span class="fc" id="L517">        final int columnTypeTag = ColumnType.tagOf(columnType);</span>
+<span class="fc" id="L518">        int typeCode = bindVariableTypeCode(columnTypeTag);</span>
+<span class="pc bpc" id="L519" title="1 of 2 branches missed.">        if (typeCode == UNDEFINED_CODE) {</span>
+<span class="nc" id="L520">            throw SqlException.position(node.position)</span>
+<span class="nc" id="L521">                    .put(&quot;unsupported bind variable type: &quot;)</span>
+<span class="nc" id="L522">                    .put(ColumnType.nameOf(columnTypeTag));</span>
+        }
+
+<span class="fc" id="L525">        bindVarFunctions.add(varFunction);</span>
+<span class="fc" id="L526">        int index = bindVarFunctions.size() - 1;</span>
+<span class="fc" id="L527">        putOperand(VAR, typeCode, index);</span>
+<span class="fc" id="L528">    }</span>
+
+    private void serializeColumn(int position, final CharSequence token) throws SqlException {
+<span class="fc bfc" id="L531" title="All 2 branches covered.">        if (!predicateContext.isActive()) {</span>
+<span class="fc" id="L532">            throw SqlException.position(position)</span>
+<span class="fc" id="L533">                    .put(&quot;non-boolean column outside of predicate: &quot;)</span>
+<span class="fc" id="L534">                    .put(token);</span>
+        }
+
+<span class="fc" id="L537">        final int index = metadata.getColumnIndexQuiet(token);</span>
+<span class="pc bpc" id="L538" title="1 of 2 branches missed.">        if (index == -1) {</span>
+<span class="nc" id="L539">            throw SqlException.invalidColumn(position, token);</span>
+        }
+
+<span class="fc" id="L542">        final int columnType = metadata.getColumnType(index);</span>
+<span class="fc" id="L543">        final int columnTypeTag = ColumnType.tagOf(columnType);</span>
+<span class="fc" id="L544">        int typeCode = columnTypeCode(columnTypeTag);</span>
+<span class="fc bfc" id="L545" title="All 2 branches covered.">        if (typeCode == UNDEFINED_CODE) {</span>
+<span class="fc" id="L546">            throw SqlException.position(position)</span>
+<span class="fc" id="L547">                    .put(&quot;unsupported column type: &quot;)</span>
+<span class="fc" id="L548">                    .put(ColumnType.nameOf(columnTypeTag));</span>
+        }
+
+        // In case of a top level boolean column, expand it to &quot;boolean_column = true&quot; expression.
+<span class="pc bpc" id="L552" title="1 of 4 branches missed.">        if (predicateContext.singleBooleanColumn &amp;&amp; columnTypeTag == ColumnType.BOOLEAN) {</span>
+            // &quot;true&quot; constant
+<span class="fc" id="L554">            putOperand(IMM, I1_TYPE, 1);</span>
+            // column
+<span class="fc" id="L556">            putOperand(MEM, typeCode, index);</span>
+            // =
+<span class="fc" id="L558">            putOperator(EQ);</span>
+<span class="fc" id="L559">            return;</span>
+        }
+<span class="fc" id="L561">        putOperand(MEM, typeCode, index);</span>
+<span class="fc" id="L562">    }</span>
+
+    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
+<span class="fc" id="L565">        final int len = token.length();</span>
+<span class="fc" id="L566">        final int typeCode = predicateContext.localTypesObserver.constantTypeCode();</span>
+<span class="fc bfc" id="L567" title="All 2 branches covered.">        if (typeCode == UNDEFINED_CODE) {</span>
+<span class="fc" id="L568">            throw SqlException.position(position).put(&quot;all constants expression: &quot;).put(token);</span>
+        }
+
+<span class="fc bfc" id="L571" title="All 2 branches covered.">        if (SqlKeywords.isNullKeyword(token)) {</span>
+<span class="fc bfc" id="L572" title="All 2 branches covered.">            boolean geoHashExpression = PredicateType.GEO_HASH == predicateContext.type;</span>
+<span class="fc" id="L573">            serializeNull(offset, position, typeCode, geoHashExpression);</span>
+<span class="fc" id="L574">            return;</span>
+        }
+
+<span class="fc bfc" id="L577" title="All 2 branches covered.">        if (PredicateType.SYMBOL == predicateContext.type) {</span>
+<span class="fc" id="L578">            serializeSymbolConstant(offset, position, token);</span>
+<span class="fc" id="L579">            return;</span>
+        }
+
+<span class="fc bfc" id="L582" title="All 2 branches covered.">        if (Chars.isQuoted(token)) {</span>
+<span class="fc bfc" id="L583" title="All 2 branches covered.">            if (PredicateType.CHAR != predicateContext.type) {</span>
+<span class="fc" id="L584">                throw SqlException.position(position).put(&quot;char constant in non-char expression: &quot;).put(token);</span>
+            }
+<span class="fc bfc" id="L586" title="All 2 branches covered.">            if (len == 3) {</span>
+                // this is 'x' - char
+<span class="fc" id="L588">                putOperand(offset, IMM, I2_TYPE, token.charAt(1));</span>
+<span class="fc" id="L589">                return;</span>
+            }
+<span class="fc" id="L591">            throw SqlException.position(position).put(&quot;unsupported string constant: &quot;).put(token);</span>
+        }
+
+<span class="fc bfc" id="L594" title="All 2 branches covered.">        if (SqlKeywords.isTrueKeyword(token)) {</span>
+<span class="fc bfc" id="L595" title="All 2 branches covered.">            if (PredicateType.BOOLEAN != predicateContext.type) {</span>
+<span class="fc" id="L596">                throw SqlException.position(position).put(&quot;boolean constant in non-boolean expression: &quot;).put(token);</span>
+            }
+
+<span class="fc" id="L599">            putOperand(offset, IMM, I1_TYPE, 1);</span>
+<span class="fc" id="L600">            return;</span>
+        }
+
+<span class="fc bfc" id="L603" title="All 2 branches covered.">        if (SqlKeywords.isFalseKeyword(token)) {</span>
+<span class="fc bfc" id="L604" title="All 2 branches covered.">            if (PredicateType.BOOLEAN != predicateContext.type) {</span>
+<span class="fc" id="L605">                throw SqlException.position(position).put(&quot;boolean constant in non-boolean expression: &quot;).put(token);</span>
+            }
+<span class="fc" id="L607">            putOperand(offset, IMM, I1_TYPE, 0);</span>
+<span class="fc" id="L608">            return;</span>
+        }
+
+<span class="fc bfc" id="L611" title="All 4 branches covered.">        if (len &gt; 1 &amp;&amp; token.charAt(0) == '#') {</span>
+<span class="pc bpc" id="L612" title="1 of 2 branches missed.">            if (PredicateType.GEO_HASH != predicateContext.type) {</span>
+<span class="nc" id="L613">                throw SqlException.position(position).put(&quot;geo hash constant in non-geo hash expression: &quot;).put(token);</span>
+            }
+<span class="fc" id="L615">            ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);</span>
+<span class="fc bfc" id="L616" title="All 2 branches covered.">            if (geoConstant != null) {</span>
+<span class="fc" id="L617">                serializeGeoHash(offset, position, geoConstant, typeCode);</span>
+<span class="fc" id="L618">                return;</span>
+            }
+        }
+
+<span class="fc bfc" id="L622" title="All 2 branches covered.">        if (PredicateType.NUMERIC != predicateContext.type) {</span>
+<span class="fc" id="L623">            throw SqlException.position(position).put(&quot;numeric constant in non-numeric expression: &quot;).put(token);</span>
+        }
+<span class="fc bfc" id="L625" title="All 2 branches covered.">        if (predicateContext.localTypesObserver.hasMixedSizes()) {</span>
+<span class="fc" id="L626">            serializeUntypedNumber(offset, position, token, negated);</span>
+        } else {
+<span class="fc" id="L628">            serializeNumber(offset, position, token, typeCode, negated);</span>
+        }
+<span class="fc" id="L630">    }</span>
+
+    private void serializeConstantStub(final ExpressionNode node) throws SqlException {
+<span class="fc bfc" id="L633" title="All 2 branches covered.">        if (!predicateContext.isActive()) {</span>
+<span class="fc" id="L634">            throw SqlException.position(node.position)</span>
+<span class="fc" id="L635">                    .put(&quot;constant outside of predicate: &quot;)</span>
+<span class="fc" id="L636">                    .put(node.token);</span>
+        }
+
+<span class="fc" id="L639">        long offset = memory.getAppendOffset();</span>
+<span class="fc" id="L640">        backfillNodes.put(offset, node);</span>
+<span class="fc" id="L641">        putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);</span>
+<span class="fc" id="L642">    }</span>
+
+    private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, int typeCode) throws SqlException {
+        try {
+<span class="pc bpc" id="L646" title="1 of 5 branches missed.">            switch (typeCode) {</span>
+                case I1_TYPE:
+<span class="fc" id="L648">                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoByte(null));</span>
+<span class="fc" id="L649">                    break;</span>
+                case I2_TYPE:
+<span class="fc" id="L651">                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoShort(null));</span>
+<span class="fc" id="L652">                    break;</span>
+                case I4_TYPE:
+<span class="fc" id="L654">                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoInt(null));</span>
+<span class="fc" id="L655">                    break;</span>
+                case I8_TYPE:
+<span class="fc" id="L657">                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoLong(null));</span>
+<span class="fc" id="L658">                    break;</span>
+                default:
+<span class="nc" id="L660">                    throw SqlException.position(position).put(&quot;unexpected type code for geo hash: &quot;).put(typeCode);</span>
+            }
+<span class="fc" id="L662">        } catch (UnsupportedOperationException e) {</span>
+<span class="fc" id="L663">            throw SqlException.position(position).put(&quot;unexpected type for geo hash: &quot;).put(typeCode);</span>
+<span class="fc" id="L664">        }</span>
+<span class="fc" id="L665">    }</span>
+
+    private void serializeNull(long offset, int position, int typeCode, boolean geoHashPredicate) throws SqlException {
+<span class="pc bpc" id="L668" title="1 of 7 branches missed.">        switch (typeCode) {</span>
+            case I1_TYPE:
+<span class="fc bfc" id="L670" title="All 2 branches covered.">                if (!geoHashPredicate) {</span>
+<span class="fc" id="L671">                    throw SqlException.position(position).put(&quot;byte type is not nullable&quot;);</span>
+                }
+<span class="fc" id="L673">                putOperand(offset, IMM, typeCode, GeoHashes.BYTE_NULL);</span>
+<span class="fc" id="L674">                break;</span>
+            case I2_TYPE:
+<span class="fc bfc" id="L676" title="All 2 branches covered.">                if (!geoHashPredicate) {</span>
+<span class="fc" id="L677">                    throw SqlException.position(position).put(&quot;short type is not nullable&quot;);</span>
+                }
+<span class="fc" id="L679">                putOperand(offset, IMM, typeCode, GeoHashes.SHORT_NULL);</span>
+<span class="fc" id="L680">                break;</span>
+            case I4_TYPE:
+<span class="fc bfc" id="L682" title="All 2 branches covered.">                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.INT_NULL : Numbers.INT_NaN);</span>
+<span class="fc" id="L683">                break;</span>
+            case I8_TYPE:
+<span class="fc bfc" id="L685" title="All 2 branches covered.">                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.NULL : Numbers.LONG_NaN);</span>
+<span class="fc" id="L686">                break;</span>
+            case F4_TYPE:
+<span class="fc" id="L688">                putDoubleOperand(offset, typeCode, Float.NaN);</span>
+<span class="fc" id="L689">                break;</span>
+            case F8_TYPE:
+<span class="fc" id="L691">                putDoubleOperand(offset, typeCode, Double.NaN);</span>
+<span class="fc" id="L692">                break;</span>
+            default:
+<span class="nc" id="L694">                throw SqlException.position(position).put(&quot;unexpected null type: &quot;).put(typeCode);</span>
+        }
+<span class="fc" id="L696">    }</span>
+
+    private void serializeNumber(
+            long offset,
+            int position,
+            final CharSequence token,
+            int typeCode,
+            boolean negated
+    ) throws SqlException {
+<span class="fc bfc" id="L705" title="All 2 branches covered.">        long sign = negated ? -1 : 1;</span>
+        try {
+<span class="pc bpc" id="L707" title="1 of 5 branches missed.">            switch (typeCode) {</span>
+                case I1_TYPE:
+<span class="fc" id="L709">                    final byte b = (byte) Numbers.parseInt(token);</span>
+<span class="fc" id="L710">                    putOperand(offset, IMM, I1_TYPE, sign * b);</span>
+<span class="fc" id="L711">                    break;</span>
+                case I2_TYPE:
+<span class="fc" id="L713">                    final short s = (short) Numbers.parseInt(token);</span>
+<span class="fc" id="L714">                    putOperand(offset, IMM, I2_TYPE, sign * s);</span>
+<span class="fc" id="L715">                    break;</span>
+                case I4_TYPE:
+                case F4_TYPE:
+                    try {
+<span class="fc" id="L719">                        final int i = Numbers.parseInt(token);</span>
+<span class="fc" id="L720">                        putOperand(offset, IMM, I4_TYPE, sign * i);</span>
+<span class="fc" id="L721">                    } catch (NumericException e) {</span>
+<span class="fc" id="L722">                        final float fi = Numbers.parseFloat(token);</span>
+<span class="fc" id="L723">                        putDoubleOperand(offset, F4_TYPE, sign * fi);</span>
+<span class="fc" id="L724">                    }</span>
+<span class="fc" id="L725">                    break;</span>
+                case I8_TYPE:
+                case F8_TYPE:
+                    try {
+<span class="fc" id="L729">                        final long l = Numbers.parseLong(token);</span>
+<span class="fc" id="L730">                        putOperand(offset, IMM, I8_TYPE, sign * l);</span>
+<span class="fc" id="L731">                    } catch (NumericException e) {</span>
+<span class="fc" id="L732">                        final double dl = Numbers.parseDouble(token);</span>
+<span class="fc" id="L733">                        putDoubleOperand(offset, F8_TYPE, sign * dl);</span>
+<span class="fc" id="L734">                    }</span>
+<span class="fc" id="L735">                    break;</span>
+                default:
+<span class="nc" id="L737">                    throw SqlException.position(position)</span>
+<span class="nc" id="L738">                            .put(&quot;unexpected non-numeric constant: &quot;).put(token)</span>
+<span class="nc" id="L739">                            .put(&quot;, expected type: &quot;).put(typeCode);</span>
+            }
+<span class="fc" id="L741">        } catch (NumericException e) {</span>
+<span class="fc" id="L742">            throw SqlException.position(position)</span>
+<span class="fc" id="L743">                    .put(&quot;could not parse constant: &quot;).put(token)</span>
+<span class="fc" id="L744">                    .put(&quot;, expected type: &quot;).put(typeCode);</span>
+<span class="fc" id="L745">        }</span>
+<span class="fc" id="L746">    }</span>
+
+    private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
+<span class="fc bfc" id="L749" title="All 2 branches covered.">        if (SqlKeywords.isNotKeyword(token)) {</span>
+<span class="fc" id="L750">            putOperator(NOT);</span>
+<span class="fc" id="L751">            return;</span>
+        }
+<span class="fc bfc" id="L753" title="All 2 branches covered.">        if (SqlKeywords.isAndKeyword(token)) {</span>
+<span class="fc" id="L754">            putOperator(AND);</span>
+<span class="fc" id="L755">            return;</span>
+        }
+<span class="fc bfc" id="L757" title="All 2 branches covered.">        if (SqlKeywords.isOrKeyword(token)) {</span>
+<span class="fc" id="L758">            putOperator(OR);</span>
+<span class="fc" id="L759">            return;</span>
+        }
+<span class="fc bfc" id="L761" title="All 2 branches covered.">        if (Chars.equals(token, &quot;=&quot;)) {</span>
+<span class="fc" id="L762">            putOperator(EQ);</span>
+<span class="fc" id="L763">            return;</span>
+        }
+<span class="fc bfc" id="L765" title="All 4 branches covered.">        if (Chars.equals(token, &quot;&lt;&gt;&quot;) || Chars.equals(token, &quot;!=&quot;)) {</span>
+<span class="fc" id="L766">            putOperator(NE);</span>
+<span class="fc" id="L767">            return;</span>
+        }
+<span class="fc bfc" id="L769" title="All 2 branches covered.">        if (Chars.equals(token, &quot;&lt;&quot;)) {</span>
+<span class="fc" id="L770">            putOperator(LT);</span>
+<span class="fc" id="L771">            return;</span>
+        }
+<span class="fc bfc" id="L773" title="All 2 branches covered.">        if (Chars.equals(token, &quot;&lt;=&quot;)) {</span>
+<span class="fc" id="L774">            putOperator(LE);</span>
+<span class="fc" id="L775">            return;</span>
+        }
+<span class="fc bfc" id="L777" title="All 2 branches covered.">        if (Chars.equals(token, &quot;&gt;&quot;)) {</span>
+<span class="fc" id="L778">            putOperator(GT);</span>
+<span class="fc" id="L779">            return;</span>
+        }
+<span class="fc bfc" id="L781" title="All 2 branches covered.">        if (Chars.equals(token, &quot;&gt;=&quot;)) {</span>
+<span class="fc" id="L782">            putOperator(GE);</span>
+<span class="fc" id="L783">            return;</span>
+        }
+<span class="fc bfc" id="L785" title="All 2 branches covered.">        if (Chars.equals(token, &quot;+&quot;)) {</span>
+<span class="pc bpc" id="L786" title="1 of 2 branches missed.">            if (argCount == 2) {</span>
+<span class="fc" id="L787">                putOperator(ADD);</span>
+            } // ignore unary
+<span class="fc" id="L789">            return;</span>
+        }
+<span class="fc bfc" id="L791" title="All 2 branches covered.">        if (Chars.equals(token, &quot;-&quot;)) {</span>
+<span class="fc bfc" id="L792" title="All 2 branches covered.">            if (argCount == 2) {</span>
+<span class="fc" id="L793">                putOperator(SUB);</span>
+<span class="pc bpc" id="L794" title="1 of 2 branches missed.">            } else if (argCount == 1) {</span>
+<span class="fc" id="L795">                putOperator(NEG);</span>
+            }
+<span class="fc" id="L797">            return;</span>
+        }
+<span class="fc bfc" id="L799" title="All 2 branches covered.">        if (Chars.equals(token, &quot;*&quot;)) {</span>
+<span class="fc" id="L800">            putOperator(MUL);</span>
+<span class="fc" id="L801">            return;</span>
+        }
+<span class="fc bfc" id="L803" title="All 2 branches covered.">        if (Chars.equals(token, &quot;/&quot;)) {</span>
+<span class="fc" id="L804">            putOperator(DIV);</span>
+<span class="fc" id="L805">            return;</span>
+        }
+<span class="fc" id="L807">        throw SqlException.position(position).put(&quot;invalid operator: &quot;).put(token);</span>
+    }
+
+    private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
+<span class="fc" id="L811">        final int len = token.length();</span>
+<span class="fc" id="L812">        CharSequence symbol = token;</span>
+<span class="pc bpc" id="L813" title="1 of 2 branches missed.">        if (Chars.isQuoted(token)) {</span>
+<span class="pc bpc" id="L814" title="1 of 2 branches missed.">            if (len &lt; 3) {</span>
+<span class="nc" id="L815">                throw SqlException.position(position).put(&quot;unsupported symbol constant: &quot;).put(token);</span>
+            }
+<span class="fc" id="L817">            symbol = symbol.subSequence(1, len - 1);</span>
+        }
+
+<span class="pc bpc" id="L820" title="2 of 4 branches missed.">        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {</span>
+<span class="nc" id="L821">            throw SqlException.position(position).put(&quot;reader or column index is missing for symbol constant: &quot;).put(token);</span>
+        }
+
+<span class="fc" id="L824">        final int key = predicateContext.symbolTable.keyOf(symbol);</span>
+<span class="fc bfc" id="L825" title="All 2 branches covered.">        if (key != SymbolTable.VALUE_NOT_FOUND) {</span>
+            // Known symbol constant case
+<span class="fc" id="L827">            putOperand(offset, IMM, I4_TYPE, key);</span>
+<span class="fc" id="L828">            return;</span>
+        }
+
+        // Unknown symbol constant case. Create a fake bind variable function to handle it.
+<span class="fc" id="L832">        final SymbolConstant function = SymbolConstant.newInstance(symbol);</span>
+<span class="fc" id="L833">        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));</span>
+<span class="fc" id="L834">        int index = bindVarFunctions.size() - 1;</span>
+
+<span class="fc" id="L836">        int typeCode = bindVariableTypeCode(ColumnType.STRING);</span>
+<span class="fc" id="L837">        putOperand(offset, VAR, typeCode, index);</span>
+<span class="fc" id="L838">    }</span>
+
+    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
+<span class="pc bpc" id="L841" title="1 of 2 branches missed.">        long sign = negated ? -1 : 1;</span>
+
+        try {
+<span class="fc" id="L844">            final int i = Numbers.parseInt(token);</span>
+<span class="fc" id="L845">            putOperand(offset, IMM, I4_TYPE, sign * i);</span>
+<span class="fc" id="L846">            return;</span>
+<span class="fc" id="L847">        } catch (NumericException ignore) {</span>
+        }
+
+        try {
+<span class="fc" id="L851">            final long l = Numbers.parseLong(token);</span>
+<span class="fc" id="L852">            putOperand(offset, IMM, I8_TYPE, sign * l);</span>
+<span class="fc" id="L853">            return;</span>
+<span class="fc" id="L854">        } catch (NumericException ignore) {</span>
+        }
+
+        try {
+<span class="fc" id="L858">            final double d = Numbers.parseDouble(token);</span>
+<span class="fc" id="L859">            putDoubleOperand(offset, F8_TYPE, sign * d);</span>
+<span class="fc" id="L860">            return;</span>
+<span class="fc" id="L861">        } catch (NumericException ignore) {</span>
+        }
+
+        try {
+<span class="fc" id="L865">            final float f = Numbers.parseFloat(token);</span>
+<span class="fc" id="L866">            putDoubleOperand(offset, F4_TYPE, sign * f);</span>
+<span class="fc" id="L867">            return;</span>
+<span class="nc" id="L868">        } catch (NumericException ignore) {</span>
+        }
+
+<span class="nc" id="L871">        throw SqlException.position(position).put(&quot;unexpected non-numeric constant: &quot;).put(token);</span>
+    }
+
+<span class="fc" id="L874">    private enum PredicateType {</span>
+<span class="fc" id="L875">        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH</span>
+    }
+
+    private static class SqlWrapperException extends RuntimeException {
+
+        final SqlException wrappedException;
+
+<span class="fc" id="L882">        SqlWrapperException(SqlException wrappedException) {</span>
+<span class="fc" id="L883">            this.wrappedException = wrappedException;</span>
+<span class="fc" id="L884">        }</span>
+    }
+
+    /**
+     * Helper class for accumulating column and bind variable types information.
+     */
+<span class="fc" id="L890">    private static class TypesObserver implements Mutable {</span>
+
+        private static final int F4_INDEX = 3;
+        private static final int F8_INDEX = 5;
+        private static final int I1_INDEX = 0;
+        private static final int I2_INDEX = 1;
+        private static final int I4_INDEX = 2;
+        private static final int I8_INDEX = 4;
+        private static final int TYPES_COUNT = F8_INDEX + 1;
+
+<span class="fc" id="L900">        private final byte[] sizes = new byte[TYPES_COUNT];</span>
+
+        @Override
+        public void clear() {
+<span class="fc" id="L904">            Arrays.fill(sizes, (byte) 0);</span>
+<span class="fc" id="L905">        }</span>
+
+        /**
+         * Returns the expected constant type calculated based on the &quot;widest&quot; observed column
+         * or bind variable type. The result contains *_TYPE value or UNDEFINED_CODE value.
+         */
+        public int constantTypeCode() {
+<span class="fc bfc" id="L912" title="All 2 branches covered.">            for (int i = sizes.length - 1; i &gt; -1; i--) {</span>
+<span class="fc" id="L913">                byte size = sizes[i];</span>
+<span class="fc bfc" id="L914" title="All 2 branches covered.">                if (size &gt; 0) {</span>
+                    // If floats are present, we need to cast longs to double.
+<span class="fc bfc" id="L916" title="All 4 branches covered.">                    if (i == I8_INDEX &amp;&amp; sizes[F4_INDEX] &gt; 0) {</span>
+<span class="fc" id="L917">                        return F8_TYPE;</span>
+                    }
+<span class="fc" id="L919">                    return indexToTypeCode(i);</span>
+                }
+            }
+<span class="fc" id="L922">            return UNDEFINED_CODE;</span>
+        }
+
+        public boolean hasMixedSizes() {
+<span class="fc" id="L926">            byte prevSize = 0;</span>
+<span class="fc bfc" id="L927" title="All 2 branches covered.">            for (byte size : sizes) {</span>
+<span class="fc bfc" id="L928" title="All 2 branches covered.">                prevSize = prevSize == 0 ? size : prevSize;</span>
+<span class="fc bfc" id="L929" title="All 2 branches covered.">                if (prevSize &gt; 0) {</span>
+<span class="fc bfc" id="L930" title="All 4 branches covered.">                    if (size &gt; 0 &amp;&amp; size != prevSize) {</span>
+<span class="fc" id="L931">                        return true;</span>
+                    }
+                } else {
+<span class="fc" id="L934">                    prevSize = size;</span>
+                }
+            }
+<span class="fc" id="L937">            return false;</span>
+        }
+
+        /**
+         * Returns size in bytes of the &quot;widest&quot; observed column or bind variable type.
+         */
+        public int maxSize() {
+<span class="pc bpc" id="L944" title="1 of 2 branches missed.">            for (int i = sizes.length - 1; i &gt; -1; i--) {</span>
+<span class="fc" id="L945">                byte size = sizes[i];</span>
+<span class="fc bfc" id="L946" title="All 2 branches covered.">                if (size &gt; 0) {</span>
+<span class="fc" id="L947">                    return size;</span>
+                }
+            }
+<span class="nc" id="L950">            return 0;</span>
+        }
+
+        public void observe(int code) {
+<span class="pc bpc" id="L954" title="1 of 7 branches missed.">            switch (code) {</span>
+                case I1_TYPE:
+<span class="fc" id="L956">                    sizes[I1_INDEX] = 1;</span>
+<span class="fc" id="L957">                    break;</span>
+                case I2_TYPE:
+<span class="fc" id="L959">                    sizes[I2_INDEX] = 2;</span>
+<span class="fc" id="L960">                    break;</span>
+                case I4_TYPE:
+<span class="fc" id="L962">                    sizes[I4_INDEX] = 4;</span>
+<span class="fc" id="L963">                    break;</span>
+                case F4_TYPE:
+<span class="fc" id="L965">                    sizes[F4_INDEX] = 4;</span>
+<span class="fc" id="L966">                    break;</span>
+                case I8_TYPE:
+<span class="fc" id="L968">                    sizes[I8_INDEX] = 8;</span>
+<span class="fc" id="L969">                    break;</span>
+                case F8_TYPE:
+<span class="fc" id="L971">                    sizes[F8_INDEX] = 8;</span>
+                    break;
+            }
+<span class="fc" id="L974">        }</span>
+
+        private int indexToTypeCode(int index) {
+<span class="pc bpc" id="L977" title="1 of 7 branches missed.">            switch (index) {</span>
+                case I1_INDEX:
+<span class="fc" id="L979">                    return I1_TYPE;</span>
+                case I2_INDEX:
+<span class="fc" id="L981">                    return I2_TYPE;</span>
+                case I4_INDEX:
+<span class="fc" id="L983">                    return I4_TYPE;</span>
+                case F4_INDEX:
+<span class="fc" id="L985">                    return F4_TYPE;</span>
+                case I8_INDEX:
+<span class="fc" id="L987">                    return I8_TYPE;</span>
+                case F8_INDEX:
+<span class="fc" id="L989">                    return F8_TYPE;</span>
+            }
+<span class="nc" id="L991">            return UNDEFINED_CODE;</span>
+        }
+    }
+
+    /**
+     * Helper class that tracks types and arithmetic operations in a predicate.
+     * &lt;p&gt;
+     * A &quot;predicate&quot; stands for any arithmetical expression or single boolean
+     * column expression present in the filter. Predicates are combined with
+     * each other via binary boolean operators (and, or).
+     * &lt;p&gt;
+     * For example, we consider the below filter:
+     * &lt;pre&gt;
+     * long_col - 42 &gt; 0 and (not bool_col1 or bool_col2)
+     * &lt;/pre&gt;
+     * to contain three predicates:
+     * &lt;pre&gt;
+     * long_col - 42 &gt; 0
+     * not bool_col1
+     * bool_col2
+     * &lt;/pre&gt;
+     */
+<span class="fc" id="L1013">    private class PredicateContext implements Mutable {</span>
+
+<span class="fc" id="L1015">        final TypesObserver globalTypesObserver = new TypesObserver();</span>
+<span class="fc" id="L1016">        final TypesObserver localTypesObserver = new TypesObserver();</span>
+        boolean hasArithmeticOperations;
+        boolean singleBooleanColumn;
+        int symbolColumnIndex; // used for symbol deferred constants and bind variables
+        StaticSymbolTable symbolTable; // used for known symbol constant lookups
+        PredicateType type;
+        private ExpressionNode rootNode;
+
+        @Override
+        public void clear() {
+<span class="fc" id="L1026">            reset();</span>
+<span class="fc" id="L1027">            globalTypesObserver.clear();</span>
+<span class="fc" id="L1028">        }</span>
+
+        public boolean isActive() {
+<span class="fc bfc" id="L1031" title="All 2 branches covered.">            return rootNode != null;</span>
+        }
+
+        public void onNodeDescended(final ExpressionNode node) {
+<span class="fc bfc" id="L1035" title="All 2 branches covered.">            if (rootNode == null) {</span>
+<span class="fc" id="L1036">                boolean topLevelOperation = isTopLevelOperation(node);</span>
+<span class="fc" id="L1037">                boolean topLevelBooleanColumn = isTopLevelBooleanColumn(node);</span>
+<span class="fc bfc" id="L1038" title="All 4 branches covered.">                if (topLevelOperation || topLevelBooleanColumn) {</span>
+                    // We entered a predicate.
+<span class="fc" id="L1040">                    reset();</span>
+<span class="fc" id="L1041">                    rootNode = node;</span>
+                }
+<span class="fc bfc" id="L1043" title="All 2 branches covered.">                if (topLevelBooleanColumn) {</span>
+<span class="fc" id="L1044">                    type = PredicateType.BOOLEAN;</span>
+<span class="fc" id="L1045">                    singleBooleanColumn = true;</span>
+                }
+            }
+<span class="fc" id="L1048">        }</span>
+
+        public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
+<span class="fc" id="L1051">            boolean predicateLeft = false;</span>
+<span class="fc bfc" id="L1052" title="All 2 branches covered.">            if (node == rootNode) {</span>
+                // We left the predicate.
+<span class="fc" id="L1054">                rootNode = null;</span>
+<span class="fc" id="L1055">                predicateLeft = true;</span>
+            }
+
+<span class="fc bfc" id="L1058" title="All 4 branches covered.">            switch (node.type) {</span>
+                case ExpressionNode.LITERAL:
+<span class="fc" id="L1060">                    handleColumn(node);</span>
+<span class="fc" id="L1061">                    break;</span>
+                case ExpressionNode.BIND_VARIABLE:
+<span class="fc" id="L1063">                    handleBindVariable(node);</span>
+<span class="fc" id="L1064">                    break;</span>
+                case ExpressionNode.OPERATION:
+<span class="fc" id="L1066">                    handleOperation(node);</span>
+                    break;
+            }
+
+<span class="fc" id="L1070">            return predicateLeft;</span>
+        }
+
+        private void handleBindVariable(ExpressionNode node) throws SqlException {
+<span class="fc" id="L1074">            Function varFunction = getBindVariableFunction(node.position, node.token);</span>
+            // We treat bind variables as columns here for the sake of simplicity
+<span class="fc" id="L1076">            final int columnType = varFunction.getType();</span>
+<span class="fc" id="L1077">            int columnTypeTag = ColumnType.tagOf(columnType);</span>
+            // Treat string bind variable to be of symbol type
+<span class="fc bfc" id="L1079" title="All 2 branches covered.">            if (columnTypeTag == ColumnType.STRING) {</span>
+<span class="fc" id="L1080">                columnTypeTag = ColumnType.SYMBOL;</span>
+            }
+
+<span class="fc" id="L1083">            updateType(node.position, columnTypeTag);</span>
+
+<span class="fc" id="L1085">            int code = columnTypeCode(columnTypeTag);</span>
+<span class="fc" id="L1086">            localTypesObserver.observe(code);</span>
+<span class="fc" id="L1087">            globalTypesObserver.observe(code);</span>
+<span class="fc" id="L1088">        }</span>
+
+        private void handleColumn(ExpressionNode node) throws SqlException {
+<span class="fc" id="L1091">            final int columnIndex = metadata.getColumnIndexQuiet(node.token);</span>
+<span class="pc bpc" id="L1092" title="1 of 2 branches missed.">            if (columnIndex == -1) {</span>
+<span class="nc" id="L1093">                throw SqlException.invalidColumn(node.position, node.token);</span>
+            }
+<span class="fc" id="L1095">            final int columnType = metadata.getColumnType(columnIndex);</span>
+<span class="fc" id="L1096">            final int columnTypeTag = ColumnType.tagOf(columnType);</span>
+<span class="fc bfc" id="L1097" title="All 2 branches covered.">            if (columnTypeTag == ColumnType.SYMBOL) {</span>
+<span class="fc" id="L1098">                symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);</span>
+<span class="fc" id="L1099">                symbolColumnIndex = columnIndex;</span>
+            }
+
+<span class="fc" id="L1102">            updateType(node.position, columnTypeTag);</span>
+
+<span class="fc" id="L1104">            int typeCode = columnTypeCode(columnTypeTag);</span>
+<span class="fc" id="L1105">            localTypesObserver.observe(typeCode);</span>
+<span class="fc" id="L1106">            globalTypesObserver.observe(typeCode);</span>
+<span class="fc" id="L1107">        }</span>
+
+        private void handleOperation(ExpressionNode node) {
+<span class="fc" id="L1110">            hasArithmeticOperations |= isArithmeticOperation(node);</span>
+<span class="fc" id="L1111">        }</span>
+
+        private void reset() {
+<span class="fc" id="L1114">            rootNode = null;</span>
+<span class="fc" id="L1115">            type = null;</span>
+<span class="fc" id="L1116">            symbolTable = null;</span>
+<span class="fc" id="L1117">            symbolColumnIndex = -1;</span>
+<span class="fc" id="L1118">            singleBooleanColumn = false;</span>
+<span class="fc" id="L1119">            hasArithmeticOperations = false;</span>
+<span class="fc" id="L1120">            localTypesObserver.clear();</span>
+<span class="fc" id="L1121">        }</span>
+
+        private void updateType(int position, int columnTypeTag) throws SqlException {
+<span class="fc bfc" id="L1124" title="All 5 branches covered.">            switch (columnTypeTag) {</span>
+                case ColumnType.BOOLEAN:
+<span class="fc bfc" id="L1126" title="All 4 branches covered.">                    if (type != null &amp;&amp; type != PredicateType.BOOLEAN) {</span>
+<span class="fc" id="L1127">                        throw SqlException.position(position)</span>
+<span class="fc" id="L1128">                                .put(&quot;non-boolean column in boolean expression: &quot;)</span>
+<span class="fc" id="L1129">                                .put(ColumnType.nameOf(columnTypeTag));</span>
+                    }
+<span class="fc" id="L1131">                    type = PredicateType.BOOLEAN;</span>
+<span class="fc" id="L1132">                    break;</span>
+                case ColumnType.GEOBYTE:
+                case ColumnType.GEOSHORT:
+                case ColumnType.GEOINT:
+                case ColumnType.GEOLONG:
+<span class="fc bfc" id="L1137" title="All 4 branches covered.">                    if (type != null &amp;&amp; type != PredicateType.GEO_HASH) {</span>
+<span class="fc" id="L1138">                        throw SqlException.position(position)</span>
+<span class="fc" id="L1139">                                .put(&quot;non-geohash column in geohash expression: &quot;)</span>
+<span class="fc" id="L1140">                                .put(ColumnType.nameOf(columnTypeTag));</span>
+                    }
+<span class="fc" id="L1142">                    type = PredicateType.GEO_HASH;</span>
+<span class="fc" id="L1143">                    break;</span>
+                case ColumnType.CHAR:
+<span class="fc bfc" id="L1145" title="All 4 branches covered.">                    if (type != null &amp;&amp; type != PredicateType.CHAR) {</span>
+<span class="fc" id="L1146">                        throw SqlException.position(position)</span>
+<span class="fc" id="L1147">                                .put(&quot;non-char column in char expression: &quot;)</span>
+<span class="fc" id="L1148">                                .put(ColumnType.nameOf(columnTypeTag));</span>
+                    }
+<span class="fc" id="L1150">                    type = PredicateType.CHAR;</span>
+<span class="fc" id="L1151">                    break;</span>
+                case ColumnType.SYMBOL:
+<span class="fc bfc" id="L1153" title="All 4 branches covered.">                    if (type != null &amp;&amp; type != PredicateType.SYMBOL) {</span>
+<span class="fc" id="L1154">                        throw SqlException.position(position)</span>
+<span class="fc" id="L1155">                                .put(&quot;non-symbol column in symbol expression: &quot;)</span>
+<span class="fc" id="L1156">                                .put(ColumnType.nameOf(columnTypeTag));</span>
+                    }
+<span class="fc" id="L1158">                    type = PredicateType.SYMBOL;</span>
+<span class="fc" id="L1159">                    break;</span>
+                default:
+<span class="pc bpc" id="L1161" title="1 of 4 branches missed.">                    if (type != null &amp;&amp; type != PredicateType.NUMERIC) {</span>
+<span class="nc" id="L1162">                        throw SqlException.position(position)</span>
+<span class="nc" id="L1163">                                .put(&quot;non-numeric column in numeric expression: &quot;)</span>
+<span class="nc" id="L1164">                                .put(ColumnType.nameOf(columnTypeTag));</span>
+                    }
+<span class="fc" id="L1166">                    type = PredicateType.NUMERIC;</span>
+                    break;
+            }
+<span class="fc" id="L1169">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

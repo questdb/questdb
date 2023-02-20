@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineTcpConnectionContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.tcp</a> &gt; <span class="el_source">LineTcpConnectionContext.java</span></div><h1>LineTcpConnectionContext.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.tcp;
+
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.network.AbstractMutableIOContext;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.DirectByteCharSequence;
+
+class LineTcpConnectionContext extends AbstractMutableIOContext&lt;LineTcpConnectionContext&gt; {
+<span class="fc" id="L41">    private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);</span>
+    private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
+    protected final NetworkFacade nf;
+<span class="fc" id="L44">    private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();</span>
+    private final boolean disconnectOnError;
+    private final Metrics metrics;
+    private final MillisecondClock milliClock;
+    private final LineTcpParser parser;
+    private final LineTcpMeasurementScheduler scheduler;
+    protected boolean peerDisconnected;
+    protected long recvBufEnd;
+    protected long recvBufPos;
+    protected long recvBufStart;
+    protected long recvBufStartOfMeasurement;
+    private boolean goodMeasurement;
+<span class="fc" id="L56">    private long lastQueueFullLogMillis = 0;</span>
+
+<span class="fc" id="L58">    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {</span>
+<span class="fc" id="L59">        nf = configuration.getNetworkFacade();</span>
+<span class="fc" id="L60">        disconnectOnError = configuration.getDisconnectOnError();</span>
+<span class="fc" id="L61">        this.scheduler = scheduler;</span>
+<span class="fc" id="L62">        this.metrics = metrics;</span>
+<span class="fc" id="L63">        this.milliClock = configuration.getMillisecondClock();</span>
+<span class="fc" id="L64">        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());</span>
+<span class="fc" id="L65">        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);</span>
+<span class="fc" id="L66">        recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();</span>
+<span class="fc" id="L67">        clear();</span>
+<span class="fc" id="L68">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L72">        recvBufPos = recvBufStart;</span>
+<span class="fc" id="L73">        peerDisconnected = false;</span>
+<span class="fc" id="L74">        resetParser();</span>
+<span class="fc" id="L75">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L79">        this.fd = -1;</span>
+<span class="fc" id="L80">        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);</span>
+<span class="fc" id="L81">    }</span>
+
+    private boolean checkQueueFullLogHysteresis() {
+<span class="fc" id="L84">        long millis = milliClock.getTicks();</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        if ((millis - lastQueueFullLogMillis) &gt;= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {</span>
+<span class="fc" id="L86">            lastQueueFullLogMillis = millis;</span>
+<span class="fc" id="L87">            return true;</span>
+        }
+<span class="fc" id="L89">        return false;</span>
+    }
+
+    private void doHandleDisconnectEvent() {
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">        if (parser.getBufferAddress() == recvBufEnd) {</span>
+<span class="fc" id="L94">            LOG.error().$('[').$(fd).$(&quot;] buffer overflow [line.tcp.msg.buffer.size=&quot;).$(recvBufEnd - recvBufStart).$(']').$();</span>
+<span class="fc" id="L95">            return;</span>
+        }
+
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (peerDisconnected) {</span>
+            // Peer disconnected, we have now finished disconnect our end
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (recvBufPos != recvBufStart) {</span>
+<span class="nc" id="L101">                LOG.info().$('[').$(fd).$(&quot;] peer disconnected with partial measurement, &quot;).$(recvBufPos - recvBufStart).$(&quot; unprocessed bytes&quot;).$();</span>
+            } else {
+<span class="nc" id="L103">                LOG.info().$('[').$(fd).$(&quot;] peer disconnected&quot;).$();</span>
+            }
+        }
+<span class="nc" id="L106">    }</span>
+
+    private void logParseError() {
+<span class="fc" id="L109">        int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);</span>
+<span class="pc bpc" id="L110" title="1 of 2 branches missed.">        assert position &gt;= 0;</span>
+<span class="fc" id="L111">        LOG.error()</span>
+<span class="fc" id="L112">                .$('[').$(fd)</span>
+<span class="fc" id="L113">                .$(&quot;] could not parse measurement, &quot;).$(parser.getErrorCode())</span>
+<span class="fc" id="L114">                .$(&quot; at &quot;).$(position)</span>
+<span class="fc" id="L115">                .$(&quot;, line (may be mangled due to partial parsing): '&quot;)</span>
+<span class="fc" id="L116">                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$(&quot;'&quot;)</span>
+<span class="fc" id="L117">                .$();</span>
+<span class="fc" id="L118">    }</span>
+
+    private void startNewMeasurement() {
+<span class="fc" id="L121">        parser.startNextMeasurement();</span>
+<span class="fc" id="L122">        recvBufStartOfMeasurement = parser.getBufferAddress();</span>
+        // we ran out of buffer, move to start and start parsing new data from socket
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        if (recvBufStartOfMeasurement == recvBufPos) {</span>
+<span class="fc" id="L125">            recvBufPos = recvBufStart;</span>
+<span class="fc" id="L126">            parser.of(recvBufStart);</span>
+<span class="fc" id="L127">            recvBufStartOfMeasurement = recvBufStart;</span>
+        }
+<span class="fc" id="L129">    }</span>
+
+    /**
+     * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
+     * context and protocol parser such that all pointers that point to the incomplete measurement will remain
+     * valid. This allows protocol parser to resume execution from the point of where measurement ended abruptly
+     *
+     * @param recvBufStartOfMeasurement the address in receive buffer where incomplete measurement starts. Everything from
+     *                                  this address to end of the receive buffer will be copied to the start of the
+     *                                  receive buffer
+     * @return true if there was an incomplete measurement in the first place
+     */
+    protected final boolean compactBuffer(long recvBufStartOfMeasurement) {
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">        assert recvBufStartOfMeasurement &lt;= recvBufPos;</span>
+<span class="fc bfc" id="L143" title="All 2 branches covered.">        if (recvBufStartOfMeasurement &gt; recvBufStart) {</span>
+<span class="fc" id="L144">            final long len = recvBufPos - recvBufStartOfMeasurement;</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">            if (len &gt; 0) {</span>
+<span class="fc" id="L146">                Vect.memmove(recvBufStart, recvBufStartOfMeasurement, len); // Use memmove, there may be an overlap</span>
+<span class="fc" id="L147">                final long shl = recvBufStartOfMeasurement - recvBufStart;</span>
+<span class="fc" id="L148">                parser.shl(shl);</span>
+<span class="fc" id="L149">                this.recvBufStartOfMeasurement -= shl;</span>
+<span class="fc" id="L150">            } else {</span>
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">                assert len == 0;</span>
+<span class="fc" id="L152">                resetParser();</span>
+            }
+<span class="fc" id="L154">            recvBufPos = recvBufStart + len;</span>
+<span class="fc" id="L155">            return true;</span>
+        }
+<span class="fc" id="L157">        return false;</span>
+    }
+
+    IOContextResult handleIO(NetworkIOJob netIoJob) {
+<span class="fc" id="L161">        read();</span>
+        try {
+<span class="fc" id="L163">            return parseMeasurements(netIoJob);</span>
+        } finally {
+<span class="fc" id="L165">            netIoJob.releaseWalTableDetails();</span>
+        }
+    }
+
+    protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
+        while (true) {
+            try {
+<span class="fc bfc" id="L172" title="All 2 branches covered.">                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);</span>
+<span class="pc bpc" id="L173" title="1 of 4 branches missed.">                switch (rc) {</span>
+                    case MEASUREMENT_COMPLETE: {
+<span class="fc bfc" id="L175" title="All 2 branches covered.">                        if (goodMeasurement) {</span>
+<span class="fc bfc" id="L176" title="All 2 branches covered.">                            if (scheduler.scheduleEvent(netIoJob, parser)) {</span>
+                                // Waiting for writer threads to drain queue, request callback as soon as possible
+<span class="fc bfc" id="L178" title="All 2 branches covered.">                                if (checkQueueFullLogHysteresis()) {</span>
+<span class="fc" id="L179">                                    LOG.debug().$('[').$(fd).$(&quot;] queue full&quot;).$();</span>
+                                }
+<span class="fc" id="L181">                                return IOContextResult.QUEUE_FULL;</span>
+                            }
+                        } else {
+<span class="fc" id="L184">                            logParseError();</span>
+<span class="fc" id="L185">                            goodMeasurement = true;</span>
+                        }
+
+<span class="fc" id="L188">                        startNewMeasurement();</span>
+
+<span class="fc" id="L190">                        continue;</span>
+                    }
+
+                    case ERROR: {
+<span class="fc bfc" id="L194" title="All 2 branches covered.">                        if (disconnectOnError) {</span>
+<span class="fc" id="L195">                            logParseError();</span>
+<span class="fc" id="L196">                            return IOContextResult.NEEDS_DISCONNECT;</span>
+                        }
+<span class="fc" id="L198">                        goodMeasurement = false;</span>
+<span class="fc" id="L199">                        continue;</span>
+                    }
+
+                    case BUFFER_UNDERFLOW: {
+<span class="fc bfc" id="L203" title="All 4 branches covered.">                        if (recvBufPos == recvBufEnd &amp;&amp; !compactBuffer(recvBufStartOfMeasurement)) {</span>
+<span class="fc" id="L204">                            doHandleDisconnectEvent();</span>
+<span class="fc" id="L205">                            return IOContextResult.NEEDS_DISCONNECT;</span>
+                        }
+
+<span class="fc bfc" id="L208" title="All 2 branches covered.">                        if (!read()) {</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">                            if (peerDisconnected) {</span>
+<span class="fc" id="L210">                                return IOContextResult.NEEDS_DISCONNECT;</span>
+                            }
+<span class="fc" id="L212">                            return IOContextResult.NEEDS_READ;</span>
+                        }
+                        break;
+                    }
+                }
+<span class="fc" id="L217">            } catch (CairoException ex) {</span>
+<span class="fc" id="L218">                LOG.error()</span>
+<span class="fc" id="L219">                        .$('[').$(fd).$(&quot;] could not process line data [table=&quot;).$(parser.getMeasurementName())</span>
+<span class="fc" id="L220">                        .$(&quot;, msg=&quot;).$(ex.getFlyweightMessage())</span>
+<span class="fc" id="L221">                        .$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="fc" id="L222">                        .I$();</span>
+<span class="fc bfc" id="L223" title="All 2 branches covered.">                if (disconnectOnError) {</span>
+<span class="fc" id="L224">                    logParseError();</span>
+<span class="fc" id="L225">                    return IOContextResult.NEEDS_DISCONNECT;</span>
+                }
+<span class="fc" id="L227">                goodMeasurement = false;</span>
+<span class="fc" id="L228">            } catch (Throwable ex) {</span>
+<span class="fc" id="L229">                LOG.critical()</span>
+<span class="fc" id="L230">                        .$('[').$(fd).$(&quot;] could not process line data [table=&quot;).$(parser.getMeasurementName())</span>
+<span class="fc" id="L231">                        .$(&quot;, ex=&quot;).$(ex)</span>
+<span class="fc" id="L232">                        .I$();</span>
+                // This is a critical error, so we treat it as an unhandled one.
+<span class="fc" id="L234">                metrics.health().incrementUnhandledErrors();</span>
+<span class="fc" id="L235">                return IOContextResult.NEEDS_DISCONNECT;</span>
+<span class="fc" id="L236">            }</span>
+        }
+    }
+
+    protected boolean read() {
+<span class="fc" id="L241">        int bufferRemaining = (int) (recvBufEnd - recvBufPos);</span>
+<span class="fc" id="L242">        final int orig = bufferRemaining;</span>
+<span class="fc bfc" id="L243" title="All 4 branches covered.">        if (bufferRemaining &gt; 0 &amp;&amp; !peerDisconnected) {</span>
+<span class="fc" id="L244">            int bytesRead = nf.recv(fd, recvBufPos, bufferRemaining);</span>
+<span class="fc bfc" id="L245" title="All 2 branches covered.">            if (bytesRead &gt; 0) {</span>
+<span class="fc" id="L246">                recvBufPos += bytesRead;</span>
+<span class="fc" id="L247">                bufferRemaining -= bytesRead;</span>
+            } else {
+<span class="fc bfc" id="L249" title="All 2 branches covered.">                peerDisconnected = bytesRead &lt; 0;</span>
+            }
+<span class="fc bfc" id="L251" title="All 2 branches covered.">            return bufferRemaining &lt; orig;</span>
+        }
+<span class="fc bfc" id="L253" title="All 2 branches covered.">        return !peerDisconnected;</span>
+    }
+
+    protected void resetParser() {
+<span class="fc" id="L257">        parser.of(recvBufStart);</span>
+<span class="fc" id="L258">        goodMeasurement = true;</span>
+<span class="fc" id="L259">        recvBufStartOfMeasurement = recvBufStart;</span>
+<span class="fc" id="L260">    }</span>
+
+<span class="fc" id="L262">    enum IOContextResult {</span>
+<span class="fc" id="L263">        NEEDS_READ, NEEDS_WRITE, QUEUE_FULL, NEEDS_DISCONNECT</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

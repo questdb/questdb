@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InSymbolFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.bool</a> &gt; <span class="el_source">InSymbolFunctionFactory.java</span></div><h1>InSymbolFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.bool;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.*;
+
+<span class="fc" id="L43">public class InSymbolFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L46">        return &quot;in(Kv)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList&lt;Function&gt; args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+<span class="fc" id="L57">        CharSequenceHashSet set = new CharSequenceHashSet();</span>
+<span class="fc" id="L58">        int n = args.size();</span>
+
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        if (n == 1) {</span>
+<span class="nc" id="L61">            return BooleanConstant.FALSE;</span>
+        }
+
+<span class="fc" id="L64">        ObjList&lt;Function&gt; deferredValues = null;</span>
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        for (int i = 1; i &lt; n; i++) {</span>
+<span class="fc" id="L66">            Function func = args.getQuick(i);</span>
+<span class="pc bpc" id="L67" title="1 of 4 branches missed.">            switch (ColumnType.tagOf(func.getType())) {</span>
+                case ColumnType.STRING:
+<span class="fc bfc" id="L69" title="All 2 branches covered.">                    if (func.isRuntimeConstant()) {</span>
+                        // string bind variable case
+<span class="fc bfc" id="L71" title="All 2 branches covered.">                        if (deferredValues == null) {</span>
+<span class="fc" id="L72">                            deferredValues = new ObjList&lt;&gt;();</span>
+                        }
+<span class="fc" id="L74">                        deferredValues.add(func);</span>
+<span class="fc" id="L75">                        continue;</span>
+                    }
+                    // fall through
+                case ColumnType.SYMBOL:
+                case ColumnType.NULL:
+<span class="fc" id="L80">                    CharSequence value = func.getStr(null);</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">                    if (value == null) {</span>
+<span class="fc" id="L82">                        set.add(null);</span>
+                    } else {
+<span class="fc" id="L84">                        set.add(Chars.toString(value));</span>
+                    }
+<span class="fc" id="L86">                    break;</span>
+                case ColumnType.CHAR:
+<span class="fc" id="L88">                    set.add(String.valueOf(func.getChar(null)));</span>
+<span class="fc" id="L89">                    break;</span>
+                default:
+<span class="nc" id="L91">                    throw SqlException.$(argPositions.getQuick(i), &quot;STRING constant expected&quot;);</span>
+            }
+        }
+<span class="fc" id="L94">        SymbolFunction var = (SymbolFunction) args.getQuick(0);</span>
+<span class="pc bpc" id="L95" title="1 of 4 branches missed.">        if (var.isConstant() &amp;&amp; deferredValues == null) {</span>
+            // Fast path for all constants case.
+<span class="fc" id="L97">            return BooleanConstant.of(set.contains(var.getSymbol(null)));</span>
+        }
+<span class="fc" id="L99">        return new Func(var, set, deferredValues);</span>
+    }
+
+    @FunctionalInterface
+    private interface TestFunc {
+        boolean test(Record rec);
+    }
+
+    private static class Func extends BooleanFunction implements UnaryFunction {
+        private final SymbolFunction arg;
+        private final CharSequenceHashSet deferredSet;
+        private final ObjList&lt;Function&gt; deferredValues;
+<span class="fc" id="L111">        private final IntHashSet intSet = new IntHashSet();</span>
+<span class="fc" id="L112">        private final TestFunc intTest = this::testAsInt;</span>
+        private final CharSequenceHashSet set;
+<span class="fc" id="L114">        private final TestFunc strTest = this::testAsString;</span>
+        private TestFunc testFunc;
+
+<span class="fc" id="L117">        public Func(SymbolFunction arg, CharSequenceHashSet set, ObjList&lt;Function&gt; deferredValues) {</span>
+<span class="fc" id="L118">            this.arg = arg;</span>
+<span class="fc" id="L119">            this.set = set;</span>
+<span class="fc" id="L120">            this.deferredValues = deferredValues;</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">            this.deferredSet = deferredValues != null ? new CharSequenceHashSet() : null;</span>
+<span class="fc" id="L122">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="fc" id="L126">            return arg;</span>
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc" id="L131">            return testFunc.test(rec);</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L136">            arg.init(symbolTableSource, executionContext);</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">            if (deferredValues != null) {</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">                for (int i = 0, n = deferredValues.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L139">                    deferredValues.getQuick(i).init(symbolTableSource, executionContext);</span>
+                }
+            }
+
+<span class="fc" id="L143">            final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">            if (symbolTable != null) {</span>
+<span class="fc" id="L145">                intSet.clear();</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">                for (int i = 0, n = set.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L147">                    intSet.add(symbolTable.keyOf(set.get(i)));</span>
+                }
+<span class="fc bfc" id="L149" title="All 2 branches covered.">                if (deferredValues != null) {</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">                    for (int i = 0, n = deferredValues.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L151">                        final Function func = deferredValues.getQuick(i);</span>
+<span class="fc" id="L152">                        intSet.add(symbolTable.keyOf(func.getStr(null)));</span>
+                    }
+                }
+<span class="fc" id="L155">                testFunc = intTest;</span>
+            } else {
+<span class="nc bnc" id="L157" title="All 2 branches missed.">                if (deferredValues != null) {</span>
+<span class="nc" id="L158">                    deferredSet.clear();</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">                    for (int i = 0, n = deferredValues.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L160">                        final Function func = deferredValues.getQuick(i);</span>
+<span class="nc" id="L161">                        deferredSet.add(func.getStr(null));</span>
+                    }
+                }
+<span class="nc" id="L164">                testFunc = strTest;</span>
+            }
+<span class="fc" id="L166">        }</span>
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L170">            sink.val(arg).val(&quot; in &quot;).val(set);</span>
+<span class="fc" id="L171">        }</span>
+
+        private boolean testAsInt(Record rec) {
+<span class="fc" id="L174">            return intSet.contains(arg.getInt(rec));</span>
+        }
+
+        private boolean testAsString(Record rec) {
+<span class="nc" id="L178">            final CharSequence symbol = arg.getSymbol(rec);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">            if (set.contains(symbol)) {</span>
+<span class="nc" id="L180">                return true;</span>
+            }
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            if (deferredSet != null) {</span>
+<span class="nc" id="L183">                return deferredSet.contains(symbol);</span>
+            }
+<span class="nc" id="L185">            return false;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

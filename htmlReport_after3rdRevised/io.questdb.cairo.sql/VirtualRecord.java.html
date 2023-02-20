@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VirtualRecord.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.sql</a> &gt; <span class="el_source">VirtualRecord.java</span></div><h1>VirtualRecord.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.sql;
+
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+
+public class VirtualRecord implements ColumnTypes, Record {
+    private final int columnCount;
+    private final ObjList&lt;? extends Function&gt; functions;
+    private Record base;
+
+<span class="fc" id="L38">    public VirtualRecord(ObjList&lt;? extends Function&gt; functions) {</span>
+<span class="fc" id="L39">        this.functions = functions;</span>
+<span class="fc" id="L40">        this.columnCount = functions.size();</span>
+<span class="fc" id="L41">    }</span>
+
+    public Record getBaseRecord() {
+<span class="fc" id="L44">        return base;</span>
+    }
+
+    @Override
+    public BinarySequence getBin(int col) {
+<span class="fc" id="L49">        return getFunction(col).getBin(base);</span>
+    }
+
+    @Override
+    public long getBinLen(int col) {
+<span class="fc" id="L54">        return getFunction(col).getBinLen(base);</span>
+    }
+
+    @Override
+    public boolean getBool(int col) {
+<span class="fc" id="L59">        return getFunction(col).getBool(base);</span>
+    }
+
+    @Override
+    public byte getByte(int col) {
+<span class="fc" id="L64">        return getFunction(col).getByte(base);</span>
+    }
+
+    @Override
+    public char getChar(int col) {
+<span class="fc" id="L69">        return getFunction(col).getChar(base);</span>
+    }
+
+    @Override
+    public int getColumnCount() {
+<span class="nc" id="L74">        return columnCount;</span>
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+<span class="fc" id="L79">        return getFunction(columnIndex).getType();</span>
+    }
+
+    @Override
+    public long getDate(int col) {
+<span class="fc" id="L84">        return getFunction(col).getDate(base);</span>
+    }
+
+    @Override
+    public double getDouble(int col) {
+<span class="fc" id="L89">        return getFunction(col).getDouble(base);</span>
+    }
+
+    @Override
+    public float getFloat(int col) {
+<span class="fc" id="L94">        return getFunction(col).getFloat(base);</span>
+    }
+
+    public ObjList&lt;? extends Function&gt; getFunctions() {
+<span class="fc" id="L98">        return functions;</span>
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+<span class="fc" id="L103">        return getFunction(col).getGeoByte(base);</span>
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+<span class="fc" id="L108">        return getFunction(col).getGeoInt(base);</span>
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+<span class="fc" id="L113">        return getFunction(col).getGeoLong(base);</span>
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+<span class="fc" id="L118">        return getFunction(col).getGeoShort(base);</span>
+    }
+
+    @Override
+    public int getInt(int col) {
+<span class="fc" id="L123">        return getFunction(col).getInt(base);</span>
+    }
+
+    @Override
+    public long getLong(int col) {
+<span class="fc" id="L128">        return getFunction(col).getLong(base);</span>
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+<span class="fc" id="L133">        return getFunction(col).getLong128Hi(base);</span>
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+<span class="fc" id="L138">        return getFunction(col).getLong128Lo(base);</span>
+    }
+
+    @Override
+    public void getLong256(int col, CharSink sink) {
+<span class="fc" id="L143">        getFunction(col).getLong256(base, sink);</span>
+<span class="fc" id="L144">    }</span>
+
+    @Override
+    public Long256 getLong256A(int col) {
+<span class="fc" id="L148">        return getFunction(col).getLong256A(base);</span>
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+<span class="fc" id="L153">        return getFunction(col).getLong256B(base);</span>
+    }
+
+    @Override
+    public Record getRecord(int col) {
+<span class="nc" id="L158">        return getFunction(col).getRecord(base);</span>
+    }
+
+    @Override
+    public long getRowId() {
+<span class="fc" id="L163">        return base.getRowId();</span>
+    }
+
+    @Override
+    public short getShort(int col) {
+<span class="fc" id="L168">        return getFunction(col).getShort(base);</span>
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+<span class="fc" id="L173">        return getFunction(col).getStr(base);</span>
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+<span class="fc" id="L178">        getFunction(col).getStr(base, sink);</span>
+<span class="fc" id="L179">    }</span>
+
+    @Override
+    public CharSequence getStrB(int col) {
+<span class="fc" id="L183">        return getFunction(col).getStrB(base);</span>
+    }
+
+    @Override
+    public int getStrLen(int col) {
+<span class="fc" id="L188">        return getFunction(col).getStrLen(base);</span>
+    }
+
+    @Override
+    public CharSequence getSym(int col) {
+<span class="fc" id="L193">        return getFunction(col).getSymbol(base);</span>
+    }
+
+    @Override
+    public CharSequence getSymB(int col) {
+<span class="fc" id="L198">        return getFunction(col).getSymbolB(base);</span>
+    }
+
+    @Override
+    public long getTimestamp(int col) {
+<span class="fc" id="L203">        return getFunction(col).getTimestamp(base);</span>
+    }
+
+    @Override
+    public long getUpdateRowId() {
+<span class="fc" id="L208">        return base.getUpdateRowId();</span>
+    }
+
+    public void of(Record record) {
+<span class="fc" id="L212">        this.base = record;</span>
+<span class="fc" id="L213">    }</span>
+
+    private Function getFunction(int columnIndex) {
+<span class="fc" id="L216">        return functions.getQuick(columnIndex);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

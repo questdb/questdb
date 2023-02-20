@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EqSymStrFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.eq</a> &gt; <span class="el_source">EqSymStrFunctionFactory.java</span></div><h1>EqSymStrFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.eq;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+<span class="fc" id="L41">public class EqSymStrFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L44">        return &quot;=(KS)&quot;;</span>
+    }
+
+    @Override
+    public boolean isBoolean() {
+<span class="fc" id="L49">        return true;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        // there are optimisation opportunities
+        // 1. when one of args is constant null comparison can boil down to checking
+        //    length of non-constant (must be -1)
+        // 2. when one of arguments is constant, save method call and use a field
+
+<span class="fc" id="L59">        Function symFunc = args.getQuick(0);</span>
+<span class="fc" id="L60">        Function strFunc = args.getQuick(1);</span>
+
+        // SYMBOL cannot be constant
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        if (strFunc.isConstant()) {</span>
+<span class="fc" id="L64">            return createHalfConstantFunc(strFunc, symFunc);</span>
+        }
+<span class="fc" id="L66">        return new Func(symFunc, strFunc);</span>
+    }
+
+    private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
+<span class="fc" id="L70">        CharSequence constValue = constFunc.getStr(null);</span>
+<span class="fc" id="L71">        SymbolFunction func = (SymbolFunction) varFunc;</span>
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        if (func.getStaticSymbolTable() != null) {</span>
+<span class="nc" id="L73">            return new ConstCheckColumnFunc(func, constValue);</span>
+        } else {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">            if (constValue == null) {</span>
+<span class="fc" id="L76">                return new NullCheckFunc(varFunc);</span>
+            }
+<span class="fc bfc" id="L78" title="All 2 branches covered.">            if (func.isSymbolTableStatic()) {</span>
+<span class="fc" id="L79">                return new ConstSymIntCheckFunc(func, constValue);</span>
+            }
+<span class="fc" id="L81">            return new ConstCheckFunc(func, constValue);</span>
+        }
+    }
+
+<span class="nc" id="L85">    private static class ConstCheckColumnFunc extends ConstEqSymFunc {</span>
+        private int valueIndex;
+
+        public ConstCheckColumnFunc(SymbolFunction arg, CharSequence constant) {
+<span class="nc" id="L89">            super(arg, constant);</span>
+<span class="nc" id="L90">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="nc bnc" id="L94" title="All 4 branches missed.">            return negated != (arg().getInt(rec) == valueIndex);</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="nc" id="L99">            arg().init(symbolTableSource, executionContext);</span>
+<span class="nc" id="L100">            final StaticSymbolTable symbolTable = arg().getStaticSymbolTable();</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            assert symbolTable != null;</span>
+<span class="nc" id="L102">            valueIndex = symbolTable.keyOf(constant);</span>
+<span class="nc" id="L103">        }</span>
+
+        @Override
+        public boolean isConstant() {
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            return valueIndex == SymbolTable.VALUE_NOT_FOUND;</span>
+        }
+
+        SymbolFunction arg() {
+<span class="nc" id="L111">            return (SymbolFunction) arg;</span>
+        }
+    }
+
+    private static class ConstCheckFunc extends ConstEqSymFunc {
+        public ConstCheckFunc(Function arg, CharSequence constant) {
+<span class="fc" id="L117">            super(arg, constant);</span>
+<span class="fc" id="L118">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="nc bnc" id="L122" title="All 2 branches missed.">            return negated != Chars.equalsNc(constant, arg.getSymbol(rec));</span>
+        }
+    }
+
+    private static abstract class ConstEqSymFunc extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+        protected final CharSequence constant;
+
+<span class="fc" id="L130">        protected ConstEqSymFunc(Function arg, CharSequence constant) {</span>
+<span class="fc" id="L131">            this.arg = arg;</span>
+<span class="fc" id="L132">            this.constant = constant;</span>
+<span class="fc" id="L133">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="fc" id="L137">            return arg;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L142">            sink.val(arg);</span>
+<span class="fc bfc" id="L143" title="All 2 branches covered.">            if (negated) {</span>
+<span class="fc" id="L144">                sink.val('!');</span>
+            }
+<span class="fc" id="L146">            sink.val(&quot;='&quot;).val(constant).val('\'');</span>
+<span class="fc" id="L147">        }</span>
+    }
+
+<span class="fc" id="L150">    private static class ConstSymIntCheckFunc extends ConstEqSymFunc {</span>
+        private boolean exists;
+        private int valueIndex;
+
+        public ConstSymIntCheckFunc(SymbolFunction arg, CharSequence constant) {
+<span class="fc" id="L155">            super(arg, constant);</span>
+<span class="fc" id="L156">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc bfc" id="L160" title="All 6 branches covered.">            return negated != (exists &amp;&amp; arg().getInt(rec) == valueIndex);</span>
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L165">            arg().init(symbolTableSource, executionContext);</span>
+<span class="fc" id="L166">            StaticSymbolTable staticSymbolTable = arg().getStaticSymbolTable();</span>
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">            assert staticSymbolTable != null : &quot;Static symbol table is null for func with static isSymbolTableStatic returning true&quot;;</span>
+<span class="fc" id="L168">            valueIndex = staticSymbolTable.keyOf(constant);</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">            exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);</span>
+<span class="fc" id="L170">        }</span>
+
+        SymbolFunction arg() {
+<span class="fc" id="L173">            return (SymbolFunction) arg;</span>
+        }
+    }
+
+    private static class Func extends AbstractEqBinaryFunction {
+        public Func(Function left, Function right) {
+<span class="fc" id="L179">            super(left, right);</span>
+<span class="fc" id="L180">        }</span>
+
+        @Override
+        public boolean getBool(Record rec) {
+            // important to compare A and B strings in case
+            // these are columns of the same record
+            // records have re-usable character sequences
+<span class="fc" id="L187">            final CharSequence a = left.getSymbol(rec);</span>
+<span class="fc" id="L188">            final CharSequence b = right.getStr(rec);</span>
+
+<span class="fc bfc" id="L190" title="All 2 branches covered.">            if (a == null) {</span>
+<span class="fc bfc" id="L191" title="All 4 branches covered.">                return negated != (b == null);</span>
+            }
+
+<span class="fc bfc" id="L194" title="All 2 branches covered.">            return negated != Chars.equalsNc(a, b);</span>
+        }
+    }
+
+    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+<span class="fc" id="L201">        public NullCheckFunc(Function arg) {</span>
+<span class="fc" id="L202">            this.arg = arg;</span>
+<span class="fc" id="L203">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="fc" id="L207">            return arg;</span>
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+<span class="fc bfc" id="L212" title="All 4 branches covered.">            return negated != (arg.getSymbol(rec) == null);</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="nc" id="L217">            sink.val(arg);</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            if (negated) {</span>
+<span class="nc" id="L219">                sink.val(&quot; is not null&quot;);</span>
+            } else {
+<span class="nc" id="L221">                sink.val(&quot; is null&quot;);</span>
+            }
+<span class="nc" id="L223">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

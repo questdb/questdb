@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.ops</a> &gt; <span class="el_source">AbstractOperation.java</span></div><h1>AbstractOperation.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.ops;
+
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.QuietCloseable;
+import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+<span class="fc" id="L35">public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {</span>
+    private static final long NO_CORRELATION_ID = -1L;
+    protected @Nullable TableToken tableToken;
+    @Nullable SqlExecutionContext sqlExecutionContext;
+    @Nullable CharSequence sqlText;
+    int tableNamePosition;
+    private String cmdName;
+    private int cmdType;
+    private long correlationId;
+    private int tableId;
+    private long tableVersion;
+
+    public void clearCommandCorrelationId() {
+<span class="fc" id="L48">        setCommandCorrelationId(NO_CORRELATION_ID);</span>
+<span class="fc" id="L49">    }</span>
+
+    @Override
+    public void close() {
+        // intentionally left empty
+<span class="fc" id="L54">    }</span>
+
+    @Override
+    public int getCmdType() {
+<span class="fc" id="L58">        return cmdType;</span>
+    }
+
+    @Override
+    public String getCommandName() {
+<span class="fc" id="L63">        return cmdName;</span>
+    }
+
+    @Override
+    public long getCorrelationId() {
+<span class="fc" id="L68">        return correlationId;</span>
+    }
+
+    public @Nullable SqlExecutionContext getSqlExecutionContext() {
+<span class="fc" id="L72">        return sqlExecutionContext;</span>
+    }
+
+    public @Nullable CharSequence getSqlText() {
+<span class="fc" id="L76">        return sqlText;</span>
+    }
+
+    @Override
+    public int getTableId() {
+<span class="fc" id="L81">        return tableId;</span>
+    }
+
+    @Override
+    public int getTableNamePosition() {
+<span class="fc" id="L86">        return tableNamePosition;</span>
+    }
+
+    @Override
+    public @Nullable TableToken getTableToken() {
+<span class="fc" id="L91">        return tableToken;</span>
+    }
+
+    @Override
+    public long getTableVersion() {
+<span class="fc" id="L96">        return tableVersion;</span>
+    }
+
+    @Override
+    public void serialize(TableWriterTask task) {
+<span class="fc" id="L101">        task.of(cmdType, tableId, tableToken);</span>
+<span class="fc" id="L102">        task.setInstance(correlationId);</span>
+<span class="fc" id="L103">    }</span>
+
+    @Override
+    public void setCommandCorrelationId(long correlationId) {
+<span class="fc" id="L107">        this.correlationId = correlationId;</span>
+<span class="fc" id="L108">    }</span>
+
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+<span class="fc" id="L111">        this.sqlExecutionContext = sqlExecutionContext;</span>
+<span class="fc" id="L112">    }</span>
+
+    public void withSqlStatement(String sqlStatement) {
+<span class="fc" id="L115">        this.sqlText = sqlStatement;</span>
+<span class="fc" id="L116">    }</span>
+
+    void init(
+            int cmdType,
+            String cmdName,
+            TableToken tableToken,
+            int tableId,
+            long tableVersion,
+            int tableNamePosition
+    ) {
+<span class="fc" id="L126">        this.cmdType = cmdType;</span>
+<span class="fc" id="L127">        this.cmdName = cmdName;</span>
+<span class="fc" id="L128">        this.tableToken = tableToken;</span>
+<span class="fc" id="L129">        this.tableId = tableId;</span>
+<span class="fc" id="L130">        this.tableVersion = tableVersion;</span>
+<span class="fc" id="L131">        this.tableNamePosition = tableNamePosition;</span>
+<span class="fc" id="L132">        this.correlationId = NO_CORRELATION_ID;</span>
+<span class="fc" id="L133">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FanOut.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.mp</a> &gt; <span class="el_source">FanOut.java</span></div><h1>FanOut.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp;
+
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+
+public class FanOut implements Barrier {
+<span class="fc" id="L31">    private static final long HOLDER = Unsafe.getFieldOffset(FanOut.class, &quot;holder&quot;);</span>
+    private final Holder holder;
+    private Barrier barrier;
+
+<span class="fc" id="L35">    public FanOut(Barrier... barriers) {</span>
+<span class="fc" id="L36">        Holder h = new Holder();</span>
+<span class="pc bpc" id="L37" title="1 of 2 branches missed.">        for (int i = 0; i &lt; barriers.length; i++) {</span>
+<span class="nc" id="L38">            Barrier sq = barriers[i];</span>
+<span class="nc" id="L39">            h.barriers.add(sq);</span>
+<span class="nc bnc" id="L40" title="All 2 branches missed.">            if (sq.getWaitStrategy().acceptSignal()) {</span>
+<span class="nc" id="L41">                h.waitStrategies.add(sq.getWaitStrategy());</span>
+            }
+        }
+<span class="fc" id="L44">        h.setupWaitStrategy();</span>
+<span class="fc" id="L45">        holder = h;</span>
+<span class="fc" id="L46">    }</span>
+
+    public static FanOut to(Barrier barrier) {
+<span class="fc" id="L49">        return new FanOut().and(barrier);</span>
+    }
+
+    public FanOut and(Barrier barrier) {
+        Holder _new;
+<span class="fc" id="L54">        Barrier root = null;</span>
+
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        final long current = this.barrier != null ? this.barrier.current() : -1;</span>
+<span class="fc" id="L57">        Unsafe.getUnsafe().loadFence();</span>
+
+        do {
+<span class="fc" id="L60">            Holder h = this.holder;</span>
+            // read barrier to make sure &quot;holder&quot; read doesn't fall below this
+
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">            if (h.barriers.indexOf(barrier) &gt; -1) {</span>
+<span class="nc" id="L64">                return this;</span>
+            }
+
+<span class="fc bfc" id="L67" title="All 4 branches covered.">            if (root == null &amp;&amp; this.barrier != null) {</span>
+<span class="fc" id="L68">                root = barrier.root();</span>
+<span class="fc" id="L69">                root.setBarrier(this.barrier);</span>
+<span class="fc" id="L70">                root.setCurrent(current);</span>
+<span class="fc" id="L71">                Unsafe.getUnsafe().storeFence();</span>
+            }
+<span class="fc" id="L73">            _new = new Holder();</span>
+<span class="fc" id="L74">            _new.barriers.addAll(h.barriers);</span>
+<span class="fc" id="L75">            _new.barriers.add(barrier);</span>
+<span class="fc" id="L76">            _new.waitStrategies.addAll(h.waitStrategies);</span>
+
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">            if (barrier.getWaitStrategy().acceptSignal()) {</span>
+<span class="nc" id="L79">                _new.waitStrategies.add(barrier.getWaitStrategy());</span>
+            }
+<span class="fc" id="L81">            _new.setupWaitStrategy();</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">            if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {</span>
+                // catch up with others
+<span class="pc bpc" id="L84" title="1 of 4 branches missed.">                if (root != null &amp;&amp; this.barrier != null) {</span>
+<span class="fc" id="L85">                    root.setCurrent(this.barrier.current());</span>
+                }
+                break;
+            }
+<span class="fc" id="L89">        } while (true);</span>
+
+<span class="fc" id="L91">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L92">        return this;</span>
+    }
+
+    // this is firebug bug, the code does not write to array elements
+    // it has to take a copy of this.barriers as this reference can change while
+    // loop is in flight
+    @Override
+    public long availableIndex(final long lo) {
+<span class="fc" id="L100">        long l = barrier.availableIndex(lo);</span>
+<span class="fc" id="L101">        ObjList&lt;Barrier&gt; barriers = holder.barriers;</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">        for (int i = 0, n = barriers.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L103">            l = Math.min(l, barriers.getQuick(i).availableIndex(lo));</span>
+        }
+<span class="fc" id="L105">        return l;</span>
+    }
+
+    @Override
+    public long current() {
+<span class="nc" id="L110">        return barrier.current();</span>
+    }
+
+    @Override
+    public Barrier getBarrier() {
+<span class="nc" id="L115">        return barrier;</span>
+    }
+
+    @Override
+    public WaitStrategy getWaitStrategy() {
+<span class="fc" id="L120">        return holder.waitStrategy;</span>
+    }
+
+    public void remove(Barrier barrier) {
+<span class="fc" id="L124">        Unsafe.getUnsafe().storeFence();</span>
+
+        Holder _new;
+        do {
+<span class="fc" id="L128">            Holder h = this.holder;</span>
+            // read barrier to make sure &quot;holder&quot; read doesn't fall below this
+
+<span class="fc bfc" id="L131" title="All 2 branches covered.">            if (h.barriers.indexOf(barrier) == -1) {</span>
+<span class="fc" id="L132">                return;</span>
+            }
+<span class="fc" id="L134">            _new = new Holder();</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">            for (int i = 0, n = h.barriers.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L136">                Barrier sq = h.barriers.getQuick(i);</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">                if (sq != barrier) {</span>
+<span class="fc" id="L138">                    _new.barriers.add(sq);</span>
+                }
+            }
+
+<span class="fc" id="L142">            WaitStrategy that = barrier.getWaitStrategy();</span>
+<span class="pc bpc" id="L143" title="1 of 2 branches missed.">            if (that.acceptSignal()) {</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">                for (int i = 0, n = h.waitStrategies.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L145">                    WaitStrategy ws = h.waitStrategies.getQuick(i);</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">                    if (ws != that) {</span>
+<span class="nc" id="L147">                        _new.waitStrategies.add(ws);</span>
+                    }
+                }
+            } else {
+<span class="fc" id="L151">                _new.waitStrategies.addAll(h.waitStrategies);</span>
+            }
+<span class="fc" id="L153">            _new.setupWaitStrategy();</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {</span>
+<span class="fc" id="L155">                break;</span>
+            }
+<span class="fc" id="L157">        } while (true);</span>
+<span class="fc" id="L158">    }</span>
+
+    @Override
+    public Barrier root() {
+<span class="pc bpc" id="L162" title="1 of 2 branches missed.">        return barrier != null ? barrier.root() : this;</span>
+    }
+
+    public void setBarrier(Barrier barrier) {
+<span class="fc" id="L166">        this.barrier = barrier;</span>
+<span class="fc" id="L167">        ObjList&lt;Barrier&gt; barriers = holder.barriers;</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">        for (int i = 0, n = barriers.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L169">            barriers.getQuick(i).root().setBarrier(barrier);</span>
+        }
+<span class="fc" id="L171">    }</span>
+
+    @Override
+    public void setCurrent(long value) {
+<span class="nc" id="L175">        ObjList&lt;Barrier&gt; barriers = holder.barriers;</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">        for (int i = 0, n = barriers.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L177">            barriers.getQuick(i).setCurrent(value);</span>
+        }
+<span class="nc" id="L179">    }</span>
+
+    @Override
+    public Barrier then(Barrier barrier) {
+<span class="fc" id="L183">        barrier.setBarrier(this);</span>
+<span class="fc" id="L184">        return barrier;</span>
+    }
+
+<span class="fc" id="L187">    private static class Holder {</span>
+
+<span class="fc" id="L189">        private final ObjList&lt;Barrier&gt; barriers = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L190">        private final FanOutWaitStrategy fanOutWaitStrategy = new FanOutWaitStrategy();</span>
+<span class="fc" id="L191">        private final ObjList&lt;WaitStrategy&gt; waitStrategies = new ObjList&lt;&gt;();</span>
+        private WaitStrategy waitStrategy;
+
+        private void setupWaitStrategy() {
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">            if (waitStrategies.size() &gt; 0) {</span>
+<span class="nc" id="L196">                waitStrategy = fanOutWaitStrategy;</span>
+            } else {
+<span class="fc" id="L198">                waitStrategy = NullWaitStrategy.INSTANCE;</span>
+            }
+<span class="fc" id="L200">        }</span>
+
+<span class="fc" id="L202">        private class FanOutWaitStrategy implements WaitStrategy {</span>
+            @Override
+            public boolean acceptSignal() {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                for (int i = 0, n = waitStrategies.size(); i &lt; n; i++) {</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">                    if (waitStrategies.getQuick(i).acceptSignal()) {</span>
+<span class="nc" id="L207">                        return true;</span>
+                    }
+                }
+<span class="nc" id="L210">                return false;</span>
+            }
+
+            @Override
+            public void alert() {
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                for (int i = 0, n = waitStrategies.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L216">                    waitStrategies.getQuick(i).alert();</span>
+                }
+<span class="nc" id="L218">            }</span>
+
+            @Override
+            public void await() {
+<span class="nc bnc" id="L222" title="All 2 branches missed.">                for (int i = 0, n = waitStrategies.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L223">                    waitStrategies.getQuick(i).await();</span>
+                }
+<span class="nc" id="L225">            }</span>
+
+            @Override
+            public void signal() {
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                for (int i = 0, n = waitStrategies.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L230">                    waitStrategies.getQuick(i).signal();</span>
+                }
+<span class="nc" id="L232">            }</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MinIntVectorAggregateFunction.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby.vect</a> &gt; <span class="el_source">MinIntVectorAggregateFunction.java</span></div><h1>MinIntVectorAggregateFunction.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby.vect;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+
+import java.util.concurrent.atomic.LongAccumulator;
+import java.util.function.LongBinaryOperator;
+
+import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+
+public class MinIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
+
+<span class="fc" id="L43">    public static final LongBinaryOperator MIN = (long l1, long l2) -&gt; {</span>
+<span class="fc bfc" id="L44" title="All 2 branches covered.">        if (l1 == Numbers.INT_NaN) {</span>
+<span class="fc" id="L45">            return l2;</span>
+        }
+<span class="pc bpc" id="L47" title="1 of 2 branches missed.">        if (l2 == Numbers.INT_NaN) {</span>
+<span class="nc" id="L48">            return l1;</span>
+        }
+<span class="fc" id="L50">        return Math.min(l1, l2);</span>
+    };
+<span class="fc" id="L52">    private final LongAccumulator accumulator = new LongAccumulator(</span>
+            MIN, Numbers.INT_NaN
+    );
+    private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
+
+<span class="fc" id="L60">    public MinIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {</span>
+<span class="fc" id="L61">        this.columnIndex = columnIndex;</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">        if (keyKind == GKK_HOUR_INT) {</span>
+<span class="fc" id="L63">            this.distinctFunc = Rosti::keyedHourDistinct;</span>
+<span class="fc" id="L64">            this.keyValueFunc = Rosti::keyedHourMinInt;</span>
+        } else {
+<span class="fc" id="L66">            this.distinctFunc = Rosti::keyedIntDistinct;</span>
+<span class="fc" id="L67">            this.keyValueFunc = Rosti::keyedIntMinInt;</span>
+        }
+<span class="fc" id="L69">    }</span>
+
+    @Override
+    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+<span class="fc bfc" id="L73" title="All 2 branches covered.">        if (address != 0) {</span>
+<span class="fc" id="L74">            final int value = Vect.minInt(address, addressSize / Integer.BYTES);</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">            if (value != Numbers.INT_NaN) {</span>
+<span class="fc" id="L76">                accumulator.accumulate(value);</span>
+            }
+        }
+<span class="fc" id="L79">    }</span>
+
+    @Override
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+<span class="fc bfc" id="L83" title="All 2 branches covered.">        if (valueAddress == 0) {</span>
+<span class="fc" id="L84">            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);</span>
+        } else {
+<span class="fc" id="L86">            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Integer.BYTES, valueOffset);</span>
+        }
+    }
+
+    @Override
+    public void clear() {
+<span class="fc" id="L92">        accumulator.reset();</span>
+<span class="fc" id="L93">    }</span>
+
+    @Override
+    public int getColumnIndex() {
+<span class="fc" id="L97">        return columnIndex;</span>
+    }
+
+    @Override
+    public int getInt(Record rec) {
+<span class="fc" id="L102">        return accumulator.intValue();</span>
+    }
+
+    @Override
+    public String getName() {
+<span class="fc" id="L107">        return &quot;min&quot;;</span>
+    }
+
+    @Override
+    public int getValueOffset() {
+<span class="fc" id="L112">        return valueOffset;</span>
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+<span class="fc" id="L117">        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Numbers.INT_NaN);</span>
+<span class="fc" id="L118">    }</span>
+
+    @Override
+    public boolean isReadThreadSafe() {
+<span class="nc" id="L122">        return false;</span>
+    }
+
+    @Override
+    public boolean merge(long pRostiA, long pRostiB) {
+<span class="fc" id="L127">        return Rosti.keyedIntMinIntMerge(pRostiA, pRostiB, valueOffset);</span>
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+<span class="fc" id="L132">        valueOffset = types.getColumnCount();</span>
+<span class="fc" id="L133">        types.add(ColumnType.INT);</span>
+<span class="fc" id="L134">    }</span>
+
+    @Override
+    public boolean wrapUp(long pRosti) {
+<span class="fc" id="L138">        return Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

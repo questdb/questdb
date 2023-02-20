@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableNameRegistryFileStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">TableNameRegistryFileStore.java</span></div><h1>TableNameRegistryFileStore.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+import java.util.Map;
+
+import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
+import static io.questdb.std.Files.DT_FILE;
+
+public class TableNameRegistryFileStore implements Closeable {
+<span class="fc" id="L45">    private static final Log LOG = LogFactory.getLog(TableNameRegistryFileStore.class);</span>
+    private static final int OPERATION_ADD = 0;
+    private static final int OPERATION_REMOVE = -1;
+    private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
+    private final CairoConfiguration configuration;
+<span class="fc" id="L50">    private final StringSink nameSink = new StringSink();</span>
+<span class="fc" id="L51">    private final IntHashSet tableIds = new IntHashSet();</span>
+<span class="fc" id="L52">    private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();</span>
+<span class="fc" id="L53">    private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();</span>
+<span class="fc" id="L54">    private int lockFd = -1;</span>
+
+<span class="fc" id="L56">    public TableNameRegistryFileStore(CairoConfiguration configuration) {</span>
+<span class="fc" id="L57">        this.configuration = configuration;</span>
+<span class="fc" id="L58">    }</span>
+
+    public synchronized void appendEntry(final TableToken tableToken) {
+<span class="fc" id="L61">        writeEntry(tableToken, OPERATION_ADD);</span>
+<span class="fc" id="L62">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        if (lockFd != -1) {</span>
+<span class="fc" id="L67">            configuration.getFilesFacade().close(lockFd);</span>
+<span class="fc" id="L68">            lockFd = -1;</span>
+        }
+<span class="fc" id="L70">        tableNameMemory.close(false);</span>
+<span class="fc" id="L71">    }</span>
+
+    public boolean isLocked() {
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        return lockFd != -1;</span>
+    }
+
+    public boolean lock() {
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">        if (lockFd != -1) {</span>
+<span class="nc" id="L79">            throw CairoException.critical(0).put(&quot;table registry already locked&quot;);</span>
+        }
+
+        // Windows does not allow to lock directories, so we lock a special lock file
+<span class="fc" id="L83">        FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L84">        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(&quot;.lock&quot;).$();</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        if (ff.exists(path)) {</span>
+<span class="fc" id="L86">            ff.touch(path);</span>
+        }
+<span class="fc" id="L88">        lockFd = TableUtils.lock(ff, path);</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        return lockFd != -1;</span>
+    }
+
+    public synchronized void logDropTable(final TableToken tableToken) {
+<span class="fc" id="L93">        writeEntry(tableToken, OPERATION_REMOVE);</span>
+<span class="fc" id="L94">    }</span>
+
+    @TestOnly
+    public synchronized void resetMemory() {
+<span class="fc bfc" id="L98" title="All 2 branches covered.">        if (!isLocked()) {</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">            if (!lock()) {</span>
+<span class="nc" id="L100">                throw CairoException.critical(0).put(&quot;table registry is not locked&quot;);</span>
+            }
+        }
+<span class="fc" id="L103">        tableNameMemory.close();</span>
+
+<span class="fc" id="L105">        final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(&quot;.0&quot;).$();</span>
+<span class="fc" id="L106">        configuration.getFilesFacade().remove(path);</span>
+
+<span class="fc" id="L108">        tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L109">    }</span>
+
+    private void compactTableNameFile(Map&lt;CharSequence, TableToken&gt; nameTableTokenMap, int lastFileVersion, FilesFacade ff, Path path, long currentOffset) {
+        // compact the memory, remove deleted entries.
+        // write to the tmp file.
+<span class="fc" id="L114">        int pathRootLen = path.length();</span>
+<span class="fc" id="L115">        path.concat(TABLE_REGISTRY_NAME_FILE).put(&quot;.tmp&quot;).$();</span>
+
+        try {
+<span class="fc" id="L118">            tableNameMemory.close(false);</span>
+<span class="fc" id="L119">            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L120">            tableNameMemory.putLong(0L);</span>
+
+<span class="fc bfc" id="L122" title="All 2 branches covered.">            for (TableToken token : nameTableTokenMap.values()) {</span>
+<span class="fc" id="L123">                writeEntry(token, OPERATION_ADD);</span>
+<span class="fc" id="L124">            }</span>
+<span class="fc" id="L125">            tableNameMemory.sync(false);</span>
+<span class="fc" id="L126">            long newAppendOffset = tableNameMemory.getAppendOffset();</span>
+<span class="fc" id="L127">            tableNameMemory.close();</span>
+
+            // rename tmp to next version file, everyone will automatically switch to new file
+<span class="fc" id="L130">            Path path2 = Path.getThreadLocal2(configuration.getRoot())</span>
+<span class="fc" id="L131">                    .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();</span>
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">            if (ff.rename(path, path2) == Files.FILES_RENAME_OK) {</span>
+<span class="fc" id="L133">                LOG.info().$(&quot;compacted tables file [path=&quot;).$(path2).$(']').$();</span>
+<span class="fc" id="L134">                lastFileVersion++;</span>
+<span class="fc" id="L135">                currentOffset = newAppendOffset;</span>
+                // best effort to remove old files, but we don't care if it fails
+<span class="fc" id="L137">                path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion - 1).$();</span>
+<span class="fc" id="L138">                ff.remove(path);</span>
+            } else {
+                // Not critical, if rename fails, compaction will be done next time
+<span class="nc" id="L141">                LOG.error().$(&quot;could not rename tables file, tables file will not be compacted [from=&quot;).$(path)</span>
+<span class="nc" id="L142">                        .$(&quot;, to=&quot;).$(path2).$(']').$();</span>
+            }
+        } finally {
+<span class="fc" id="L145">            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();</span>
+<span class="fc" id="L146">            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L147">            tableNameMemory.jumpTo(currentOffset);</span>
+        }
+<span class="fc" id="L149">    }</span>
+
+    private int findLastTablesFileVersion(FilesFacade ff, Path path) {
+<span class="fc" id="L152">        long findPtr = ff.findFirst(path.$());</span>
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">        if (findPtr == 0) {</span>
+<span class="nc" id="L154">            throw CairoException.critical(0).put(&quot;database root directory does not exist at &quot;).put(path);</span>
+        }
+        try {
+<span class="fc" id="L157">            int lastVersion = 0;</span>
+            do {
+<span class="fc" id="L159">                long pUtf8NameZ = ff.findName(findPtr);</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">                if (ff.findType(findPtr) == DT_FILE) {</span>
+<span class="fc" id="L161">                    nameSink.clear();</span>
+<span class="fc" id="L162">                    Chars.utf8DecodeZ(pUtf8NameZ, nameSink);</span>
+<span class="pc bpc" id="L163" title="1 of 4 branches missed.">                    if (Chars.startsWith(nameSink, TABLE_REGISTRY_NAME_FILE) &amp;&amp; nameSink.length() &gt; TABLE_REGISTRY_NAME_FILE.length() + 1) {</span>
+                        //noinspection CatchMayIgnoreException
+                        try {
+<span class="fc" id="L166">                            int version = Numbers.parseInt(nameSink, TABLE_REGISTRY_NAME_FILE.length() + 1, nameSink.length());</span>
+<span class="fc bfc" id="L167" title="All 2 branches covered.">                            if (version &gt; lastVersion) {</span>
+<span class="fc" id="L168">                                lastVersion = version;</span>
+                            }
+<span class="fc" id="L170">                        } catch (NumericException e) {</span>
+<span class="fc" id="L171">                        }</span>
+                    }
+                }
+<span class="fc bfc" id="L174" title="All 2 branches covered.">            } while (ff.findNext(findPtr) &gt; 0);</span>
+<span class="fc" id="L175">            return lastVersion;</span>
+        } finally {
+<span class="fc" id="L177">            ff.findClose(findPtr);</span>
+        }
+    }
+
+    private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
+<span class="fc" id="L182">        path.of(configuration.getRoot()).concat(dirName).concat(TableUtils.META_FILE_NAME).$();</span>
+<span class="fc" id="L183">        int fd = ff.openRO(path);</span>
+<span class="fc bfc" id="L184" title="All 2 branches covered.">        if (fd &lt; 1) {</span>
+<span class="fc" id="L185">            return 0;</span>
+        }
+
+        try {
+<span class="fc" id="L189">            int tableId = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_TABLE_ID);</span>
+<span class="pc bpc" id="L190" title="1 of 2 branches missed.">            if (tableId &lt; 0) {</span>
+<span class="nc" id="L191">                LOG.error().$(&quot;cannot read table id from metadata file [path=&quot;).$(path).I$();</span>
+<span class="nc" id="L192">                return 0;</span>
+            }
+<span class="fc" id="L194">            byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) &amp; 0xFF);</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">            return isWal == 0 ? tableId : -tableId;</span>
+        } finally {
+<span class="fc" id="L197">            ff.close(fd);</span>
+        }
+    }
+
+    private void reloadFromRootDirectory(
+            ConcurrentHashMap&lt;TableToken&gt; nameTableTokenMap,
+            ConcurrentHashMap&lt;ReverseTableMapItem&gt; reverseTableNameTokenMap
+    ) {
+<span class="fc" id="L205">        Path path = Path.getThreadLocal(configuration.getRoot());</span>
+<span class="fc" id="L206">        int plimit = path.length();</span>
+<span class="fc" id="L207">        FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L208">        long findPtr = ff.findFirst(path.$());</span>
+<span class="fc" id="L209">        StringSink sink = Misc.getThreadLocalBuilder();</span>
+        try {
+            do {
+<span class="fc bfc" id="L212" title="All 2 branches covered.">                if (ff.isDirOrSoftLinkDirNoDots(path, plimit, ff.findName(findPtr), ff.findType(findPtr), sink)) {</span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">                    if (!reverseTableNameTokenMap.containsKey(sink)</span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">                            &amp;&amp; TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {</span>
+
+<span class="fc" id="L216">                        String dirName = sink.toString();</span>
+                        int tableId;
+                        boolean isWal;
+                        String tableName;
+
+                        try {
+<span class="fc" id="L222">                            tableId = readTableId(path, dirName, ff);</span>
+<span class="fc bfc" id="L223" title="All 2 branches covered.">                            isWal = tableId &lt; 0;</span>
+<span class="fc" id="L224">                            tableId = Math.abs(tableId);</span>
+<span class="fc" id="L225">                            tableName = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirName), plimit, tableNameRoMemory, ff);</span>
+<span class="nc" id="L226">                        } catch (CairoException e) {</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                            if (e.errnoReadPathDoesNotExist()) {</span>
+                                // table is being removed.
+                                continue;
+                            } else {
+<span class="nc" id="L231">                                throw e;</span>
+                            }
+                        } finally {
+<span class="fc" id="L234">                            tableNameRoMemory.close();</span>
+                        }
+
+<span class="fc bfc" id="L237" title="All 2 branches covered.">                        if (tableName == null) {</span>
+<span class="pc bpc" id="L238" title="1 of 2 branches missed.">                            if (isWal) {</span>
+<span class="nc" id="L239">                                LOG.error().$(&quot;could not read table name, table will not be available [dirName=&quot;).utf8(dirName).I$();</span>
+<span class="nc" id="L240">                                continue;</span>
+                            } else {
+                                // Non-wal tables may not have _name file.
+<span class="fc" id="L243">                                tableName = Chars.toString(TableUtils.getTableNameFromDirName(dirName));</span>
+                            }
+                        }
+
+<span class="pc bpc" id="L247" title="1 of 2 branches missed.">                        if (tableId &gt; -1L) {</span>
+<span class="pc bpc" id="L248" title="1 of 2 branches missed.">                            if (tableIds.contains(tableId)) {</span>
+<span class="nc" id="L249">                                LOG.critical().$(&quot;duplicate table id found, table will not be available &quot; +</span>
+<span class="nc" id="L250">                                        &quot;[dirName=&quot;).utf8(dirName).$(&quot;, id=&quot;).$(tableId).I$();</span>
+<span class="nc" id="L251">                                continue;</span>
+                            }
+
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">                            if (nameTableTokenMap.containsKey(tableName)) {</span>
+<span class="nc" id="L255">                                LOG.critical().$(&quot;duplicate table name found, table will not be available &quot; +</span>
+<span class="nc" id="L256">                                                &quot;[dirName=&quot;).utf8(dirName).$(&quot;, name=&quot;).utf8(tableName)</span>
+<span class="nc" id="L257">                                        .$(&quot;, existingTableDir=&quot;).utf8(nameTableTokenMap.get(tableName).getDirName()).I$();</span>
+<span class="nc" id="L258">                                continue;</span>
+                            }
+
+<span class="fc" id="L261">                            TableToken token = new TableToken(tableName, dirName, tableId, isWal);</span>
+<span class="fc" id="L262">                            nameTableTokenMap.put(tableName, token);</span>
+<span class="fc" id="L263">                            reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.of(token));</span>
+                        }
+                    }
+                }
+<span class="fc bfc" id="L267" title="All 2 branches covered.">            } while (ff.findNext(findPtr) &gt; 0);</span>
+        } finally {
+<span class="fc" id="L269">            ff.findClose(findPtr);</span>
+        }
+<span class="fc" id="L271">    }</span>
+
+    private void reloadFromTablesFile(
+            ConcurrentHashMap&lt;TableToken&gt; nameTableTokenMap,
+            ConcurrentHashMap&lt;ReverseTableMapItem&gt; reverseTableNameTokenMap,
+            ObjList&lt;TableToken&gt; convertedTables
+    ) {
+        int lastFileVersion;
+<span class="fc" id="L279">        FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L280">        Path path = Path.getThreadLocal(configuration.getRoot());</span>
+<span class="fc" id="L281">        path.of(configuration.getRoot());</span>
+<span class="fc" id="L282">        int pathRootLen = path.length();</span>
+
+<span class="fc bfc" id="L284" title="All 2 branches covered.">        MemoryMR memory = isLocked() ? tableNameMemory : tableNameRoMemory;</span>
+        do {
+<span class="fc" id="L286">            lastFileVersion = findLastTablesFileVersion(ff, path.trimTo(pathRootLen).$());</span>
+<span class="fc" id="L287">            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();</span>
+            try {
+<span class="fc" id="L289">                memory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L290">                LOG.info().$(&quot;reloading tables file [path=&quot;).utf8(path).I$();</span>
+<span class="pc bpc" id="L291" title="1 of 2 branches missed.">                if (memory.size() &gt;= 2 * Long.BYTES) {</span>
+<span class="fc" id="L292">                    break;</span>
+                }
+<span class="fc" id="L294">            } catch (CairoException e) {</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">                if (!isLocked()) {</span>
+<span class="pc bpc" id="L296" title="1 of 2 branches missed.">                    if (e.errnoReadPathDoesNotExist()) {</span>
+<span class="pc bpc" id="L297" title="1 of 2 branches missed.">                        if (lastFileVersion == 0) {</span>
+                            // This is RO mode and file and tables.d.0 does not exist.
+<span class="nc" id="L299">                            return;</span>
+                        } else {
+                            // This is RO mode and file we want to read was just swapped to new one by the RW instance.
+<span class="fc" id="L302">                            continue;</span>
+                        }
+                    }
+                }
+<span class="nc" id="L306">                throw e;</span>
+<span class="nc" id="L307">            }</span>
+        } while (true);
+
+<span class="fc" id="L310">        long mapMem = memory.getLong(0);</span>
+<span class="fc" id="L311">        long currentOffset = Long.BYTES;</span>
+<span class="fc" id="L312">        memory.extend(mapMem);</span>
+
+<span class="fc" id="L314">        boolean compactRequired = false;</span>
+<span class="fc bfc" id="L315" title="All 2 branches covered.">        while (currentOffset &lt; mapMem) {</span>
+<span class="fc" id="L316">            int operation = memory.getInt(currentOffset);</span>
+<span class="fc" id="L317">            currentOffset += Integer.BYTES;</span>
+<span class="fc" id="L318">            String tableName = Chars.toString(memory.getStr(currentOffset));</span>
+<span class="fc" id="L319">            currentOffset += Vm.getStorageLength(tableName);</span>
+<span class="fc" id="L320">            String dirName = Chars.toString(memory.getStr(currentOffset));</span>
+<span class="fc" id="L321">            currentOffset += Vm.getStorageLength(dirName);</span>
+<span class="fc" id="L322">            int tableId = memory.getInt(currentOffset);</span>
+<span class="fc" id="L323">            currentOffset += Integer.BYTES;</span>
+<span class="fc" id="L324">            int tableType = memory.getInt(currentOffset);</span>
+<span class="fc" id="L325">            currentOffset += Integer.BYTES;</span>
+
+<span class="fc bfc" id="L327" title="All 2 branches covered.">            if (operation == OPERATION_REMOVE) {</span>
+                // remove from registry
+<span class="fc" id="L329">                final TableToken token = nameTableTokenMap.remove(tableName);</span>
+<span class="pc bpc" id="L330" title="1 of 2 branches missed.">                if (token != null) {</span>
+<span class="fc" id="L331">                    reverseTableNameTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));</span>
+<span class="fc" id="L332">                    compactRequired = true;</span>
+                }
+<span class="fc" id="L334">            } else {</span>
+<span class="pc bpc" id="L335" title="1 of 2 branches missed.">                if (tableIds.contains(tableId)) {</span>
+<span class="nc" id="L336">                    LOG.critical().$(&quot;duplicate table id found, table will not be accessible &quot; +</span>
+<span class="nc" id="L337">                            &quot;[dirName=&quot;).$(dirName).$(&quot;, id=&quot;).$(tableId).$(']').$();</span>
+<span class="nc" id="L338">                    continue;</span>
+                }
+
+<span class="pc bpc" id="L341" title="1 of 2 branches missed.">                final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL);</span>
+<span class="fc" id="L342">                nameTableTokenMap.put(tableName, token);</span>
+<span class="fc bfc" id="L343" title="All 2 branches covered.">                if (!Chars.startsWith(token.getDirName(), token.getTableName())) {</span>
+                    // This table is renamed, log system to real table name mapping
+<span class="fc" id="L345">                    LOG.advisory().$(&quot;renamed WAL table system name [table=&quot;).utf8(tableName).$(&quot;, dirName=&quot;).utf8(dirName).$();</span>
+                }
+
+<span class="fc" id="L348">                reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));</span>
+<span class="fc" id="L349">                currentOffset += TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;</span>
+            }
+<span class="fc" id="L351">        }</span>
+
+<span class="fc bfc" id="L353" title="All 2 branches covered.">        if (isLocked()) {</span>
+            // Check that the table directories exist
+<span class="fc bfc" id="L355" title="All 2 branches covered.">            for (TableToken token : nameTableTokenMap.values()) {</span>
+<span class="fc bfc" id="L356" title="All 2 branches covered.">                if (TableUtils.exists(ff, path, configuration.getRoot(), token.getDirName()) != TableUtils.TABLE_EXISTS) {</span>
+<span class="fc" id="L357">                    LOG.error().$(&quot;table directory directly removed from File System, table will not be available [path=&quot;).utf8(path)</span>
+<span class="fc" id="L358">                            .$(&quot;, dirName=&quot;).utf8(token.getDirName()).</span>
+<span class="fc" id="L359">                            $(&quot;, table=&quot;).utf8(token.getTableName())</span>
+<span class="fc" id="L360">                            .I$();</span>
+
+<span class="fc" id="L362">                    nameTableTokenMap.remove(token.getTableName());</span>
+<span class="fc" id="L363">                    reverseTableNameTokenMap.remove(token.getDirName());</span>
+<span class="fc" id="L364">                    compactRequired = true;</span>
+                }
+<span class="fc" id="L366">            }</span>
+
+<span class="fc bfc" id="L368" title="All 2 branches covered.">            if (convertedTables != null) {</span>
+<span class="fc bfc" id="L369" title="All 2 branches covered.">                for (int i = 0, n = convertedTables.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L370">                    final TableToken token = convertedTables.get(i);</span>
+<span class="fc bfc" id="L371" title="All 2 branches covered.">                    if (token.isWal()) {</span>
+<span class="fc" id="L372">                        nameTableTokenMap.put(token.getTableName(), token);</span>
+<span class="fc" id="L373">                        reverseTableNameTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));</span>
+                    } else {
+<span class="fc" id="L375">                        nameTableTokenMap.remove(token.getTableName());</span>
+<span class="fc" id="L376">                        reverseTableNameTokenMap.remove(token.getDirName());</span>
+                    }
+<span class="fc" id="L378">                    compactRequired = true;</span>
+                }
+            }
+
+<span class="fc bfc" id="L382" title="All 2 branches covered.">            if (compactRequired) {</span>
+<span class="fc" id="L383">                path.trimTo(pathRootLen);</span>
+<span class="fc" id="L384">                LOG.info().$(&quot;compacting tables file&quot;).$();</span>
+<span class="fc" id="L385">                compactTableNameFile(nameTableTokenMap, lastFileVersion, ff, path, currentOffset);</span>
+            } else {
+<span class="fc" id="L387">                tableNameMemory.jumpTo(currentOffset);</span>
+            }
+        } else {
+<span class="fc" id="L390">            tableNameRoMemory.close();</span>
+        }
+<span class="fc" id="L392">    }</span>
+
+    private void writeEntry(TableToken tableToken, int operation) {
+<span class="pc bpc" id="L395" title="1 of 2 branches missed.">        if (!isLocked()) {</span>
+<span class="nc" id="L396">            throw CairoException.critical(0).put(&quot;table registry is not locked&quot;);</span>
+        }
+<span class="fc" id="L398">        tableNameMemory.putInt(operation);</span>
+<span class="fc" id="L399">        tableNameMemory.putStr(tableToken.getTableName());</span>
+<span class="fc" id="L400">        tableNameMemory.putStr(tableToken.getDirName());</span>
+<span class="fc" id="L401">        tableNameMemory.putInt(tableToken.getTableId());</span>
+<span class="pc bpc" id="L402" title="1 of 2 branches missed.">        tableNameMemory.putInt(tableToken.isWal() ? TableUtils.TABLE_TYPE_WAL : TableUtils.TABLE_TYPE_NON_WAL);</span>
+
+<span class="fc bfc" id="L404" title="All 2 branches covered.">        if (operation != OPERATION_REMOVE) {</span>
+<span class="fc bfc" id="L405" title="All 2 branches covered.">            for (int i = 0; i &lt; TABLE_NAME_ENTRY_RESERVED_LONGS; i++) {</span>
+<span class="fc" id="L406">                tableNameMemory.putLong(0);</span>
+            }
+        }
+<span class="fc" id="L409">        tableNameMemory.putLong(0L, tableNameMemory.getAppendOffset());</span>
+<span class="fc" id="L410">    }</span>
+
+    void reload(
+            ConcurrentHashMap&lt;TableToken&gt; nameTableTokenMap,
+            ConcurrentHashMap&lt;ReverseTableMapItem&gt; reverseTableNameTokenMap,
+            ObjList&lt;TableToken&gt; convertedTables
+    ) {
+<span class="fc" id="L417">        tableIds.clear();</span>
+<span class="fc" id="L418">        reloadFromTablesFile(nameTableTokenMap, reverseTableNameTokenMap, convertedTables);</span>
+<span class="fc" id="L419">        reloadFromRootDirectory(nameTableTokenMap, reverseTableNameTokenMap);</span>
+<span class="fc" id="L420">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

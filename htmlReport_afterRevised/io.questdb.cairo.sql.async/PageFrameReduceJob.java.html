@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PageFrameReduceJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.sql.async</a> &gt; <span class="el_source">PageFrameReduceJob.java</span></div><h1>PageFrameReduceJob.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.sql.async;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+
+public class PageFrameReduceJob implements Job, Closeable {
+
+<span class="fc" id="L48">    private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);</span>
+    private final MessageBus messageBus;
+    private final int shardCount;
+    private final int[] shards;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private PageAddressCacheRecord record;
+
+    // Each thread should be assigned own instance of this job, making the code effectively
+    // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
+    public PageFrameReduceJob(
+            MessageBus bus,
+            Rnd rnd,
+            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
+<span class="fc" id="L61">    ) {</span>
+<span class="fc" id="L62">        this.messageBus = bus;</span>
+<span class="fc" id="L63">        this.shardCount = messageBus.getPageFrameReduceShardCount();</span>
+<span class="fc" id="L64">        this.shards = new int[shardCount];</span>
+        // fill shards[] with shard indexes
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        for (int i = 0; i &lt; shardCount; i++) {</span>
+<span class="fc" id="L67">            shards[i] = i;</span>
+        }
+
+        // shuffle shard indexes such that each job has its own
+        // pass order over the shared queues
+<span class="fc" id="L72">        int currentIndex = shardCount;</span>
+        int randomIndex;
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        while (currentIndex != 0) {</span>
+<span class="fc" id="L75">            randomIndex = (int) Math.floor(rnd.nextDouble() * currentIndex);</span>
+<span class="fc" id="L76">            currentIndex--;</span>
+
+<span class="fc" id="L78">            final int tmp = shards[currentIndex];</span>
+<span class="fc" id="L79">            shards[currentIndex] = shards[randomIndex];</span>
+<span class="fc" id="L80">            shards[randomIndex] = tmp;</span>
+<span class="fc" id="L81">        }</span>
+
+<span class="fc" id="L83">        this.record = new PageAddressCacheRecord();</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        if (sqlExecutionCircuitBreakerConfiguration != null) {</span>
+<span class="fc" id="L85">            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB1);</span>
+        } else {
+<span class="fc" id="L87">            this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;</span>
+        }
+<span class="fc" id="L89">    }</span>
+
+    /**
+     * Reduces single queue item when item is available. Return value is inverted as in
+     * true when queue item is not available, false otherwise. Item is reduced using the
+     * reducer method provided with each queue item.
+     *
+     * @param queue                 page frame queue instance
+     * @param subSeq                subscriber sequence
+     * @param record                instance of record that can be positioned on the frame and each row in that frame
+     * @param circuitBreaker        circuit breaker instance
+     * @param stealingFrameSequence page frame sequence that is stealing work, it is used to identify if
+     *                              page frame sequence is stealing its own work or someone else's
+     * @return inverted value of queue processing status; true if nothing was processed.
+     */
+    public static boolean consumeQueue(
+            RingQueue&lt;PageFrameReduceTask&gt; queue,
+            MCSequence subSeq,
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PageFrameSequence&lt;?&gt; stealingFrameSequence
+    ) {
+<span class="fc" id="L111">        return consumeQueue(</span>
+                -1,
+                queue,
+                subSeq,
+                record,
+                circuitBreaker,
+                stealingFrameSequence
+        );
+    }
+
+    public static void reduce(
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PageFrameReduceTask task,
+            PageFrameSequence&lt;?&gt; frameSequence,
+            PageFrameSequence&lt;?&gt; stealingFrameSequence
+    ) {
+<span class="fc" id="L128">        reduce(</span>
+                -1,
+                record,
+                circuitBreaker,
+                task,
+                frameSequence,
+                stealingFrameSequence
+        );
+<span class="fc" id="L136">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L140">        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);</span>
+<span class="fc" id="L141">        record = Misc.free(record);</span>
+<span class="fc" id="L142">    }</span>
+
+    @Override
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        // there is job instance per thread, the worker id must never change
+        // for this job
+<span class="fc" id="L148">        boolean useful = false;</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        for (int i = 0; i &lt; shardCount; i++) {</span>
+<span class="fc" id="L150">            final int shard = shards[i];</span>
+<span class="fc bfc" id="L151" title="All 4 branches covered.">            useful = !consumeQueue(</span>
+                    workerId,
+<span class="fc" id="L153">                    messageBus.getPageFrameReduceQueue(shard),</span>
+<span class="fc" id="L154">                    messageBus.getPageFrameReduceSubSeq(shard),</span>
+                    record,
+                    circuitBreaker,
+                    null // this is correct worker processing tasks rather than PageFrameSequence
+                    // helping to steal work
+            ) || useful;
+        }
+<span class="fc" id="L161">        return useful;</span>
+    }
+
+    private static boolean consumeQueue(
+            int workerId,
+            RingQueue&lt;PageFrameReduceTask&gt; queue,
+            MCSequence subSeq,
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence&lt;?&gt; stealingFrameSequence
+    ) {
+        // loop is required to deal with CAS errors, cursor == -2
+        do {
+<span class="fc" id="L174">            final long cursor = subSeq.next();</span>
+<span class="fc bfc" id="L175" title="All 2 branches covered.">            if (cursor &gt; -1) {</span>
+<span class="fc" id="L176">                final PageFrameReduceTask task = queue.get(cursor);</span>
+<span class="fc" id="L177">                final PageFrameSequence&lt;?&gt; frameSequence = task.getFrameSequence();</span>
+                try {
+<span class="fc" id="L179">                    LOG.debug()</span>
+<span class="fc" id="L180">                            .$(&quot;reducing [shard=&quot;).$(frameSequence.getShard())</span>
+<span class="fc" id="L181">                            .$(&quot;, id=&quot;).$(frameSequence.getId())</span>
+<span class="fc" id="L182">                            .$(&quot;, frameIndex=&quot;).$(task.getFrameIndex())</span>
+<span class="fc" id="L183">                            .$(&quot;, frameCount=&quot;).$(frameSequence.getFrameCount())</span>
+<span class="fc" id="L184">                            .$(&quot;, active=&quot;).$(frameSequence.isActive())</span>
+<span class="fc" id="L185">                            .$(&quot;, cursor=&quot;).$(cursor)</span>
+<span class="fc" id="L186">                            .I$();</span>
+<span class="fc bfc" id="L187" title="All 2 branches covered.">                    if (frameSequence.isActive()) {</span>
+<span class="fc" id="L188">                        reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);</span>
+                    }
+<span class="fc" id="L190">                } catch (Throwable e) {</span>
+<span class="fc" id="L191">                    frameSequence.cancel();</span>
+<span class="fc" id="L192">                    throw e;</span>
+                } finally {
+<span class="fc" id="L194">                    subSeq.done(cursor);</span>
+                    // Reduce counter has to be incremented only when we make
+                    // sure that the task is available for consumers.
+<span class="fc" id="L197">                    frameSequence.getReduceCounter().incrementAndGet();</span>
+                }
+<span class="fc" id="L199">                return false;</span>
+<span class="fc bfc" id="L200" title="All 2 branches covered.">            } else if (cursor == -1) {</span>
+                // queue is empty, we should yield or help
+<span class="fc" id="L202">                break;</span>
+            }
+<span class="fc" id="L204">            Os.pause();</span>
+<span class="fc" id="L205">        } while (true);</span>
+<span class="fc" id="L206">        return true;</span>
+    }
+
+    private static void reduce(
+            int workerId,
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PageFrameReduceTask task,
+            PageFrameSequence&lt;?&gt; frameSequence,
+            PageFrameSequence&lt;?&gt; stealingFrameSequence
+    ) {
+        // we deliberately hold the queue item because
+        // processing is daisy-chained. If we were to release item before
+        // finishing reduction, next step (job) will be processing an incomplete task
+<span class="fc bfc" id="L220" title="All 2 branches covered.">        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd())) {</span>
+<span class="fc" id="L221">            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());</span>
+<span class="fc" id="L222">            record.setFrameIndex(task.getFrameIndex());</span>
+<span class="pc bpc" id="L223" title="1 of 2 branches missed.">            assert !frameSequence.done;</span>
+<span class="fc" id="L224">            frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);</span>
+        } else {
+<span class="fc" id="L226">            frameSequence.cancel();</span>
+        }
+<span class="fc" id="L228">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

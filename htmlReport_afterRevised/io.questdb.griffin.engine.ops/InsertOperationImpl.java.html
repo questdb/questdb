@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InsertOperationImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.ops</a> &gt; <span class="el_source">InsertOperationImpl.java</span></div><h1>InsertOperationImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.ops;
+
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.WriterOutOfDateException;
+import io.questdb.griffin.InsertRowImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+
+public class InsertOperationImpl implements InsertOperation {
+<span class="fc" id="L43">    private final InsertOperationFuture doneFuture = new InsertOperationFuture();</span>
+    private final CairoEngine engine;
+<span class="fc" id="L45">    private final InsertMethodImpl insertMethod = new InsertMethodImpl();</span>
+<span class="fc" id="L46">    private final ObjList&lt;InsertRowImpl&gt; insertRows = new ObjList&lt;&gt;();</span>
+    private final long structureVersion;
+    private final TableToken tableToken;
+
+    public InsertOperationImpl(
+            CairoEngine engine,
+            TableToken tableToken,
+            long structureVersion
+<span class="fc" id="L54">    ) {</span>
+<span class="fc" id="L55">        this.engine = engine;</span>
+<span class="fc" id="L56">        this.tableToken = tableToken;</span>
+<span class="fc" id="L57">        this.structureVersion = structureVersion;</span>
+<span class="fc" id="L58">    }</span>
+
+    @Override
+    public void addInsertRow(InsertRowImpl row) {
+<span class="fc" id="L62">        insertRows.add(row);</span>
+<span class="fc" id="L63">    }</span>
+
+    @Override
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+<span class="fc" id="L67">        initContext(executionContext);</span>
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">        if (insertMethod.writer == null) {</span>
+<span class="fc" id="L69">            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableToken, &quot;insert&quot;);</span>
+<span class="fc bfc" id="L70" title="All 2 branches covered.">            if (writer.getStructureVersion() != structureVersion ||</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">                    !Chars.equals(tableToken.getTableName(), writer.getTableToken().getTableName())) {</span>
+<span class="fc" id="L72">                writer.close();</span>
+<span class="fc" id="L73">                throw WriterOutOfDateException.INSTANCE;</span>
+            }
+<span class="fc" id="L75">            insertMethod.writer = writer;</span>
+        }
+<span class="fc" id="L77">        return insertMethod;</span>
+    }
+
+    @Override
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L82">        return createMethod(executionContext, engine);</span>
+    }
+
+    @Override
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
+<span class="fc" id="L87">        try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {</span>
+<span class="fc" id="L88">            insertMethod.execute();</span>
+<span class="fc" id="L89">            insertMethod.commit();</span>
+<span class="fc" id="L90">            return doneFuture;</span>
+        }
+    }
+
+    private void initContext(SqlExecutionContext executionContext) throws SqlException {
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        for (int i = 0, n = insertRows.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L96">            InsertRowImpl row = insertRows.get(i);</span>
+<span class="fc" id="L97">            row.initContext(executionContext);</span>
+        }
+<span class="fc" id="L99">    }</span>
+
+<span class="fc" id="L101">    private class InsertMethodImpl implements InsertMethod {</span>
+<span class="fc" id="L102">        private TableWriterAPI writer = null;</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L106">            writer = Misc.free(writer);</span>
+<span class="fc" id="L107">        }</span>
+
+        @Override
+        public void commit() {
+<span class="fc" id="L111">            writer.commit();</span>
+<span class="fc" id="L112">        }</span>
+
+        @Override
+        public long execute() {
+<span class="fc bfc" id="L116" title="All 2 branches covered.">            for (int i = 0, n = insertRows.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L117">                InsertRowImpl row = insertRows.get(i);</span>
+<span class="fc" id="L118">                row.append(writer);</span>
+            }
+<span class="fc" id="L120">            return insertRows.size();</span>
+        }
+
+        @Override
+        public TableWriterAPI popWriter() {
+<span class="fc" id="L125">            TableWriterAPI w = writer;</span>
+<span class="fc" id="L126">            this.writer = null;</span>
+<span class="fc" id="L127">            return w;</span>
+        }
+    }
+
+<span class="fc" id="L131">    private class InsertOperationFuture extends DoneOperationFuture {</span>
+
+        @Override
+        public long getAffectedRowsCount() {
+<span class="nc" id="L135">            return insertRows.size();</span>
+        }
+
+        @Override
+        public long getInstanceId() {
+<span class="nc" id="L140">            return -3L;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

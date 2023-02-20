@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RightFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.str</a> &gt; <span class="el_source">RightFunctionFactory.java</span></div><h1>RightFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.str;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
+
+<span class="fc" id="L45">public class RightFunctionFactory implements FunctionFactory {</span>
+    @Override
+    public String getSignature() {
+<span class="fc" id="L48">        return &quot;right(SI)&quot;;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+<span class="fc" id="L53">        final Function strFunc = args.getQuick(0);</span>
+<span class="fc" id="L54">        final Function countFunc = args.getQuick(1);</span>
+<span class="fc bfc" id="L55" title="All 2 branches covered.">        if (countFunc.isConstant()) {</span>
+<span class="fc" id="L56">            int count = countFunc.getInt(null);</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">            if (count != Numbers.INT_NaN) {</span>
+<span class="fc" id="L58">                return new RightStrConstCountFunction(strFunc, count);</span>
+            } else {
+<span class="fc" id="L60">                return StrConstant.NULL;</span>
+            }
+        }
+<span class="fc" id="L63">        return new RightStrFunction(strFunc, countFunc);</span>
+    }
+
+    private static int getPos(int len, int count) {
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        return count &gt; -1 ? Math.min(len, Math.max(0, len - count)) : Math.min(len, -count);</span>
+    }
+
+    private static class RightStrConstCountFunction extends StrFunction implements UnaryFunction {
+
+        private final int count;
+<span class="fc" id="L73">        private final StringSink sink = new StringSink();</span>
+<span class="fc" id="L74">        private final StringSink sinkB = new StringSink();</span>
+        private final Function strFunc;
+
+<span class="fc" id="L77">        public RightStrConstCountFunction(Function strFunc, int count) {</span>
+<span class="fc" id="L78">            this.strFunc = strFunc;</span>
+<span class="fc" id="L79">            this.count = count;</span>
+<span class="fc" id="L80">        }</span>
+
+        @Override
+        public Function getArg() {
+<span class="fc" id="L84">            return strFunc;</span>
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+<span class="fc" id="L89">            return getStr0(rec, sink);</span>
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+<span class="fc" id="L94">            CharSequence str = strFunc.getStr(rec);</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">            if (str != null) {</span>
+<span class="fc" id="L96">                final int len = str.length();</span>
+<span class="fc" id="L97">                final int pos = getPos(len);</span>
+<span class="fc" id="L98">                sink.put(str, pos, len);</span>
+            }
+<span class="fc" id="L100">        }</span>
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+<span class="fc" id="L104">            return getStr0(rec, sinkB);</span>
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+<span class="fc" id="L109">            final int len = strFunc.getStrLen(rec);</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">            final int pos = len == TableUtils.NULL_LEN ? 0 : getPos(len);</span>
+<span class="fc" id="L111">            return len - pos;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L116">            sink.val(&quot;right(&quot;).val(strFunc).val(',').val(count).val(')');</span>
+<span class="fc" id="L117">        }</span>
+
+        private int getPos(int len) {
+<span class="fc" id="L120">            return RightFunctionFactory.getPos(len, count);</span>
+        }
+
+        @Nullable
+        private StringSink getStr0(Record rec, StringSink sink) {
+<span class="fc" id="L125">            CharSequence str = strFunc.getStr(rec);</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">            if (str != null) {</span>
+<span class="fc" id="L127">                final int len = str.length();</span>
+<span class="fc" id="L128">                final int pos = getPos(len);</span>
+<span class="fc" id="L129">                sink.clear();</span>
+<span class="fc" id="L130">                sink.put(str, pos, len);</span>
+<span class="fc" id="L131">                return sink;</span>
+            }
+<span class="fc" id="L133">            return null;</span>
+        }
+    }
+
+    private static class RightStrFunction extends StrFunction implements BinaryFunction {
+
+        private final Function countFunc;
+<span class="fc" id="L140">        private final StringSink sink = new StringSink();</span>
+<span class="fc" id="L141">        private final StringSink sinkB = new StringSink();</span>
+        private final Function strFunc;
+
+<span class="fc" id="L144">        public RightStrFunction(Function strFunc, Function countFunc) {</span>
+<span class="fc" id="L145">            this.strFunc = strFunc;</span>
+<span class="fc" id="L146">            this.countFunc = countFunc;</span>
+<span class="fc" id="L147">        }</span>
+
+        @Override
+        public Function getLeft() {
+<span class="fc" id="L151">            return strFunc;</span>
+        }
+
+        @Override
+        public String getName() {
+<span class="fc" id="L156">            return &quot;right&quot;;</span>
+        }
+
+        @Override
+        public Function getRight() {
+<span class="fc" id="L161">            return countFunc;</span>
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+<span class="fc" id="L166">            final CharSequence str = strFunc.getStr(rec);</span>
+<span class="fc" id="L167">            final int count = this.countFunc.getInt(rec);</span>
+<span class="pc bpc" id="L168" title="1 of 4 branches missed.">            if (str != null &amp;&amp; count != Numbers.INT_NaN) {</span>
+<span class="fc" id="L169">                final int len = str.length();</span>
+<span class="fc" id="L170">                final int pos = getPos(len, count);</span>
+<span class="fc" id="L171">                sink.put(str, pos, len);</span>
+            }
+<span class="fc" id="L173">        }</span>
+
+        @Override
+        public CharSequence getStr(Record rec) {
+<span class="fc" id="L177">            return getStr0(rec, sink);</span>
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+<span class="fc" id="L182">            return getStr0(rec, sinkB);</span>
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+<span class="fc" id="L187">            int count = this.countFunc.getInt(rec);</span>
+<span class="fc bfc" id="L188" title="All 2 branches covered.">            if (count != Numbers.INT_NaN) {</span>
+<span class="fc" id="L189">                final int len = strFunc.getStrLen(rec);</span>
+<span class="fc bfc" id="L190" title="All 2 branches covered.">                return len - (len == TableUtils.NULL_LEN ? 0 : getPos(len, count));</span>
+            }
+<span class="fc" id="L192">            return TableUtils.NULL_LEN;</span>
+        }
+
+        @Nullable
+        private StringSink getStr0(Record rec, StringSink sink) {
+<span class="fc" id="L197">            final CharSequence str = strFunc.getStr(rec);</span>
+<span class="fc" id="L198">            final int count = this.countFunc.getInt(rec);</span>
+<span class="pc bpc" id="L199" title="1 of 4 branches missed.">            if (str != null &amp;&amp; count != Numbers.INT_NaN) {</span>
+<span class="fc" id="L200">                final int len = str.length();</span>
+<span class="fc" id="L201">                final int pos = getPos(len, count);</span>
+<span class="fc" id="L202">                sink.clear();</span>
+<span class="fc" id="L203">                sink.put(str, pos, len);</span>
+<span class="fc" id="L204">                return sink;</span>
+            }
+<span class="fc" id="L206">            return null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

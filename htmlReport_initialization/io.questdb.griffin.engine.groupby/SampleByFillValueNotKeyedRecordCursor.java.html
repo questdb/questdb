@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SampleByFillValueNotKeyedRecordCursor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby</a> &gt; <span class="el_source">SampleByFillValueNotKeyedRecordCursor.java</span></div><h1>SampleByFillValueNotKeyedRecordCursor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby;
+
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.ObjList;
+
+public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
+    private final SimpleMapValuePeeker peeker;
+    private final SimpleMapValue simpleMapValue;
+<span class="fc" id="L35">    private boolean gapFill = false;</span>
+
+    public SampleByFillValueNotKeyedRecordCursor(
+            ObjList&lt;GroupByFunction&gt; groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
+            ObjList&lt;Function&gt; recordFunctions,
+            ObjList&lt;Function&gt; placeholderFunctions,
+            SimpleMapValuePeeker peeker,
+            int timestampIndex, // index of timestamp column in base cursor
+            TimestampSampler timestampSampler,
+            SimpleMapValue simpleMapValue,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
+    ) {
+<span class="fc" id="L51">        super(</span>
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                groupByFunctionsUpdater,
+                placeholderFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
+<span class="fc" id="L63">        this.simpleMapValue = simpleMapValue;</span>
+<span class="fc" id="L64">        record.of(simpleMapValue);</span>
+<span class="fc" id="L65">        this.peeker = peeker;</span>
+<span class="fc" id="L66">    }</span>
+
+    @Override
+    public Record getRecord() {
+<span class="fc" id="L70">        return record;</span>
+    }
+
+    @Override
+    public boolean hasNext() {
+<span class="fc" id="L75">        initTimestamps();</span>
+
+<span class="fc bfc" id="L77" title="All 4 branches covered.">        if (baseRecord == null &amp;&amp; !gapFill) {</span>
+<span class="fc" id="L78">            return false;</span>
+        }
+
+        // the next sample epoch could be different from current sample epoch due to DST transition,
+        // e.g. clock going backward
+        // we need to ensure we do not fill time transition
+<span class="fc" id="L84">        final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);</span>
+        // is data timestamp ahead of next expected timestamp?
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        if (expectedLocalEpoch &lt; localEpoch) {</span>
+<span class="fc" id="L87">            setActiveB(expectedLocalEpoch);</span>
+<span class="fc" id="L88">            sampleLocalEpoch = expectedLocalEpoch;</span>
+<span class="fc" id="L89">            nextSampleLocalEpoch = expectedLocalEpoch;</span>
+<span class="fc" id="L90">            return true;</span>
+        }
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        if (setActiveA(expectedLocalEpoch)) {</span>
+<span class="fc" id="L93">            return peeker.reset();</span>
+        }
+
+<span class="fc" id="L96">        return notKeyedLoop(simpleMapValue);</span>
+    }
+
+    private boolean setActiveA(long expectedLocalEpoch) {
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        if (gapFill) {</span>
+<span class="fc" id="L101">            gapFill = false;</span>
+<span class="fc" id="L102">            record.setActiveA();</span>
+<span class="fc" id="L103">            sampleLocalEpoch = expectedLocalEpoch;</span>
+<span class="fc" id="L104">            nextSampleLocalEpoch = expectedLocalEpoch;</span>
+<span class="fc" id="L105">            return true;</span>
+        }
+<span class="fc" id="L107">        return false;</span>
+    }
+
+    private void setActiveB(long expectedLocalEpoch) {
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        if (!gapFill) {</span>
+<span class="fc" id="L112">            record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);</span>
+<span class="fc" id="L113">            record.setTarget(peeker.peek());</span>
+<span class="fc" id="L114">            gapFill = true;</span>
+        }
+<span class="fc" id="L116">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

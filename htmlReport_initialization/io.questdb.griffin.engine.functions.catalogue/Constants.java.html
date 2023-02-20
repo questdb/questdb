@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Constants.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.catalogue</a> &gt; <span class="el_source">Constants.java</span></div><h1>Constants.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.catalogue;
+
+import io.questdb.cutlass.pgwire.PGOids;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+
+<span class="nc" id="L31">public class Constants {</span>
+    public static final String DB_NAME = &quot;questdb&quot;;
+    public static final String PUBLIC = &quot;public&quot;;
+<span class="fc" id="L34">    static final CharSequence[] KEYWORDS = {</span>
+            &quot;add&quot;,
+            &quot;all&quot;,
+            &quot;alter&quot;,
+            &quot;and&quot;,
+            &quot;as&quot;,
+            &quot;asc&quot;,
+            &quot;asof&quot;,
+            &quot;backup&quot;,
+            &quot;between&quot;,
+            &quot;by&quot;,
+            &quot;cache&quot;,
+            &quot;capacity&quot;,
+            &quot;case&quot;,
+            &quot;cast&quot;,
+            &quot;column&quot;,
+            &quot;columns&quot;,
+            &quot;copy&quot;,
+            &quot;create&quot;,
+            &quot;cross&quot;,
+            &quot;database&quot;,
+            &quot;default&quot;,
+            &quot;delete&quot;,
+            &quot;desc&quot;,
+            &quot;distinct&quot;,
+            &quot;drop&quot;,
+            &quot;else&quot;,
+            &quot;end&quot;,
+            &quot;except&quot;,
+            &quot;exists&quot;,
+            &quot;fill&quot;,
+            &quot;foreign&quot;,
+            &quot;from&quot;,
+            &quot;grant&quot;,
+            &quot;group&quot;,
+            &quot;header&quot;,
+            &quot;if&quot;,
+            &quot;in&quot;,
+            &quot;index&quot;,
+            &quot;inner&quot;,
+            &quot;insert&quot;,
+            &quot;intersect&quot;,
+            &quot;into&quot;,
+            &quot;isolation&quot;,
+            &quot;join&quot;,
+            &quot;key&quot;,
+            &quot;latest&quot;,
+            &quot;left&quot;,
+            &quot;level&quot;,
+            &quot;limit&quot;,
+            &quot;lock&quot;,
+            &quot;lt&quot;,
+            &quot;nan&quot;,
+            &quot;natural&quot;,
+            &quot;nocache&quot;,
+            &quot;none&quot;,
+            &quot;not&quot;,
+            &quot;null&quot;,
+            &quot;on&quot;,
+            &quot;only&quot;,
+            &quot;or&quot;,
+            &quot;order&quot;,
+            &quot;outer&quot;,
+            &quot;over&quot;,
+            &quot;partition&quot;,
+            &quot;primary&quot;,
+            &quot;references&quot;,
+            &quot;rename&quot;,
+            &quot;repair&quot;,
+            &quot;right&quot;,
+            &quot;sample&quot;,
+            &quot;select&quot;,
+            &quot;show&quot;,
+            &quot;splice&quot;,
+            &quot;system&quot;,
+            &quot;table&quot;,
+            &quot;tables&quot;,
+            &quot;then&quot;,
+            &quot;to&quot;,
+            &quot;transaction&quot;,
+            &quot;truncate&quot;,
+            &quot;type&quot;,
+            &quot;union&quot;,
+            &quot;unlock&quot;,
+            &quot;update&quot;,
+            &quot;values&quot;,
+            &quot;when&quot;,
+            &quot;where&quot;,
+            &quot;with&quot;,
+            &quot;writer&quot;
+    };
+<span class="fc" id="L125">    static final String[] NAMESPACES = {&quot;pg_catalog&quot;, PUBLIC};</span>
+<span class="fc" id="L126">    static final int[] NAMESPACE_OIDS = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};</span>
+<span class="fc" id="L127">    static final StrFunction PUBLIC_CONSTANT = new StrConstant(PUBLIC);</span>
+<span class="fc" id="L128">    static final StrFunction USER_CONSTANT = new StrConstant(&quot;admin&quot;);</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

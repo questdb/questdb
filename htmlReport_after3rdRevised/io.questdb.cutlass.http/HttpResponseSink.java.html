@@ -1,0 +1,707 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpResponseSink.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.http</a> &gt; <span class="el_source">HttpResponseSink.java</span></div><h1>HttpResponseSink.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http;
+
+import io.questdb.cairo.Reopenable;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.network.*;
+import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.ex.ZLibException;
+import io.questdb.std.str.AbstractCharSink;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StdoutSink;
+
+import java.io.Closeable;
+
+public class HttpResponseSink implements Closeable, Mutable {
+<span class="fc" id="L42">    private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);</span>
+<span class="fc" id="L43">    private static final IntObjHashMap&lt;String&gt; httpStatusMap = new IntObjHashMap&lt;&gt;();</span>
+    private final ChunkBuffer buffer;
+<span class="fc" id="L45">    private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();</span>
+    private final ChunkBuffer compressOutBuffer;
+    private final boolean connectionCloseHeader;
+    private final boolean dumpNetworkTraffic;
+    private final HttpResponseHeaderImpl headerImpl;
+    private final String httpVersion;
+    private final NetworkFacade nf;
+<span class="fc" id="L52">    private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();</span>
+<span class="fc" id="L53">    private final SimpleResponseImpl simple = new SimpleResponseImpl();</span>
+<span class="fc" id="L54">    private final ResponseSinkImpl sink = new ResponseSinkImpl();</span>
+    private boolean chunkedRequestDone;
+    private boolean compressedHeaderDone;
+    private boolean compressedOutputReady;
+    private boolean compressionComplete;
+<span class="fc" id="L59">    private int crc = 0;</span>
+<span class="fc" id="L60">    private boolean deflateBeforeSend = false;</span>
+    private int fd;
+    private boolean headersSent;
+<span class="fc" id="L63">    private long total = 0;</span>
+<span class="fc" id="L64">    private long totalBytesSent = 0;</span>
+<span class="fc" id="L65">    private long z_streamp = 0;</span>
+
+<span class="fc" id="L67">    public HttpResponseSink(HttpContextConfiguration configuration) {</span>
+<span class="fc" id="L68">        final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());</span>
+<span class="fc" id="L69">        this.nf = configuration.getNetworkFacade();</span>
+<span class="fc" id="L70">        this.buffer = new ChunkBuffer(responseBufferSize);</span>
+<span class="fc" id="L71">        this.compressOutBuffer = new ChunkBuffer(responseBufferSize);</span>
+<span class="fc" id="L72">        this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());</span>
+<span class="fc" id="L73">        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();</span>
+<span class="fc" id="L74">        this.httpVersion = configuration.getHttpVersion();</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        this.connectionCloseHeader = !configuration.getServerKeepAlive();</span>
+<span class="fc" id="L76">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L80">        headerImpl.clear();</span>
+<span class="fc" id="L81">        totalBytesSent = 0;</span>
+<span class="fc" id="L82">        headersSent = false;</span>
+<span class="fc" id="L83">        chunkedRequestDone = false;</span>
+<span class="fc" id="L84">        resetZip();</span>
+<span class="fc" id="L85">    }</span>
+
+    @Override
+    public void close() {
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">        if (z_streamp != 0) {</span>
+<span class="nc" id="L90">            Zip.deflateEnd(z_streamp);</span>
+<span class="nc" id="L91">            z_streamp = 0;</span>
+<span class="nc" id="L92">            compressOutBuffer.close();</span>
+        }
+<span class="fc" id="L94">        buffer.close();</span>
+<span class="fc" id="L95">        fd = -1;</span>
+<span class="fc" id="L96">    }</span>
+
+    public HttpChunkedResponseSocket getChunkedSocket() {
+<span class="fc" id="L99">        return chunkedResponse;</span>
+    }
+
+    public int getCode() {
+<span class="nc" id="L103">        return headerImpl.getCode();</span>
+    }
+
+    public SimpleResponseImpl getSimple() {
+<span class="fc" id="L107">        return simple;</span>
+    }
+
+    public void resumeSend() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="pc bpc" id="L111" title="1 of 4 branches missed.">        if (!headersSent || !deflateBeforeSend) {</span>
+<span class="fc" id="L112">            sendBuffer(buffer);</span>
+<span class="fc" id="L113">            return;</span>
+        }
+
+        while (true) {
+<span class="nc bnc" id="L117" title="All 4 branches missed.">            if (!compressedOutputReady &amp;&amp; !compressionComplete) {</span>
+<span class="nc" id="L118">                deflate();</span>
+            }
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (compressedOutputReady) {</span>
+<span class="nc" id="L122">                sendBuffer(compressOutBuffer);</span>
+<span class="nc" id="L123">                compressedOutputReady = false;</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">                if (compressionComplete) {</span>
+<span class="nc" id="L125">                    break;</span>
+                }
+            } else {
+                break;
+            }
+        }
+<span class="nc" id="L131">    }</span>
+
+    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
+<span class="nc" id="L134">        this.deflateBeforeSend = deflateBeforeSend;</span>
+<span class="nc bnc" id="L135" title="All 4 branches missed.">        if (z_streamp == 0 &amp;&amp; deflateBeforeSend) {</span>
+<span class="nc" id="L136">            z_streamp = Zip.deflateInit();</span>
+<span class="nc" id="L137">            compressOutBuffer.reopen();</span>
+        }
+<span class="nc" id="L139">    }</span>
+
+    private void deflate() {
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (!compressedHeaderDone) {</span>
+<span class="nc" id="L143">            int len = Zip.gzipHeaderLen;</span>
+<span class="nc" id="L144">            Vect.memcpy(compressOutBuffer.getWriteAddress(len), Zip.gzipHeader, len);</span>
+<span class="nc" id="L145">            compressOutBuffer.onWrite(len);</span>
+<span class="nc" id="L146">            compressedHeaderDone = true;</span>
+        }
+
+<span class="nc" id="L149">        int nInAvailable = (int) buffer.getReadNAvailable();</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">        if (nInAvailable &gt; 0) {</span>
+<span class="nc" id="L151">            long inAddress = buffer.getReadAddress();</span>
+<span class="nc" id="L152">            LOG.debug().$(&quot;Zip.setInput [inAddress=&quot;).$(inAddress).$(&quot;, nInAvailable=&quot;).$(nInAvailable).$(']').$();</span>
+<span class="nc" id="L153">            buffer.write64BitZeroPadding();</span>
+<span class="nc" id="L154">            Zip.setInput(z_streamp, inAddress, nInAvailable);</span>
+        }
+
+        int ret;
+        int len;
+        // compress input until we run out of either input or output
+        do {
+<span class="nc" id="L161">            int sz = (int) compressOutBuffer.getWriteNAvailable() - 8;</span>
+<span class="nc" id="L162">            long p = compressOutBuffer.getWriteAddress(0);</span>
+<span class="nc" id="L163">            LOG.debug().$(&quot;deflate starting [p=&quot;).$(p).$(&quot;, sz=&quot;).$(sz).$(&quot;, chunkedRequestDone=&quot;).$(chunkedRequestDone).$(']').$();</span>
+<span class="nc" id="L164">            ret = Zip.deflate(z_streamp, p, sz, chunkedRequestDone);</span>
+<span class="nc" id="L165">            len = sz - Zip.availOut(z_streamp);</span>
+<span class="nc" id="L166">            compressOutBuffer.onWrite(len);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            if (ret &lt; 0) {</span>
+                // This is not an error, zlib just couldn't do any work with the input/output buffers it was provided.
+                // This happens often (will depend on output buffer size) when there is no new input and zlib has finished generating
+                // output from previously provided input
+<span class="nc bnc" id="L171" title="All 4 branches missed.">                if (ret != Zip.Z_BUF_ERROR || len != 0) {</span>
+<span class="nc" id="L172">                    throw HttpException.instance(&quot;could not deflate [ret=&quot;).put(ret);</span>
+                }
+            }
+
+<span class="nc" id="L176">            int availIn = Zip.availIn(z_streamp);</span>
+<span class="nc" id="L177">            int nInConsumed = nInAvailable - availIn;</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            if (nInConsumed &gt; 0) {</span>
+<span class="nc" id="L179">                this.crc = Zip.crc32(this.crc, buffer.getReadAddress(), nInConsumed);</span>
+<span class="nc" id="L180">                this.total += nInConsumed;</span>
+<span class="nc" id="L181">                buffer.onRead(nInConsumed);</span>
+<span class="nc" id="L182">                nInAvailable = availIn;</span>
+            }
+
+<span class="nc" id="L185">            LOG.debug().$(&quot;deflate finished [ret=&quot;).$(ret).$(&quot;, len=&quot;).$(len).$(&quot;, availIn=&quot;).$(availIn).$(']').$();</span>
+<span class="nc bnc" id="L186" title="All 4 branches missed.">        } while (len == 0 &amp;&amp; nInAvailable &gt; 0);</span>
+
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (nInAvailable == 0) {</span>
+<span class="nc" id="L189">            buffer.clearAndPrepareToWriteToBuffer();</span>
+        }
+
+<span class="nc bnc" id="L192" title="All 2 branches missed.">        if (len == 0) {</span>
+<span class="nc" id="L193">            compressedOutputReady = false;</span>
+<span class="nc" id="L194">            return;</span>
+        }
+<span class="nc" id="L196">        compressedOutputReady = true;</span>
+
+        // this is ZLib error, can't continue
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        if (len &lt; 0) {</span>
+<span class="nc" id="L200">            throw ZLibException.INSTANCE;</span>
+        }
+
+        // trailer
+<span class="nc bnc" id="L204" title="All 4 branches missed.">        boolean finished = chunkedRequestDone &amp;&amp; ret == Zip.Z_STREAM_END;</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (finished) {</span>
+<span class="nc" id="L206">            long p = compressOutBuffer.getWriteAddress(0);</span>
+<span class="nc" id="L207">            Unsafe.getUnsafe().putInt(p, crc); // crc</span>
+<span class="nc" id="L208">            Unsafe.getUnsafe().putInt(p + 4, (int) total); // total</span>
+<span class="nc" id="L209">            compressOutBuffer.onWrite(8);</span>
+<span class="nc" id="L210">            compressionComplete = true;</span>
+        }
+<span class="nc" id="L212">        compressOutBuffer.prepareToReadFromBuffer(true, finished);</span>
+<span class="nc" id="L213">    }</span>
+
+    private void dumpBuffer(long buffer, int size) {
+<span class="pc bpc" id="L216" title="3 of 4 branches missed.">        if (dumpNetworkTraffic &amp;&amp; size &gt; 0) {</span>
+<span class="nc" id="L217">            StdoutSink.INSTANCE.put('&lt;');</span>
+<span class="nc" id="L218">            Net.dump(buffer, size);</span>
+        }
+<span class="fc" id="L220">    }</span>
+
+    private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L223">        sendBuffer(buffer);</span>
+<span class="fc" id="L224">    }</span>
+
+    private void prepareHeaderSink() {
+<span class="fc" id="L227">        buffer.prepareToReadFromBuffer(false, false);</span>
+<span class="fc" id="L228">        headerImpl.prepareToSend();</span>
+<span class="fc" id="L229">    }</span>
+
+    private void resetZip() {
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">        if (z_streamp != 0) {</span>
+<span class="nc" id="L233">            Zip.deflateReset(z_streamp);</span>
+<span class="nc" id="L234">            compressOutBuffer.clear();</span>
+<span class="nc" id="L235">            crc = 0;</span>
+<span class="nc" id="L236">            total = 0;</span>
+<span class="nc" id="L237">            compressedHeaderDone = false;</span>
+<span class="nc" id="L238">            compressedOutputReady = false;</span>
+<span class="nc" id="L239">            compressionComplete = false;</span>
+        }
+<span class="fc" id="L241">    }</span>
+
+    private void sendBuffer(ChunkBuffer sendBuf) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L244">        int nSend = (int) sendBuf.getReadNAvailable();</span>
+<span class="fc bfc" id="L245" title="All 2 branches covered.">        while (nSend &gt; 0) {</span>
+<span class="fc" id="L246">            int n = nf.send(fd, sendBuf.getReadAddress(), nSend);</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">            if (n &lt; 0) {</span>
+                // disconnected
+<span class="fc" id="L249">                LOG.error()</span>
+<span class="fc" id="L250">                        .$(&quot;disconnected [errno=&quot;).$(nf.errno())</span>
+<span class="fc" id="L251">                        .$(&quot;, fd=&quot;).$(fd)</span>
+<span class="fc" id="L252">                        .$(']').$();</span>
+<span class="fc" id="L253">                throw PeerDisconnectedException.INSTANCE;</span>
+            }
+<span class="fc bfc" id="L255" title="All 2 branches covered.">            if (n == 0) {</span>
+                // test how many times we tried to send before parking up
+<span class="fc" id="L257">                throw PeerIsSlowToReadException.INSTANCE;</span>
+            } else {
+<span class="fc" id="L259">                dumpBuffer(sendBuf.getReadAddress(), n);</span>
+<span class="fc" id="L260">                sendBuf.onRead(n);</span>
+<span class="fc" id="L261">                nSend -= n;</span>
+<span class="fc" id="L262">                totalBytesSent += n;</span>
+            }
+<span class="fc" id="L264">        }</span>
+<span class="pc bpc" id="L265" title="1 of 2 branches missed.">        assert sendBuf.getReadNAvailable() == 0;</span>
+<span class="fc" id="L266">        sendBuf.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L267">    }</span>
+
+    HttpResponseHeader getHeader() {
+<span class="fc" id="L270">        return headerImpl;</span>
+    }
+
+    HttpRawSocket getRawSocket() {
+<span class="fc" id="L274">        return rawSocket;</span>
+    }
+
+    long getTotalBytesSent() {
+<span class="fc" id="L278">        return totalBytesSent;</span>
+    }
+
+    void of(int fd) {
+<span class="fc" id="L282">        this.fd = fd;</span>
+<span class="pc bpc" id="L283" title="1 of 2 branches missed.">        if (fd &gt; -1) {</span>
+<span class="fc" id="L284">            this.buffer.reopen();</span>
+        }
+<span class="fc" id="L286">    }</span>
+
+<span class="fc" id="L288">    private class ChunkBuffer extends AbstractCharSink implements Closeable, Reopenable {</span>
+        private static final String EOF_CHUNK = &quot;\r\n00\r\n\r\n&quot;;
+        private static final int MAX_CHUNK_HEADER_SIZE = 12;
+        private final long bufSize;
+        private long _rptr;
+        private long _wptr;
+        private long bufStart;
+        private long bufStartOfData;
+
+<span class="fc" id="L297">        private ChunkBuffer(int bufSize) {</span>
+<span class="fc" id="L298">            this.bufSize = bufSize;</span>
+<span class="fc" id="L299">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc bfc" id="L303" title="All 2 branches covered.">            if (bufStart != 0) {</span>
+<span class="fc" id="L304">                Unsafe.free(bufStart, bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="fc" id="L305">                bufStart = bufStartOfData = _wptr = _rptr = 0;</span>
+            }
+<span class="fc" id="L307">        }</span>
+
+        @Override
+        public CharSink put(CharSequence cs) {
+<span class="fc" id="L311">            int len = cs.length();</span>
+<span class="fc" id="L312">            Chars.asciiStrCpy(cs, len, getWriteAddress(len));</span>
+<span class="fc" id="L313">            onWrite(len);</span>
+<span class="fc" id="L314">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(char c) {
+<span class="fc" id="L319">            Unsafe.getUnsafe().putByte(getWriteAddress(1), (byte) c);</span>
+<span class="fc" id="L320">            onWrite(1);</span>
+<span class="fc" id="L321">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+<span class="fc" id="L326">            Chars.asciiCopyTo(chars, start, len, getWriteAddress(len));</span>
+<span class="fc" id="L327">            onWrite(len);</span>
+<span class="fc" id="L328">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(CharSequence cs, int lo, int hi) {
+<span class="fc" id="L333">            int len = hi - lo;</span>
+<span class="fc" id="L334">            Chars.asciiStrCpy(cs, lo, len, getWriteAddress(len));</span>
+<span class="fc" id="L335">            onWrite(len);</span>
+<span class="fc" id="L336">            return this;</span>
+        }
+
+        @Override
+        public void reopen() {
+<span class="pc bpc" id="L341" title="1 of 2 branches missed.">            if (bufStart == 0) {</span>
+<span class="fc" id="L342">                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="fc" id="L343">                bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;</span>
+<span class="fc" id="L344">                clear();</span>
+            }
+<span class="fc" id="L346">        }</span>
+
+        void clear() {
+<span class="fc" id="L349">            _wptr = _rptr = bufStartOfData;</span>
+<span class="fc" id="L350">        }</span>
+
+        void clearAndPrepareToWriteToBuffer() {
+<span class="fc" id="L353">            _rptr = _wptr = bufStartOfData;</span>
+<span class="fc" id="L354">        }</span>
+
+        long getReadAddress() {
+<span class="pc bpc" id="L357" title="1 of 2 branches missed.">            assert _rptr != 0;</span>
+<span class="fc" id="L358">            return _rptr;</span>
+        }
+
+        long getReadNAvailable() {
+<span class="fc" id="L362">            return _wptr - _rptr;</span>
+        }
+
+        long getWriteAddress(int len) {
+<span class="pc bpc" id="L366" title="1 of 2 branches missed.">            assert _wptr != 0;</span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">            if (getWriteNAvailable() &gt;= len) {</span>
+<span class="fc" id="L368">                return _wptr;</span>
+            }
+<span class="fc" id="L370">            throw NoSpaceLeftInResponseBufferException.INSTANCE;</span>
+        }
+
+        long getWriteNAvailable() {
+<span class="fc" id="L374">            return bufStartOfData + bufSize - _wptr;</span>
+        }
+
+        void onRead(int nRead) {
+<span class="pc bpc" id="L378" title="2 of 4 branches missed.">            assert nRead &gt;= 0 &amp;&amp; nRead &lt;= getReadNAvailable();</span>
+<span class="fc" id="L379">            _rptr += nRead;</span>
+<span class="fc" id="L380">        }</span>
+
+        void onWrite(int nWrite) {
+<span class="pc bpc" id="L383" title="2 of 4 branches missed.">            assert nWrite &gt;= 0 &amp;&amp; nWrite &lt;= getWriteNAvailable();</span>
+<span class="fc" id="L384">            _wptr += nWrite;</span>
+<span class="fc" id="L385">        }</span>
+
+        void prepareToReadFromBuffer(boolean addChunkHeader, boolean addEofChunk) {
+<span class="fc bfc" id="L388" title="All 2 branches covered.">            if (addChunkHeader) {</span>
+<span class="fc" id="L389">                int len = (int) (_wptr - bufStartOfData);</span>
+<span class="pc bpc" id="L390" title="1 of 2 branches missed.">                int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) &gt;&gt; 3) &lt;&lt; 1;</span>
+<span class="fc" id="L391">                long tmp = _wptr;</span>
+<span class="fc" id="L392">                _rptr = _wptr = bufStart + padding;</span>
+<span class="fc" id="L393">                put(Misc.EOL);</span>
+<span class="fc" id="L394">                Numbers.appendHex(this, len);</span>
+<span class="fc" id="L395">                put(Misc.EOL);</span>
+<span class="fc" id="L396">                _wptr = tmp;</span>
+            }
+<span class="fc bfc" id="L398" title="All 2 branches covered.">            if (addEofChunk) {</span>
+<span class="fc" id="L399">                int len = EOF_CHUNK.length();</span>
+<span class="fc" id="L400">                Chars.asciiStrCpy(EOF_CHUNK, len, _wptr);</span>
+<span class="fc" id="L401">                _wptr += len;</span>
+<span class="fc" id="L402">                LOG.debug().$(&quot;end chunk sent [fd=&quot;).$(fd).$(']').$();</span>
+            }
+<span class="fc" id="L404">        }</span>
+
+        void write64BitZeroPadding() {
+<span class="nc" id="L407">            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);</span>
+<span class="nc" id="L408">            Unsafe.getUnsafe().putLong(_wptr, 0);</span>
+<span class="nc" id="L409">        }</span>
+    }
+
+<span class="fc" id="L412">    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponseSocket {</span>
+<span class="fc" id="L413">        private long bookmark = 0;</span>
+
+        @Override
+        public void bookmark() {
+<span class="fc" id="L417">            bookmark = buffer._wptr;</span>
+<span class="fc" id="L418">        }</span>
+
+        @Override
+        public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc bfc" id="L422" title="All 2 branches covered.">            if (!chunkedRequestDone) {</span>
+<span class="fc" id="L423">                sendChunk(true);</span>
+            }
+<span class="fc" id="L425">        }</span>
+
+        @Override
+        public HttpResponseHeader headers() {
+<span class="fc" id="L429">            return headerImpl;</span>
+        }
+
+        @Override
+        public boolean resetToBookmark() {
+<span class="fc" id="L434">            buffer._wptr = bookmark;</span>
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">            return bookmark != buffer.bufStartOfData;</span>
+        }
+
+        @Override
+        public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L440">            headersSent = true;</span>
+<span class="fc" id="L441">            chunkedRequestDone = done;</span>
+<span class="pc bpc" id="L442" title="1 of 4 branches missed.">            if (buffer.getReadNAvailable() &gt; 0 || done) {</span>
+<span class="pc bpc" id="L443" title="1 of 2 branches missed.">                if (!deflateBeforeSend) {</span>
+<span class="fc" id="L444">                    buffer.prepareToReadFromBuffer(true, chunkedRequestDone);</span>
+                }
+<span class="fc" id="L446">                resumeSend();</span>
+            }
+<span class="fc" id="L448">        }</span>
+
+        @Override
+        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L452">            chunkedRequestDone = false;</span>
+<span class="fc" id="L453">            prepareHeaderSink();</span>
+<span class="fc" id="L454">            flushSingle();</span>
+<span class="fc" id="L455">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L456">        }</span>
+
+        @Override
+        public void shutdownWrite() {
+<span class="fc" id="L460">            nf.shutdown(fd, Net.SHUT_WR);</span>
+<span class="fc" id="L461">        }</span>
+
+        @Override
+        public void status(int status, CharSequence contentType) {
+<span class="fc" id="L465">            super.status(status, contentType);</span>
+<span class="pc bpc" id="L466" title="1 of 2 branches missed.">            if (deflateBeforeSend) {</span>
+<span class="nc" id="L467">                headerImpl.put(&quot;Content-Encoding: gzip&quot;).put(Misc.EOL);</span>
+            }
+<span class="fc" id="L469">        }</span>
+    }
+
+<span class="fc" id="L472">    public class HttpRawSocketImpl implements HttpRawSocket {</span>
+
+        @Override
+        public long getBufferAddress() {
+<span class="fc" id="L476">            return buffer.getWriteAddress(1);</span>
+        }
+
+        @Override
+        public int getBufferSize() {
+<span class="fc" id="L481">            return (int) buffer.getWriteNAvailable();</span>
+        }
+
+        @Override
+        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L486">            buffer.onWrite(size);</span>
+<span class="fc" id="L487">            buffer.prepareToReadFromBuffer(false, false);</span>
+<span class="fc" id="L488">            flushSingle();</span>
+<span class="fc" id="L489">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L490">        }</span>
+    }
+
+    public class HttpResponseHeaderImpl extends AbstractCharSink implements Mutable, HttpResponseHeader {
+        private final MillisecondClock clock;
+        private boolean chunky;
+        private int code;
+
+<span class="fc" id="L498">        public HttpResponseHeaderImpl(MillisecondClock clock) {</span>
+<span class="fc" id="L499">            this.clock = clock;</span>
+<span class="fc" id="L500">        }</span>
+
+        @Override
+        public void clear() {
+<span class="fc" id="L504">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L505">            chunky = false;</span>
+<span class="fc" id="L506">        }</span>
+
+        // this is used for HTTP access logging
+        public int getCode() {
+<span class="nc" id="L510">            return code;</span>
+        }
+
+        @Override
+        public CharSink put(CharSequence cs) {
+<span class="fc" id="L515">            int len = cs.length();</span>
+<span class="fc" id="L516">            Chars.asciiStrCpy(cs, len, buffer.getWriteAddress(len));</span>
+<span class="fc" id="L517">            buffer.onWrite(len);</span>
+<span class="fc" id="L518">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(char c) {
+<span class="fc" id="L523">            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), (byte) c);</span>
+<span class="fc" id="L524">            buffer.onWrite(1);</span>
+<span class="fc" id="L525">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+<span class="nc" id="L530">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L535">            headerImpl.prepareToSend();</span>
+<span class="fc" id="L536">            flushSingle();</span>
+<span class="fc" id="L537">        }</span>
+
+        @Override
+        public String status(CharSequence httpProtocolVersion, int code, CharSequence contentType, long contentLength) {
+<span class="fc" id="L541">            this.code = code;</span>
+<span class="fc" id="L542">            String status = httpStatusMap.get(code);</span>
+<span class="pc bpc" id="L543" title="1 of 2 branches missed.">            if (status == null) {</span>
+<span class="nc" id="L544">                throw new IllegalArgumentException(&quot;Illegal status code: &quot; + code);</span>
+            }
+<span class="fc" id="L546">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L547">            put(httpProtocolVersion).put(code).put(' ').put(status).put(Misc.EOL);</span>
+<span class="fc" id="L548">            put(&quot;Server: &quot;).put(&quot;questDB/1.0&quot;).put(Misc.EOL);</span>
+<span class="fc" id="L549">            put(&quot;Date: &quot;);</span>
+<span class="fc" id="L550">            DateFormatUtils.formatHTTP(this, clock.getTicks());</span>
+<span class="fc" id="L551">            put(Misc.EOL);</span>
+<span class="fc bfc" id="L552" title="All 2 branches covered.">            if (contentLength &gt; -2) {</span>
+<span class="fc bfc" id="L553" title="All 2 branches covered.">                this.chunky = (contentLength == -1);</span>
+<span class="fc bfc" id="L554" title="All 2 branches covered.">                if (this.chunky) {</span>
+<span class="fc" id="L555">                    put(&quot;Transfer-Encoding: &quot;).put(&quot;chunked&quot;).put(Misc.EOL);</span>
+                } else {
+<span class="fc" id="L557">                    put(&quot;Content-Length: &quot;).put(contentLength).put(Misc.EOL);</span>
+                }
+            }
+<span class="pc bpc" id="L560" title="1 of 2 branches missed.">            if (contentType != null) {</span>
+<span class="fc" id="L561">                put(&quot;Content-Type: &quot;).put(contentType).put(Misc.EOL);</span>
+            }
+
+<span class="fc bfc" id="L564" title="All 2 branches covered.">            if (connectionCloseHeader) {</span>
+<span class="fc" id="L565">                put(&quot;Connection: close&quot;).put(Misc.EOL);</span>
+            }
+
+<span class="fc" id="L568">            return status;</span>
+        }
+
+        private void prepareToSend() {
+<span class="fc bfc" id="L572" title="All 2 branches covered.">            if (!chunky) {</span>
+<span class="fc" id="L573">                put(Misc.EOL);</span>
+            }
+<span class="fc" id="L575">        }</span>
+
+    }
+
+<span class="fc" id="L579">    private class ResponseSinkImpl extends AbstractCharSink {</span>
+
+        @Override
+        public CharSink put(CharSequence seq) {
+<span class="fc" id="L583">            buffer.put(seq);</span>
+<span class="fc" id="L584">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(CharSequence cs, int lo, int hi) {
+<span class="fc" id="L589">            buffer.put(cs, lo, hi);</span>
+<span class="fc" id="L590">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(char c) {
+<span class="fc" id="L595">            buffer.put(c);</span>
+<span class="fc" id="L596">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+<span class="fc" id="L601">            buffer.put(chars, start, len);</span>
+<span class="fc" id="L602">            return this;</span>
+        }
+
+        @Override
+        public CharSink put(float value, int scale) {
+<span class="fc bfc" id="L607" title="All 4 branches covered.">            if (Float.isNaN(value) || Float.isInfinite(value)) {</span>
+<span class="fc" id="L608">                put(&quot;null&quot;);</span>
+<span class="fc" id="L609">                return this;</span>
+            }
+<span class="fc" id="L611">            return super.put(value, scale);</span>
+        }
+
+        @Override
+        public CharSink put(double value, int scale) {
+<span class="fc bfc" id="L616" title="All 4 branches covered.">            if (Double.isNaN(value) || Double.isInfinite(value)) {</span>
+<span class="fc" id="L617">                put(&quot;null&quot;);</span>
+<span class="fc" id="L618">                return this;</span>
+            }
+<span class="fc" id="L620">            return super.put(value, scale);</span>
+        }
+
+        @Override
+        public void putUtf8Special(char c) {
+<span class="fc bfc" id="L625" title="All 2 branches covered.">            if (c &lt; 32) {</span>
+<span class="fc" id="L626">                escapeSpace(c);</span>
+            } else {
+<span class="fc bfc" id="L628" title="All 2 branches covered.">                switch (c) {</span>
+                    case '\&quot;':
+                    case '\\':
+<span class="fc" id="L631">                        put('\\');</span>
+                        // intentional fall through
+                    default:
+<span class="fc" id="L634">                        put(c);</span>
+                        break;
+                }
+            }
+<span class="fc" id="L638">        }</span>
+
+        public void status(int status, CharSequence contentType) {
+<span class="fc" id="L641">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L642">            headerImpl.status(&quot;HTTP/1.1 &quot;, status, contentType, -1);</span>
+<span class="fc" id="L643">        }</span>
+
+        private void escapeSpace(char c) {
+<span class="pc bpc" id="L646" title="3 of 6 branches missed.">            switch (c) {</span>
+                case '\b':
+<span class="nc" id="L648">                    put(&quot;\\b&quot;);</span>
+<span class="nc" id="L649">                    break;</span>
+                case '\f':
+<span class="nc" id="L651">                    put(&quot;\\f&quot;);</span>
+<span class="nc" id="L652">                    break;</span>
+                case '\n':
+<span class="fc" id="L654">                    put(&quot;\\n&quot;);</span>
+<span class="fc" id="L655">                    break;</span>
+                case '\r':
+<span class="fc" id="L657">                    put(&quot;\\r&quot;);</span>
+<span class="fc" id="L658">                    break;</span>
+                case '\t':
+<span class="nc" id="L660">                    put(&quot;\\t&quot;);</span>
+<span class="nc" id="L661">                    break;</span>
+                default:
+<span class="fc" id="L663">                    put(&quot;\\u00&quot;);</span>
+<span class="fc" id="L664">                    put(c &gt;&gt; 4);</span>
+<span class="fc" id="L665">                    put(Numbers.hexDigits[c &amp; 15]);</span>
+                    break;
+            }
+<span class="fc" id="L668">        }</span>
+    }
+
+<span class="fc" id="L671">    public class SimpleResponseImpl {</span>
+
+        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L674">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L675">            final String std = headerImpl.status(httpVersion, code, &quot;text/plain; charset=utf-8&quot;, -1L);</span>
+<span class="fc" id="L676">            prepareHeaderSink();</span>
+<span class="fc" id="L677">            flushSingle();</span>
+<span class="fc" id="L678">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc bfc" id="L679" title="All 2 branches covered.">            sink.put(message == null ? std : message).put(Misc.EOL);</span>
+<span class="fc" id="L680">            buffer.prepareToReadFromBuffer(true, true);</span>
+<span class="fc" id="L681">            resumeSend();</span>
+<span class="fc" id="L682">        }</span>
+
+        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L685">            buffer.clearAndPrepareToWriteToBuffer();</span>
+<span class="fc" id="L686">            headerImpl.status(httpVersion, code, &quot;text/html; charset=utf-8&quot;, -2L);</span>
+<span class="fc" id="L687">            prepareHeaderSink();</span>
+<span class="fc" id="L688">            flushSingle();</span>
+<span class="fc" id="L689">        }</span>
+
+        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L692">            sendStatus(code, null);</span>
+<span class="fc" id="L693">        }</span>
+    }
+
+    static {
+<span class="fc" id="L697">        httpStatusMap.put(200, &quot;OK&quot;);</span>
+<span class="fc" id="L698">        httpStatusMap.put(206, &quot;Partial content&quot;);</span>
+<span class="fc" id="L699">        httpStatusMap.put(304, &quot;Not Modified&quot;);</span>
+<span class="fc" id="L700">        httpStatusMap.put(400, &quot;Bad request&quot;);</span>
+<span class="fc" id="L701">        httpStatusMap.put(404, &quot;Not Found&quot;);</span>
+<span class="fc" id="L702">        httpStatusMap.put(416, &quot;Request range not satisfiable&quot;);</span>
+<span class="fc" id="L703">        httpStatusMap.put(431, &quot;Headers too large&quot;);</span>
+<span class="fc" id="L704">        httpStatusMap.put(500, &quot;Internal server error&quot;);</span>
+<span class="fc" id="L705">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JsonPlanSink.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin</a> &gt; <span class="el_source">JsonPlanSink.java</span></div><h1>JsonPlanSink.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin;
+
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Uuid;
+
+<span class="fc" id="L34">public class JsonPlanSink extends BasePlanSink {</span>
+<span class="fc" id="L35">    final int NODE_ATTR = 2;</span>
+<span class="fc" id="L36">    final int NODE_CHILD = 4;</span>
+<span class="fc" id="L37">    final int NODE_META = 3;</span>
+<span class="fc" id="L38">    final int NODE_NONE = 0;</span>
+<span class="fc" id="L39">    final int NODE_TYPE = 1;</span>
+<span class="fc" id="L40">    final int NODE_VALUE = 5;</span>
+<span class="fc" id="L41">    String childIndent = &quot;    &quot;;</span>
+<span class="fc" id="L42">    int lastNodeDepth = 0;</span>
+<span class="fc" id="L43">    int lastNodeType = 0;</span>
+<span class="fc" id="L44">    boolean quoteValue = false;</span>
+<span class="fc" id="L45">    int valueStartPos = 0;</span>
+
+    @Override
+    public PlanSink attr(CharSequence name) {
+<span class="fc" id="L49">        checkType(NODE_ATTR);</span>
+<span class="fc" id="L50">        sink.put(name);</span>
+<span class="fc" id="L51">        return this;</span>
+    }
+
+    @Override
+    public PlanSink child(CharSequence outer, Plannable inner) {
+<span class="fc" id="L56">        checkType(NODE_CHILD);</span>
+<span class="fc" id="L57">        depth++;</span>
+
+<span class="fc" id="L59">        lastNodeType = NODE_NONE;</span>
+<span class="fc" id="L60">        type(outer);</span>
+<span class="fc" id="L61">        child(inner);</span>
+<span class="fc" id="L62">        depth--;</span>
+<span class="fc" id="L63">        return this;</span>
+    }
+
+    @Override
+    public PlanSink child(Plannable p) {
+<span class="fc" id="L68">        checkType(NODE_CHILD);</span>
+<span class="fc" id="L69">        depth++;</span>
+<span class="fc" id="L70">        lastNodeType = NODE_NONE;</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        if (p instanceof RecordCursorFactory) {</span>
+<span class="fc" id="L72">            factoryStack.push((RecordCursorFactory) p);</span>
+<span class="fc" id="L73">            p.toPlan(this);</span>
+<span class="fc" id="L74">            factoryStack.pop();</span>
+        } else {
+<span class="fc" id="L76">            p.toPlan(this);</span>
+        }
+<span class="fc" id="L78">        closeChild();</span>
+<span class="fc" id="L79">        lastNodeType = NODE_CHILD;</span>
+<span class="fc" id="L80">        lastNodeDepth = --depth;</span>
+<span class="fc" id="L81">        return this;</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="fc" id="L86">        super.clear();</span>
+<span class="fc" id="L87">        lastNodeDepth = 0;</span>
+<span class="fc" id="L88">        lastNodeType = NODE_NONE;</span>
+<span class="fc" id="L89">        quoteValue = false;</span>
+<span class="fc" id="L90">        valueStartPos = 0;</span>
+<span class="fc" id="L91">    }</span>
+
+    @Override
+    public void end() {
+<span class="pc bpc" id="L95" title="2 of 4 branches missed.">        switch (lastNodeType) {</span>
+            case NODE_TYPE:
+            case NODE_VALUE:
+<span class="fc" id="L98">                sink.putNoEsc(&quot;\&quot;,\n&quot;);</span>
+<span class="fc" id="L99">                break;</span>
+            case NODE_META:
+            case NODE_ATTR:
+<span class="nc" id="L102">                sink.putNoEsc(&quot;\&quot;: &quot;);</span>
+<span class="nc" id="L103">                break;</span>
+            case NODE_CHILD:
+<span class="fc" id="L105">                indent();</span>
+<span class="fc" id="L106">                sink.putNoEsc(&quot;} ]\n&quot;);</span>
+        }
+<span class="fc" id="L108">        depth = lastNodeDepth;</span>
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">        while (depth-- &gt; 2) {</span>
+<span class="nc" id="L110">            indent();</span>
+<span class="nc" id="L111">            sink.putNoEsc(&quot;} ]\n&quot;);</span>
+        }
+<span class="fc" id="L113">        sink.putNoEsc(&quot;    }\n  }\n]&quot;);</span>
+<span class="fc" id="L114">    }</span>
+
+    @Override
+    public CharSequence getLine(int idx) {
+<span class="fc" id="L118">        return sink;</span>
+    }
+
+    @Override
+    public int getLineCount() {
+<span class="fc" id="L123">        return 1;</span>
+    }
+
+    @Override
+    public PlanSink meta(CharSequence name) {
+<span class="fc" id="L128">        checkType(NODE_META);</span>
+<span class="fc" id="L129">        sink.put(name);</span>
+<span class="fc" id="L130">        return this;</span>
+    }
+
+    @Override
+    public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+<span class="fc" id="L135">        clear();</span>
+<span class="fc" id="L136">        start();</span>
+<span class="fc" id="L137">        this.executionContext = executionContext;</span>
+<span class="pc bpc" id="L138" title="1 of 2 branches missed.">        if (factory != null) {</span>
+<span class="fc" id="L139">            factoryStack.push(factory);</span>
+<span class="fc" id="L140">            factory.toPlan(this);</span>
+        }
+<span class="fc" id="L142">        end();</span>
+<span class="fc" id="L143">    }</span>
+
+    @Override
+    public PlanSink type(CharSequence type) {
+<span class="fc" id="L147">        checkType(NODE_TYPE);</span>
+<span class="fc" id="L148">        sink.put(&quot;Node Type\&quot;: \&quot;&quot;);</span>
+<span class="fc" id="L149">        sink.put(type);</span>
+<span class="fc" id="L150">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(ObjList&lt;?&gt; list, int from, int to) {
+<span class="fc" id="L155">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L156">        return super.val(list, from, to);</span>
+    }
+
+    @Override
+    public PlanSink val(char c) {
+<span class="fc" id="L161">        quoteValue = true;</span>
+<span class="fc" id="L162">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L163">        sink.put(c);</span>
+<span class="fc" id="L164">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(int i) {
+<span class="fc" id="L169">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L170">        sink.put(i);</span>
+<span class="fc" id="L171">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(long l) {
+<span class="fc" id="L176">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L177">        sink.put(l);</span>
+<span class="fc" id="L178">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(float f) {
+<span class="fc" id="L183">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L184">        sink.put(f);</span>
+<span class="fc" id="L185">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(double d) {
+<span class="fc" id="L190">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L191">        sink.put(d);</span>
+<span class="fc" id="L192">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(boolean b) {
+<span class="fc" id="L197">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L198">        sink.put(b);</span>
+<span class="fc" id="L199">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(CharSequence cs) {
+<span class="fc" id="L204">        quoteValue = true;</span>
+<span class="fc" id="L205">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L206">        sink.put(cs);</span>
+<span class="fc" id="L207">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(Sinkable s) {
+<span class="fc" id="L212">        quoteValue = true;</span>
+<span class="fc" id="L213">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L214">        sink.put(s);</span>
+<span class="fc" id="L215">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(Plannable s) {
+<span class="fc" id="L220">        quoteValue = true;</span>
+<span class="fc" id="L221">        checkType(NODE_VALUE);</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">        if (s != null) {</span>
+<span class="fc" id="L223">            s.toPlan(this);</span>
+        } else {
+<span class="fc" id="L225">            sink.put(&quot;null&quot;);</span>
+        }
+<span class="fc" id="L227">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(long long0, long long1, long long2, long long3) {
+<span class="fc" id="L232">        quoteValue = true;</span>
+<span class="fc" id="L233">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L234">        Numbers.appendLong256(long0, long1, long2, long3, sink);</span>
+<span class="fc" id="L235">        return this;</span>
+    }
+
+    @Override
+    public PlanSink val(long hash, int geoHashBits) {
+<span class="fc" id="L240">        quoteValue = true;</span>
+<span class="fc" id="L241">        checkType(NODE_VALUE);</span>
+<span class="fc" id="L242">        GeoHashes.append(hash, geoHashBits, sink);</span>
+<span class="fc" id="L243">        return this;</span>
+    }
+
+    @Override
+    public PlanSink valUuid(long lo, long hi) {
+<span class="fc" id="L248">        quoteValue = true;</span>
+<span class="fc" id="L249">        checkType(NODE_VALUE);</span>
+<span class="fc bfc" id="L250" title="All 2 branches covered.">        if (Uuid.isNull(lo, hi)) {</span>
+<span class="fc" id="L251">            sink.put(&quot;null&quot;);</span>
+        } else {
+<span class="fc" id="L253">            Numbers.appendUuid(lo, hi, sink);</span>
+        }
+<span class="fc" id="L255">        return this;</span>
+    }
+
+    private void checkType(int newNodeType) {
+<span class="fc bfc" id="L259" title="All 2 branches covered.">        if (lastNodeType == NODE_NONE) {//start of new node</span>
+<span class="fc" id="L260">            indent();</span>
+<span class="fc" id="L261">            sink.put('&quot;');</span>
+<span class="fc" id="L262">            lastNodeType = newNodeType;</span>
+<span class="fc" id="L263">            return;</span>
+        }
+<span class="fc bfc" id="L265" title="All 4 branches covered.">        if (newNodeType == lastNodeType &amp;&amp;</span>
+                newNodeType != NODE_CHILD) {
+<span class="fc" id="L267">            return;//continuation</span>
+        }
+
+<span class="pc bpc" id="L270" title="1 of 5 branches missed.">        switch (lastNodeType) {</span>
+            case NODE_TYPE:
+<span class="fc" id="L272">                sink.putNoEsc(&quot;\&quot;,\n&quot;);</span>
+<span class="fc" id="L273">                indent();</span>
+<span class="fc" id="L274">                break;</span>
+            case NODE_META:
+            case NODE_ATTR:
+<span class="fc" id="L277">                sink.put(&quot;\&quot;: &quot;);</span>
+<span class="fc" id="L278">                break;</span>
+            case NODE_VALUE:
+<span class="fc bfc" id="L280" title="All 2 branches covered.">                if (quoteValue) {</span>
+<span class="fc" id="L281">                    sink.put('&quot;');</span>
+<span class="fc" id="L282">                    sink.setCharAt(valueStartPos, '&quot;');</span>
+                }
+<span class="fc" id="L284">                sink.putNoEsc(&quot;,\n&quot;);</span>
+<span class="fc" id="L285">                indent();</span>
+<span class="fc" id="L286">                break;</span>
+            case NODE_CHILD:
+<span class="fc" id="L288">                indent();</span>
+<span class="pc bpc" id="L289" title="1 of 2 branches missed.">                if (newNodeType == NODE_CHILD) {</span>
+<span class="fc" id="L290">                    sink.putNoEsc(&quot;},\n&quot;);</span>
+                } else {
+<span class="nc" id="L292">                    sink.putNoEsc(&quot;} ]\n&quot;);</span>
+                }
+        }
+
+<span class="fc bfc" id="L296" title="All 2 branches covered.">        if (newNodeType == NODE_CHILD) {</span>
+<span class="fc bfc" id="L297" title="All 2 branches covered.">            if (lastNodeType != NODE_CHILD) {</span>
+<span class="fc" id="L298">                sink.putNoEsc(&quot;\&quot;Plans\&quot;: [\n&quot;);</span>
+<span class="fc" id="L299">                indent();</span>
+<span class="fc" id="L300">                sink.putNoEsc(&quot;{\n&quot;);</span>
+            } else {
+<span class="fc" id="L302">                indent();</span>
+<span class="fc" id="L303">                sink.putNoEsc(&quot;{\n&quot;);</span>
+            }
+        } else {
+<span class="fc" id="L306">            char c = '&quot;';</span>
+<span class="fc bfc" id="L307" title="All 2 branches covered.">            if (newNodeType == NODE_VALUE) {</span>
+<span class="fc" id="L308">                valueStartPos = sink.length();</span>
+<span class="fc bfc" id="L309" title="All 2 branches covered.">                if (!quoteValue) {</span>
+<span class="fc" id="L310">                    c = ' ';</span>
+                }
+            }
+<span class="fc" id="L313">            sink.put(c);</span>
+        }
+
+<span class="fc" id="L316">        lastNodeType = newNodeType;</span>
+<span class="fc" id="L317">        lastNodeDepth = depth;</span>
+<span class="fc" id="L318">    }</span>
+
+    private void closeChild() {
+<span class="pc bpc" id="L321" title="1 of 4 branches missed.">        switch (lastNodeType) {</span>
+            case NODE_CHILD:
+<span class="fc" id="L323">                indent();</span>
+<span class="fc" id="L324">                sink.putNoEsc(&quot;} ]\n&quot;);</span>
+<span class="fc" id="L325">                break;</span>
+            case NODE_VALUE:
+<span class="fc bfc" id="L327" title="All 2 branches covered.">                if (quoteValue) {</span>
+<span class="fc" id="L328">                    sink.setCharAt(valueStartPos, '&quot;');</span>
+<span class="fc" id="L329">                    sink.putNoEsc(&quot;\&quot;\n&quot;);</span>
+                } else {
+<span class="fc" id="L331">                    sink.putNoEsc(&quot;\n&quot;);</span>
+                }
+<span class="fc" id="L333">                break;</span>
+            case NODE_TYPE:
+            case NODE_META:
+            case NODE_ATTR:
+<span class="fc" id="L337">                sink.putNoEsc(&quot;\&quot;\n&quot;);</span>
+        }
+<span class="fc" id="L339">    }</span>
+
+    private void indent() {
+<span class="fc bfc" id="L342" title="All 2 branches covered.">        for (int i = 0; i &lt; depth; i++) {</span>
+<span class="fc" id="L343">            sink.put(childIndent);</span>
+        }
+<span class="fc" id="L345">    }</span>
+
+    private void start() {
+<span class="fc" id="L348">        depth = 2;</span>
+<span class="fc" id="L349">        sink.putNoEsc(&quot;[\n  {\n    \&quot;Plan\&quot;: {\n&quot;);</span>
+<span class="fc" id="L350">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,1402 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">TableUtils.java</span></div><h1>TableUtils.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.*;
+import io.questdb.griffin.AnyRecordMetadata;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
+import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.tasks.O3PartitionPurgeTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
+import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+
+public final class TableUtils {
+    public static final int ANY_TABLE_ID = -1;
+    public static final int ANY_TABLE_VERSION = -1;
+    public static final String ATTACHABLE_DIR_MARKER = &quot;.attachable&quot;;
+    public static final long COLUMN_NAME_TXN_NONE = -1L;
+    public static final String COLUMN_VERSION_FILE_NAME = &quot;_cv&quot;;
+    public static final String DEFAULT_PARTITION_NAME = &quot;default&quot;;
+    public static final String DETACHED_DIR_MARKER = &quot;.detached&quot;;
+    public static final String FILE_SUFFIX_D = &quot;.d&quot;;
+    public static final String FILE_SUFFIX_I = &quot;.i&quot;;
+    public static final int INITIAL_TXN = 0;
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+<span class="fc" id="L66">    public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);</span>
+    public static final long META_COLUMN_DATA_SIZE = 32;
+    public static final String META_FILE_NAME = &quot;_meta&quot;;
+    public static final long META_OFFSET_COLUMN_TYPES = 128;
+    public static final long META_OFFSET_COUNT = 0;
+    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+    public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
+    public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
+    public static final long META_OFFSET_TABLE_ID = 16;
+    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    public static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
+    public static final int NULL_LEN = -1;
+    public static final String SNAPSHOT_META_FILE_NAME = &quot;_snapshot&quot;;
+    public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = &quot;.r&quot;;
+    public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
+    public static final int TABLE_DOES_NOT_EXIST = 1;
+    public static final int TABLE_EXISTS = 0;
+    public static final String TABLE_NAME_FILE = &quot;_name&quot;;
+    public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_NON_WAL = 0;
+    public static final int TABLE_TYPE_WAL = 1;
+    public static final String TAB_INDEX_FILE_NAME = &quot;_tab_index.d&quot;;
+    public static final String TXN_FILE_NAME = &quot;_txn&quot;;
+    public static final String TXN_SCOREBOARD_FILE_NAME = &quot;_txn_scoreboard&quot;;
+    // transaction file structure
+    public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
+    public static final long TX_BASE_OFFSET_VERSION_64 = 0;
+    public static final long TX_BASE_OFFSET_A_32 = TX_BASE_OFFSET_VERSION_64 + 8;
+    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 = TX_BASE_OFFSET_A_32 + 4;
+    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 + 4;
+    public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
+    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
+    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
+<span class="fc" id="L100">    public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);</span>
+    public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
+    public static final long TX_OFFSET_TXN_64 = 0;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
+    public static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT_64 + 8;
+    public static final long TX_OFFSET_MIN_TIMESTAMP_64 = TX_OFFSET_FIXED_ROW_COUNT_64 + 8;
+    public static final long TX_OFFSET_MAX_TIMESTAMP_64 = TX_OFFSET_MIN_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_STRUCT_VERSION_64 = TX_OFFSET_MAX_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_DATA_VERSION_64 = TX_OFFSET_STRUCT_VERSION_64 + 8;
+    public static final long TX_OFFSET_PARTITION_TABLE_VERSION_64 = TX_OFFSET_DATA_VERSION_64 + 8;
+    public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
+    public static final long TX_OFFSET_TRUNCATE_VERSION_64 = TX_OFFSET_COLUMN_VERSION_64 + 8;
+    public static final long TX_OFFSET_SEQ_TXN_64 = TX_OFFSET_TRUNCATE_VERSION_64 + 8;
+    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
+    public static final String UPGRADE_FILE_NAME = &quot;_upgrade.d&quot;;
+    static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
+    static final int META_FLAG_BIT_INDEXED = 1;
+    static final int META_FLAG_BIT_NOT_INDEXED = 0;
+    static final int META_FLAG_BIT_SEQUENTIAL = 1 &lt;&lt; 1;
+    // INT - symbol map count, this is a variable part of transaction file
+    // below this offset we will have INT values for symbol map size
+    static final long META_OFFSET_PARTITION_BY = 4;
+    static final String META_PREV_FILE_NAME = &quot;_meta.prev&quot;;
+    /**
+     * TXN file structure
+     * struct {
+     * long txn;
+     * long transient_row_count; // rows count in last partition
+     * long fixed_row_count; // row count in table excluding count in last partition
+     * long max_timestamp; // last timestamp written to table
+     * long struct_version; // data structure version; whenever columns added or removed this version changes.
+     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
+     * long txn_check; // same as txn - sanity check for concurrent reads and writes
+     * int  map_writer_count; // symbol writer count
+     * int  map_writer_position[map_writer_count]; // position of each of map writers
+     * }
+     * &lt;p&gt;
+     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
+     */
+
+    static final String META_SWAP_FILE_NAME = &quot;_meta.swp&quot;;
+<span class="fc" id="L141">    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);</span>
+    static final String TODO_FILE_NAME = &quot;_todo_&quot;;
+    static final byte TODO_RESTORE_META = 2;
+    static final byte TODO_TRUNCATE = 1;
+<span class="fc" id="L145">    private final static Log LOG = LogFactory.getLog(TableUtils.class);</span>
+<span class="fc" id="L146">    private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);</span>
+<span class="fc" id="L147">    private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);</span>
+<span class="fc" id="L148">    private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);</span>
+    private static final int MIN_SYMBOL_CAPACITY = 2;
+
+    private TableUtils() {
+    }
+
+    public static void allocateDiskSpace(FilesFacade ff, int fd, long size) {
+<span class="fc bfc" id="L155" title="All 4 branches covered.">        if (ff.length(fd) &lt; size &amp;&amp; !ff.allocate(fd, size)) {</span>
+<span class="fc" id="L156">            throw CairoException.critical(ff.errno()).put(&quot;No space left [size=&quot;).put(size).put(&quot;, fd=&quot;).put(fd).put(']');</span>
+        }
+<span class="fc" id="L158">    }</span>
+
+    public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
+<span class="fc" id="L161">        return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;</span>
+    }
+
+    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
+<span class="fc" id="L165">        path.concat(columnName).put(&quot;.c&quot;);</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">        if (columnNameTxn &gt; COLUMN_NAME_TXN_NONE) {</span>
+<span class="fc" id="L167">            path.put('.').put(columnNameTxn);</span>
+        }
+<span class="fc" id="L169">        return path.$();</span>
+    }
+
+    public static long checkMemSize(MemoryMR metaMem, long minSize) {
+<span class="fc" id="L173">        final long memSize = metaMem.size();</span>
+<span class="fc bfc" id="L174" title="All 2 branches covered.">        if (memSize &lt; minSize) {</span>
+<span class="fc" id="L175">            throw CairoException.critical(0).put(&quot;File is too small, size=&quot;).put(memSize).put(&quot;, required=&quot;).put(minSize);</span>
+        }
+<span class="fc" id="L177">        return memSize;</span>
+    }
+
+    public static int compressColumnCount(RecordMetadata metadata) {
+<span class="fc" id="L181">        int count = 0;</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">        for (int i = 0, n = metadata.getColumnCount(); i &lt; n; i++) {</span>
+<span class="fc bfc" id="L183" title="All 2 branches covered.">            if (metadata.getColumnType(i) &gt; 0) {</span>
+<span class="fc" id="L184">                count++;</span>
+            }
+        }
+<span class="fc" id="L187">        return count;</span>
+    }
+
+    public static void createColumnVersionFile(MemoryMARW mem) {
+        // Create page of 0s for Column Version file &quot;_cv&quot;
+<span class="fc" id="L192">        mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);</span>
+<span class="fc" id="L193">        mem.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE);</span>
+<span class="fc" id="L194">        mem.zero();</span>
+<span class="fc" id="L195">    }</span>
+
+    public static void createConvertFile(FilesFacade ff, Path path, byte walFlag) {
+<span class="fc" id="L198">        long addr = 0;</span>
+<span class="fc" id="L199">        int fd = -1;</span>
+        try {
+<span class="fc" id="L201">            fd = ff.openRW(path.concat(CONVERT_FILE_NAME).$(), CairoConfiguration.O_NONE);</span>
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">            if (fd &lt; 1) {</span>
+<span class="nc" id="L203">                throw CairoException.critical(ff.errno()).put(&quot;Could not open file [path=&quot;).put(path).put(']');</span>
+            }
+<span class="fc" id="L205">            addr = Unsafe.malloc(Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);</span>
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">            if (addr &lt; 1) {</span>
+<span class="nc" id="L207">                throw CairoException.critical(ff.errno()).put(&quot;Could not allocate 1 byte&quot;);</span>
+            }
+<span class="fc" id="L209">            Unsafe.getUnsafe().putByte(addr, walFlag);</span>
+<span class="fc" id="L210">            ff.write(fd, addr, Byte.BYTES, 0);</span>
+        } finally {
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">            if (addr &gt; 0) {</span>
+<span class="fc" id="L213">                Unsafe.free(addr, Byte.BYTES, MemoryTag.MMAP_TABLE_WAL_WRITER);</span>
+            }
+<span class="fc" id="L215">            ff.close(fd);</span>
+        }
+<span class="fc" id="L217">    }</span>
+
+    @NotNull
+    public static Function createCursorFunction(
+            FunctionParser functionParser,
+            @NotNull QueryModel model,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+<span class="fc" id="L225">        final ExpressionNode tableNameExpr = model.getTableNameExpr();</span>
+<span class="fc" id="L226">        final Function function = functionParser.parseFunction(</span>
+                tableNameExpr,
+                AnyRecordMetadata.INSTANCE,
+                executionContext
+        );
+<span class="fc bfc" id="L231" title="All 2 branches covered.">        if (!ColumnType.isCursor(function.getType())) {</span>
+<span class="fc" id="L232">            throw SqlException.$(tableNameExpr.position, &quot;function must return CURSOR&quot;);</span>
+        }
+<span class="pc bpc" id="L234" title="1 of 2 branches missed.">        return function;</span>
+    }
+
+    public static void createTable(
+            CairoConfiguration configuration,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableId,
+            CharSequence dirName
+    ) {
+<span class="fc" id="L245">        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, dirName);</span>
+<span class="fc" id="L246">    }</span>
+
+    public static void createTable(
+            CairoConfiguration configuration,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence dirName
+    ) {
+<span class="fc" id="L257">        final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L258">        final CharSequence root = configuration.getRoot();</span>
+<span class="fc" id="L259">        final int mkDirMode = configuration.getMkDirMode();</span>
+<span class="fc" id="L260">        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);</span>
+<span class="fc" id="L261">    }</span>
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence dirName
+    ) {
+<span class="fc" id="L274">        createTable(ff, root, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);</span>
+<span class="fc" id="L275">    }</span>
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+<span class="fc" id="L288">        LOG.debug().$(&quot;create table [name=&quot;).$(tableDir).$(']').$();</span>
+<span class="fc" id="L289">        path.of(root).concat(tableDir);</span>
+
+<span class="fc bfc" id="L291" title="All 2 branches covered.">        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {</span>
+<span class="fc" id="L292">            throw CairoException.critical(ff.errno()).put(&quot;could not create [dir=&quot;).put(path).put(']');</span>
+        }
+
+<span class="fc" id="L295">        final int rootLen = path.length();</span>
+
+<span class="pc bpc" id="L297" title="1 of 2 branches missed.">        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;</span>
+<span class="fc" id="L298">        try (MemoryMARW mem = memory) {</span>
+<span class="fc" id="L299">            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L300">            mem.jumpTo(0);</span>
+<span class="fc" id="L301">            final int count = structure.getColumnCount();</span>
+<span class="fc" id="L302">            path.trimTo(rootLen);</span>
+<span class="fc" id="L303">            mem.putInt(count);</span>
+<span class="fc" id="L304">            mem.putInt(structure.getPartitionBy());</span>
+<span class="fc" id="L305">            int timestampIndex = structure.getTimestampIndex();</span>
+<span class="pc bpc" id="L306" title="2 of 6 branches missed.">            assert timestampIndex == -1 ||</span>
+<span class="pc bpc" id="L307" title="1 of 2 branches missed.">                    (timestampIndex &gt;= 0 &amp;&amp; timestampIndex &lt; count &amp;&amp; structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);</span>
+<span class="fc" id="L308">            mem.putInt(timestampIndex);</span>
+<span class="fc" id="L309">            mem.putInt(tableVersion);</span>
+<span class="fc" id="L310">            mem.putInt(tableId);</span>
+<span class="fc" id="L311">            mem.putInt(structure.getMaxUncommittedRows());</span>
+<span class="fc" id="L312">            mem.putLong(structure.getO3MaxLag());</span>
+<span class="fc" id="L313">            mem.putLong(0); // Structure version.</span>
+<span class="fc bfc" id="L314" title="All 2 branches covered.">            mem.putInt(structure.isWalEnabled() ? 1 : 0);</span>
+<span class="fc" id="L315">            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);</span>
+
+<span class="pc bpc" id="L317" title="1 of 2 branches missed.">            assert count &gt; 0;</span>
+
+<span class="fc bfc" id="L319" title="All 2 branches covered.">            for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc" id="L320">                mem.putInt(structure.getColumnType(i));</span>
+<span class="fc" id="L321">                long flags = 0;</span>
+<span class="fc bfc" id="L322" title="All 2 branches covered.">                if (structure.isIndexed(i)) {</span>
+<span class="fc" id="L323">                    flags |= META_FLAG_BIT_INDEXED;</span>
+                }
+
+<span class="pc bpc" id="L326" title="1 of 2 branches missed.">                if (structure.isSequential(i)) {</span>
+<span class="nc" id="L327">                    flags |= META_FLAG_BIT_SEQUENTIAL;</span>
+                }
+
+<span class="fc" id="L330">                mem.putLong(flags);</span>
+<span class="fc" id="L331">                mem.putInt(structure.getIndexBlockCapacity(i));</span>
+                // reserved
+<span class="fc" id="L333">                mem.skip(16);</span>
+            }
+
+<span class="fc bfc" id="L336" title="All 2 branches covered.">            for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc" id="L337">                mem.putStr(structure.getColumnName(i));</span>
+            }
+
+            // create symbol maps
+<span class="fc" id="L341">            int symbolMapCount = 0;</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">            for (int i = 0; i &lt; count; i++) {</span>
+<span class="fc bfc" id="L343" title="All 2 branches covered.">                if (ColumnType.isSymbol(structure.getColumnType(i))) {</span>
+<span class="fc" id="L344">                    createSymbolMapFiles(</span>
+                            ff,
+                            mem,
+<span class="fc" id="L347">                            path.trimTo(rootLen),</span>
+<span class="fc" id="L348">                            structure.getColumnName(i),</span>
+                            COLUMN_NAME_TXN_NONE,
+<span class="fc" id="L350">                            structure.getSymbolCapacity(i),</span>
+<span class="fc" id="L351">                            structure.getSymbolCacheFlag(i)</span>
+                    );
+<span class="fc" id="L353">                    symbolMapCount++;</span>
+                }
+            }
+<span class="fc" id="L356">            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L357">            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);</span>
+
+<span class="fc" id="L359">            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L360">            createColumnVersionFile(mem);</span>
+<span class="fc" id="L361">            mem.close();</span>
+
+<span class="fc" id="L363">            resetTodoLog(ff, path, rootLen, mem);</span>
+            // allocate txn scoreboard
+<span class="fc" id="L365">            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();</span>
+
+<span class="fc" id="L367">            mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L368">            createTableNameFile(mem, getTableNameFromDirName(tableDir));</span>
+        } finally {
+<span class="pc bpc" id="L370" title="1 of 2 branches missed.">            if (dirFd &gt; 0) {</span>
+<span class="pc bpc" id="L371" title="1 of 2 branches missed.">                if (ff.fsync(dirFd) != 0) {</span>
+<span class="nc" id="L372">                    LOG.error()</span>
+<span class="nc" id="L373">                            .$(&quot;could not fsync [fd=&quot;).$(dirFd)</span>
+<span class="nc" id="L374">                            .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="nc" id="L375">                            .I$();</span>
+                }
+<span class="fc" id="L377">                ff.close(dirFd);</span>
+            }
+        }
+<span class="fc" id="L380">    }</span>
+
+    public static long createTransitionIndex(
+            MemoryR masterMeta,
+            AbstractRecordMetadata slaveMeta
+    ) {
+<span class="fc" id="L386">        int slaveColumnCount = slaveMeta.columnCount;</span>
+<span class="fc" id="L387">        int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);</span>
+        final long pTransitionIndex;
+<span class="fc" id="L389">        final int size = 8 + masterColumnCount * 8;</span>
+
+<span class="fc" id="L391">        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_TABLE_READER);</span>
+<span class="fc" id="L392">        Unsafe.getUnsafe().putInt(index, size);</span>
+<span class="fc" id="L393">        index += 8;</span>
+
+        // index structure is
+        // [action: int, copy from:int]
+
+        // action: if -1 then current column in slave is deleted or renamed, else it's reused
+        // &quot;copy from&quot; &gt;= 0 indicates that column is to be copied from slave position
+        // &quot;copy from&quot; &lt; 0  indicates that column is new and should be taken from updated metadata position
+        // &quot;copy from&quot; == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
+
+<span class="fc" id="L403">        long offset = getColumnNameOffset(masterColumnCount);</span>
+<span class="fc" id="L404">        int slaveIndex = 0;</span>
+<span class="fc" id="L405">        int shiftLeft = 0;</span>
+<span class="fc bfc" id="L406" title="All 2 branches covered.">        for (int masterIndex = 0; masterIndex &lt; masterColumnCount; masterIndex++) {</span>
+<span class="fc" id="L407">            CharSequence name = masterMeta.getStr(offset);</span>
+<span class="fc" id="L408">            offset += Vm.getStorageLength(name);</span>
+<span class="fc" id="L409">            int masterColumnType = getColumnType(masterMeta, masterIndex);</span>
+
+<span class="fc bfc" id="L411" title="All 2 branches covered.">            if (slaveIndex &lt; slaveColumnCount) {</span>
+<span class="fc" id="L412">                int existingWriterIndex = slaveMeta.getWriterIndex(slaveIndex);</span>
+<span class="fc bfc" id="L413" title="All 2 branches covered.">                if (existingWriterIndex &gt; masterIndex) {</span>
+                    // This column must be deleted so existing dense columns do not contain it
+<span class="pc bpc" id="L415" title="1 of 2 branches missed.">                    assert masterColumnType &lt; 0;</span>
+                    continue;
+                }
+<span class="pc bpc" id="L418" title="1 of 2 branches missed.">                assert existingWriterIndex == masterIndex;</span>
+            }
+
+<span class="fc" id="L421">            int outIndex = slaveIndex - shiftLeft;</span>
+<span class="fc bfc" id="L422" title="All 2 branches covered.">            if (masterColumnType &lt; 0) {</span>
+<span class="fc" id="L423">                shiftLeft++; // Deleted in master</span>
+<span class="fc bfc" id="L424" title="All 2 branches covered.">                if (slaveIndex &lt; slaveColumnCount) {</span>
+<span class="fc" id="L425">                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);</span>
+<span class="fc" id="L426">                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);</span>
+                }
+            } else {
+<span class="fc bfc" id="L429" title="All 2 branches covered.">                if (</span>
+                        slaveIndex &lt; slaveColumnCount
+<span class="fc bfc" id="L431" title="All 2 branches covered.">                                &amp;&amp; isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)</span>
+<span class="fc bfc" id="L432" title="All 2 branches covered.">                                &amp;&amp; Chars.equals(name, slaveMeta.getColumnName(slaveIndex))</span>
+                ) {
+                    // reuse
+<span class="fc" id="L435">                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);</span>
+<span class="fc bfc" id="L436" title="All 2 branches covered.">                    if (slaveIndex &gt; outIndex) {</span>
+                        // mark to do nothing with existing column, this may be overwritten later
+<span class="fc" id="L438">                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);</span>
+                    }
+                } else {
+                    // new
+<span class="fc bfc" id="L442" title="All 2 branches covered.">                    if (slaveIndex &lt; slaveColumnCount) {</span>
+                        // free
+<span class="fc" id="L444">                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);</span>
+                    }
+<span class="fc" id="L446">                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);</span>
+                }
+            }
+<span class="fc" id="L449">            slaveIndex++;</span>
+        }
+<span class="fc" id="L451">        Unsafe.getUnsafe().putInt(pTransitionIndex + 4, slaveIndex - shiftLeft);</span>
+<span class="fc" id="L452">        return pTransitionIndex;</span>
+    }
+
+    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+<span class="fc" id="L456">        txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);</span>
+<span class="fc" id="L457">        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);</span>
+<span class="fc" id="L458">        txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);</span>
+<span class="fc" id="L459">        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, seqTxn, dataVersion, partitionTableVersion, structureVersion, columnVersion, truncateVersion);</span>
+<span class="fc" id="L460">        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);</span>
+<span class="fc" id="L461">    }</span>
+
+    public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
+<span class="fc" id="L464">        path.concat(columnName).put(FILE_SUFFIX_D);</span>
+<span class="fc bfc" id="L465" title="All 2 branches covered.">        if (columnTxn &gt; COLUMN_NAME_TXN_NONE) {</span>
+<span class="fc" id="L466">            path.put('.').put(columnTxn);</span>
+        }
+<span class="fc" id="L468">        return path.$();</span>
+    }
+
+    public static LPSZ dFile(Path path, CharSequence columnName) {
+<span class="fc" id="L472">        return dFile(path, columnName, COLUMN_NAME_TXN_NONE);</span>
+    }
+
+    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
+<span class="fc" id="L476">        return exists(ff, path, root, name, 0, name.length());</span>
+    }
+
+    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
+<span class="fc" id="L480">        path.of(root).concat(name, lo, hi).$();</span>
+<span class="fc bfc" id="L481" title="All 2 branches covered.">        if (ff.exists(path)) {</span>
+<span class="fc bfc" id="L482" title="All 2 branches covered.">            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {</span>
+<span class="fc" id="L483">                return TABLE_EXISTS;</span>
+            } else {
+<span class="fc" id="L485">                return TABLE_RESERVED;</span>
+            }
+        } else {
+<span class="fc" id="L488">            return TABLE_DOES_NOT_EXIST;</span>
+        }
+    }
+
+    public static void freeTransitionIndex(long address) {
+<span class="fc bfc" id="L493" title="All 2 branches covered.">        if (address == 0) {</span>
+<span class="fc" id="L494">            return;</span>
+        }
+<span class="fc" id="L496">        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);</span>
+<span class="fc" id="L497">    }</span>
+
+    public static int getColumnCount(MemoryMR metaMem, long offset) {
+<span class="fc" id="L500">        final int columnCount = metaMem.getInt(offset);</span>
+<span class="pc bpc" id="L501" title="1 of 2 branches missed.">        if (columnCount &lt; 0) {</span>
+<span class="nc" id="L502">            throw validationException(metaMem).put(&quot;Incorrect columnCount: &quot;).put(columnCount);</span>
+        }
+<span class="fc" id="L504">        return columnCount;</span>
+    }
+
+    public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+<span class="fc" id="L508">        final int strLength = getInt(metaMem, memSize, offset);</span>
+<span class="fc bfc" id="L509" title="All 2 branches covered.">        if (strLength == TableUtils.NULL_LEN) {</span>
+<span class="fc" id="L510">            throw validationException(metaMem).put(&quot;NULL column name at [&quot;).put(columnIndex).put(']');</span>
+        }
+<span class="fc" id="L512">        return getCharSequence(metaMem, memSize, offset, strLength);</span>
+    }
+
+    public static long getColumnNameOffset(int columnCount) {
+<span class="fc" id="L516">        return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;</span>
+    }
+
+    public static int getColumnType(MemoryR metaMem, int columnIndex) {
+<span class="fc" id="L520">        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);</span>
+    }
+
+    public static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+<span class="fc" id="L524">        final int type = getInt(metaMem, memSize, offset);</span>
+<span class="pc bpc" id="L525" title="1 of 4 branches missed.">        if (type &gt;= 0 &amp;&amp; ColumnType.sizeOf(type) == -1) {</span>
+<span class="nc" id="L526">            throw validationException(metaMem).put(&quot;Invalid column type &quot;).put(type).put(&quot; at [&quot;).put(columnIndex).put(']');</span>
+        }
+<span class="fc" id="L528">        return type;</span>
+    }
+
+    public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
+<span class="nc" id="L532">        return getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolWriterCount), index);</span>
+    }
+
+    public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
+<span class="fc" id="L536">        return partitionTableOffset + 4 + index * 8L;</span>
+    }
+
+    public static long getPartitionTableSizeOffset(int symbolWriterCount) {
+<span class="fc" id="L540">        return getSymbolWriterIndexOffset(symbolWriterCount);</span>
+    }
+
+    public static long getSymbolWriterIndexOffset(int index) {
+<span class="fc" id="L544">        return TX_OFFSET_MAP_WRITER_COUNT_32 + 4 + index * 8L;</span>
+    }
+
+    public static long getSymbolWriterTransientIndexOffset(int index) {
+<span class="fc" id="L548">        return getSymbolWriterIndexOffset(index) + Integer.BYTES;</span>
+    }
+
+    @NotNull
+    public static String getTableDir(boolean mangleDirNames, @NotNull String tableName, int tableId, boolean isWal) {
+<span class="fc" id="L553">        String dirName = tableName;</span>
+<span class="fc bfc" id="L554" title="All 2 branches covered.">        if (isWal) {</span>
+<span class="fc" id="L555">            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;</span>
+<span class="fc" id="L556">            dirName += tableId;</span>
+<span class="fc bfc" id="L557" title="All 2 branches covered.">        } else if (mangleDirNames) {</span>
+<span class="fc" id="L558">            dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;</span>
+        }
+<span class="pc bpc" id="L560" title="1 of 2 branches missed.">        return dirName;</span>
+    }
+
+    public static CharSequence getTableNameFromDirName(CharSequence privateName) {
+<span class="fc" id="L564">        int suffixIndex = Chars.indexOf(privateName, SYSTEM_TABLE_NAME_SUFFIX);</span>
+<span class="fc bfc" id="L565" title="All 2 branches covered.">        if (suffixIndex == -1) {</span>
+<span class="fc" id="L566">            return privateName;</span>
+        }
+<span class="fc" id="L568">        return Chars.toString(privateName).substring(0, suffixIndex);</span>
+    }
+
+    public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
+<span class="fc" id="L572">        final int timestampIndex = metaMem.getInt(offset);</span>
+<span class="fc bfc" id="L573" title="All 4 branches covered.">        if (timestampIndex &lt; -1 || timestampIndex &gt;= columnCount) {</span>
+<span class="fc" id="L574">            throw validationException(metaMem).put(&quot;Timestamp index is outside of range, timestampIndex=&quot;).put(timestampIndex);</span>
+        }
+<span class="fc" id="L576">        return timestampIndex;</span>
+    }
+
+    public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
+        // This is temporary solution until we can get multiple version of metadata not overwriting each other
+<span class="fc bfc" id="L581" title="All 2 branches covered.">        if (ex.errnoReadPathDoesNotExist()) {</span>
+<span class="fc bfc" id="L582" title="All 2 branches covered.">            if (millisecondClock.getTicks() &lt; deadline) {</span>
+<span class="fc" id="L583">                LOG.info().$(&quot;error reloading metadata [table=&quot;).utf8(tableName)</span>
+<span class="fc" id="L584">                        .$(&quot;, errno=&quot;).$(ex.getErrno())</span>
+<span class="fc" id="L585">                        .$(&quot;, error=&quot;).utf8(ex.getFlyweightMessage()).I$();</span>
+<span class="fc" id="L586">                Os.pause();</span>
+            } else {
+<span class="fc" id="L588">                LOG.error().$(&quot;metadata read timeout [timeout=&quot;).$(spinLockTimeout).utf8(&quot;μs]&quot;).$();</span>
+<span class="fc" id="L589">                throw CairoException.critical(ex.getErrno()).put(&quot;Metadata read timeout. Last error: &quot;).put(ex.getFlyweightMessage());</span>
+            }
+        } else {
+<span class="fc" id="L592">            throw ex;</span>
+        }
+<span class="fc" id="L594">    }</span>
+
+    public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
+<span class="fc" id="L597">        path.concat(columnName).put(FILE_SUFFIX_I);</span>
+<span class="fc bfc" id="L598" title="All 2 branches covered.">        if (columnTxn &gt; COLUMN_NAME_TXN_NONE) {</span>
+<span class="fc" id="L599">            path.put('.').put(columnTxn);</span>
+        }
+<span class="fc" id="L601">        return path.$();</span>
+    }
+
+    public static LPSZ iFile(Path path, CharSequence columnName) {
+<span class="fc" id="L605">        return iFile(path, columnName, COLUMN_NAME_TXN_NONE);</span>
+    }
+
+    public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
+<span class="fc" id="L609">        int l = seq.length();</span>
+<span class="fc bfc" id="L610" title="All 2 branches covered.">        if (l &gt; fsFileNameLimit) {</span>
+            // Most file systems don't support files name longer than 255 bytes
+<span class="fc" id="L612">            return false;</span>
+        }
+
+<span class="fc bfc" id="L615" title="All 2 branches covered.">        for (int i = 0; i &lt; l; i++) {</span>
+<span class="fc" id="L616">            char c = seq.charAt(i);</span>
+<span class="fc bfc" id="L617" title="All 2 branches covered.">            switch (c) {</span>
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\&quot;':
+                case '\\':
+                case '/':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case '\u0000': // Control characters
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009':
+                case '\u000B':
+                case '\u000c':
+                case '\n':
+                case '\r':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+<span class="fc" id="L651">                    return false;</span>
+                default:
+                    break;
+            }
+        }
+<span class="fc bfc" id="L656" title="All 2 branches covered.">        return l &gt; 0;</span>
+    }
+
+    public static boolean isValidTableName(CharSequence tableName, int fsFileNameLimit) {
+<span class="fc" id="L660">        int l = tableName.length();</span>
+<span class="fc bfc" id="L661" title="All 2 branches covered.">        if (l &gt; fsFileNameLimit) {</span>
+            // Most file systems don't support files name longer than 255 bytes
+<span class="fc" id="L663">            return false;</span>
+        }
+<span class="fc bfc" id="L665" title="All 2 branches covered.">        for (int i = 0; i &lt; l; i++) {</span>
+<span class="fc" id="L666">            char c = tableName.charAt(i);</span>
+<span class="fc bfc" id="L667" title="All 3 branches covered.">            switch (c) {</span>
+                case '.':
+<span class="fc bfc" id="L669" title="All 6 branches covered.">                    if (i == 0 || i == l - 1 || tableName.charAt(i - 1) == '.') {</span>
+                        // Single dot in the middle is allowed only
+                        // Starting from . hides directory in Linux
+                        // Ending . can be trimmed by some Windows versions / file systems
+                        // Double, triple dot look suspicious
+                        // Single dot allowed as compatibility,
+                        // when someone uploads 'file_name.csv' the file name used as the table name
+<span class="fc" id="L676">                        return false;</span>
+                    }
+                    break;
+                case '?':
+                case ',':
+                case '\'':
+                case '\&quot;':
+                case '\\':
+                case '/':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '*':
+                case '%':
+                case '~':
+                case '\u0000':  // Control characters
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009':
+                case '\u000B':
+                case '\u000c':
+                case '\r':
+                case '\n':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+<span class="fc" id="L710">                    return false;</span>
+            }
+        }
+<span class="pc bpc" id="L713" title="1 of 6 branches missed.">        return tableName.length() &gt; 0 &amp;&amp; tableName.charAt(0) != ' ' &amp;&amp; tableName.charAt(l - 1) != ' ';</span>
+    }
+
+    public static int lock(FilesFacade ff, Path path, boolean verbose) {
+<span class="fc" id="L717">        final int fd = ff.openRW(path, CairoConfiguration.O_NONE);</span>
+<span class="fc bfc" id="L718" title="All 2 branches covered.">        if (fd == -1) {</span>
+<span class="pc bpc" id="L719" title="1 of 2 branches missed.">            if (verbose) {</span>
+<span class="fc" id="L720">                LOG.error().$(&quot;cannot open '&quot;).utf8(path).$(&quot;' to lock [errno=&quot;).$(ff.errno()).$(']').$();</span>
+            }
+<span class="fc" id="L722">            return -1;</span>
+        }
+
+<span class="fc bfc" id="L725" title="All 2 branches covered.">        if (ff.lock(fd) != 0) {</span>
+<span class="fc bfc" id="L726" title="All 2 branches covered.">            if (verbose) {</span>
+<span class="fc" id="L727">                LOG.error().$(&quot;cannot lock '&quot;).utf8(path).$(&quot;' [errno=&quot;).$(ff.errno()).$(&quot;, fd=&quot;).$(fd).$(']').$();</span>
+            }
+<span class="fc" id="L729">            ff.close(fd);</span>
+<span class="fc" id="L730">            return -1;</span>
+        }
+
+<span class="fc bfc" id="L733" title="All 2 branches covered.">        if (verbose) {</span>
+<span class="fc" id="L734">            LOG.info().$(&quot;locked '&quot;).utf8(path).$(&quot;' [fd=&quot;).$(fd).I$();</span>
+        }
+<span class="fc" id="L736">        return fd;</span>
+    }
+
+    public static int lock(FilesFacade ff, Path path) {
+<span class="fc" id="L740">        return lock(ff, path, true);</span>
+    }
+
+    public static void lockName(Path path) {
+<span class="fc" id="L744">        path.put(&quot;.lock&quot;).$();</span>
+<span class="fc" id="L745">    }</span>
+
+    public static long mapRO(FilesFacade ff, int fd, long size, int memoryTag) {
+<span class="fc" id="L748">        return mapRO(ff, fd, size, 0, memoryTag);</span>
+    }
+
+    /**
+     * Maps a file in read-only mode.
+     * &lt;p&gt;
+     * Important note. Linux requires the offset to be page aligned.
+     *
+     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd        file descriptor, previously provided by one of openFile() functions
+     * @param size      size of the mapped file region
+     * @param offset    offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-only memory address
+     */
+    public static long mapRO(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
+<span class="pc bpc" id="L764" title="1 of 2 branches missed.">        assert fd != -1;</span>
+<span class="pc bpc" id="L765" title="1 of 2 branches missed.">        assert offset % ff.getPageSize() == 0;</span>
+<span class="fc" id="L766">        final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);</span>
+<span class="fc bfc" id="L767" title="All 2 branches covered.">        if (address == FilesFacade.MAP_FAILED) {</span>
+<span class="fc" id="L768">            throw CairoException.critical(ff.errno())</span>
+<span class="fc" id="L769">                    .put(&quot;could not mmap &quot;)</span>
+<span class="fc" id="L770">                    .put(&quot; [size=&quot;).put(size)</span>
+<span class="fc" id="L771">                    .put(&quot;, offset=&quot;).put(offset)</span>
+<span class="fc" id="L772">                    .put(&quot;, fd=&quot;).put(fd)</span>
+<span class="fc" id="L773">                    .put(&quot;, memUsed=&quot;).put(Unsafe.getMemUsed())</span>
+<span class="fc" id="L774">                    .put(&quot;, fileLen=&quot;).put(ff.length(fd))</span>
+<span class="fc" id="L775">                    .put(']');</span>
+        }
+<span class="fc" id="L777">        return address;</span>
+    }
+
+    public static long mapRW(FilesFacade ff, int fd, long size, int memoryTag) {
+<span class="fc" id="L781">        return mapRW(ff, fd, size, 0, memoryTag);</span>
+    }
+
+    /**
+     * Maps a file in read-write mode.
+     * &lt;p&gt;
+     * Important note. Linux requires the offset to be page aligned.
+     *
+     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd        file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
+     * @param size      size of the mapped file region
+     * @param offset    offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-write memory address
+     */
+    public static long mapRW(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
+<span class="pc bpc" id="L797" title="1 of 2 branches missed.">        assert fd != -1;</span>
+<span class="pc bpc" id="L798" title="1 of 2 branches missed.">        assert offset % ff.getPageSize() == 0;</span>
+<span class="fc" id="L799">        allocateDiskSpace(ff, fd, size + offset);</span>
+<span class="fc" id="L800">        long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);</span>
+<span class="fc bfc" id="L801" title="All 2 branches covered.">        if (addr &gt; -1) {</span>
+<span class="fc" id="L802">            return addr;</span>
+        }
+<span class="fc" id="L804">        int errno = ff.errno();</span>
+<span class="pc bpc" id="L805" title="3 of 4 branches missed.">        if (Os.type != Os.WINDOWS || errno != 112) {</span>
+<span class="fc" id="L806">            throw CairoException.critical(ff.errno()).put(&quot;could not mmap column [fd=&quot;).put(fd).put(&quot;, size=&quot;).put(size).put(']');</span>
+        }
+<span class="nc" id="L808">        throw CairoException.critical(ff.errno()).put(&quot;No space left [size=&quot;).put(size).put(&quot;, fd=&quot;).put(fd).put(']');</span>
+    }
+
+    public static long mapRWOrClose(FilesFacade ff, int fd, long size, int memoryTag) {
+        try {
+<span class="fc" id="L813">            return TableUtils.mapRW(ff, fd, size, memoryTag);</span>
+<span class="nc" id="L814">        } catch (CairoException e) {</span>
+<span class="nc" id="L815">            ff.close(fd);</span>
+<span class="nc" id="L816">            throw e;</span>
+        }
+    }
+
+    public static long mremap(
+            FilesFacade ff,
+            int fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            int mapMode,
+            int memoryTag
+    ) {
+<span class="fc" id="L829">        return mremap(ff, fd, prevAddress, prevSize, newSize, 0L, mapMode, memoryTag);</span>
+    }
+
+    public static long mremap(
+            FilesFacade ff,
+            int fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            long offset,
+            int mapMode,
+            int memoryTag
+    ) {
+<span class="fc" id="L842">        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);</span>
+<span class="fc bfc" id="L843" title="All 2 branches covered.">        if (page == FilesFacade.MAP_FAILED) {</span>
+<span class="fc" id="L844">            int errno = ff.errno();</span>
+            // Closing memory will truncate size to current append offset.
+            // Since the failed resize can occur before append offset can be
+            // explicitly set, we must assume that file size should be
+            // equal to previous memory size
+<span class="fc" id="L849">            throw CairoException.critical(errno).put(&quot;could not remap file [previousSize=&quot;).put(prevSize).put(&quot;, newSize=&quot;).put(newSize).put(&quot;, offset=&quot;).put(offset).put(&quot;, fd=&quot;).put(fd).put(']');</span>
+        }
+<span class="fc" id="L851">        return page;</span>
+    }
+
+    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
+<span class="fc" id="L855">        path.concat(columnName).put(&quot;.o&quot;);</span>
+<span class="fc bfc" id="L856" title="All 2 branches covered.">        if (columnNameTxn &gt; COLUMN_NAME_TXN_NONE) {</span>
+<span class="fc" id="L857">            path.put('.').put(columnNameTxn);</span>
+        }
+<span class="fc" id="L859">        return path.$();</span>
+    }
+
+    public static void oldPartitionName(Path path, long txn) {
+<span class="fc" id="L863">        path.put(&quot;-x-&quot;).put(txn);</span>
+<span class="fc" id="L864">    }</span>
+
+    public static int openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+<span class="fc" id="L867">        return openRW(ff, path, LOG, opts);</span>
+    }
+
+    public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
+<span class="fc" id="L871">        final int rootLen = path.length();</span>
+<span class="fc" id="L872">        path.concat(fileName).$();</span>
+        try {
+<span class="fc" id="L874">            return TableUtils.openRO(ff, path, log);</span>
+        } finally {
+<span class="fc" id="L876">            path.trimTo(rootLen);</span>
+        }
+    }
+
+    public static int openRO(FilesFacade ff, LPSZ path, Log log) {
+<span class="fc" id="L881">        final int fd = ff.openRO(path);</span>
+<span class="fc bfc" id="L882" title="All 2 branches covered.">        if (fd &gt; -1) {</span>
+<span class="fc" id="L883">            log.debug().$(&quot;open [file=&quot;).$(path).$(&quot;, fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L884">            return fd;</span>
+        }
+<span class="fc" id="L886">        throw CairoException.critical(ff.errno()).put(&quot;could not open read-only [file=&quot;).put(path).put(']');</span>
+    }
+
+    public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+<span class="fc" id="L890">        final int fd = ff.openRW(path, opts);</span>
+<span class="fc bfc" id="L891" title="All 2 branches covered.">        if (fd &gt; -1) {</span>
+<span class="fc" id="L892">            log.debug().$(&quot;open [file=&quot;).$(path).$(&quot;, fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L893">            return fd;</span>
+        }
+<span class="fc" id="L895">        throw CairoException.critical(ff.errno()).put(&quot;could not open read-write [file=&quot;).put(path).put(']');</span>
+    }
+
+    public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
+<span class="fc" id="L899">        path.concat(fileName).$();</span>
+        try {
+<span class="fc" id="L901">            metaMem.smallFile(ff, path, memoryTag);</span>
+        } finally {
+<span class="fc" id="L903">            path.trimTo(rootLen);</span>
+        }
+<span class="fc" id="L905">    }</span>
+
+    public static void overwriteTableNameFile(Path tablePath, MemoryMARW memory, FilesFacade ff, TableToken newTableToken) {
+        // Update name in _name file.
+        // This is potentially racy but the file only read on startup when the tables.d file is missing 
+        // so very limited circumstances.
+<span class="fc" id="L911">        Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();</span>
+<span class="fc" id="L912">        memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);</span>
+<span class="fc" id="L913">        memory.jumpTo(0);</span>
+<span class="fc" id="L914">        createTableNameFile(memory, newTableToken.getTableName());</span>
+<span class="fc" id="L915">        memory.close(true, Vm.TRUNCATE_TO_POINTER);</span>
+<span class="fc" id="L916">    }</span>
+
+    public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {
+<span class="pc bpc" id="L919" title="1 of 2 branches missed.">        if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {</span>
+<span class="nc" id="L920">            throw CairoException.critical(ff.errno()).put(&quot;Cannot read: &quot;).put(path);</span>
+        }
+<span class="fc" id="L922">        return Unsafe.getUnsafe().getInt(tempMem8b);</span>
+    }
+
+    public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
+<span class="fc" id="L926">        final int fd = TableUtils.openRO(ff, path, LOG);</span>
+        try {
+<span class="fc" id="L928">            return readLongOrFail(ff, fd, offset, tempMem8b, path);</span>
+        } finally {
+<span class="fc" id="L930">            ff.close(fd);</span>
+        }
+    }
+
+    public static long readLongOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, @Nullable Path path) {
+<span class="pc bpc" id="L935" title="1 of 2 branches missed.">        if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {</span>
+<span class="nc bnc" id="L936" title="All 2 branches missed.">            if (path != null) {</span>
+<span class="nc" id="L937">                throw CairoException.critical(ff.errno()).put(&quot;could not read long [path=&quot;).put(path).put(&quot;, fd=&quot;).put(fd).put(&quot;, offset=&quot;).put(offset);</span>
+            }
+<span class="nc" id="L939">            throw CairoException.critical(ff.errno()).put(&quot;could not read long [fd=&quot;).put(fd).put(&quot;, offset=&quot;).put(offset);</span>
+        }
+<span class="fc" id="L941">        return Unsafe.getUnsafe().getLong(tempMem8b);</span>
+    }
+
+    public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
+<span class="fc" id="L945">        int fd = -1;</span>
+        try {
+<span class="fc" id="L947">            path.concat(TableUtils.TABLE_NAME_FILE).$();</span>
+<span class="fc" id="L948">            fd = ff.openRO(path);</span>
+<span class="fc bfc" id="L949" title="All 2 branches covered.">            if (fd &lt; 1) {</span>
+<span class="fc" id="L950">                return null;</span>
+            }
+
+<span class="fc" id="L953">            long fileLen = ff.length(fd);</span>
+<span class="pc bpc" id="L954" title="1 of 2 branches missed.">            if (fileLen &gt; Integer.BYTES) {</span>
+<span class="fc" id="L955">                int charLen = ff.readNonNegativeInt(fd, 0);</span>
+<span class="fc bfc" id="L956" title="All 2 branches covered.">                if (charLen * 2L + Integer.BYTES != fileLen - 1) {</span>
+<span class="fc" id="L957">                    LOG.error().$(&quot;invalid table name file [path=&quot;).$(path).$(&quot;, headerLen=&quot;).$(charLen).$(&quot;, fileLen=&quot;).$(fileLen).I$();</span>
+<span class="fc" id="L958">                    return null;</span>
+                }
+
+<span class="fc" id="L961">                mem.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L962">                return Chars.toString(mem.getStr(0));</span>
+            } else {
+<span class="nc" id="L964">                LOG.error().$(&quot;invalid table name file [path=&quot;).$(path).$(&quot;, fileLen=&quot;).$(fileLen).I$();</span>
+<span class="nc" id="L965">                return null;</span>
+            }
+        } finally {
+<span class="fc" id="L968">            path.trimTo(rootLen);</span>
+<span class="fc" id="L969">            ff.close(fd);</span>
+        }
+    }
+
+    public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {
+<span class="pc bpc" id="L974" title="1 of 4 branches missed.">        if (ff.exists(path) &amp;&amp; !ff.closeRemove(fd, path)) {</span>
+<span class="fc" id="L975">            throw CairoException.critical(ff.errno()).put(&quot;Cannot remove &quot;).put(path);</span>
+        }
+<span class="fc" id="L977">    }</span>
+
+    public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
+<span class="fc bfc" id="L980" title="All 2 branches covered.">        if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {</span>
+<span class="fc" id="L981">            throw CairoException.critical(ff.errno()).put(&quot;could not rename &quot;).put(src).put(&quot; -&gt; &quot;).put(dst);</span>
+        }
+<span class="fc" id="L983">    }</span>
+
+    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
+<span class="fc" id="L986">        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L987">        mem.jumpTo(0);</span>
+<span class="fc" id="L988">        mem.putLong(24, 0); // txn check</span>
+<span class="fc" id="L989">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L990">        mem.putLong(8, 0); // hashLo</span>
+<span class="fc" id="L991">        mem.putLong(16, 0); // hashHi</span>
+<span class="fc" id="L992">        Unsafe.getUnsafe().storeFence();</span>
+<span class="fc" id="L993">        mem.putLong(0, 0); // txn</span>
+<span class="fc" id="L994">        mem.putLong(32, 0); // count</span>
+<span class="fc" id="L995">        mem.jumpTo(40);</span>
+<span class="fc" id="L996">    }</span>
+
+    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long seqTxn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
+        // txn to let readers know table is being reset
+<span class="fc" id="L1000">        txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);</span>
+
+        // transient row count
+<span class="fc" id="L1003">        txMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, 0);</span>
+        // fixed row count
+<span class="fc" id="L1005">        txMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, 0);</span>
+        // min timestamp value in table
+<span class="fc" id="L1007">        txMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, Long.MAX_VALUE);</span>
+        // max timestamp value in table
+<span class="fc" id="L1009">        txMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, Long.MIN_VALUE);</span>
+        // structure version
+<span class="fc" id="L1011">        txMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);</span>
+        // data version
+<span class="fc" id="L1013">        txMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);</span>
+        // partition table version
+<span class="fc" id="L1015">        txMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);</span>
+        // column version
+<span class="fc" id="L1017">        txMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);</span>
+        // truncate version
+<span class="fc" id="L1019">        txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);</span>
+        // sequencer txn
+<span class="fc" id="L1021">        txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);</span>
+
+<span class="fc" id="L1023">        txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);</span>
+<span class="fc bfc" id="L1024" title="All 2 branches covered.">        for (int i = 0; i &lt; symbolMapCount; i++) {</span>
+<span class="fc" id="L1025">            long offset = getSymbolWriterIndexOffset(i);</span>
+<span class="fc" id="L1026">            txMem.putInt(baseOffset + offset, 0);</span>
+<span class="fc" id="L1027">            offset += Integer.BYTES;</span>
+<span class="fc" id="L1028">            txMem.putInt(baseOffset + offset, 0);</span>
+        }
+
+        // partition update count
+<span class="fc" id="L1032">        txMem.putInt(baseOffset + getPartitionTableSizeOffset(symbolMapCount), 0);</span>
+<span class="fc" id="L1033">    }</span>
+
+    public static void safeReadTxn(TxReader txReader, MillisecondClock clock, long spinLockTimeout) {
+<span class="fc" id="L1036">        long deadline = clock.getTicks() + spinLockTimeout;</span>
+<span class="fc bfc" id="L1037" title="All 2 branches covered.">        if (txReader.unsafeReadVersion() == txReader.getVersion()) {</span>
+<span class="fc" id="L1038">            LOG.debug().$(&quot;checked clean txn, version &quot;).$(txReader.getVersion()).$(&quot;, txn=&quot;).$(txReader.getTxn()).$();</span>
+<span class="fc" id="L1039">            return;</span>
+        }
+
+        while (true) {
+<span class="fc bfc" id="L1043" title="All 2 branches covered.">            if (txReader.unsafeLoadAll()) {</span>
+<span class="fc" id="L1044">                LOG.debug().$(&quot;loaded clean txn, version &quot;).$(txReader.getVersion())</span>
+<span class="fc" id="L1045">                        .$(&quot;, offset=&quot;).$(txReader.getBaseOffset())</span>
+<span class="fc" id="L1046">                        .$(&quot;, size=&quot;).$(txReader.getRecordSize())</span>
+<span class="fc" id="L1047">                        .$(&quot;, txn=&quot;).$(txReader.getTxn()).$();</span>
+                // All good, snapshot read
+<span class="fc" id="L1049">                return;</span>
+            }
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
+<span class="pc bpc" id="L1053" title="1 of 2 branches missed.">            if (clock.getTicks() &gt; deadline) {</span>
+<span class="nc" id="L1054">                LOG.error().$(&quot;tx read timeout [timeout=&quot;).$(spinLockTimeout).utf8(&quot;ms]&quot;).$();</span>
+<span class="nc" id="L1055">                throw CairoException.critical(0).put(&quot;Transaction read timeout&quot;);</span>
+            }
+
+<span class="fc" id="L1058">            LOG.debug().$(&quot;loaded __dirty__ txn, version &quot;).$(txReader.getVersion()).$();</span>
+<span class="fc" id="L1059">            Os.pause();</span>
+        }
+    }
+
+    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, TableToken tableName, int partitionBy) {
+<span class="fc" id="L1064">        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();</span>
+        while (true) {
+<span class="fc" id="L1066">            long cursor = seq.next();</span>
+<span class="fc bfc" id="L1067" title="All 2 branches covered.">            if (cursor &gt; -1) {</span>
+<span class="fc" id="L1068">                O3PartitionPurgeTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);</span>
+<span class="fc" id="L1069">                task.of(tableName, partitionBy);</span>
+<span class="fc" id="L1070">                seq.done(cursor);</span>
+<span class="fc" id="L1071">                return true;</span>
+<span class="pc bpc" id="L1072" title="1 of 2 branches missed.">            } else if (cursor == -1) {</span>
+<span class="fc" id="L1073">                return false;</span>
+            }
+<span class="nc" id="L1075">            Os.pause();</span>
+<span class="nc" id="L1076">        }</span>
+    }
+
+    public static void setNull(int columnType, long addr, long count) {
+<span class="pc bpc" id="L1080" title="1 of 14 branches missed.">        switch (ColumnType.tagOf(columnType)) {</span>
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+<span class="fc" id="L1083">                Vect.memset(addr, count, 0);</span>
+<span class="fc" id="L1084">                break;</span>
+            case ColumnType.GEOBYTE:
+<span class="fc" id="L1086">                Vect.memset(addr, count, GeoHashes.BYTE_NULL);</span>
+<span class="fc" id="L1087">                break;</span>
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+<span class="fc" id="L1090">                Vect.setMemoryShort(addr, (short) 0, count);</span>
+<span class="fc" id="L1091">                break;</span>
+            case ColumnType.GEOSHORT:
+<span class="fc" id="L1093">                Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);</span>
+<span class="fc" id="L1094">                break;</span>
+            case ColumnType.INT:
+<span class="fc" id="L1096">                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);</span>
+<span class="fc" id="L1097">                break;</span>
+            case ColumnType.GEOINT:
+<span class="fc" id="L1099">                Vect.setMemoryInt(addr, GeoHashes.INT_NULL, count);</span>
+<span class="fc" id="L1100">                break;</span>
+            case ColumnType.FLOAT:
+<span class="fc" id="L1102">                Vect.setMemoryFloat(addr, Float.NaN, count);</span>
+<span class="fc" id="L1103">                break;</span>
+            case ColumnType.SYMBOL:
+<span class="fc" id="L1105">                Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count);</span>
+<span class="fc" id="L1106">                break;</span>
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+<span class="fc" id="L1110">                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);</span>
+<span class="fc" id="L1111">                break;</span>
+            case ColumnType.GEOLONG:
+<span class="fc" id="L1113">                Vect.setMemoryLong(addr, GeoHashes.NULL, count);</span>
+<span class="fc" id="L1114">                break;</span>
+            case ColumnType.DOUBLE:
+<span class="fc" id="L1116">                Vect.setMemoryDouble(addr, Double.NaN, count);</span>
+<span class="fc" id="L1117">                break;</span>
+            case ColumnType.LONG256:
+                // Long256 is null when all 4 longs are NaNs
+<span class="fc" id="L1120">                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);</span>
+<span class="fc" id="L1121">                break;</span>
+            case ColumnType.LONG128:
+                // fall through
+            case ColumnType.UUID:
+                // Long128 and UUID are null when all 2 longs are NaNs
+<span class="fc" id="L1126">                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);</span>
+<span class="fc" id="L1127">                break;</span>
+            default:
+                break;
+        }
+<span class="fc" id="L1131">    }</span>
+
+    /**
+     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param tablePath        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param tableRootLen     Trim to this length to go back to the root path of the table
+     * @param partitionBy      Partitioning scheme
+     * @param timestamp        A timestamp in the partition
+     * @param partitionNameTxn Partition txn suffix
+     */
+    public static void setPathForPartition(
+            Path tablePath,
+            int tableRootLen,
+            int partitionBy,
+            long timestamp,
+            long partitionNameTxn
+    ) {
+<span class="fc" id="L1150">        tablePath.trimTo(tableRootLen);</span>
+<span class="fc" id="L1151">        TableUtils.setPathForPartition(tablePath, partitionBy, timestamp, false);</span>
+<span class="fc" id="L1152">        TableUtils.txnPartitionConditionally(tablePath, partitionNameTxn);</span>
+<span class="fc" id="L1153">    }</span>
+
+    /**
+     * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
+     *
+     * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy           Partitioning scheme
+     * @param timestamp             A timestamp in the partition
+     * @param calculatePartitionMax flag when caller is going to use the return value of this method
+     * @return The last timestamp in the partition
+     */
+    public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
+<span class="fc" id="L1165">        return PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);</span>
+    }
+
+    public static int toIndexKey(int symbolKey) {
+<span class="fc bfc" id="L1169" title="All 2 branches covered.">        return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;</span>
+    }
+
+    public static void txnPartition(CharSink path, long txn) {
+<span class="fc" id="L1173">        path.put('.').put(txn);</span>
+<span class="fc" id="L1174">    }</span>
+
+    public static void txnPartitionConditionally(CharSink path, long txn) {
+<span class="fc bfc" id="L1177" title="All 2 branches covered.">        if (txn &gt; -1) {</span>
+<span class="fc" id="L1178">            txnPartition(path, txn);</span>
+        }
+<span class="fc" id="L1180">    }</span>
+
+    public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
+<span class="fc bfc" id="L1183" title="All 2 branches covered.">        if (indexValueBlockSize &lt; MIN_INDEX_VALUE_BLOCK_SIZE) {</span>
+<span class="fc" id="L1184">            throw SqlException.$(position, &quot;min index block capacity is &quot;).put(MIN_INDEX_VALUE_BLOCK_SIZE);</span>
+        }
+<span class="fc bfc" id="L1186" title="All 2 branches covered.">        if (indexValueBlockSize &gt; MAX_INDEX_VALUE_BLOCK_SIZE) {</span>
+<span class="fc" id="L1187">            throw SqlException.$(position, &quot;max index block capacity is &quot;).put(MAX_INDEX_VALUE_BLOCK_SIZE);</span>
+        }
+<span class="fc" id="L1189">    }</span>
+
+    public static void validateMeta(
+            MemoryMR metaMem,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
+    ) {
+        try {
+<span class="fc" id="L1197">            final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);</span>
+<span class="fc" id="L1198">            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);</span>
+<span class="fc" id="L1199">            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);</span>
+
+<span class="fc" id="L1201">            long offset = getColumnNameOffset(columnCount);</span>
+<span class="fc bfc" id="L1202" title="All 2 branches covered.">            if (memSize &lt; offset) {</span>
+<span class="fc" id="L1203">                throw validationException(metaMem).put(&quot;File is too small, column types are missing &quot;).put(memSize);</span>
+            }
+
+            // validate designated timestamp column
+<span class="fc" id="L1207">            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);</span>
+<span class="fc bfc" id="L1208" title="All 2 branches covered.">            if (timestampIndex != -1) {</span>
+<span class="fc" id="L1209">                final int timestampType = getColumnType(metaMem, timestampIndex);</span>
+<span class="fc bfc" id="L1210" title="All 2 branches covered.">                if (!ColumnType.isTimestamp(timestampType)) {</span>
+<span class="fc" id="L1211">                    throw validationException(metaMem).put(&quot;Timestamp column must be TIMESTAMP, but found &quot;).put(ColumnType.nameOf(timestampType));</span>
+                }
+            }
+
+            // validate column types and index attributes
+<span class="fc bfc" id="L1216" title="All 2 branches covered.">            for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L1217">                final int type = Math.abs(getColumnType(metaMem, i));</span>
+<span class="fc bfc" id="L1218" title="All 2 branches covered.">                if (ColumnType.sizeOf(type) == -1) {</span>
+<span class="fc" id="L1219">                    throw validationException(metaMem).put(&quot;Invalid column type &quot;).put(type).put(&quot; at [&quot;).put(i).put(']');</span>
+                }
+
+<span class="fc bfc" id="L1222" title="All 2 branches covered.">                if (isColumnIndexed(metaMem, i)) {</span>
+<span class="fc bfc" id="L1223" title="All 2 branches covered.">                    if (!ColumnType.isSymbol(type)) {</span>
+<span class="fc" id="L1224">                        throw validationException(metaMem).put(&quot;Index flag is only supported for SYMBOL&quot;).put(&quot; at [&quot;).put(i).put(']');</span>
+                    }
+
+<span class="fc bfc" id="L1227" title="All 2 branches covered.">                    if (getIndexBlockCapacity(metaMem, i) &lt; 2) {</span>
+<span class="fc" id="L1228">                        throw validationException(metaMem).put(&quot;Invalid index value block capacity &quot;).put(getIndexBlockCapacity(metaMem, i)).put(&quot; at [&quot;).put(i).put(']');</span>
+                    }
+                }
+            }
+
+            // validate column names
+<span class="fc" id="L1234">            int denseCount = 0;</span>
+<span class="fc bfc" id="L1235" title="All 2 branches covered.">            for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L1236">                final CharSequence name = getColumnName(metaMem, memSize, offset, i);</span>
+<span class="fc bfc" id="L1237" title="All 4 branches covered.">                if (getColumnType(metaMem, i) &lt; 0 || nameIndex.put(name, denseCount++)) {</span>
+<span class="fc" id="L1238">                    offset += Vm.getStorageLength(name);</span>
+                } else {
+<span class="fc" id="L1240">                    throw validationException(metaMem).put(&quot;Duplicate column [name=&quot;).put(name).put(&quot;] at &quot;).put(i);</span>
+                }
+            }
+<span class="fc" id="L1243">        } catch (Throwable e) {</span>
+<span class="fc" id="L1244">            nameIndex.clear();</span>
+<span class="fc" id="L1245">            throw e;</span>
+<span class="fc" id="L1246">        }</span>
+<span class="fc" id="L1247">    }</span>
+
+    public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+<span class="fc" id="L1250">        final int metaVersion = metaMem.getInt(metaVersionOffset);</span>
+<span class="pc bpc" id="L1251" title="1 of 2 branches missed.">        if (expectedVersion != metaVersion) {</span>
+<span class="nc" id="L1252">            throw validationException(metaMem)</span>
+<span class="nc" id="L1253">                    .put(&quot;Metadata version does not match runtime version [expected=&quot;).put(expectedVersion)</span>
+<span class="nc" id="L1254">                    .put(&quot;, actual=&quot;).put(metaVersion)</span>
+<span class="nc" id="L1255">                    .put(']');</span>
+        }
+<span class="fc" id="L1257">    }</span>
+
+    public static void validateSymbolCapacity(int position, int symbolCapacity) throws SqlException {
+<span class="fc bfc" id="L1260" title="All 2 branches covered.">        if (symbolCapacity &lt; MIN_SYMBOL_CAPACITY) {</span>
+<span class="fc" id="L1261">            throw SqlException.$(position, &quot;min symbol capacity is &quot;).put(MIN_SYMBOL_CAPACITY);</span>
+        }
+<span class="fc bfc" id="L1263" title="All 2 branches covered.">        if (symbolCapacity &gt; MAX_SYMBOL_CAPACITY) {</span>
+<span class="fc" id="L1264">            throw SqlException.$(position, &quot;max symbol capacity is &quot;).put(MAX_SYMBOL_CAPACITY);</span>
+        }
+<span class="fc" id="L1266">    }</span>
+
+    public static void validateSymbolCapacityCached(boolean cache, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
+<span class="fc bfc" id="L1269" title="All 4 branches covered.">        if (cache &amp;&amp; symbolCapacity &gt; MAX_SYMBOL_CAPACITY_CACHED) {</span>
+<span class="fc" id="L1270">            throw SqlException.$(cacheKeywordPosition, &quot;max cached symbol capacity is &quot;).put(MAX_SYMBOL_CAPACITY_CACHED);</span>
+        }
+<span class="fc" id="L1272">    }</span>
+
+    public static CairoException validationException(MemoryMR mem) {
+<span class="fc" id="L1275">        return CairoException.critical(CairoException.METADATA_VALIDATION).put(&quot;Invalid metadata at fd=&quot;).put(mem.getFd()).put(&quot;. &quot;);</span>
+    }
+
+    public static void writeIntOrFail(FilesFacade ff, int fd, long offset, int value, long tempMem8b, Path path) {
+<span class="fc" id="L1279">        Unsafe.getUnsafe().putInt(tempMem8b, value);</span>
+<span class="pc bpc" id="L1280" title="1 of 2 branches missed.">        if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {</span>
+<span class="nc" id="L1281">            throw CairoException.critical(ff.errno())</span>
+<span class="nc" id="L1282">                    .put(&quot;could not write 8 bytes [path=&quot;).put(path)</span>
+<span class="nc" id="L1283">                    .put(&quot;, fd=&quot;).put(fd)</span>
+<span class="nc" id="L1284">                    .put(&quot;, offset=&quot;).put(offset)</span>
+<span class="nc" id="L1285">                    .put(&quot;, value=&quot;).put(value)</span>
+<span class="nc" id="L1286">                    .put(']');</span>
+        }
+<span class="fc" id="L1288">    }</span>
+
+    public static void writeLongOrFail(FilesFacade ff, int fd, long offset, long value, long tempMem8b, Path path) {
+<span class="fc" id="L1291">        Unsafe.getUnsafe().putLong(tempMem8b, value);</span>
+<span class="pc bpc" id="L1292" title="1 of 2 branches missed.">        if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {</span>
+<span class="nc" id="L1293">            throw CairoException.critical(ff.errno())</span>
+<span class="nc" id="L1294">                    .put(&quot;could not write 8 bytes [path=&quot;).put(path)</span>
+<span class="nc" id="L1295">                    .put(&quot;, fd=&quot;).put(fd)</span>
+<span class="nc" id="L1296">                    .put(&quot;, offset=&quot;).put(offset)</span>
+<span class="nc" id="L1297">                    .put(&quot;, value=&quot;).put(value)</span>
+<span class="nc" id="L1298">                    .put(']');</span>
+        }
+<span class="fc" id="L1300">    }</span>
+
+    private static void createTableNameFile(MemoryMARW mem, CharSequence charSequence) {
+<span class="fc" id="L1303">        mem.putStr(charSequence);</span>
+<span class="fc" id="L1304">        mem.putByte((byte) 0);</span>
+<span class="fc" id="L1305">        mem.close(true, Vm.TRUNCATE_TO_POINTER);</span>
+<span class="fc" id="L1306">    }</span>
+
+    private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
+<span class="pc bpc" id="L1309" title="1 of 4 branches missed.">        if (strLength &lt; 1 || strLength &gt; 255) {</span>
+            // EXT4 and many others do not allow file name length &gt; 255 bytes
+<span class="fc" id="L1311">            throw validationException(metaMem).put(&quot;String length of &quot;).put(strLength).put(&quot; is invalid at offset &quot;).put(offset);</span>
+        }
+<span class="fc" id="L1313">        final long storageLength = Vm.getStorageLength(strLength);</span>
+<span class="pc bpc" id="L1314" title="1 of 2 branches missed.">        if (offset + storageLength &gt; memSize) {</span>
+<span class="nc" id="L1315">            throw CairoException.critical(0).put(&quot;File is too small, size=&quot;).put(memSize).put(&quot;, required=&quot;).put(offset + storageLength);</span>
+        }
+<span class="fc" id="L1317">        return metaMem.getStr(offset);</span>
+    }
+
+    private static int getInt(MemoryMR metaMem, long memSize, long offset) {
+<span class="fc bfc" id="L1321" title="All 2 branches covered.">        if (memSize &lt; offset + Integer.BYTES) {</span>
+<span class="fc" id="L1322">            throw CairoException.critical(0).put(&quot;File is too small, size=&quot;).put(memSize).put(&quot;, required=&quot;).put(offset + Integer.BYTES);</span>
+        }
+<span class="fc" id="L1324">        return metaMem.getInt(offset);</span>
+    }
+
+    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+<span class="fc bfc" id="L1328" title="All 2 branches covered.">        if (ff.mkdirs(path, mkDirMode) != 0) {</span>
+<span class="fc" id="L1329">            throw CairoException.critical(ff.errno()).put(&quot;could not create directories [file=&quot;).put(path).put(']');</span>
+        }
+<span class="fc" id="L1331">    }</span>
+
+    static long getColumnFlags(MemoryR metaMem, int columnIndex) {
+<span class="fc" id="L1334">        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);</span>
+    }
+
+    static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
+<span class="fc" id="L1338">        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);</span>
+    }
+
+    static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
+<span class="fc bfc" id="L1342" title="All 2 branches covered.">        return (getColumnFlags(metaMem, columnIndex) &amp; META_FLAG_BIT_INDEXED) != 0;</span>
+    }
+
+    static boolean isSequential(MemoryR metaMem, int columnIndex) {
+<span class="pc bpc" id="L1346" title="1 of 2 branches missed.">        return (getColumnFlags(metaMem, columnIndex) &amp; META_FLAG_BIT_SEQUENTIAL) != 0;</span>
+    }
+
+    static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {
+        try {
+<span class="fc" id="L1351">            path.concat(META_SWAP_FILE_NAME).$();</span>
+<span class="fc" id="L1352">            int l = path.length();</span>
+<span class="fc" id="L1353">            int index = 0;</span>
+            do {
+<span class="fc bfc" id="L1355" title="All 2 branches covered.">                if (index &gt; 0) {</span>
+<span class="fc" id="L1356">                    path.trimTo(l).put('.').put(index);</span>
+<span class="fc" id="L1357">                    path.$();</span>
+                }
+
+<span class="fc bfc" id="L1360" title="All 4 branches covered.">                if (!ff.exists(path) || ff.remove(path)) {</span>
+                    try {
+<span class="fc" id="L1362">                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+<span class="fc" id="L1363">                        mem.jumpTo(0);</span>
+<span class="fc" id="L1364">                        return index;</span>
+<span class="fc" id="L1365">                    } catch (CairoException e) {</span>
+                        // right, cannot open file for some reason?
+<span class="fc" id="L1367">                        LOG.error()</span>
+<span class="fc" id="L1368">                                .$(&quot;could not open swap [file=&quot;).$(path)</span>
+<span class="fc" id="L1369">                                .$(&quot;, errno=&quot;).$(e.getErrno())</span>
+<span class="fc" id="L1370">                                .$(']').$();</span>
+<span class="fc" id="L1371">                    }</span>
+                } else {
+<span class="fc" id="L1373">                    LOG.error()</span>
+<span class="fc" id="L1374">                            .$(&quot;could not remove swap [file=&quot;).$(path)</span>
+<span class="fc" id="L1375">                            .$(&quot;, errno=&quot;).$(ff.errno())</span>
+<span class="fc" id="L1376">                            .$(']').$();</span>
+                }
+<span class="fc bfc" id="L1378" title="All 2 branches covered.">            } while (++index &lt; retryCount);</span>
+<span class="fc" id="L1379">            throw CairoException.critical(0).put(&quot;Cannot open indexed file. Max number of attempts reached [&quot;).put(index).put(&quot;]. Last file tried: &quot;).put(path);</span>
+        } finally {
+<span class="fc" id="L1381">            path.trimTo(rootLen);</span>
+        }
+    }
+
+    static void openMetaSwapFileByIndex(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int swapIndex) {
+        try {
+<span class="fc" id="L1387">            path.concat(META_SWAP_FILE_NAME);</span>
+<span class="pc bpc" id="L1388" title="1 of 2 branches missed.">            if (swapIndex &gt; 0) {</span>
+<span class="nc" id="L1389">                path.put('.').put(swapIndex);</span>
+            }
+<span class="fc" id="L1391">            path.$();</span>
+<span class="fc" id="L1392">            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);</span>
+        } finally {
+<span class="fc" id="L1394">            path.trimTo(rootLen);</span>
+        }
+<span class="fc" id="L1396">    }</span>
+
+    public interface FailureCloseable {
+        void close(long prevSize);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

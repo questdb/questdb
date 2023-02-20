@@ -1,0 +1,548 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FastDoubleByteArray.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std.fastdouble</a> &gt; <span class="el_source">FastDoubleByteArray.java</span></div><h1>FastDoubleByteArray.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std.fastdouble;
+
+import io.questdb.std.NumericException;
+
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Parses a {@code FloatingPointLiteral} from a {@code byte} array.
+ * &lt;p&gt;
+ * See {@link io.questdb.std.fastdouble} for the grammar of
+ * {@code FloatingPointLiteral}.
+ */
+<span class="nc" id="L37">final class FastDoubleByteArray {</span>
+
+    private static double fallbackToJavaParaser(byte[] str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
+        double d;
+<span class="fc" id="L41">        d = Double.parseDouble(new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1));</span>
+<span class="pc bpc" id="L42" title="1 of 8 branches missed.">        if (rejectOverflow &amp;&amp;</span>
+                (
+                        d == Double.POSITIVE_INFINITY
+                                || d == Double.NEGATIVE_INFINITY
+                                || d == 0.0
+                )
+        ) {
+<span class="fc" id="L49">            throw NumericException.INSTANCE;</span>
+        }
+<span class="fc" id="L51">        return d;</span>
+    }
+
+    private static boolean isDigit(byte c) {
+<span class="fc bfc" id="L55" title="All 4 branches covered.">        return '0' &lt;= c &amp;&amp; c &lt;= '9';</span>
+    }
+
+    /**
+     * Parses a {@code DecimalFloatingPointLiteral} production with optional
+     * trailing white space until the end of the text.
+     * Given that we have already consumed the optional leading zero of
+     * the {@code DecSignificand}.
+     * &lt;blockquote&gt;
+     * &lt;dl&gt;
+     * &lt;dt&gt;&lt;i&gt;DecimalFloatingPointLiteralWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+     * &lt;dd&gt;&lt;i&gt;DecimalFloatingPointLiteral [WhiteSpace] EOT&lt;/i&gt;&lt;/dd&gt;
+     * &lt;/dl&gt;
+     * &lt;/blockquote&gt;
+     * See {@link io.questdb.std.fastdouble} for the grammar of
+     * {@code DecimalFloatingPointLiteral} and {@code DecSignificand}.
+     *
+     * @param str            a string
+     * @param index          start index inclusive of the {@code DecimalFloatingPointLiteralWithWhiteSpace}
+     * @param endIndex       end index (exclusive)
+     * @param isNegative     true if the float value is negative
+     * @param hasLeadingZero true if we have consumed the optional leading zero
+     * @param rejectOverflow reject parsed values that overflow double type
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException if the input is illegal.
+     */
+    private static double parseDecFloatLiteral(
+            byte[] str,
+            int index,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            boolean hasLeadingZero,
+            boolean rejectOverflow
+    ) throws NumericException {
+        // Parse significand
+        // -----------------
+        // Note: a multiplication by a constant is cheaper than an
+        //       arbitrary integer multiplication.
+<span class="fc" id="L94">        long significand = 0;// significand is treated as an unsigned long</span>
+<span class="fc" id="L95">        final int significandStartIndex = index;</span>
+<span class="fc" id="L96">        int virtualIndexOfPoint = -1;</span>
+<span class="fc" id="L97">        boolean illegal = false;</span>
+<span class="fc" id="L98">        byte ch = 0;</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        for (; index &lt; endIndex; index++) {</span>
+<span class="fc" id="L100">            ch = str[index];</span>
+<span class="fc bfc" id="L101" title="All 2 branches covered.">            if (isDigit(ch)) {</span>
+                // This might overflow, we deal with it later.
+<span class="fc" id="L103">                significand = 10 * significand + ch - '0';</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">            } else if (ch == '.') {</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">                illegal |= virtualIndexOfPoint &gt;= 0;</span>
+<span class="fc" id="L106">                virtualIndexOfPoint = index;</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">                for (; index &lt; endIndex - 8; index += 8) {</span>
+<span class="fc" id="L108">                    int eightDigits = tryToParseEightDigits(str, index + 1);</span>
+<span class="fc bfc" id="L109" title="All 2 branches covered.">                    if (eightDigits &lt; 0) {</span>
+<span class="fc" id="L110">                        break;</span>
+                    }
+                    // This might overflow, we deal with it later.
+<span class="fc" id="L113">                    significand = 100_000_000L * significand + eightDigits;</span>
+                }
+            } else {
+                break;
+            }
+        }
+        final int digitCount;
+<span class="fc" id="L120">        final int significandEndIndex = index;</span>
+        int exponent;
+<span class="fc bfc" id="L122" title="All 2 branches covered.">        if (virtualIndexOfPoint &lt; 0) {</span>
+<span class="fc" id="L123">            digitCount = index - significandStartIndex;</span>
+<span class="fc" id="L124">            virtualIndexOfPoint = index;</span>
+<span class="fc" id="L125">            exponent = 0;</span>
+        } else {
+<span class="fc" id="L127">            digitCount = index - significandStartIndex - 1;</span>
+<span class="fc" id="L128">            exponent = virtualIndexOfPoint - index + 1;</span>
+        }
+
+        // Parse exponent number
+        // ---------------------
+<span class="fc" id="L133">        int expNumber = 0;</span>
+<span class="fc bfc" id="L134" title="All 4 branches covered.">        if (ch == 'e' || ch == 'E') {</span>
+<span class="fc bfc" id="L135" title="All 2 branches covered.">            ch = ++index &lt; endIndex ? str[index] : 0;</span>
+<span class="fc bfc" id="L136" title="All 2 branches covered.">            boolean neg_exp = ch == '-';</span>
+<span class="fc bfc" id="L137" title="All 4 branches covered.">            if (neg_exp || ch == '+') {</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">                ch = ++index &lt; endIndex ? str[index] : 0;</span>
+            }
+<span class="fc bfc" id="L140" title="All 2 branches covered.">            illegal |= !isDigit(ch);</span>
+            do {
+                // Guard against overflow
+<span class="fc bfc" id="L143" title="All 2 branches covered.">                if (expNumber &lt; FastDoubleUtils.MAX_EXPONENT_NUMBER) {</span>
+<span class="fc" id="L144">                    expNumber = 10 * expNumber + ch - '0';</span>
+                }
+<span class="fc bfc" id="L146" title="All 2 branches covered.">                ch = ++index &lt; endIndex ? str[index] : 0;</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">            } while (isDigit(ch));</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">            if (neg_exp) {</span>
+<span class="fc" id="L149">                expNumber = -expNumber;</span>
+            }
+<span class="fc" id="L151">            exponent += expNumber;</span>
+        }
+
+        // Skip optional FloatTypeSuffix
+        // ------------------------
+<span class="fc bfc" id="L156" title="All 10 branches covered.">        if (index &lt; endIndex &amp;&amp; (ch == 'd' || ch == 'D' || ch == 'f' || ch == 'F')) {</span>
+<span class="fc" id="L157">            index++;</span>
+        }
+
+        // Skip trailing whitespace and check if FloatingPointLiteral is complete
+        // ------------------------
+<span class="fc" id="L162">        index = skipWhitespace(str, index, endIndex);</span>
+<span class="fc bfc" id="L163" title="All 8 branches covered.">        if (illegal</span>
+                || index &lt; endIndex
+                || !hasLeadingZero
+                &amp;&amp; digitCount == 0
+        ) {
+<span class="fc" id="L168">            throw NumericException.INSTANCE;</span>
+        }
+
+        // Re-parse significand in case of a potential overflow
+        // -----------------------------------------------
+        final boolean isSignificandTruncated;
+<span class="fc" id="L174">        int skipCountInTruncatedDigits = 0;//counts +1 if we skipped over the decimal point</span>
+        int exponentOfTruncatedSignificand;
+<span class="fc bfc" id="L176" title="All 2 branches covered.">        if (digitCount &gt; 19) {</span>
+<span class="fc" id="L177">            significand = 0;</span>
+<span class="fc bfc" id="L178" title="All 2 branches covered.">            for (index = significandStartIndex; index &lt; significandEndIndex; index++) {</span>
+<span class="fc" id="L179">                ch = str[index];</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">                if (ch == '.') {</span>
+<span class="fc" id="L181">                    skipCountInTruncatedDigits++;</span>
+                } else {
+<span class="fc bfc" id="L183" title="All 2 branches covered.">                    if (Long.compareUnsigned(significand, FastDoubleUtils.MINIMAL_NINETEEN_DIGIT_INTEGER) &lt; 0) {</span>
+<span class="fc" id="L184">                        significand = 10 * significand + ch - '0';</span>
+                    } else {
+                        break;
+                    }
+                }
+            }
+<span class="fc bfc" id="L190" title="All 2 branches covered.">            isSignificandTruncated = (index &lt; significandEndIndex);</span>
+<span class="fc" id="L191">            exponentOfTruncatedSignificand = virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber;</span>
+        } else {
+<span class="fc" id="L193">            isSignificandTruncated = false;</span>
+<span class="fc" id="L194">            exponentOfTruncatedSignificand = 0;</span>
+        }
+<span class="fc" id="L196">        return valueOfFloatLiteral(</span>
+                str,
+                startIndex,
+                endIndex,
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                exponentOfTruncatedSignificand,
+                rejectOverflow
+        );
+    }
+
+    /**
+     * Parses the following rules
+     * (more rules are defined in {@link FastDoubleUtils}):
+     * &lt;dl&gt;
+     * &lt;dt&gt;&lt;i&gt;RestOfHexFloatingPointLiteral&lt;/i&gt;:
+     * &lt;dd&gt;&lt;i&gt;RestOfHexSignificand BinaryExponent&lt;/i&gt;
+     * &lt;/dl&gt;
+     *
+     * &lt;dl&gt;
+     * &lt;dt&gt;&lt;i&gt;RestOfHexSignificand:&lt;/i&gt;
+     * &lt;dd&gt;&lt;i&gt;HexDigits&lt;/i&gt;
+     * &lt;dd&gt;&lt;i&gt;HexDigits&lt;/i&gt; {@code .}
+     * &lt;dd&gt;&lt;i&gt;[HexDigits]&lt;/i&gt; {@code .} &lt;i&gt;HexDigits&lt;/i&gt;
+     * &lt;/dl&gt;
+     *
+     * @param str            the input string
+     * @param index          index to the first character of RestOfHexFloatingPointLiteral
+     * @param startIndex     the start index of the string
+     * @param endIndex       the end index of the string
+     * @param isNegative     if the resulting number is negative
+     * @param rejectOverflow reject parsed values that overflow double type
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException if the input is illegal.
+     */
+    private static double parseHexFloatingPointLiteral(
+            byte[] str,
+            int index,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            boolean rejectOverflow
+    ) throws NumericException {
+
+        // Parse HexSignificand
+        // ------------
+<span class="fc" id="L244">        long significand = 0;// significand is treated as an unsigned long</span>
+<span class="fc" id="L245">        int exponent = 0;</span>
+<span class="fc" id="L246">        final int significandStartIndex = index;</span>
+<span class="fc" id="L247">        int virtualIndexOfPoint = -1;</span>
+        final int digitCount;
+<span class="fc" id="L249">        boolean illegal = false;</span>
+<span class="fc" id="L250">        byte ch = 0;</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">        for (; index &lt; endIndex; index++) {</span>
+<span class="fc" id="L252">            ch = str[index];</span>
+            // Table look up is faster than a sequence of if-else-branches.
+<span class="fc bfc" id="L254" title="All 2 branches covered.">            int hexValue = ch &lt; 0 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">            if (hexValue &gt;= 0) {</span>
+<span class="fc" id="L256">                significand = (significand &lt;&lt; 4) | hexValue;// This might overflow, we deal with it later.</span>
+<span class="fc bfc" id="L257" title="All 2 branches covered.">            } else if (hexValue == FastDoubleUtils.DECIMAL_POINT_CLASS) {</span>
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">                illegal |= virtualIndexOfPoint &gt;= 0;</span>
+<span class="fc" id="L259">                virtualIndexOfPoint = index;</span>
+            } else {
+                break;
+            }
+        }
+<span class="fc" id="L264">        final int significandEndIndex = index;</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (virtualIndexOfPoint &lt; 0) {</span>
+<span class="fc" id="L266">            digitCount = significandEndIndex - significandStartIndex;</span>
+<span class="fc" id="L267">            virtualIndexOfPoint = significandEndIndex;</span>
+        } else {
+<span class="fc" id="L269">            digitCount = significandEndIndex - significandStartIndex - 1;</span>
+<span class="fc" id="L270">            exponent = Math.min(virtualIndexOfPoint - index + 1, FastDoubleUtils.MAX_EXPONENT_NUMBER) * 4;</span>
+        }
+
+        // Parse exponent
+        // --------------
+<span class="fc" id="L275">        int expNumber = 0;</span>
+<span class="fc bfc" id="L276" title="All 4 branches covered.">        final boolean hasExponent = (ch == 'p') || (ch == 'P');</span>
+<span class="fc bfc" id="L277" title="All 2 branches covered.">        if (hasExponent) {</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">            ch = ++index &lt; endIndex ? str[index] : 0;</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">            boolean neg_exp = ch == '-';</span>
+<span class="fc bfc" id="L280" title="All 4 branches covered.">            if (neg_exp || ch == '+') {</span>
+<span class="fc bfc" id="L281" title="All 2 branches covered.">                ch = ++index &lt; endIndex ? str[index] : 0;</span>
+            }
+<span class="fc bfc" id="L283" title="All 2 branches covered.">            illegal |= !isDigit(ch);</span>
+            do {
+<span class="fc" id="L285">                expNumber = 10 * expNumber + ch - '0';</span>
+<span class="fc bfc" id="L286" title="All 2 branches covered.">                ch = ++index &lt; endIndex ? str[index] : 0;</span>
+<span class="fc bfc" id="L287" title="All 2 branches covered.">            } while (isDigit(ch));</span>
+<span class="fc bfc" id="L288" title="All 2 branches covered.">            if (neg_exp) {</span>
+<span class="fc" id="L289">                expNumber = -expNumber;</span>
+            }
+<span class="fc" id="L291">            exponent += expNumber;</span>
+        }
+
+        // Skip optional FloatTypeSuffix
+        // ------------------------
+<span class="fc bfc" id="L296" title="All 10 branches covered.">        if (index &lt; endIndex &amp;&amp; (ch == 'd' || ch == 'D' || ch == 'f' || ch == 'F')) {</span>
+<span class="fc" id="L297">            index++;</span>
+        }
+
+        // Skip trailing whitespace and check if FloatingPointLiteral is complete
+        // ------------------------
+<span class="fc" id="L302">        index = skipWhitespace(str, index, endIndex);</span>
+<span class="fc bfc" id="L303" title="All 8 branches covered.">        if (illegal || index &lt; endIndex</span>
+                || digitCount == 0
+                || !hasExponent) {
+<span class="fc" id="L306">            throw NumericException.INSTANCE;</span>
+        }
+
+        // Re-parse significand in case of a potential overflow
+        // -----------------------------------------------
+        final boolean isSignificandTruncated;
+<span class="fc" id="L312">        int skipCountInTruncatedDigits = 0;//counts +1 if we skipped over the decimal point</span>
+<span class="fc bfc" id="L313" title="All 2 branches covered.">        if (digitCount &gt; 16) {</span>
+<span class="fc" id="L314">            significand = 0;</span>
+<span class="pc bpc" id="L315" title="1 of 2 branches missed.">            for (index = significandStartIndex; index &lt; significandEndIndex; index++) {</span>
+<span class="fc" id="L316">                ch = str[index];</span>
+                // Table look up is faster than a sequence of if-else-branches.
+<span class="pc bpc" id="L318" title="1 of 2 branches missed.">                int hexValue = ch &lt; 0 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];</span>
+<span class="fc bfc" id="L319" title="All 2 branches covered.">                if (hexValue &gt;= 0) {</span>
+<span class="fc bfc" id="L320" title="All 2 branches covered.">                    if (Long.compareUnsigned(significand, FastDoubleUtils.MINIMAL_NINETEEN_DIGIT_INTEGER) &lt; 0) {</span>
+<span class="fc" id="L321">                        significand = (significand &lt;&lt; 4) | hexValue;</span>
+                    } else {
+                        break;
+                    }
+                } else {
+<span class="fc" id="L326">                    skipCountInTruncatedDigits++;</span>
+                }
+            }
+<span class="pc bpc" id="L329" title="1 of 2 branches missed.">            isSignificandTruncated = (index &lt; significandEndIndex);</span>
+        } else {
+<span class="fc" id="L331">            isSignificandTruncated = false;</span>
+        }
+
+<span class="fc" id="L334">        return valueOfHexLiteral(</span>
+                str,
+                startIndex,
+                endIndex,
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber,
+                rejectOverflow
+        );
+    }
+
+    /**
+     * Parses a {@code Infinity} production with optional trailing white space
+     * until the end of the text.
+     * &lt;blockquote&gt;
+     * &lt;dl&gt;
+     * &lt;dt&gt;&lt;i&gt;InfinityWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+     * &lt;dd&gt;{@code Infinity} &lt;i&gt;[WhiteSpace] EOT&lt;/i&gt;&lt;/dd&gt;
+     * &lt;/dl&gt;
+     * &lt;/blockquote&gt;
+     *
+     * @param str      a string
+     * @param index    index of the &quot;I&quot; character
+     * @param endIndex end index (exclusive)
+     * @return a positive or negative infinity value
+     * @throws NumberFormatException on parsing failure
+     */
+    private static double parseInfinity(byte[] str, int index, int endIndex, boolean negative) throws NumericException {
+<span class="pc bpc" id="L364" title="6 of 18 branches missed.">        if (index + 7 &lt; endIndex</span>
+                &amp;&amp; str[index] == 'I'
+                &amp;&amp; str[index + 1] == 'n'
+                &amp;&amp; str[index + 2] == 'f'
+                &amp;&amp; str[index + 3] == 'i'
+                &amp;&amp; str[index + 4] == 'n'
+                &amp;&amp; str[index + 5] == 'i'
+                &amp;&amp; str[index + 6] == 't'
+                &amp;&amp; str[index + 7] == 'y'
+        ) {
+<span class="fc" id="L374">            index = skipWhitespace(str, index + 8, endIndex);</span>
+<span class="fc bfc" id="L375" title="All 2 branches covered.">            if (index == endIndex) {</span>
+<span class="fc bfc" id="L376" title="All 2 branches covered.">                return negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;</span>
+            }
+        }
+<span class="fc" id="L379">        throw NumericException.INSTANCE;</span>
+    }
+
+    /**
+     * Parses a {@code Nan} production with optional trailing white space
+     * until the end of the text.
+     * Given that the String contains a 'N' character at the current
+     * {@code index}.
+     * &lt;blockquote&gt;
+     * &lt;dl&gt;
+     * &lt;dt&gt;&lt;i&gt;NanWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+     * &lt;dd&gt;{@code NaN} &lt;i&gt;[WhiteSpace] EOT&lt;/i&gt;&lt;/dd&gt;
+     * &lt;/dl&gt;
+     * &lt;/blockquote&gt;
+     *
+     * @param str      a string that contains a &quot;N&quot; character at {@code index}
+     * @param index    index of the &quot;N&quot; character
+     * @param endIndex end index (exclusive)
+     * @return a NaN value
+     * @throws NumberFormatException on parsing failure
+     */
+    private static double parseNaN(byte[] str, int index, int endIndex) throws NumericException {
+<span class="fc bfc" id="L401" title="All 6 branches covered.">        if (index + 2 &lt; endIndex</span>
+                // &amp;&amp; str[index] == 'N'
+                &amp;&amp; str[index + 1] == 'a'
+                &amp;&amp; str[index + 2] == 'N') {
+
+<span class="fc" id="L406">            index = skipWhitespace(str, index + 3, endIndex);</span>
+<span class="fc bfc" id="L407" title="All 2 branches covered.">            if (index == endIndex) {</span>
+<span class="fc" id="L408">                return Double.NaN;</span>
+            }
+        }
+<span class="fc" id="L411">        throw NumericException.INSTANCE;</span>
+    }
+
+    /**
+     * Skips optional white space in the provided string
+     *
+     * @param str      a string
+     * @param index    start index (inclusive) of the optional white space
+     * @param endIndex end index (exclusive) of the optional white space
+     * @return index after the optional white space
+     */
+    private static int skipWhitespace(byte[] str, int index, int endIndex) {
+<span class="fc bfc" id="L423" title="All 2 branches covered.">        for (; index &lt; endIndex; index++) {</span>
+<span class="fc bfc" id="L424" title="All 2 branches covered.">            if ((str[index] &amp; 0xff) &gt; ' ') {</span>
+<span class="fc" id="L425">                break;</span>
+            }
+        }
+<span class="fc" id="L428">        return index;</span>
+    }
+
+    private static int tryToParseEightDigits(byte[] str, int offset) {
+<span class="fc" id="L432">        return FastDoubleSwar.tryToParseEightDigitsUtf8(str, offset);</span>
+    }
+
+    /**
+     * Parses a {@code FloatingPointLiteral} production with optional leading and trailing
+     * white space.
+     * &lt;blockquote&gt;
+     * &lt;dl&gt;
+     * &lt;dt&gt;&lt;i&gt;FloatingPointLiteralWithWhiteSpace:&lt;/i&gt;&lt;/dt&gt;
+     * &lt;dd&gt;&lt;i&gt;[WhiteSpace] FloatingPointLiteral [WhiteSpace]&lt;/i&gt;&lt;/dd&gt;
+     * &lt;/dl&gt;
+     * &lt;/blockquote&gt;
+     * See {@link io.questdb.std.fastdouble} for the grammar of
+     * {@code FloatingPointLiteral}.
+     *
+     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
+     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param rejectOverflow reject parsed values that overflow double type
+     * @return the parsed value, if the input is legal;
+     * @throws NumericException is the input is illegal.
+     */
+    static double parseFloatingPointLiteral(byte[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
+<span class="fc" id="L455">        final int endIndex = offset + length;</span>
+<span class="fc bfc" id="L456" title="All 4 branches covered.">        if (offset &lt; 0 || endIndex &gt; str.length) {</span>
+<span class="fc" id="L457">            throw NumericException.INSTANCE;</span>
+        }
+
+        // Skip leading whitespace
+        // -------------------
+<span class="fc" id="L462">        int index = skipWhitespace(str, offset, endIndex);</span>
+<span class="fc bfc" id="L463" title="All 2 branches covered.">        if (index == endIndex) {</span>
+<span class="fc" id="L464">            throw NumericException.INSTANCE;</span>
+        }
+<span class="fc" id="L466">        byte ch = str[index];</span>
+
+        // Parse optional sign
+        // -------------------
+<span class="fc bfc" id="L470" title="All 2 branches covered.">        final boolean isNegative = ch == '-';</span>
+<span class="fc bfc" id="L471" title="All 4 branches covered.">        if (isNegative || ch == '+') {</span>
+<span class="fc bfc" id="L472" title="All 2 branches covered.">            ch = ++index &lt; endIndex ? str[index] : 0;</span>
+<span class="fc bfc" id="L473" title="All 2 branches covered.">            if (ch == 0) {</span>
+<span class="fc" id="L474">                throw NumericException.INSTANCE;</span>
+            }
+        }
+
+        // Parse NaN or Infinity
+        // ---------------------
+<span class="fc bfc" id="L480" title="All 2 branches covered.">        if (ch &gt;= 'I') {</span>
+<span class="fc bfc" id="L481" title="All 2 branches covered.">            return ch == 'N'</span>
+<span class="fc" id="L482">                    ? parseNaN(str, index, endIndex)</span>
+<span class="fc" id="L483">                    : parseInfinity(str, index, endIndex, isNegative);</span>
+        }
+
+        // Parse optional leading zero
+        // ---------------------------
+<span class="fc bfc" id="L488" title="All 2 branches covered.">        final boolean hasLeadingZero = ch == '0';</span>
+<span class="fc bfc" id="L489" title="All 2 branches covered.">        if (hasLeadingZero) {</span>
+<span class="fc bfc" id="L490" title="All 2 branches covered.">            ch = ++index &lt; endIndex ? str[index] : 0;</span>
+<span class="fc bfc" id="L491" title="All 4 branches covered.">            if (ch == 'x' || ch == 'X') {</span>
+<span class="fc" id="L492">                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);</span>
+            }
+        }
+
+<span class="fc" id="L496">        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);</span>
+    }
+
+    static double valueOfFloatLiteral(
+            byte[] str,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            long significand,
+            int exponent,
+            boolean isSignificandTruncated,
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
+<span class="fc" id="L510">        double d = FastDoubleMath.tryDecFloatToDoubleTruncated(</span>
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                exponentOfTruncatedSignificand
+        );
+
+<span class="fc bfc" id="L518" title="All 2 branches covered.">        if (Double.isNaN(d)) {</span>
+<span class="fc" id="L519">            d = fallbackToJavaParaser(str, startIndex, endIndex, rejectOverflow);</span>
+        }
+<span class="fc" id="L521">        return d;</span>
+    }
+
+    static double valueOfHexLiteral(
+            byte[] str,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            long significand,
+            int exponent,
+            boolean isSignificandTruncated,
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
+<span class="fc" id="L535">        double d = FastDoubleMath.tryHexFloatToDoubleTruncated(</span>
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                exponentOfTruncatedSignificand
+        );
+<span class="fc bfc" id="L542" title="All 2 branches covered.">        if (Double.isNaN(d)) {</span>
+<span class="fc" id="L543">            d = fallbackToJavaParaser(str, startIndex, endIndex, rejectOverflow);</span>
+        }
+<span class="fc" id="L545">        return d;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

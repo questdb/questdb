@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultPGWireConfiguration.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.pgwire</a> &gt; <span class="el_source">DefaultPGWireConfiguration.java</span></div><h1>DefaultPGWireConfiguration.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.pgwire;
+
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+
+<span class="fc" id="L36">public class DefaultPGWireConfiguration implements PGWireConfiguration {</span>
+
+<span class="fc" id="L38">    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();</span>
+<span class="fc" id="L39">    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {</span>
+        @Override
+        public int getBindPort() {
+<span class="nc" id="L42">            return 8812;</span>
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+<span class="nc" id="L47">            return &quot;pg-server&quot;;</span>
+        }
+    };
+
+    @Override
+    public int getBinParamCountCapacity() {
+<span class="fc" id="L53">        return 4;</span>
+    }
+
+    @Override
+    public int getCharacterStoreCapacity() {
+<span class="fc" id="L58">        return 4096;</span>
+    }
+
+    @Override
+    public int getCharacterStorePoolCapacity() {
+<span class="fc" id="L63">        return 64;</span>
+    }
+
+    @Override
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+<span class="fc" id="L68">        return circuitBreakerConfiguration;</span>
+    }
+
+    @Override
+    public int getConnectionPoolInitialCapacity() {
+<span class="fc" id="L73">        return 4;</span>
+    }
+
+    @Override
+    public DateLocale getDefaultDateLocale() {
+<span class="nc" id="L78">        return DateFormatUtils.enLocale;</span>
+    }
+
+    @Override
+    public String getDefaultPassword() {
+<span class="fc" id="L83">        return &quot;quest&quot;;</span>
+    }
+
+    @Override
+    public String getDefaultUsername() {
+<span class="fc" id="L88">        return &quot;admin&quot;;</span>
+    }
+
+    @Override
+    public IODispatcherConfiguration getDispatcherConfiguration() {
+<span class="nc" id="L93">        return ioDispatcherConfiguration;</span>
+    }
+
+    @Override
+    public int getInsertCacheBlockCount() {
+<span class="fc" id="L98">        return 4;</span>
+    }
+
+    @Override
+    public int getInsertCacheRowCount() {
+<span class="fc" id="L103">        return 4;</span>
+    }
+
+    @Override
+    public int getInsertPoolCapacity() {
+<span class="fc" id="L108">        return 16;</span>
+    }
+
+    @Override
+    public int getMaxBlobSizeOnQuery() {
+        // BLOBs must fit inside send buffer together with other column values
+<span class="fc" id="L114">        return 512 * 1024;</span>
+    }
+
+    @Override
+    public int getNamedStatementCacheCapacity() {
+<span class="fc" id="L119">        return 32;</span>
+    }
+
+    @Override
+    public int getNamesStatementPoolCapacity() {
+<span class="fc" id="L124">        return 32;</span>
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+<span class="fc" id="L129">        return NetworkFacadeImpl.INSTANCE;</span>
+    }
+
+    @Override
+    public int getPendingWritersCacheSize() {
+<span class="fc" id="L134">        return 16;</span>
+    }
+
+    @Override
+    public String getPoolName() {
+<span class="fc" id="L139">        return &quot;pgwire&quot;;</span>
+    }
+
+    @Override
+    public String getReadOnlyPassword() {
+<span class="fc" id="L144">        return &quot;quest&quot;;</span>
+    }
+
+    @Override
+    public String getReadOnlyUsername() {
+<span class="fc" id="L149">        return &quot;user&quot;;</span>
+    }
+
+    @Override
+    public int getRecvBufferSize() {
+<span class="fc" id="L154">        return 1024 * 1024;</span>
+    }
+
+    @Override
+    public int getSelectCacheBlockCount() {
+<span class="fc" id="L159">        return 8;</span>
+    }
+
+    @Override
+    public int getSelectCacheRowCount() {
+<span class="fc" id="L164">        return 8;</span>
+    }
+
+    @Override
+    public int getSendBufferSize() {
+<span class="fc" id="L169">        return 1024 * 1024;</span>
+    }
+
+    @Override
+    public String getServerVersion() {
+<span class="fc" id="L174">        return &quot;11.3&quot;;</span>
+    }
+
+    @Override
+    public int getUpdateCacheBlockCount() {
+<span class="fc" id="L179">        return 4;</span>
+    }
+
+    @Override
+    public int getUpdateCacheRowCount() {
+<span class="fc" id="L184">        return 4;</span>
+    }
+
+    @Override
+    public int getWorkerCount() {
+<span class="fc" id="L189">        return 1;</span>
+    }
+
+    @Override
+    public boolean isInsertCacheEnabled() {
+<span class="fc" id="L194">        return true;</span>
+    }
+
+    @Override
+    public boolean isReadOnlyUserEnabled() {
+<span class="fc" id="L199">        return false;</span>
+    }
+
+    @Override
+    public boolean isSelectCacheEnabled() {
+<span class="fc" id="L204">        return true;</span>
+    }
+
+    @Override
+    public boolean isUpdateCacheEnabled() {
+<span class="fc" id="L209">        return true;</span>
+    }
+
+    @Override
+    public boolean readOnlySecurityContext() {
+<span class="fc" id="L214">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

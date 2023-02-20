@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SymbolMapWriter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">SymbolMapWriter.java</span></div><h1>SymbolMapWriter.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+
+import static io.questdb.cairo.TableUtils.charFileName;
+import static io.questdb.cairo.TableUtils.offsetFileName;
+
+public class SymbolMapWriter implements Closeable, MapWriter {
+    public static final int HEADER_CACHE_ENABLED = 4;
+    public static final int HEADER_CAPACITY = 0;
+    public static final int HEADER_NULL_FLAG = 8;
+    public static final int HEADER_SIZE = 64;
+<span class="fc" id="L48">    private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);</span>
+    private final CharSequenceIntHashMap cache;
+    private final MemoryMARW charMem;
+    private final BitmapIndexWriter indexWriter;
+    private final int maxHash;
+    private final MemoryMARW offsetMem;
+    private final SymbolValueCountCollector valueCountCollector;
+<span class="fc" id="L55">    private boolean nullValue = false;</span>
+    private int symbolIndexInTxWriter;
+
+    public SymbolMapWriter(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            int symbolCount,
+            int symbolIndexInTxWriter,
+            @NotNull SymbolValueCountCollector valueCountCollector
+<span class="fc" id="L66">    ) {</span>
+<span class="fc" id="L67">        final int plen = path.length();</span>
+        try {
+<span class="fc" id="L69">            final FilesFacade ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L70">            final long mapPageSize = configuration.getMiscAppendPageSize();</span>
+
+            // this constructor does not create index. Index must exist,
+            // and we use &quot;offset&quot; file to store &quot;header&quot;
+<span class="fc" id="L74">            offsetFileName(path.trimTo(plen), name, columnNameTxn);</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">            if (!ff.exists(path)) {</span>
+<span class="fc" id="L76">                LOG.error().$(path).$(&quot; is not found&quot;).$();</span>
+<span class="fc" id="L77">                throw CairoException.critical(0).put(&quot;SymbolMap does not exist: &quot;).put(path);</span>
+            }
+
+            // is there enough length in &quot;offset&quot; file for &quot;header&quot;?
+<span class="fc" id="L81">            long len = ff.length(path);</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">            if (len &lt; HEADER_SIZE) {</span>
+<span class="fc" id="L83">                LOG.error().$(path).$(&quot; is too short [len=&quot;).$(len).$(']').$();</span>
+<span class="fc" id="L84">                throw CairoException.critical(0).put(&quot;SymbolMap is too short: &quot;).put(path);</span>
+            }
+
+            // open &quot;offset&quot; memory and make sure we start appending from where
+            // we left off. Where we left off is stored externally to symbol map
+<span class="fc" id="L89">            this.offsetMem = Vm.getWholeMARWInstance(</span>
+                    ff,
+                    path,
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+<span class="fc" id="L94">                    configuration.getWriterFileOpenOpts()</span>
+            );
+            // formula for calculating symbol capacity needs to be in agreement with symbol reader
+<span class="fc" id="L97">            final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">            assert symbolCapacity &gt; 0;</span>
+<span class="fc" id="L99">            final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);</span>
+<span class="fc" id="L100">            this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);</span>
+
+            // index writer is used to identify attempts to store duplicate symbol value
+            // symbol table index stores int keys and long values, e.g. value = key * 2 storage size
+<span class="fc" id="L104">            this.indexWriter = new BitmapIndexWriter(</span>
+                    configuration,
+<span class="fc" id="L106">                    path.trimTo(plen),</span>
+                    name,
+                    columnNameTxn,
+<span class="fc" id="L109">                    configuration.getDataIndexKeyAppendPageSize(),</span>
+<span class="fc" id="L110">                    configuration.getDataIndexKeyAppendPageSize() * 2</span>
+            );
+
+            // this is the place where symbol values are stored
+<span class="fc" id="L114">            this.charMem = Vm.getWholeMARWInstance(</span>
+                    ff,
+<span class="fc" id="L116">                    charFileName(path.trimTo(plen), name, columnNameTxn),</span>
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+<span class="fc" id="L119">                    configuration.getWriterFileOpenOpts()</span>
+            );
+
+            // move append pointer for symbol values in the correct place
+<span class="fc" id="L123">            jumpCharMemToSymbolCount(symbolCount);</span>
+
+            // we use index hash maximum equals to half of symbol capacity, which
+            // theoretically should require 2 value cells in index per hash
+            // we use 4 cells to compensate for occasionally unlucky hash distribution
+<span class="fc" id="L128">            this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);</span>
+
+<span class="fc bfc" id="L130" title="All 2 branches covered.">            if (useCache) {</span>
+<span class="fc" id="L131">                this.cache = new CharSequenceIntHashMap(symbolCapacity, 0.3, CharSequenceIntHashMap.NO_ENTRY_VALUE);</span>
+            } else {
+<span class="fc" id="L133">                this.cache = null;</span>
+            }
+
+<span class="fc" id="L136">            this.symbolIndexInTxWriter = symbolIndexInTxWriter;</span>
+<span class="fc" id="L137">            this.valueCountCollector = valueCountCollector;</span>
+<span class="fc" id="L138">            LOG.debug()</span>
+<span class="fc" id="L139">                    .$(&quot;open [name=&quot;).$(path.trimTo(plen).concat(name).$())</span>
+<span class="fc" id="L140">                    .$(&quot;, fd=&quot;).$(this.offsetMem.getFd())</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">                    .$(&quot;, cache=&quot;).$(cache != null)</span>
+<span class="fc" id="L142">                    .$(&quot;, capacity=&quot;).$(symbolCapacity)</span>
+<span class="fc" id="L143">                    .I$();</span>
+<span class="fc" id="L144">        } catch (Throwable e) {</span>
+<span class="fc" id="L145">            close();</span>
+<span class="fc" id="L146">            throw e;</span>
+        } finally {
+<span class="fc" id="L148">            path.trimTo(plen);</span>
+        }
+<span class="fc" id="L150">    }</span>
+
+    public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
+<span class="fc" id="L153">        boolean remapped = false;</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId &lt; symbolCount; srcId++) {</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">            if (dst.put(src.valueOf(srcId)) != srcId) {</span>
+<span class="fc" id="L156">                remapped = true;</span>
+            }
+        }
+<span class="pc bpc" id="L159" title="2 of 4 branches missed.">        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());</span>
+<span class="fc" id="L160">        return remapped;</span>
+    }
+
+    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
+<span class="fc" id="L164">        map.jumpTo(0);</span>
+<span class="fc bfc" id="L165" title="All 2 branches covered.">        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId &lt; symbolCount; srcId++) {</span>
+<span class="fc" id="L166">            map.putInt(dst.put(src.valueOf(srcId)));</span>
+        }
+<span class="pc bpc" id="L168" title="2 of 4 branches missed.">        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());</span>
+<span class="fc" id="L169">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L173">        Misc.free(indexWriter);</span>
+<span class="fc" id="L174">        Misc.free(charMem);</span>
+<span class="fc bfc" id="L175" title="All 2 branches covered.">        if (this.offsetMem != null) {</span>
+<span class="fc" id="L176">            int fd = this.offsetMem.getFd();</span>
+<span class="fc" id="L177">            Misc.free(offsetMem);</span>
+<span class="fc" id="L178">            LOG.debug().$(&quot;closed [fd=&quot;).$(fd).$(']').$();</span>
+        }
+<span class="fc" id="L180">        nullValue = false;</span>
+<span class="fc" id="L181">    }</span>
+
+    @Override
+    public boolean getNullFlag() {
+<span class="fc" id="L185">        return offsetMem.getBool(HEADER_NULL_FLAG);</span>
+    }
+
+    public int getSymbolCount() {
+<span class="fc" id="L189">        return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);</span>
+    }
+
+    public boolean isCached() {
+<span class="fc bfc" id="L193" title="All 2 branches covered.">        return cache != null;</span>
+    }
+
+    @Override
+    public int put(char c) {
+<span class="fc" id="L198">        return put(SingleCharCharSequence.get(c));</span>
+    }
+
+    @Override
+    public int put(CharSequence symbol) {
+<span class="fc" id="L203">        return put(symbol, valueCountCollector);</span>
+    }
+
+    @Override
+    public int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector) {
+<span class="fc bfc" id="L208" title="All 2 branches covered.">        if (symbol == null) {</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">            if (!nullValue) {</span>
+<span class="fc" id="L210">                updateNullFlag(true);</span>
+            }
+<span class="fc" id="L212">            return SymbolTable.VALUE_IS_NULL;</span>
+        }
+
+<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (cache != null) {</span>
+<span class="fc" id="L216">            int index = cache.keyIndex(symbol);</span>
+<span class="fc bfc" id="L217" title="All 2 branches covered.">            return index &lt; 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol, valueCountCollector);</span>
+        }
+<span class="fc" id="L219">        return lookupAndPut(symbol, valueCountCollector);</span>
+    }
+
+    @Override
+    public void rollback(int symbolCount) {
+<span class="fc" id="L224">        indexWriter.rollbackValues(keyToOffset(symbolCount - 1));</span>
+<span class="fc" id="L225">        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);</span>
+<span class="fc" id="L226">        jumpCharMemToSymbolCount(symbolCount);</span>
+<span class="fc" id="L227">        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);</span>
+<span class="fc bfc" id="L228" title="All 2 branches covered.">        if (cache != null) {</span>
+<span class="fc" id="L229">            cache.clear();</span>
+        }
+<span class="fc" id="L231">    }</span>
+
+    @Override
+    public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
+<span class="fc" id="L235">        this.symbolIndexInTxWriter = symbolIndexInTxWriter;</span>
+<span class="fc" id="L236">    }</span>
+
+    @Override
+    public void truncate() {
+<span class="fc" id="L240">        final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);</span>
+<span class="fc" id="L241">        offsetMem.truncate();</span>
+<span class="fc" id="L242">        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);</span>
+<span class="fc" id="L243">        offsetMem.putBool(HEADER_CACHE_ENABLED, isCached());</span>
+<span class="fc" id="L244">        updateNullFlag(false);</span>
+<span class="fc" id="L245">        offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);</span>
+<span class="fc" id="L246">        charMem.truncate();</span>
+<span class="fc" id="L247">        indexWriter.truncate();</span>
+<span class="fc bfc" id="L248" title="All 2 branches covered.">        if (cache != null) {</span>
+<span class="fc" id="L249">            cache.clear();</span>
+        }
+<span class="fc" id="L251">    }</span>
+
+    @Override
+    public void updateCacheFlag(boolean flag) {
+<span class="fc" id="L255">        offsetMem.putBool(HEADER_CACHE_ENABLED, flag);</span>
+<span class="fc" id="L256">    }</span>
+
+    @Override
+    public void updateNullFlag(boolean flag) {
+<span class="fc" id="L260">        offsetMem.putBool(HEADER_NULL_FLAG, flag);</span>
+<span class="fc" id="L261">        nullValue = flag;</span>
+<span class="fc" id="L262">    }</span>
+
+    private void jumpCharMemToSymbolCount(int symbolCount) {
+<span class="fc bfc" id="L265" title="All 2 branches covered.">        if (symbolCount &gt; 0) {</span>
+<span class="fc" id="L266">            this.charMem.jumpTo(this.offsetMem.getLong(keyToOffset(symbolCount)));</span>
+        } else {
+<span class="fc" id="L268">            this.charMem.jumpTo(0);</span>
+        }
+<span class="fc" id="L270">    }</span>
+
+    private int lookupAndPut(CharSequence symbol, SymbolValueCountCollector countCollector) {
+<span class="fc" id="L273">        int hash = Hash.boundedHash(symbol, maxHash);</span>
+<span class="fc" id="L274">        RowCursor cursor = indexWriter.getCursor(hash);</span>
+<span class="fc bfc" id="L275" title="All 2 branches covered.">        while (cursor.hasNext()) {</span>
+<span class="fc" id="L276">            long offsetOffset = cursor.next();</span>
+<span class="fc bfc" id="L277" title="All 2 branches covered.">            if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {</span>
+<span class="fc" id="L278">                return offsetToKey(offsetOffset);</span>
+            }
+<span class="fc" id="L280">        }</span>
+<span class="fc" id="L281">        return put0(symbol, hash, countCollector);</span>
+    }
+
+    private int lookupPutAndCache(int index, CharSequence symbol, SymbolValueCountCollector countCollector) {
+        int result;
+<span class="fc" id="L286">        result = lookupAndPut(symbol, countCollector);</span>
+<span class="fc" id="L287">        cache.putAt(index, symbol.toString(), result);</span>
+<span class="fc" id="L288">        return result;</span>
+    }
+
+    private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector) {
+<span class="fc" id="L292">        long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;</span>
+<span class="fc" id="L293">        offsetMem.putLong(charMem.putStr(symbol));</span>
+<span class="fc" id="L294">        indexWriter.add(hash, offsetOffset);</span>
+<span class="fc" id="L295">        final int symIndex = offsetToKey(offsetOffset);</span>
+<span class="fc" id="L296">        countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);</span>
+<span class="fc" id="L297">        return symIndex;</span>
+    }
+
+    static long keyToOffset(int key) {
+<span class="fc" id="L301">        return HEADER_SIZE + key * 8L;</span>
+    }
+
+    static int offsetToKey(long offset) {
+<span class="fc" id="L305">        return (int) ((offset - HEADER_SIZE) / 8L);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

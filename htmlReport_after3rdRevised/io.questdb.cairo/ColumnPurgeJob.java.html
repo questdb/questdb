@@ -1,0 +1,394 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ColumnPurgeJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">ColumnPurgeJob.java</span></div><h1>ColumnPurgeJob.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.tasks.ColumnPurgeTask;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
+import java.util.PriorityQueue;
+
+public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
+    private static final int COLUMN_NAME_COLUMN = 2;
+    private static final int COLUMN_TYPE_COLUMN = 5;
+    private static final int COLUMN_VERSION_COLUMN = 8;
+<span class="fc" id="L50">    private static final Log LOG = LogFactory.getLog(ColumnPurgeJob.class);</span>
+    private static final int MAX_ERRORS = 11;
+    private static final int PARTITION_BY_COLUMN = 6;
+    private static final int PARTITION_NAME_COLUMN = 10;
+    private static final int PARTITION_TIMESTAMP_COLUMN = 9;
+    private static final int TABLE_ID_COLUMN = 3;
+    private static final int TABLE_NAME_COLUMN = 1;
+    private static final int TABLE_TRUNCATE_VERSION = 4;
+    private static final int UPDATE_TXN_COLUMN = 7;
+    private final MicrosecondClock clock;
+    private final RingQueue&lt;ColumnPurgeTask&gt; inQueue;
+    private final Sequence inSubSequence;
+    private final long retryDelay;
+    private final long retryDelayLimit;
+    private final double retryDelayMultiplier;
+    private final PriorityQueue&lt;ColumnPurgeRetryTask&gt; retryQueue;
+    private final TableToken tableToken;
+    private ColumnPurgeOperator columnPurgeOperator;
+    private int inErrorCount;
+    private SqlCompiler sqlCompiler;
+    private SqlExecutionContextImpl sqlExecutionContext;
+    private WeakMutableObjectPool&lt;ColumnPurgeRetryTask&gt; taskPool;
+    private TableWriter writer;
+
+<span class="fc" id="L74">    public ColumnPurgeJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {</span>
+<span class="fc" id="L75">        CairoConfiguration configuration = engine.getConfiguration();</span>
+<span class="fc" id="L76">        this.clock = configuration.getMicrosecondClock();</span>
+<span class="fc" id="L77">        this.inQueue = engine.getMessageBus().getColumnPurgeQueue();</span>
+<span class="fc" id="L78">        this.inSubSequence = engine.getMessageBus().getColumnPurgeSubSeq();</span>
+<span class="fc" id="L79">        String tableName = configuration.getSystemTableNamePrefix() + &quot;column_versions_purge_log&quot;;</span>
+<span class="fc" id="L80">        this.taskPool = new WeakMutableObjectPool&lt;&gt;(ColumnPurgeRetryTask::new, configuration.getColumnPurgeTaskPoolCapacity());</span>
+<span class="fc" id="L81">        this.retryQueue = new PriorityQueue&lt;&gt;(configuration.getColumnPurgeQueueCapacity(), ColumnPurgeJob::compareRetryTasks);</span>
+<span class="fc" id="L82">        this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();</span>
+<span class="fc" id="L83">        this.retryDelay = configuration.getColumnPurgeRetryDelay();</span>
+<span class="fc" id="L84">        this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();</span>
+<span class="fc" id="L85">        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);</span>
+<span class="fc" id="L86">        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);</span>
+<span class="fc" id="L87">        this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);</span>
+<span class="fc" id="L88">        this.sqlCompiler.compile(</span>
+                &quot;CREATE TABLE IF NOT EXISTS \&quot;&quot; + tableName + &quot;\&quot; (&quot; +
+                        &quot;ts timestamp, &quot; + // 0
+                        &quot;table_name symbol, &quot; + // 1
+                        &quot;column_name symbol, &quot; + // 2
+                        &quot;table_id int, &quot; + // 3
+                        &quot;truncate_version long, &quot; + // 4
+                        &quot;columnType int, &quot; + // 5
+                        &quot;table_partition_by int, &quot; + // 6
+                        &quot;updated_txn long, &quot; + // 7
+                        &quot;column_version long, &quot; + // 8
+                        &quot;partition_timestamp timestamp, &quot; + // 9
+                        &quot;partition_name_txn long,&quot; + // 10
+                        &quot;completed timestamp&quot; + // 11
+                        &quot;) timestamp(ts) partition by MONTH&quot;,
+                sqlExecutionContext
+        );
+<span class="fc" id="L105">        this.tableToken = engine.getTableToken(tableName);</span>
+<span class="fc" id="L106">        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableToken, &quot;QuestDB system&quot;);</span>
+<span class="fc" id="L107">        this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, &quot;completed&quot;);</span>
+<span class="fc" id="L108">        processTableRecords(engine);</span>
+<span class="fc" id="L109">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L113">        this.writer = Misc.free(writer);</span>
+<span class="fc" id="L114">        this.sqlCompiler = Misc.free(sqlCompiler);</span>
+<span class="fc" id="L115">        this.sqlExecutionContext = Misc.free(sqlExecutionContext);</span>
+<span class="fc" id="L116">        this.columnPurgeOperator = Misc.free(columnPurgeOperator);</span>
+<span class="fc" id="L117">        this.taskPool = Misc.free(taskPool);</span>
+<span class="fc" id="L118">    }</span>
+
+    @TestOnly
+    public String getLogTableName() {
+<span class="fc" id="L122">        return tableToken.getTableName();</span>
+    }
+
+    @TestOnly
+    public int getOutstandingPurgeTasks() {
+<span class="fc" id="L127">        return retryQueue.size();</span>
+    }
+
+    private static int compareRetryTasks(ColumnPurgeRetryTask task1, ColumnPurgeRetryTask task2) {
+<span class="fc" id="L131">        return Long.compare(task1.nextRunTimestamp, task2.nextRunTimestamp);</span>
+    }
+
+    private void calculateNextTimestamp(ColumnPurgeRetryTask task, long currentTime) {
+<span class="fc" id="L135">        task.retryDelay = Math.min(retryDelayLimit, (long) (task.retryDelay * retryDelayMultiplier));</span>
+<span class="fc" id="L136">        task.nextRunTimestamp = currentTime + task.retryDelay;</span>
+<span class="fc" id="L137">    }</span>
+
+    private void commit() {
+        try {
+<span class="fc bfc" id="L141" title="All 2 branches covered.">            if (writer != null) {</span>
+<span class="fc" id="L142">                writer.commit();</span>
+            }
+<span class="nc" id="L144">        } catch (Throwable th) {</span>
+<span class="nc" id="L145">            LOG.error().$(&quot;error saving to column version house keeping log, cannot commit&quot;)</span>
+<span class="nc" id="L146">                    .$(&quot;, releasing writer and stop updating log [table=&quot;).$(tableToken)</span>
+<span class="nc" id="L147">                    .$(&quot;, error=&quot;).$(th)</span>
+<span class="nc" id="L148">                    .I$();</span>
+<span class="nc" id="L149">            writer = Misc.free(writer);</span>
+<span class="fc" id="L150">        }</span>
+<span class="fc" id="L151">    }</span>
+
+    private String internStrObj(CharSequenceObjHashMap&lt;String&gt; stringIntern, CharSequence sym) {
+<span class="fc" id="L154">        String val = stringIntern.get(sym);</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        if (val != null) {</span>
+<span class="fc" id="L156">            return val;</span>
+        }
+<span class="fc" id="L158">        val = Chars.toString(sym);</span>
+<span class="fc" id="L159">        stringIntern.put(val, val);</span>
+<span class="fc" id="L160">        return val;</span>
+    }
+
+    // Process incoming queue and put it on priority queue with next timestamp to rerun
+    private boolean processInQueue() {
+<span class="fc" id="L165">        boolean useful = false;</span>
+<span class="fc" id="L166">        long microTime = clock.getTicks();</span>
+        while (true) {
+<span class="fc" id="L168">            long cursor = inSubSequence.next();</span>
+            // -2 = there was a contest for queue index and this thread has lost
+<span class="pc bpc" id="L170" title="1 of 2 branches missed.">            if (cursor &lt; -1) {</span>
+<span class="nc" id="L171">                Os.pause();</span>
+<span class="nc" id="L172">                continue;</span>
+            }
+            // -1 = queue is empty, all done
+<span class="fc bfc" id="L175" title="All 2 branches covered.">            if (cursor &lt; 0) {</span>
+<span class="fc" id="L176">                break;</span>
+            }
+
+<span class="fc" id="L179">            ColumnPurgeTask queueTask = inQueue.get(cursor);</span>
+<span class="fc" id="L180">            ColumnPurgeRetryTask purgeTaskRun = taskPool.pop();</span>
+<span class="fc" id="L181">            purgeTaskRun.copyFrom(queueTask, retryDelay, microTime + retryDelay);</span>
+<span class="fc" id="L182">            purgeTaskRun.timestamp = microTime++;</span>
+<span class="fc" id="L183">            inSubSequence.done(cursor);</span>
+
+<span class="fc" id="L185">            saveToStorage(purgeTaskRun);</span>
+
+<span class="fc" id="L187">            retryQueue.add(purgeTaskRun);</span>
+<span class="fc" id="L188">            useful = true;</span>
+<span class="fc" id="L189">        }</span>
+
+<span class="fc bfc" id="L191" title="All 2 branches covered.">        if (useful) {</span>
+<span class="fc" id="L192">            commit();</span>
+        }
+<span class="fc" id="L194">        return useful;</span>
+    }
+
+    private void processTableRecords(CairoEngine engine) {
+        try {
+<span class="fc" id="L199">            CompiledQuery reloadQuery = sqlCompiler.compile(</span>
+<span class="fc" id="L200">                    &quot;SELECT * FROM \&quot;&quot; + tableToken.getTableName() + &quot;\&quot; WHERE completed = null&quot;,</span>
+                    sqlExecutionContext
+            );
+
+<span class="fc" id="L204">            long microTime = clock.getTicks();</span>
+<span class="fc" id="L205">            try (RecordCursorFactory recordCursorFactory = reloadQuery.getRecordCursorFactory()) {</span>
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">                assert recordCursorFactory.supportsUpdateRowId(tableToken);</span>
+<span class="fc" id="L207">                int count = 0;</span>
+
+<span class="fc" id="L209">                try (RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext)) {</span>
+<span class="fc" id="L210">                    Record rec = records.getRecord();</span>
+<span class="fc" id="L211">                    long lastTs = 0;</span>
+<span class="fc" id="L212">                    ColumnPurgeRetryTask taskRun = null;</span>
+
+<span class="fc" id="L214">                    CharSequenceObjHashMap&lt;String&gt; stringIntern = new CharSequenceObjHashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L216" title="All 2 branches covered.">                    while (records.hasNext()) {</span>
+<span class="fc" id="L217">                        count++;</span>
+<span class="fc" id="L218">                        long ts = rec.getTimestamp(0);</span>
+<span class="pc bpc" id="L219" title="1 of 4 branches missed.">                        if (ts != lastTs || taskRun == null) {</span>
+<span class="fc bfc" id="L220" title="All 2 branches covered.">                            if (taskRun != null) {</span>
+<span class="fc" id="L221">                                columnPurgeOperator.purgeExclusive(taskRun);</span>
+                            } else {
+<span class="fc" id="L223">                                taskRun = taskPool.pop();</span>
+                            }
+
+<span class="fc" id="L226">                            lastTs = ts;</span>
+<span class="fc" id="L227">                            String tableName = internStrObj(stringIntern, rec.getSym(TABLE_NAME_COLUMN));</span>
+<span class="fc" id="L228">                            String columnName = internStrObj(stringIntern, rec.getSym(COLUMN_NAME_COLUMN));</span>
+<span class="fc" id="L229">                            int tableId = rec.getInt(TABLE_ID_COLUMN);</span>
+<span class="fc" id="L230">                            long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);</span>
+<span class="fc" id="L231">                            int columnType = rec.getInt(COLUMN_TYPE_COLUMN);</span>
+<span class="fc" id="L232">                            int partitionBY = rec.getInt(PARTITION_BY_COLUMN);</span>
+<span class="fc" id="L233">                            long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);</span>
+<span class="fc" id="L234">                            TableToken token = engine.getTableTokenByDirName(tableName, tableId);</span>
+
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">                            if (token == null) {</span>
+<span class="nc" id="L237">                                LOG.debug().$(&quot;table deleted, skipping [tableDir=&quot;).utf8(tableName).I$();</span>
+<span class="nc" id="L238">                                continue;</span>
+                            }
+
+<span class="fc" id="L241">                            taskRun.of(</span>
+                                    token,
+                                    columnName,
+                                    tableId,
+                                    truncateVersion,
+                                    columnType,
+                                    partitionBY,
+                                    updateTxn,
+                                    retryDelay,
+                                    microTime
+                            );
+                        }
+<span class="fc" id="L253">                        long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);</span>
+<span class="fc" id="L254">                        long partitionTs = rec.getLong(PARTITION_TIMESTAMP_COLUMN);</span>
+<span class="fc" id="L255">                        long partitionNameTxn = rec.getLong(PARTITION_NAME_COLUMN);</span>
+<span class="fc" id="L256">                        taskRun.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());</span>
+<span class="fc" id="L257">                    }</span>
+<span class="fc bfc" id="L258" title="All 2 branches covered.">                    if (taskRun != null) {</span>
+<span class="fc" id="L259">                        columnPurgeOperator.purgeExclusive(taskRun);</span>
+<span class="fc" id="L260">                        taskPool.push(taskRun);</span>
+                    }
+                }
+
+<span class="fc bfc" id="L264" title="All 2 branches covered.">                if (count &gt; 0) {</span>
+<span class="fc" id="L265">                    LOG.info().$(&quot;cleaned up rewritten column files [cleanCount=&quot;).$(count).I$();</span>
+                }
+            }
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">            if (writer != null) {</span>
+                try {
+<span class="fc" id="L270">                    writer.truncate();</span>
+<span class="nc" id="L271">                } catch (Throwable th) {</span>
+<span class="nc" id="L272">                    LOG.error().$(&quot;failed to truncate column version purge log table&quot;).$(th).$();</span>
+<span class="fc" id="L273">                }</span>
+            }
+<span class="nc" id="L275">        } catch (SqlException e) {</span>
+<span class="nc" id="L276">            LOG.error().$(&quot;failed to reload column version purge tasks&quot;).$((Throwable) e).$();</span>
+<span class="fc" id="L277">        }</span>
+<span class="fc" id="L278">    }</span>
+
+    private boolean purge() {
+<span class="fc" id="L281">        boolean useful = false;</span>
+<span class="fc" id="L282">        final long now = clock.getTicks() + 1;</span>
+<span class="fc bfc" id="L283" title="All 2 branches covered.">        while (retryQueue.size() &gt; 0) {</span>
+<span class="fc" id="L284">            ColumnPurgeRetryTask nextTask = retryQueue.peek();</span>
+<span class="fc bfc" id="L285" title="All 2 branches covered.">            if (nextTask.nextRunTimestamp &lt; now) {</span>
+<span class="fc" id="L286">                retryQueue.poll();</span>
+<span class="fc" id="L287">                useful = true;</span>
+<span class="fc bfc" id="L288" title="All 2 branches covered.">                if (!columnPurgeOperator.purge(nextTask)) {</span>
+                    // Re-queue
+<span class="fc" id="L290">                    calculateNextTimestamp(nextTask, now);</span>
+<span class="fc" id="L291">                    retryQueue.add(nextTask);</span>
+                } else {
+<span class="fc" id="L293">                    taskPool.push(nextTask);</span>
+                }
+            } else {
+                // All reruns are in the future.
+<span class="fc" id="L297">                return useful;</span>
+            }
+<span class="fc" id="L299">        }</span>
+<span class="fc" id="L300">        return useful;</span>
+    }
+
+    private void saveToStorage(ColumnPurgeRetryTask cleanTask) {
+<span class="fc bfc" id="L304" title="All 2 branches covered.">        if (writer != null) {</span>
+            try {
+<span class="fc" id="L306">                LongList updatedColumnInfo = cleanTask.getUpdatedColumnInfo();</span>
+<span class="fc bfc" id="L307" title="All 2 branches covered.">                for (int i = 0, n = updatedColumnInfo.size(); i &lt; n; i += ColumnPurgeTask.BLOCK_SIZE) {</span>
+<span class="fc" id="L308">                    TableWriter.Row row = writer.newRow(cleanTask.timestamp);</span>
+<span class="fc" id="L309">                    row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableName().getDirName());</span>
+<span class="fc" id="L310">                    row.putSym(COLUMN_NAME_COLUMN, cleanTask.getColumnName());</span>
+<span class="fc" id="L311">                    row.putInt(TABLE_ID_COLUMN, cleanTask.getTableId());</span>
+<span class="fc" id="L312">                    row.putLong(TABLE_TRUNCATE_VERSION, cleanTask.getTruncateVersion());</span>
+<span class="fc" id="L313">                    row.putInt(COLUMN_TYPE_COLUMN, cleanTask.getColumnType());</span>
+<span class="fc" id="L314">                    row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());</span>
+<span class="fc" id="L315">                    row.putLong(UPDATE_TXN_COLUMN, cleanTask.getUpdateTxn());</span>
+<span class="fc" id="L316">                    row.putLong(COLUMN_VERSION_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_COLUMN_VERSION));</span>
+<span class="fc" id="L317">                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP));</span>
+<span class="fc" id="L318">                    row.putLong(PARTITION_NAME_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN));</span>
+<span class="fc" id="L319">                    row.append();</span>
+<span class="fc" id="L320">                    updatedColumnInfo.setQuick(</span>
+                            i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID,
+<span class="fc" id="L322">                            Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1)</span>
+                    );
+                }
+<span class="fc" id="L325">            } catch (Throwable th) {</span>
+<span class="fc" id="L326">                LOG.error().$(&quot;error saving to column version house keeping log, unable to insert&quot;)</span>
+<span class="fc" id="L327">                        .$(&quot;, releasing writer and stop updating log [table=&quot;).$(tableToken)</span>
+<span class="fc" id="L328">                        .$(&quot;, error=&quot;).$(th)</span>
+<span class="fc" id="L329">                        .I$();</span>
+<span class="fc" id="L330">                writer = Misc.free(writer);</span>
+<span class="fc" id="L331">            }</span>
+        }
+<span class="fc" id="L333">    }</span>
+
+    @Override
+    protected boolean runSerially() {
+<span class="pc bpc" id="L337" title="1 of 2 branches missed.">        if (inErrorCount &gt;= MAX_ERRORS) {</span>
+<span class="nc" id="L338">            return false;</span>
+        }
+
+        try {
+<span class="fc" id="L342">            boolean useful = processInQueue();</span>
+<span class="fc" id="L343">            boolean cleanupUseful = purge();</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">            if (cleanupUseful) {</span>
+<span class="fc" id="L345">                LOG.debug().$(&quot;cleaned column version, outstanding tasks: &quot;).$(retryQueue.size()).$();</span>
+            }
+<span class="fc" id="L347">            inErrorCount = 0;</span>
+<span class="fc bfc" id="L348" title="All 4 branches covered.">            return cleanupUseful || useful;</span>
+<span class="nc" id="L349">        } catch (Throwable th) {</span>
+<span class="nc" id="L350">            LOG.error().$(&quot;failed to clean up column versions&quot;).$(th).$();</span>
+<span class="nc" id="L351">            inErrorCount++;</span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">            if (inErrorCount == MAX_ERRORS) {</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">                if (retryQueue.size() &gt; 0) {</span>
+<span class="nc" id="L354">                    LOG.error().$(&quot;clean up column versions reached maximum error count and will be recycled. Some column version may be left behind.&quot;).$(th).$();</span>
+<span class="nc" id="L355">                    retryQueue.clear();</span>
+<span class="nc" id="L356">                    inErrorCount = 0;</span>
+                } else {
+<span class="nc" id="L358">                    LOG.error().$(&quot;clean up column versions reached maximum error count and will be DISABLED. Restart QuestDB to re-enable the job.&quot;).$(th).$();</span>
+<span class="nc" id="L359">                    close();</span>
+                }
+            }
+<span class="nc" id="L362">            return false;</span>
+        }
+    }
+
+<span class="fc" id="L366">    static class ColumnPurgeRetryTask extends ColumnPurgeTask implements Mutable {</span>
+        public long nextRunTimestamp;
+        public long retryDelay;
+        public long timestamp;
+
+        public void copyFrom(ColumnPurgeTask inTask, long retryDelay, long nextRunTimestamp) {
+<span class="fc" id="L372">            this.retryDelay = retryDelay;</span>
+<span class="fc" id="L373">            this.nextRunTimestamp = nextRunTimestamp;</span>
+<span class="fc" id="L374">            super.copyFrom(inTask);</span>
+<span class="fc" id="L375">        }</span>
+
+        public void of(
+                TableToken tableName,
+                CharSequence columnName,
+                int tableId,
+                long truncateVersion,
+                int columnType,
+                int partitionBy,
+                long updateTxn,
+                long retryDelay,
+                long microTime
+        ) {
+<span class="fc" id="L388">            super.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);</span>
+<span class="fc" id="L389">            this.retryDelay = retryDelay;</span>
+<span class="fc" id="L390">            nextRunTimestamp = microTime;</span>
+<span class="fc" id="L391">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

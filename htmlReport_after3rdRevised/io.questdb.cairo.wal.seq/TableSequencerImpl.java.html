@@ -1,0 +1,377 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableSequencerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.wal.seq</a> &gt; <span class="el_source">TableSequencerImpl.java</span></div><h1>TableSequencerImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.wal.seq;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.locks.ReadWriteLock;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
+
+public class TableSequencerImpl implements TableSequencer {
+<span class="fc" id="L45">    private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);</span>
+<span class="fc" id="L46">    private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();</span>
+<span class="fc" id="L47">    private final EmptyOperationCursor emptyOperationCursor = new EmptyOperationCursor();</span>
+    private final CairoEngine engine;
+    private final FilesFacade ff;
+    private final SequencerMetadata metadata;
+    private final MicrosecondClock microClock;
+    private final SequencerMetadataService metadataSvc;
+    private final int mkDirMode;
+    private final Path path;
+    private final int rootLen;
+<span class="fc" id="L56">    private final ReadWriteLock schemaLock = new SimpleReadWriteLock();</span>
+    private final TableTransactionLog tableTransactionLog;
+    private final IDGenerator walIdGenerator;
+<span class="fc" id="L59">    private volatile boolean closed = false;</span>
+    private boolean distressed;
+    private TableToken tableToken;
+
+<span class="fc" id="L63">    TableSequencerImpl(CairoEngine engine, TableToken tableToken) {</span>
+<span class="fc" id="L64">        this.engine = engine;</span>
+<span class="fc" id="L65">        this.tableToken = tableToken;</span>
+
+<span class="fc" id="L67">        final CairoConfiguration configuration = engine.getConfiguration();</span>
+<span class="fc" id="L68">        final FilesFacade ff = configuration.getFilesFacade();</span>
+        try {
+<span class="fc" id="L70">            path = new Path();</span>
+<span class="fc" id="L71">            path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR);</span>
+<span class="fc" id="L72">            rootLen = path.length();</span>
+<span class="fc" id="L73">            this.ff = ff;</span>
+<span class="fc" id="L74">            this.mkDirMode = configuration.getMkDirMode();</span>
+
+<span class="fc" id="L76">            metadata = new SequencerMetadata(ff);</span>
+<span class="fc" id="L77">            metadataSvc = new SequencerMetadataService(metadata, tableToken);</span>
+<span class="fc" id="L78">            walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);</span>
+<span class="fc" id="L79">            tableTransactionLog = new TableTransactionLog(ff);</span>
+<span class="fc" id="L80">            microClock = engine.getConfiguration().getMicrosecondClock();</span>
+<span class="nc" id="L81">        } catch (Throwable th) {</span>
+<span class="nc" id="L82">            LOG.critical().$(&quot;could not create sequencer [name=&quot;).utf8(tableToken.getDirName())</span>
+<span class="nc" id="L83">                    .$(&quot;, error=&quot;).$(th.getMessage())</span>
+<span class="nc" id="L84">                    .I$();</span>
+<span class="nc" id="L85">            closeLocked();</span>
+<span class="nc" id="L86">            throw th;</span>
+<span class="fc" id="L87">        }</span>
+<span class="fc" id="L88">    }</span>
+
+    public boolean checkClose() {
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">        if (!closed) {</span>
+<span class="fc" id="L92">            schemaLock.writeLock().lock();</span>
+            try {
+<span class="fc" id="L94">                return closeLocked();</span>
+            } finally {
+<span class="fc" id="L96">                schemaLock.writeLock().unlock();</span>
+            }
+        }
+<span class="nc" id="L99">        return false;</span>
+    }
+
+    @Override
+    public void close() {
+<span class="nc" id="L104">        checkClose();</span>
+<span class="nc" id="L105">    }</span>
+
+    @Override
+    public void dropTable() {
+<span class="fc" id="L109">        checkDropped();</span>
+<span class="fc" id="L110">        tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID, 0, 0, microClock.getTicks());</span>
+<span class="fc" id="L111">        metadata.dropTable();</span>
+<span class="fc" id="L112">        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);</span>
+<span class="fc" id="L113">    }</span>
+
+    @Override
+    public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
+<span class="fc" id="L117">        checkDropped();</span>
+<span class="fc bfc" id="L118" title="All 2 branches covered.">        if (metadata.getStructureVersion() == structureVersionLo) {</span>
+            // Nothing to do.
+<span class="fc" id="L120">            return emptyOperationCursor.of(tableToken);</span>
+        }
+<span class="fc" id="L122">        return tableTransactionLog.getTableMetadataChangeLog(tableToken, structureVersionLo, alterCommandWalFormatter);</span>
+    }
+
+    @Override
+    public int getNextWalId() {
+<span class="fc" id="L127">        return (int) walIdGenerator.getNextId();</span>
+    }
+
+    @Override
+    public long getStructureVersion() {
+<span class="fc" id="L132">        return metadata.getStructureVersion();</span>
+    }
+
+    @Override
+    public int getTableId() {
+<span class="fc" id="L137">        return metadata.getTableId();</span>
+    }
+
+    @Override
+    public long getTableMetadata(@NotNull TableRecordMetadataSink sink) {
+<span class="fc" id="L142">        int columnCount = metadata.getColumnCount();</span>
+<span class="fc" id="L143">        int timestampIndex = metadata.getTimestampIndex();</span>
+<span class="fc" id="L144">        int compressedTimestampIndex = -1;</span>
+<span class="fc" id="L145">        sink.clear();</span>
+
+<span class="fc" id="L147">        int compressedColumnCount = 0;</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        for (int i = 0; i &lt; columnCount; i++) {</span>
+<span class="fc" id="L149">            int columnType = metadata.getColumnType(i);</span>
+<span class="fc" id="L150">            sink.addColumn(</span>
+<span class="fc" id="L151">                    metadata.getColumnName(i),</span>
+                    columnType,
+<span class="fc" id="L153">                    metadata.isColumnIndexed(i),</span>
+<span class="fc" id="L154">                    metadata.getIndexValueBlockCapacity(i),</span>
+<span class="fc" id="L155">                    metadata.isSymbolTableStatic(i),</span>
+                    i
+            );
+<span class="fc bfc" id="L158" title="All 2 branches covered.">            if (columnType &gt; -1) {</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">                if (i == timestampIndex) {</span>
+<span class="fc" id="L160">                    compressedTimestampIndex = compressedColumnCount;</span>
+                }
+<span class="fc" id="L162">                compressedColumnCount++;</span>
+            }
+        }
+
+<span class="fc" id="L166">        sink.of(</span>
+                tableToken,
+<span class="fc" id="L168">                metadata.getTableId(),</span>
+                timestampIndex,
+                compressedTimestampIndex,
+<span class="fc" id="L171">                metadata.isSuspended(),</span>
+<span class="fc" id="L172">                metadata.getStructureVersion(),</span>
+                compressedColumnCount
+        );
+
+<span class="fc" id="L176">        return tableTransactionLog.lastTxn();</span>
+    }
+
+    public TableToken getTableToken() {
+<span class="fc" id="L180">        return tableToken;</span>
+    }
+
+    @Override
+    public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
+<span class="fc" id="L185">        checkDropped();</span>
+<span class="fc" id="L186">        return tableTransactionLog.getCursor(seqTxn);</span>
+    }
+
+    public boolean isClosed() {
+<span class="fc" id="L190">        return closed;</span>
+    }
+
+    public boolean isDistressed() {
+<span class="fc" id="L194">        return distressed;</span>
+    }
+
+    public boolean isDropped() {
+<span class="fc" id="L198">        return metadata.isDropped();</span>
+    }
+
+    @Override
+    public boolean isSuspended() {
+<span class="fc" id="L203">        return metadata.isSuspended();</span>
+    }
+
+    @Override
+    public long lastTxn() {
+<span class="fc" id="L208">        return tableTransactionLog.lastTxn();</span>
+    }
+
+    @Override
+    public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
+        // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
+<span class="pc bpc" id="L214" title="1 of 2 branches missed.">        assert !closed;</span>
+<span class="fc" id="L215">        checkDropped();</span>
+        long txn;
+        try {
+<span class="fc bfc" id="L218" title="All 2 branches covered.">            if (metadata.getStructureVersion() == expectedStructureVersion) {</span>
+<span class="fc" id="L219">                tableTransactionLog.beginMetadataChangeEntry(expectedStructureVersion + 1, alterCommandWalFormatter, change, microClock.getTicks());</span>
+
+                // Re-read serialised change to ensure it can be read.
+<span class="fc" id="L222">                AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(expectedStructureVersion, alterCommandWalFormatter);</span>
+
+<span class="fc" id="L224">                applyToMetadata(deserializedAlter);</span>
+<span class="pc bpc" id="L225" title="1 of 2 branches missed.">                if (metadata.getStructureVersion() != expectedStructureVersion + 1) {</span>
+<span class="nc" id="L226">                    throw CairoException.critical(0)</span>
+<span class="nc" id="L227">                            .put(&quot;applying structure change to WAL table failed [table=&quot;).put(tableToken.getDirName())</span>
+<span class="nc" id="L228">                            .put(&quot;, oldVersion: &quot;).put(expectedStructureVersion)</span>
+<span class="nc" id="L229">                            .put(&quot;, newVersion: &quot;).put(metadata.getStructureVersion())</span>
+<span class="nc" id="L230">                            .put(']');</span>
+                }
+<span class="fc" id="L232">                metadata.syncToDisk();</span>
+<span class="fc" id="L233">                txn = tableTransactionLog.endMetadataChangeEntry();</span>
+<span class="fc" id="L234">            } else {</span>
+<span class="fc" id="L235">                return NO_TXN;</span>
+            }
+<span class="fc" id="L237">        } catch (Throwable th) {</span>
+<span class="fc" id="L238">            distressed = true;</span>
+<span class="fc" id="L239">            LOG.critical().$(&quot;could not apply structure change to WAL table sequencer [table=&quot;).utf8(tableToken.getDirName())</span>
+<span class="fc" id="L240">                    .$(&quot;, error=&quot;).$(th.getMessage())</span>
+<span class="fc" id="L241">                    .I$();</span>
+<span class="fc" id="L242">            throw th;</span>
+<span class="fc" id="L243">        }</span>
+
+<span class="pc bpc" id="L245" title="1 of 2 branches missed.">        if (!metadata.isSuspended()) {</span>
+<span class="fc" id="L246">            engine.notifyWalTxnCommitted(tableToken, txn);</span>
+        }
+<span class="fc" id="L248">        return txn;</span>
+    }
+
+    @Override
+    public long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn) {
+        // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        assert !closed;</span>
+<span class="fc" id="L255">        checkDropped();</span>
+        long txn;
+        try {
+<span class="fc bfc" id="L258" title="All 2 branches covered.">            if (metadata.getStructureVersion() == expectedStructureVersion) {</span>
+<span class="fc" id="L259">                txn = nextTxn(walId, segmentId, segmentTxn);</span>
+            } else {
+<span class="fc" id="L261">                return NO_TXN;</span>
+            }
+<span class="nc" id="L263">        } catch (Throwable th) {</span>
+<span class="nc" id="L264">            distressed = true;</span>
+<span class="nc" id="L265">            LOG.critical().$(&quot;could not apply transaction to WAL table sequencer [table=&quot;).utf8(tableToken.getDirName())</span>
+<span class="nc" id="L266">                    .$(&quot;, error=&quot;).$(th.getMessage())</span>
+<span class="nc" id="L267">                    .I$();</span>
+<span class="nc" id="L268">            throw th;</span>
+<span class="fc" id="L269">        }</span>
+
+<span class="fc bfc" id="L271" title="All 2 branches covered.">        if (!metadata.isSuspended()) {</span>
+<span class="fc" id="L272">            engine.notifyWalTxnCommitted(tableToken, txn);</span>
+        }
+<span class="fc" id="L274">        return txn;</span>
+    }
+
+    public void open() {
+        try {
+<span class="fc" id="L279">            walIdGenerator.open(path);</span>
+<span class="fc" id="L280">            metadata.open(path, rootLen);</span>
+<span class="fc" id="L281">            tableTransactionLog.open(path);</span>
+<span class="fc" id="L282">        } catch (Throwable th) {</span>
+<span class="fc" id="L283">            LOG.critical().$(&quot;could not open sequencer [name=&quot;).utf8(tableToken.getDirName())</span>
+<span class="fc" id="L284">                    .$(&quot;, path=&quot;).$(path)</span>
+<span class="fc" id="L285">                    .$(&quot;, error=&quot;).$(th.getMessage())</span>
+<span class="fc" id="L286">                    .I$();</span>
+<span class="fc" id="L287">            closeLocked();</span>
+<span class="fc" id="L288">            throw th;</span>
+<span class="fc" id="L289">        }</span>
+<span class="fc" id="L290">    }</span>
+
+    @Override
+    public void rename(TableToken newTableToken) {
+<span class="fc" id="L294">        checkDropped();</span>
+<span class="fc" id="L295">        tableToken = newTableToken;</span>
+<span class="fc" id="L296">        this.metadata.updateTableToken(newTableToken);</span>
+<span class="fc" id="L297">    }</span>
+
+    @Override
+    public void resumeTable() {
+<span class="fc" id="L301">        metadata.resumeTable();</span>
+<span class="fc" id="L302">        engine.notifyWalTxnCommitted(tableToken, Long.MAX_VALUE);</span>
+<span class="fc" id="L303">    }</span>
+
+    @TestOnly
+    public void setDistressed() {
+<span class="fc" id="L307">        this.distressed = true;</span>
+<span class="fc" id="L308">    }</span>
+
+    @Override
+    public void suspendTable() {
+<span class="fc" id="L312">        metadata.suspendTable();</span>
+<span class="fc" id="L313">    }</span>
+
+    private void applyToMetadata(TableMetadataChange change) {
+<span class="fc" id="L316">        change.apply(metadataSvc, true);</span>
+<span class="fc" id="L317">        metadata.syncToMetaFile();</span>
+<span class="fc" id="L318">    }</span>
+
+    private void checkDropped() {
+<span class="fc bfc" id="L321" title="All 2 branches covered.">        if (metadata.isDropped()) {</span>
+<span class="fc" id="L322">            throw CairoException.nonCritical().put(&quot;table is dropped [dirName=&quot;).put(tableToken.getDirName()).put(']');</span>
+        }
+<span class="fc" id="L324">    }</span>
+
+    private boolean closeLocked() {
+<span class="fc bfc" id="L327" title="All 2 branches covered.">        if (!closed) {</span>
+<span class="fc" id="L328">            closed = true;</span>
+<span class="fc" id="L329">            Misc.free(metadata);</span>
+<span class="fc" id="L330">            Misc.free(tableTransactionLog);</span>
+<span class="fc" id="L331">            Misc.free(walIdGenerator);</span>
+<span class="fc" id="L332">            Misc.free(path);</span>
+<span class="fc" id="L333">            return true;</span>
+        }
+<span class="fc" id="L335">        return false;</span>
+    }
+
+    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
+<span class="fc bfc" id="L339" title="All 2 branches covered.">        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {</span>
+<span class="fc" id="L340">            final CairoException e = CairoException.critical(ff.errno()).put(&quot;Cannot create sequencer directory: &quot;).put(path);</span>
+<span class="fc" id="L341">            closeLocked();</span>
+<span class="fc" id="L342">            throw e;</span>
+        }
+<span class="fc" id="L344">        path.trimTo(rootLen);</span>
+<span class="fc" id="L345">    }</span>
+
+    private long nextTxn(int walId, int segmentId, int segmentTxn) {
+<span class="fc" id="L348">        return tableTransactionLog.addEntry(getStructureVersion(), walId, segmentId, segmentTxn, microClock.getTicks());</span>
+    }
+
+    void create(int tableId, TableDescriptor model) {
+<span class="fc" id="L352">        schemaLock.writeLock().lock();</span>
+        try {
+<span class="fc" id="L354">            createSequencerDir(ff, mkDirMode);</span>
+<span class="fc" id="L355">            metadata.create(model, tableToken, path, rootLen, tableId);</span>
+        } finally {
+<span class="fc" id="L357">            schemaLock.writeLock().unlock();</span>
+        }
+<span class="fc" id="L359">    }</span>
+
+    void readLock() {
+<span class="fc" id="L362">        schemaLock.readLock().lock();</span>
+<span class="fc" id="L363">    }</span>
+
+    void unlockRead() {
+<span class="fc" id="L366">        schemaLock.readLock().unlock();</span>
+<span class="fc" id="L367">    }</span>
+
+    void unlockWrite() {
+<span class="fc" id="L370">        schemaLock.writeLock().unlock();</span>
+<span class="fc" id="L371">    }</span>
+
+    void writeLock() {
+<span class="fc" id="L374">        schemaLock.writeLock().lock();</span>
+<span class="fc" id="L375">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

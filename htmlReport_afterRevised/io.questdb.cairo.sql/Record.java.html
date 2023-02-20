@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Record.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.sql</a> &gt; <span class="el_source">Record.java</span></div><h1>Record.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.sql;
+
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.str.CharSink;
+
+/**
+ * Access the value of columns of a table record by column index.
+ * &lt;p&gt;
+ * Type checking is not performed beforehand, meaning the type of the
+ * element being retrieved by the following methods should be known by
+ * performing a prior lookup using {@link io.questdb.cairo.sql.RecordMetadata}
+ */
+public interface Record {
+
+<span class="fc" id="L40">    CharSequenceFunction GET_STR = Record::getStr;</span>
+
+<span class="fc" id="L42">    CharSequenceFunction GET_SYM = Record::getSym;</span>
+
+    /**
+     * Gets the value of a binary column by index
+     *
+     * @param col numeric index of the column
+     * @return the binary content
+     */
+    default BinarySequence getBin(int col) {
+<span class="fc" id="L51">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the length of the binary value of a column by index
+     *
+     * @param col numeric index of the column
+     * @return length of the binary content
+     */
+    default long getBinLen(int col) {
+<span class="fc" id="L61">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a boolean column by index
+     *
+     * @param col numeric index of the column
+     * @return boolean
+     */
+    default boolean getBool(int col) {
+<span class="fc" id="L71">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a byte column by index
+     *
+     * @param col numeric index of the column
+     * @return byte as 8-bit signed integer
+     */
+    default byte getByte(int col) {
+<span class="fc" id="L81">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a char column by index
+     *
+     * @param col numeric index of the column
+     * @return 16-bit char value
+     */
+    default char getChar(int col) {
+<span class="nc" id="L91">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a date column by index
+     *
+     * @param col numeric index of the column
+     * @return date value of the column as 64-bit signed long integer
+     */
+    default long getDate(int col) {
+<span class="fc" id="L101">        return getLong(col);</span>
+    }
+
+    /**
+     * Gets the value of a double column by index
+     *
+     * @param col numeric index of the column
+     * @return 64-bit double floating point
+     */
+    default double getDouble(int col) {
+<span class="fc" id="L111">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a float column by index
+     *
+     * @param col numeric index of the column
+     * @return 32-bit floating point value
+     */
+    default float getFloat(int col) {
+<span class="fc" id="L121">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a byte GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default byte getGeoByte(int col) {
+<span class="nc" id="L131">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of an int GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default int getGeoInt(int col) {
+<span class="nc" id="L141">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a long GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default long getGeoLong(int col) {
+<span class="nc" id="L151">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a short GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default short getGeoShort(int col) {
+<span class="nc" id="L161">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of an integer column by index
+     *
+     * @param col numeric index of the column
+     * @return 32-bit integer
+     */
+    default int getInt(int col) {
+<span class="fc" id="L171">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a long column by index
+     *
+     * @param col numeric index of the column
+     * @return 64-bit signed integer
+     */
+    default long getLong(int col) {
+<span class="fc" id="L181">        throw new UnsupportedOperationException();</span>
+    }
+
+    default long getLong128Hi(int col) {
+<span class="nc" id="L185">        throw new UnsupportedOperationException();</span>
+    }
+
+    default long getLong128Lo(int col) {
+<span class="nc" id="L189">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a long256 column by index
+     *
+     * @param col  numeric index of the column
+     * @param sink a character sink
+     */
+    default void getLong256(int col, CharSink sink) {
+<span class="nc" id="L199">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a long256 column by index
+     * getLong256A used for A/B comparison with getLong256B to compare references
+     *
+     * @param col numeric index of the column
+     * @return unsigned 256-bit integer
+     */
+    default Long256 getLong256A(int col) {
+<span class="nc" id="L210">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a long256 column by index
+     * getLong256B used for A/B comparison with getLong256A to compare references
+     *
+     * @param col numeric index of the column
+     * @return unsigned 256-bit integer
+     */
+    default Long256 getLong256B(int col) {
+<span class="nc" id="L221">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Get record by column index
+     *
+     * @param col numeric index of the column
+     * @return record
+     */
+    default Record getRecord(int col) {
+<span class="nc" id="L231">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the numeric ID of this row. This can be not real table row id
+     *
+     * @return numeric ID of the current row
+     */
+    default long getRowId() {
+<span class="fc" id="L240">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a short column by index
+     *
+     * @param col numeric index of the column
+     * @return 16-bit signed integer
+     */
+    default short getShort(int col) {
+<span class="fc" id="L250">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a string column by index
+     *
+     * @param col numeric index of the column
+     * @return string, null if string is empty
+     */
+    default CharSequence getStr(int col) {
+<span class="fc" id="L260">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a string column by index
+     *
+     * @param col  numeric index of the column
+     * @param sink a character sink
+     */
+    default void getStr(int col, CharSink sink) {
+<span class="fc" id="L270">        sink.put(getStr(col));</span>
+<span class="fc" id="L271">    }</span>
+
+    /**
+     * Gets the value of a string column by index
+     * getStrB used for A/B comparison with getStr to compare references
+     *
+     * @param col numeric index of the column
+     * @return string, null if string is empty
+     */
+    default CharSequence getStrB(int col) {
+<span class="fc" id="L281">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the length of the string value of a column by index
+     *
+     * @param col numeric index of the column
+     * @return length of the string value
+     */
+    default int getStrLen(int col) {
+<span class="fc" id="L291">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a symbol column by index
+     *
+     * @param col numeric index of the column
+     * @return symbol value as string
+     */
+    default CharSequence getSym(int col) {
+<span class="fc" id="L301">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the string-based value of a symbol column by index
+     * getSymB used for A/B comparison with getSym to compare references
+     *
+     * @param col numeric index of the column
+     * @return symbol value as string
+     */
+    default CharSequence getSymB(int col) {
+<span class="nc" id="L312">        throw new UnsupportedOperationException();</span>
+    }
+
+    /**
+     * Gets the value of a timestamp column by index
+     *
+     * @param col numeric index of the column
+     * @return 64-bit signed integer
+     */
+    default long getTimestamp(int col) {
+<span class="fc" id="L322">        return getLong(col);</span>
+    }
+
+    /**
+     * Gets the numeric ID of this row. This must be real table row id
+     *
+     * @return numeric ID of the current row
+     */
+    default long getUpdateRowId() {
+<span class="nc" id="L331">        throw new UnsupportedOperationException();</span>
+    }
+
+    @FunctionalInterface
+    interface CharSequenceFunction {
+        /**
+         * @param record to retrieve CharSequence from
+         * @param col    numeric index of the column
+         * @return record as a char sequence
+         */
+        CharSequence get(Record record, int col);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

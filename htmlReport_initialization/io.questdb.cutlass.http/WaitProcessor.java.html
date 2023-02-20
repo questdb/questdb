@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WaitProcessor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.http</a> &gt; <span class="el_source">WaitProcessor.java</span></div><h1>WaitProcessor.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http;
+
+import io.questdb.cutlass.http.ex.RetryFailedOperationException;
+import io.questdb.mp.*;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+import java.util.PriorityQueue;
+
+public class WaitProcessor extends SynchronizedJob implements RescheduleContext, Closeable {
+
+    private final MillisecondClock clock;
+    private final double exponentialWaitMultiplier;
+    private final Sequence inPubSequence;
+    private final RingQueue&lt;RetryHolder&gt; inQueue;
+    private final Sequence inSubSequence;
+    private final long maxWaitCapMs;
+    private final PriorityQueue&lt;Retry&gt; nextRerun;
+    private final Sequence outPubSequence;
+    private final RingQueue&lt;RetryHolder&gt; outQueue;
+    private final Sequence outSubSequence;
+
+<span class="fc" id="L50">    public WaitProcessor(WaitProcessorConfiguration configuration) {</span>
+<span class="fc" id="L51">        clock = configuration.getClock();</span>
+<span class="fc" id="L52">        maxWaitCapMs = configuration.getMaxWaitCapMs();</span>
+<span class="fc" id="L53">        exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();</span>
+<span class="fc" id="L54">        nextRerun = new PriorityQueue&lt;&gt;(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetriesInQueue);</span>
+
+<span class="fc" id="L56">        int retryQueueLength = configuration.getMaxProcessingQueueSize();</span>
+<span class="fc" id="L57">        inQueue = new RingQueue&lt;&gt;(RetryHolder::new, retryQueueLength);</span>
+<span class="fc" id="L58">        inPubSequence = new MPSequence(retryQueueLength);</span>
+<span class="fc" id="L59">        inSubSequence = new SCSequence();</span>
+<span class="fc" id="L60">        outQueue = new RingQueue&lt;&gt;(RetryHolder::new, retryQueueLength);</span>
+<span class="fc" id="L61">        outPubSequence = new SPSequence(retryQueueLength);</span>
+<span class="fc" id="L62">        outSubSequence = new MCSequence(retryQueueLength);</span>
+
+<span class="fc" id="L64">        inPubSequence.then(inSubSequence).then(inPubSequence);</span>
+<span class="fc" id="L65">        outPubSequence.then(outSubSequence).then(outPubSequence);</span>
+<span class="fc" id="L66">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L70">        processInQueue(); // Process incoming queue to close all contexts</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">        for (int i = 0, n = nextRerun.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L72">            Misc.free(nextRerun.poll());</span>
+        }
+<span class="fc" id="L74">    }</span>
+
+    @Override
+    // This supposed to run in http execution thread / job
+    public void reschedule(Retry retry) {
+<span class="fc" id="L79">        reschedule(retry, 0, 0);</span>
+<span class="fc" id="L80">    }</span>
+
+    // This hijacks http execution thread / job and runs retries in it.
+    public boolean runReruns(HttpRequestProcessorSelector selector) {
+<span class="fc" id="L84">        boolean useful = false;</span>
+
+        while (true) {
+<span class="fc" id="L87">            Retry retry = getNextRerun();</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">            if (retry != null) {</span>
+<span class="fc" id="L89">                useful = true;</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">                if (!retry.tryRerun(selector, this)) {</span>
+                    try {
+<span class="fc" id="L92">                        reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);</span>
+<span class="fc" id="L93">                    } catch (RetryFailedOperationException e) {</span>
+<span class="fc" id="L94">                        retry.fail(selector, e);</span>
+<span class="fc" id="L95">                    }</span>
+                }
+            } else {
+<span class="fc" id="L98">                return useful;</span>
+            }
+<span class="fc" id="L100">        }</span>
+    }
+
+    private static int compareRetriesInQueue(Retry r1, Retry r2) {
+        // r1, r2 are always not null, null retries are not queued
+<span class="fc" id="L105">        RetryAttemptAttributes a1 = r1.getAttemptDetails();</span>
+<span class="fc" id="L106">        RetryAttemptAttributes a2 = r2.getAttemptDetails();</span>
+<span class="fc" id="L107">        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);</span>
+    }
+
+    private long calculateNextTimestamp(RetryAttemptAttributes attemptAttributes) {
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        if (attemptAttributes.attempt == 0) {</span>
+            // First retry after fixed time of 2ms
+<span class="fc" id="L113">            return attemptAttributes.lastRunTimestamp + 2;</span>
+        }
+
+        // 'exponentialWaitMultiplier' times wait time starting until it is 'maxWaitCapMs' sec
+<span class="fc" id="L117">        long totalWait = attemptAttributes.lastRunTimestamp - attemptAttributes.waitStartTimestamp;</span>
+<span class="fc" id="L118">        return Math.min(maxWaitCapMs, Math.max(4L, (long) (totalWait * exponentialWaitMultiplier))) + attemptAttributes.lastRunTimestamp;</span>
+    }
+
+    private @Nullable Retry getNextRerun() {
+<span class="fc" id="L122">        long cursor = outSubSequence.next();</span>
+        // -2 = there was a contest for queue index and this thread has lost
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        if (cursor &lt; 0) {</span>
+<span class="fc" id="L125">            return null;</span>
+        }
+
+<span class="fc" id="L128">        RetryHolder retryHolder = outQueue.get(cursor);</span>
+<span class="fc" id="L129">        Retry r = retryHolder.retry;</span>
+<span class="fc" id="L130">        retryHolder.retry = null;</span>
+<span class="fc" id="L131">        outSubSequence.done(cursor);</span>
+<span class="fc" id="L132">        return r;</span>
+    }
+
+    // Process incoming queue and put it on priority queue with next timestamp to rerun
+    private boolean processInQueue() {
+<span class="fc" id="L137">        boolean any = false;</span>
+        while (true) {
+<span class="fc" id="L139">            long cursor = inSubSequence.next();</span>
+            // -2 = there was a contest for queue index and this thread has lost
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">            if (cursor &lt; -1) {</span>
+<span class="nc" id="L142">                Os.pause();</span>
+<span class="nc" id="L143">                continue;</span>
+            }
+
+            // -1 = queue is empty. All done.
+<span class="fc bfc" id="L147" title="All 2 branches covered.">            if (cursor &lt; 0) {</span>
+<span class="fc" id="L148">                return any;</span>
+            }
+
+            Retry retry;
+            try {
+<span class="fc" id="L153">                RetryHolder toRun = inQueue.get(cursor);</span>
+<span class="fc" id="L154">                retry = toRun.retry;</span>
+<span class="fc" id="L155">                toRun.retry = null;</span>
+            } finally {
+<span class="fc" id="L157">                inSubSequence.done(cursor);</span>
+            }
+<span class="fc" id="L159">            retry.getAttemptDetails().nextRunTimestamp = calculateNextTimestamp(retry.getAttemptDetails());</span>
+
+<span class="fc" id="L161">            nextRerun.add(retry);</span>
+<span class="fc" id="L162">            any = true;</span>
+<span class="fc" id="L163">        }</span>
+    }
+
+    private void reschedule(Retry retry, int attempt, long waitStartMs) {
+<span class="fc" id="L167">        long now = clock.getTicks();</span>
+<span class="fc" id="L168">        retry.getAttemptDetails().attempt = attempt;</span>
+<span class="fc" id="L169">        retry.getAttemptDetails().lastRunTimestamp = now;</span>
+<span class="fc bfc" id="L170" title="All 2 branches covered.">        retry.getAttemptDetails().waitStartTimestamp = attempt == 0 ? now : waitStartMs;</span>
+
+        while (true) {
+<span class="fc" id="L173">            long cursor = inPubSequence.next();</span>
+            // -2 = there was a contest for queue index and this thread has lost
+<span class="fc bfc" id="L175" title="All 2 branches covered.">            if (cursor &lt; -1) {</span>
+<span class="fc" id="L176">                Os.pause();</span>
+<span class="fc" id="L177">                continue;</span>
+            }
+
+            // -1 = queue is full. It means there are already too many retries waiting
+            // Send error to client.
+<span class="fc bfc" id="L182" title="All 2 branches covered.">            if (cursor &lt; 0) {</span>
+<span class="fc" id="L183">                throw RetryFailedOperationException.INSTANCE;</span>
+            }
+
+<span class="fc" id="L186">            RetryHolder retryHolder = inQueue.get(cursor);</span>
+<span class="fc" id="L187">            retryHolder.retry = retry;</span>
+<span class="fc" id="L188">            inPubSequence.done(cursor);</span>
+<span class="fc" id="L189">            return;</span>
+        }
+    }
+
+    private boolean sendToOutQueue() {
+<span class="fc" id="L194">        boolean useful = false;</span>
+<span class="fc" id="L195">        final long now = clock.getTicks();</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">        while (nextRerun.size() &gt; 0) {</span>
+<span class="fc" id="L197">            Retry next = nextRerun.peek();</span>
+<span class="fc bfc" id="L198" title="All 2 branches covered.">            if (next.getAttemptDetails().nextRunTimestamp &lt;= now) {</span>
+<span class="fc" id="L199">                useful = true;</span>
+<span class="fc" id="L200">                Retry retry = nextRerun.poll();</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">                if (!sendToOutQueue(retry)) {</span>
+<span class="fc" id="L202">                    nextRerun.add(retry);</span>
+<span class="fc" id="L203">                    return true;</span>
+                }
+<span class="fc" id="L205">            } else {</span>
+                // All reruns are in the future.
+<span class="fc" id="L207">                return useful;</span>
+            }
+<span class="fc" id="L209">        }</span>
+<span class="fc" id="L210">        return useful;</span>
+    }
+
+    private boolean sendToOutQueue(Retry retry) {
+        while (true) {
+<span class="fc" id="L215">            long cursor = outPubSequence.next();</span>
+            // -2 = there was a contest for queue index and this thread has lost
+<span class="pc bpc" id="L217" title="1 of 2 branches missed.">            if (cursor &lt; -1) {</span>
+<span class="nc" id="L218">                Os.pause();</span>
+<span class="nc" id="L219">                continue;</span>
+            }
+
+<span class="fc bfc" id="L222" title="All 2 branches covered.">            if (cursor &lt; 0) {</span>
+                // Cannot put to out queue. It is full. Release job and retry next run.
+<span class="fc" id="L224">                return false;</span>
+            }
+
+<span class="fc" id="L227">            RetryHolder retryHolderOut = outQueue.get(cursor);</span>
+<span class="fc" id="L228">            retryHolderOut.retry = retry;</span>
+<span class="fc" id="L229">            outPubSequence.done(cursor);</span>
+<span class="fc" id="L230">            return true;</span>
+        }
+    }
+
+    @Override
+    protected boolean runSerially() {
+<span class="fc bfc" id="L236" title="All 4 branches covered.">        return processInQueue() || sendToOutQueue();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

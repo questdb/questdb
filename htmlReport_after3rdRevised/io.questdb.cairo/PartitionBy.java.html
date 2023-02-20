@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PartitionBy.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">PartitionBy.java</span></div><h1>PartitionBy.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
+
+import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
+
+/**
+ * Collection of static assets to provide time partitioning API. It should be
+ * possible to express any time partitioning strategy via this API alone.
+ * The rest of QuestDB should just pick it up natively.
+ */
+public final class PartitionBy {
+
+    public static final int DAY = 0;
+    public static final int HOUR = 4;
+    public static final int MONTH = 1;
+    public static final int WEEK = 5;
+    /**
+     * Data is not partitioned at all,
+     * all data is stored in a single directory
+     */
+    public static final int NONE = 3;
+    public static final int YEAR = 2;
+<span class="fc" id="L55">    private static final PartitionAddMethod ADD_DD = Timestamps::addDays;</span>
+<span class="fc" id="L56">    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;</span>
+<span class="fc" id="L57">    private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;</span>
+<span class="fc" id="L58">    private static final PartitionAddMethod ADD_WW = Timestamps::addWeeks;</span>
+<span class="fc" id="L59">    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYear;</span>
+<span class="fc" id="L60">    private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;</span>
+<span class="fc" id="L61">    private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;</span>
+<span class="fc" id="L62">    private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;</span>
+<span class="fc" id="L63">    private static final PartitionCeilMethod CEIL_WW = Timestamps::ceilWW;</span>
+<span class="fc" id="L64">    private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;</span>
+<span class="fc" id="L65">    private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;</span>
+<span class="fc" id="L66">    private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;</span>
+<span class="fc" id="L67">    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;</span>
+<span class="fc" id="L68">    private static final PartitionFloorMethod FLOOR_WW = Timestamps::floorWW;</span>
+<span class="fc" id="L69">    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;</span>
+    private static final DateFormat fmtDay;
+    private final static DateFormat fmtDefault;
+    private final static DateFormat fmtHour;
+    private static final DateFormat fmtMonth;
+    private static final DateFormat fmtWeek;
+    private static final DateFormat fmtYear;
+<span class="fc" id="L76">    private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();</span>
+
+    private PartitionBy() {
+    }
+
+    public static int fromString(CharSequence name) {
+<span class="fc" id="L82">        return nameToIndexMap.get(name);</span>
+    }
+
+    public static PartitionAddMethod getPartitionAddMethod(int partitionBy) {
+<span class="fc bfc" id="L86" title="All 6 branches covered.">        switch (partitionBy) {</span>
+            case DAY:
+<span class="fc" id="L88">                return ADD_DD;</span>
+            case MONTH:
+<span class="fc" id="L90">                return ADD_MM;</span>
+            case YEAR:
+<span class="fc" id="L92">                return ADD_YYYY;</span>
+            case HOUR:
+<span class="fc" id="L94">                return ADD_HH;</span>
+            case WEEK:
+<span class="fc" id="L96">                return ADD_WW;</span>
+            default:
+<span class="fc" id="L98">                return null;</span>
+        }
+    }
+
+    public static DateFormat getPartitionDirFormatMethod(int partitionBy) {
+<span class="fc bfc" id="L103" title="All 7 branches covered.">        switch (partitionBy) {</span>
+            case DAY:
+<span class="fc" id="L105">                return fmtDay;</span>
+            case MONTH:
+<span class="fc" id="L107">                return fmtMonth;</span>
+            case YEAR:
+<span class="fc" id="L109">                return fmtYear;</span>
+            case HOUR:
+<span class="fc" id="L111">                return fmtHour;</span>
+            case WEEK:
+<span class="fc" id="L113">                return fmtWeek;</span>
+            case NONE:
+<span class="fc" id="L115">                return fmtDefault;</span>
+            default:
+<span class="fc" id="L117">                throw new UnsupportedOperationException(&quot;partition by &quot; + partitionBy + &quot; does not have date format&quot;);</span>
+        }
+    }
+
+    public static PartitionFloorMethod getPartitionFloorMethod(int partitionBy) {
+<span class="fc bfc" id="L122" title="All 6 branches covered.">        switch (partitionBy) {</span>
+            case DAY:
+<span class="fc" id="L124">                return FLOOR_DD;</span>
+            case WEEK:
+<span class="fc" id="L126">                return FLOOR_WW;</span>
+            case MONTH:
+<span class="fc" id="L128">                return FLOOR_MM;</span>
+            case YEAR:
+<span class="fc" id="L130">                return FLOOR_YYYY;</span>
+            case HOUR:
+<span class="fc" id="L132">                return FLOOR_HH;</span>
+            default:
+<span class="fc" id="L134">                return null;</span>
+        }
+    }
+
+    public static long getPartitionTimeIntervalFloor(int partitionBy) {
+<span class="pc bpc" id="L139" title="2 of 6 branches missed.">        switch (partitionBy) {</span>
+            case DAY:
+<span class="fc" id="L141">                return Timestamps.DAY_MICROS;</span>
+            case WEEK:
+<span class="nc" id="L143">                return Timestamps.DAY_MICROS * 7;</span>
+            case MONTH:
+<span class="fc" id="L145">                return Timestamps.DAY_MICROS * 28;</span>
+            case YEAR:
+<span class="fc" id="L147">                return Timestamps.DAY_MICROS * 365;</span>
+            case HOUR:
+<span class="fc" id="L149">                return Timestamps.HOUR_MICROS;</span>
+            default:
+<span class="nc" id="L151">                throw new UnsupportedOperationException();</span>
+        }
+    }
+
+    public static boolean isPartitioned(int partitionBy) {
+<span class="fc bfc" id="L156" title="All 2 branches covered.">        return partitionBy != NONE;</span>
+    }
+
+    public static long parsePartitionDirName(CharSequence partitionName, int partitionBy) {
+        try {
+<span class="fc" id="L161">            return getPartitionDirFormatMethod(partitionBy).parse(partitionName, null);</span>
+<span class="fc" id="L162">        } catch (NumericException e) {</span>
+<span class="fc" id="L163">            final CairoException ee = CairoException.critical(0);</span>
+<span class="pc bpc" id="L164" title="1 of 6 branches missed.">            switch (partitionBy) {</span>
+                case DAY:
+<span class="fc" id="L166">                    ee.put(&quot;'YYYY-MM-DD'&quot;);</span>
+<span class="fc" id="L167">                    break;</span>
+                case WEEK:
+<span class="fc" id="L169">                    ee.put(&quot;'YYYYWww'&quot;);</span>
+<span class="fc" id="L170">                    break;</span>
+                case MONTH:
+<span class="fc" id="L172">                    ee.put(&quot;'YYYY-MM'&quot;);</span>
+<span class="fc" id="L173">                    break;</span>
+                case YEAR:
+<span class="fc" id="L175">                    ee.put(&quot;'YYYY'&quot;);</span>
+<span class="fc" id="L176">                    break;</span>
+                case HOUR:
+<span class="fc" id="L178">                    ee.put(&quot;'YYYY-MM-DDTHH'&quot;);</span>
+                    break;
+            }
+<span class="fc" id="L181">            ee.put(&quot; expected&quot;);</span>
+<span class="fc" id="L182">            throw ee;</span>
+        }
+    }
+
+    public static long setSinkForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
+        int y, m, d;
+        boolean leap;
+<span class="fc bfc" id="L189" title="All 6 branches covered.">        switch (partitionBy) {</span>
+            case DAY:
+<span class="fc" id="L191">                y = Timestamps.getYear(timestamp);</span>
+<span class="fc" id="L192">                leap = Timestamps.isLeapYear(y);</span>
+<span class="fc" id="L193">                m = Timestamps.getMonthOfYear(timestamp, y, leap);</span>
+<span class="fc" id="L194">                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);</span>
+<span class="fc" id="L195">                TimestampFormatUtils.appendYear000(path, y);</span>
+<span class="fc" id="L196">                path.put('-');</span>
+<span class="fc" id="L197">                TimestampFormatUtils.append0(path, m);</span>
+<span class="fc" id="L198">                path.put('-');</span>
+<span class="fc" id="L199">                TimestampFormatUtils.append0(path, d);</span>
+
+<span class="fc bfc" id="L201" title="All 2 branches covered.">                if (calculatePartitionMax) {</span>
+<span class="fc" id="L202">                    return Timestamps.yearMicros(y, leap)</span>
+<span class="fc" id="L203">                            + Timestamps.monthOfYearMicros(m, leap)</span>
+                            + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
+                }
+<span class="fc" id="L206">                return 0;</span>
+            case MONTH:
+<span class="fc" id="L208">                y = Timestamps.getYear(timestamp);</span>
+<span class="fc" id="L209">                leap = Timestamps.isLeapYear(y);</span>
+<span class="fc" id="L210">                m = Timestamps.getMonthOfYear(timestamp, y, leap);</span>
+<span class="fc" id="L211">                TimestampFormatUtils.appendYear000(path, y);</span>
+<span class="fc" id="L212">                path.put('-');</span>
+<span class="fc" id="L213">                TimestampFormatUtils.append0(path, m);</span>
+
+<span class="fc bfc" id="L215" title="All 2 branches covered.">                if (calculatePartitionMax) {</span>
+<span class="fc" id="L216">                    return Timestamps.yearMicros(y, leap)</span>
+<span class="fc" id="L217">                            + Timestamps.monthOfYearMicros(m, leap)</span>
+<span class="fc" id="L218">                            + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;</span>
+                }
+<span class="fc" id="L220">                return 0;</span>
+            case YEAR:
+<span class="fc" id="L222">                y = Timestamps.getYear(timestamp);</span>
+<span class="fc" id="L223">                leap = Timestamps.isLeapYear(y);</span>
+<span class="fc" id="L224">                TimestampFormatUtils.appendYear000(path, y);</span>
+<span class="fc bfc" id="L225" title="All 2 branches covered.">                if (calculatePartitionMax) {</span>
+<span class="fc" id="L226">                    return Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;</span>
+                }
+<span class="fc" id="L228">                return 0;</span>
+            case HOUR:
+<span class="fc" id="L230">                y = Timestamps.getYear(timestamp);</span>
+<span class="fc" id="L231">                leap = Timestamps.isLeapYear(y);</span>
+<span class="fc" id="L232">                m = Timestamps.getMonthOfYear(timestamp, y, leap);</span>
+<span class="fc" id="L233">                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);</span>
+<span class="fc" id="L234">                int h = Timestamps.getHourOfDay(timestamp);</span>
+<span class="fc" id="L235">                TimestampFormatUtils.appendYear000(path, y);</span>
+<span class="fc" id="L236">                path.put('-');</span>
+<span class="fc" id="L237">                TimestampFormatUtils.append0(path, m);</span>
+<span class="fc" id="L238">                path.put('-');</span>
+<span class="fc" id="L239">                TimestampFormatUtils.append0(path, d);</span>
+<span class="fc" id="L240">                path.put('T');</span>
+<span class="fc" id="L241">                TimestampFormatUtils.append0(path, h);</span>
+
+<span class="fc bfc" id="L243" title="All 2 branches covered.">                if (calculatePartitionMax) {</span>
+<span class="fc" id="L244">                    return Timestamps.yearMicros(y, leap)</span>
+<span class="fc" id="L245">                            + Timestamps.monthOfYearMicros(m, leap)</span>
+                            + (d - 1) * Timestamps.DAY_MICROS + (h + 1) * Timestamps.HOUR_MICROS - 1;
+                }
+<span class="fc" id="L248">                return 0;</span>
+            case WEEK:
+<span class="fc" id="L250">                y = Timestamps.getIsoYear(timestamp);</span>
+<span class="fc" id="L251">                int w = Timestamps.getWeek(timestamp);</span>
+<span class="fc" id="L252">                TimestampFormatUtils.appendYear000(path, y);</span>
+<span class="fc" id="L253">                path.put(&quot;-W&quot;);</span>
+<span class="fc" id="L254">                TimestampFormatUtils.append0(path, w);</span>
+
+<span class="fc bfc" id="L256" title="All 2 branches covered.">                if (calculatePartitionMax) {</span>
+<span class="fc" id="L257">                    return Timestamps.ceilWW(timestamp) - 1;</span>
+                }
+<span class="fc" id="L259">                return 0;</span>
+            default:
+<span class="fc" id="L261">                path.put(DEFAULT_PARTITION_NAME);</span>
+<span class="fc" id="L262">                return Long.MAX_VALUE;</span>
+        }
+    }
+
+    public static String toString(int partitionBy) {
+<span class="fc bfc" id="L267" title="All 7 branches covered.">        switch (partitionBy) {</span>
+            case DAY:
+<span class="fc" id="L269">                return &quot;DAY&quot;;</span>
+            case MONTH:
+<span class="fc" id="L271">                return &quot;MONTH&quot;;</span>
+            case YEAR:
+<span class="fc" id="L273">                return &quot;YEAR&quot;;</span>
+            case HOUR:
+<span class="fc" id="L275">                return &quot;HOUR&quot;;</span>
+            case WEEK:
+<span class="fc" id="L277">                return &quot;WEEK&quot;;</span>
+            case NONE:
+<span class="fc" id="L279">                return &quot;NONE&quot;;</span>
+            default:
+<span class="fc" id="L281">                return &quot;UNKNOWN&quot;;</span>
+        }
+    }
+
+    static PartitionCeilMethod getPartitionCeilMethod(int partitionBy) {
+<span class="fc bfc" id="L286" title="All 6 branches covered.">        switch (partitionBy) {</span>
+            case DAY:
+<span class="fc" id="L288">                return CEIL_DD;</span>
+            case MONTH:
+<span class="fc" id="L290">                return CEIL_MM;</span>
+            case YEAR:
+<span class="fc" id="L292">                return CEIL_YYYY;</span>
+            case HOUR:
+<span class="fc" id="L294">                return CEIL_HH;</span>
+            case WEEK:
+<span class="fc" id="L296">                return CEIL_WW;</span>
+            default:
+<span class="fc" id="L298">                return null;</span>
+        }
+    }
+
+    @FunctionalInterface
+    public interface PartitionAddMethod {
+        long calculate(long timestamp, int increment);
+    }
+
+    @FunctionalInterface
+    public interface PartitionCeilMethod {
+        // returns exclusive ceiling for the give timestamp
+        long ceil(long timestamp);
+    }
+
+    @FunctionalInterface
+    public interface PartitionFloorMethod {
+        long floor(long timestamp);
+    }
+
+    static {
+<span class="fc" id="L319">        nameToIndexMap.put(&quot;day&quot;, DAY);</span>
+<span class="fc" id="L320">        nameToIndexMap.put(&quot;month&quot;, MONTH);</span>
+<span class="fc" id="L321">        nameToIndexMap.put(&quot;year&quot;, YEAR);</span>
+<span class="fc" id="L322">        nameToIndexMap.put(&quot;hour&quot;, HOUR);</span>
+<span class="fc" id="L323">        nameToIndexMap.put(&quot;week&quot;, WEEK);</span>
+<span class="fc" id="L324">        nameToIndexMap.put(&quot;none&quot;, NONE);</span>
+    }
+
+    static {
+<span class="fc" id="L328">        TimestampFormatCompiler compiler = new TimestampFormatCompiler();</span>
+<span class="fc" id="L329">        fmtDay = compiler.compile(&quot;yyyy-MM-dd&quot;);</span>
+<span class="fc" id="L330">        fmtMonth = compiler.compile(&quot;yyyy-MM&quot;);</span>
+<span class="fc" id="L331">        fmtYear = compiler.compile(&quot;yyyy&quot;);</span>
+<span class="fc" id="L332">        fmtHour = compiler.compile(&quot;yyyy-MM-ddTHH&quot;);</span>
+<span class="fc" id="L333">        fmtWeek = compiler.compile(&quot;YYYY-Www&quot;);</span>
+<span class="fc" id="L334">        fmtDefault = new DateFormat() {</span>
+            @Override
+            public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+<span class="fc" id="L337">                sink.put(DEFAULT_PARTITION_NAME);</span>
+<span class="fc" id="L338">            }</span>
+
+            @Override
+            public long parse(CharSequence in, DateLocale locale) {
+<span class="fc" id="L342">                return parse(in, 0, in.length(), locale);</span>
+            }
+
+            @Override
+            public long parse(CharSequence in, int lo, int hi, DateLocale locale) {
+<span class="fc" id="L347">                return 0;</span>
+            }
+        };
+<span class="fc" id="L350">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

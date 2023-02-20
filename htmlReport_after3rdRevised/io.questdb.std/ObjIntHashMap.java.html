@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ObjIntHashMap.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">ObjIntHashMap.java</span></div><h1>ObjIntHashMap.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import org.jetbrains.annotations.NotNull;
+
+import java.util.Arrays;
+import java.util.Iterator;
+
+
+public class ObjIntHashMap&lt;K&gt; implements Iterable&lt;ObjIntHashMap.Entry&lt;K&gt;&gt;, Mutable {
+    private static final int MIN_INITIAL_CAPACITY = 16;
+<span class="fc" id="L35">    private static final Object noEntryValue = new Object();</span>
+<span class="fc" id="L36">    private final EntryIterator iterator = new EntryIterator();</span>
+    private final double loadFactor;
+    private final int noKeyValue;
+    private int capacity;
+    private int free;
+    private K[] keys;
+    private int mask;
+    private int[] values;
+
+    public ObjIntHashMap() {
+<span class="fc" id="L46">        this(8);</span>
+<span class="fc" id="L47">    }</span>
+
+    private ObjIntHashMap(int initialCapacity) {
+<span class="fc" id="L50">        this(initialCapacity, 0.3, -1);</span>
+<span class="fc" id="L51">    }</span>
+
+<span class="fc" id="L53">    public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {</span>
+<span class="pc bpc" id="L54" title="2 of 4 branches missed.">        assert loadFactor &gt; 0 &amp;&amp; loadFactor &lt; 1.0;</span>
+<span class="fc" id="L55">        this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);</span>
+<span class="fc" id="L56">        this.loadFactor = loadFactor;</span>
+<span class="fc" id="L57">        this.noKeyValue = noKeyValue;</span>
+<span class="fc" id="L58">        keys = createKeys();</span>
+<span class="fc" id="L59">        values = new int[keys.length];</span>
+<span class="fc" id="L60">        mask = keys.length - 1;</span>
+<span class="fc" id="L61">        clear();</span>
+<span class="fc" id="L62">    }</span>
+
+    public int capacity() {
+<span class="nc" id="L65">        return capacity;</span>
+    }
+
+    @Override
+    public final void clear() {
+<span class="fc bfc" id="L70" title="All 2 branches covered.">        if (free != capacity) {</span>
+<span class="fc" id="L71">            free = capacity;</span>
+<span class="fc" id="L72">            Arrays.fill(keys, noEntryValue);</span>
+        }
+<span class="fc" id="L74">    }</span>
+
+    public int get(K key) {
+<span class="fc" id="L77">        return valueAt(keyIndex(key));</span>
+    }
+
+    @Override
+    @NotNull
+    public Iterator&lt;Entry&lt;K&gt;&gt; iterator() {
+<span class="fc" id="L83">        iterator.index = 0;</span>
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        return iterator;</span>
+    }
+
+    public int keyIndex(K key) {
+<span class="fc" id="L88">        int index = Hash.spread(key.hashCode()) &amp; mask;</span>
+
+<span class="fc" id="L90">        final K kv = keys[index];</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (kv == noEntryValue) {</span>
+<span class="fc" id="L92">            return index;</span>
+        }
+
+<span class="fc bfc" id="L95" title="All 4 branches covered.">        if (kv == key || key.equals(kv)) {</span>
+<span class="fc" id="L96">            return -index - 1;</span>
+        }
+
+<span class="fc" id="L99">        return probe(key, index);</span>
+    }
+
+    public void put(K key, int value) {
+<span class="fc" id="L103">        putAt(keyIndex(key), key, value);</span>
+<span class="fc" id="L104">    }</span>
+
+    public void putAt(int index, K key, int value) {
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L108">            values[-index - 1] = value;</span>
+<span class="fc" id="L109">            return;</span>
+        }
+<span class="fc" id="L111">        putAt0(index, key, value);</span>
+<span class="fc" id="L112">    }</span>
+
+    public boolean putIfAbsent(K key, int value) {
+<span class="fc" id="L115">        final int index = keyIndex(key);</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L117">            putAt(index, key, value);</span>
+<span class="fc" id="L118">            return true;</span>
+        }
+<span class="fc" id="L120">        return false;</span>
+    }
+
+    public int size() {
+<span class="fc" id="L124">        return capacity - free;</span>
+    }
+
+    public int valueAt(int index) {
+<span class="fc" id="L128">        int index1 = -index - 1;</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">        return index &lt; 0 ? values[index1] : noKeyValue;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private K[] createKeys() {
+<span class="fc" id="L134">        return (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / this.loadFactor))];</span>
+    }
+
+    private int probe(K key, int index) {
+        do {
+<span class="fc" id="L139">            index = (index + 1) &amp; mask;</span>
+<span class="fc" id="L140">            final K kv = keys[index];</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">            if (kv == noEntryValue) {</span>
+<span class="fc" id="L142">                return index;</span>
+            }
+<span class="fc bfc" id="L144" title="All 4 branches covered.">            if (kv == key || key.equals(kv)) {</span>
+<span class="fc" id="L145">                return -index - 1;</span>
+            }
+<span class="fc" id="L147">        } while (true);</span>
+    }
+
+    private void putAt0(int index, K key, int value) {
+<span class="fc" id="L151">        keys[index] = key;</span>
+<span class="fc" id="L152">        values[index] = value;</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        if (--free == 0) {</span>
+<span class="fc" id="L154">            rehash();</span>
+        }
+<span class="fc" id="L156">    }</span>
+
+    @SuppressWarnings({&quot;unchecked&quot;})
+    private void rehash() {
+<span class="fc" id="L160">        free = capacity = this.capacity * 2;</span>
+<span class="fc" id="L161">        int[] oldValues = values;</span>
+<span class="fc" id="L162">        K[] oldKeys = keys;</span>
+<span class="fc" id="L163">        this.keys = (K[]) new Object[Numbers.ceilPow2(Numbers.ceilPow2((int) (this.capacity / loadFactor)))];</span>
+<span class="fc" id="L164">        this.values = new int[keys.length];</span>
+<span class="fc" id="L165">        Arrays.fill(keys, noEntryValue);</span>
+<span class="fc" id="L166">        mask = keys.length - 1;</span>
+
+<span class="fc bfc" id="L168" title="All 2 branches covered.">        for (int i = oldKeys.length; i-- &gt; 0; ) {</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">            if (oldKeys[i] != noEntryValue) {</span>
+<span class="fc" id="L170">                put(oldKeys[i], oldValues[i]);</span>
+            }
+        }
+<span class="fc" id="L173">    }</span>
+
+<span class="fc" id="L175">    public static class Entry&lt;V&gt; {</span>
+        public V key;
+        public int value;
+    }
+
+<span class="fc" id="L180">    public class EntryIterator implements ImmutableIterator&lt;Entry&lt;K&gt;&gt; {</span>
+
+<span class="fc" id="L182">        private final Entry&lt;K&gt; entry = new Entry&lt;&gt;();</span>
+<span class="fc" id="L183">        private int index = 0;</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="pc bpc" id="L187" title="1 of 6 branches missed.">            return index &lt; values.length &amp;&amp; (keys[index] != noEntryValue || scan());</span>
+        }
+
+        @Override
+        public Entry&lt;K&gt; next() {
+<span class="fc" id="L192">            entry.key = keys[index];</span>
+<span class="fc" id="L193">            int index1 = index++;</span>
+<span class="fc" id="L194">            entry.value = values[index1];</span>
+<span class="fc" id="L195">            return entry;</span>
+        }
+
+        private boolean scan() {
+            do {
+<span class="fc" id="L200">                index++;</span>
+<span class="fc bfc" id="L201" title="All 4 branches covered.">            } while (index &lt; values.length &amp;&amp; keys[index] == noEntryValue);</span>
+
+<span class="fc bfc" id="L203" title="All 2 branches covered.">            return index &lt; values.length;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

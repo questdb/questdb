@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IntIntHashMap.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">IntIntHashMap.java</span></div><h1>IntIntHashMap.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import java.util.Arrays;
+
+
+public class IntIntHashMap extends AbstractIntHashSet {
+    private static final int noEntryValue = -1;
+    private int[] values;
+
+    public IntIntHashMap() {
+<span class="fc" id="L35">        this(8);</span>
+<span class="fc" id="L36">    }</span>
+
+    public IntIntHashMap(int initialCapacity) {
+<span class="fc" id="L39">        this(initialCapacity, 0.5f);</span>
+<span class="fc" id="L40">    }</span>
+
+    private IntIntHashMap(int initialCapacity, double loadFactor) {
+<span class="fc" id="L43">        super(initialCapacity, loadFactor);</span>
+<span class="fc" id="L44">        values = new int[keys.length];</span>
+<span class="fc" id="L45">        clear();</span>
+<span class="fc" id="L46">    }</span>
+
+    public int get(int key) {
+<span class="fc" id="L49">        return valueAt(keyIndex(key));</span>
+    }
+
+    public void put(int key, int value) {
+<span class="fc" id="L53">        putAt(keyIndex(key), key, value);</span>
+<span class="fc" id="L54">    }</span>
+
+    public void putAll(IntIntHashMap other) {
+<span class="fc" id="L57">        int[] otherKeys = other.keys;</span>
+<span class="fc" id="L58">        int[] otherValues = other.values;</span>
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        for (int i = 0, n = otherKeys.length; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">            if (otherKeys[i] != other.noEntryKeyValue) {</span>
+<span class="fc" id="L61">                put(otherKeys[i], otherValues[i]);</span>
+            }
+        }
+<span class="fc" id="L64">    }</span>
+
+    public void putAt(int index, int key, int value) {
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (index &lt; 0) {</span>
+<span class="fc" id="L68">            values[-index - 1] = value;</span>
+        } else {
+<span class="fc" id="L70">            keys[index] = key;</span>
+<span class="fc" id="L71">            values[index] = value;</span>
+<span class="fc bfc" id="L72" title="All 2 branches covered.">            if (--free == 0) {</span>
+<span class="fc" id="L73">                rehash();</span>
+            }
+        }
+<span class="fc" id="L76">    }</span>
+
+    public int valueAt(int index) {
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        return index &lt; 0 ? values[-index - 1] : noEntryValue;</span>
+    }
+
+    private void rehash() {
+<span class="fc" id="L83">        int size = size();</span>
+<span class="fc" id="L84">        int newCapacity = capacity * 2;</span>
+<span class="fc" id="L85">        free = capacity = newCapacity;</span>
+<span class="fc" id="L86">        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));</span>
+
+<span class="fc" id="L88">        int[] oldValues = values;</span>
+<span class="fc" id="L89">        int[] oldKeys = keys;</span>
+<span class="fc" id="L90">        this.keys = new int[len];</span>
+<span class="fc" id="L91">        this.values = new int[len];</span>
+<span class="fc" id="L92">        Arrays.fill(keys, noEntryKeyValue);</span>
+<span class="fc" id="L93">        mask = len - 1;</span>
+
+<span class="fc" id="L95">        free -= size;</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        for (int i = oldKeys.length; i-- &gt; 0; ) {</span>
+<span class="fc" id="L97">            int key = oldKeys[i];</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">            if (key != noEntryKeyValue) {</span>
+<span class="fc" id="L99">                final int index = keyIndex(key);</span>
+<span class="fc" id="L100">                keys[index] = key;</span>
+<span class="fc" id="L101">                values[index] = oldValues[i];</span>
+            }
+<span class="fc" id="L103">        }</span>
+<span class="fc" id="L104">    }</span>
+
+    @Override
+    protected void erase(int index) {
+<span class="nc" id="L108">        keys[index] = this.noEntryKeyValue;</span>
+<span class="nc" id="L109">    }</span>
+
+    @Override
+    protected void move(int from, int to) {
+<span class="nc" id="L113">        keys[to] = keys[from];</span>
+<span class="nc" id="L114">        values[to] = values[from];</span>
+<span class="nc" id="L115">        erase(from);</span>
+<span class="nc" id="L116">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

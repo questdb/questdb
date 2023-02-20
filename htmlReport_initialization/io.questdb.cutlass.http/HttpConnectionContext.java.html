@@ -1,0 +1,711 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpConnectionContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.http</a> &gt; <span class="el_source">HttpConnectionContext.java</span></div><h1>HttpConnectionContext.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http;
+
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.security.CairoSecurityContextImpl;
+import io.questdb.cutlass.http.ex.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.network.*;
+import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StdoutSink;
+
+import static io.questdb.network.IODispatcher.*;
+
+public class HttpConnectionContext extends AbstractMutableIOContext&lt;HttpConnectionContext&gt; implements Locality, Retry {
+<span class="fc" id="L41">    private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);</span>
+    private final boolean allowDeflateBeforeSend;
+    private final CairoSecurityContext cairoSecurityContext;
+    private final ObjectPool&lt;DirectByteCharSequence&gt; csPool;
+    private final boolean dumpNetworkTraffic;
+    private final HttpHeaderParser headerParser;
+<span class="fc" id="L47">    private final LocalValueMap localValueMap = new LocalValueMap();</span>
+    private final Metrics metrics;
+    private final HttpHeaderParser multipartContentHeaderParser;
+    private final HttpMultipartContentParser multipartContentParser;
+    private final long multipartIdleSpinCount;
+<span class="fc" id="L52">    private final MultipartParserState multipartParserState = new MultipartParserState();</span>
+    private final NetworkFacade nf;
+    private final int recvBufferSize;
+    private final HttpResponseSink responseSink;
+<span class="fc" id="L56">    private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();</span>
+<span class="fc" id="L57">    private final RescheduleContext retryRescheduleContext = retry -&gt; {</span>
+<span class="nc" id="L58">        LOG.info().$(&quot;Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=&quot;).$(Thread.currentThread().getId()).$(']');</span>
+<span class="nc" id="L59">        throw RetryOperationException.INSTANCE;</span>
+    };
+    private final boolean serverKeepAlive;
+    private int nCompletedRequests;
+<span class="fc" id="L63">    private boolean pendingRetry = false;</span>
+    private int receivedBytes;
+    private long recvBuffer;
+<span class="fc" id="L66">    private HttpRequestProcessor resumeProcessor = null;</span>
+    private SuspendEvent suspendEvent;
+    private long totalBytesSent;
+
+<span class="fc" id="L70">    public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {</span>
+<span class="fc" id="L71">        this.nf = configuration.getNetworkFacade();</span>
+<span class="fc" id="L72">        this.csPool = new ObjectPool&lt;&gt;(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());</span>
+<span class="fc" id="L73">        this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);</span>
+<span class="fc" id="L74">        this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);</span>
+<span class="fc" id="L75">        this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);</span>
+<span class="fc" id="L76">        this.responseSink = new HttpResponseSink(configuration);</span>
+<span class="fc" id="L77">        this.recvBufferSize = configuration.getRecvBufferSize();</span>
+<span class="fc" id="L78">        this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();</span>
+<span class="fc" id="L79">        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();</span>
+<span class="fc" id="L80">        this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();</span>
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">        this.cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());</span>
+<span class="fc" id="L82">        this.serverKeepAlive = configuration.getServerKeepAlive();</span>
+<span class="fc" id="L83">        this.metrics = metrics;</span>
+<span class="fc" id="L84">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L88">        LOG.debug().$(&quot;clear [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L89">        this.totalBytesSent += responseSink.getTotalBytesSent();</span>
+<span class="fc" id="L90">        this.responseSink.clear();</span>
+<span class="fc" id="L91">        this.nCompletedRequests++;</span>
+<span class="fc" id="L92">        this.resumeProcessor = null;</span>
+<span class="fc" id="L93">        this.headerParser.clear();</span>
+<span class="fc" id="L94">        this.multipartContentParser.clear();</span>
+<span class="fc" id="L95">        this.multipartContentHeaderParser.clear();</span>
+<span class="fc" id="L96">        this.csPool.clear();</span>
+<span class="fc" id="L97">        this.localValueMap.clear();</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">        if (this.pendingRetry) {</span>
+<span class="nc" id="L99">            LOG.error().$(&quot;reused context with retry pending&quot;).$();</span>
+        }
+<span class="fc" id="L101">        this.pendingRetry = false;</span>
+<span class="fc" id="L102">        this.multipartParserState.multipartRetry = false;</span>
+<span class="fc" id="L103">        this.retryAttemptAttributes.waitStartTimestamp = 0;</span>
+<span class="fc" id="L104">        this.retryAttemptAttributes.lastRunTimestamp = 0;</span>
+<span class="fc" id="L105">        this.retryAttemptAttributes.attempt = 0;</span>
+<span class="fc" id="L106">        this.receivedBytes = 0;</span>
+<span class="fc" id="L107">        clearSuspendEvent();</span>
+<span class="fc" id="L108">    }</span>
+
+    @Override
+    public void clearSuspendEvent() {
+<span class="fc" id="L112">        suspendEvent = Misc.free(suspendEvent);</span>
+<span class="fc" id="L113">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L117">        LOG.debug().$(&quot;close [fd=&quot;).$(fd).$(']').$();</span>
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">        if (this.pendingRetry) {</span>
+<span class="nc" id="L119">            this.pendingRetry = false;</span>
+<span class="nc" id="L120">            LOG.info().$(&quot;closed context with retry pending [fd=&quot;).$(fd).$(']').$();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (this.fd &gt; 0) {</span>
+<span class="nc" id="L122">                Net.close(this.fd);</span>
+            }
+        }
+<span class="fc" id="L125">        this.fd = -1;</span>
+<span class="fc" id="L126">        this.dispatcher = null;</span>
+<span class="fc" id="L127">        this.nCompletedRequests = 0;</span>
+<span class="fc" id="L128">        this.totalBytesSent = 0;</span>
+<span class="fc" id="L129">        this.csPool.clear();</span>
+<span class="fc" id="L130">        this.multipartContentParser.close();</span>
+<span class="fc" id="L131">        this.multipartContentHeaderParser.close();</span>
+<span class="fc" id="L132">        this.headerParser.close();</span>
+<span class="fc" id="L133">        this.localValueMap.close();</span>
+<span class="fc" id="L134">        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="fc" id="L135">        this.responseSink.close();</span>
+<span class="fc" id="L136">        this.receivedBytes = 0;</span>
+<span class="fc" id="L137">        clearSuspendEvent();</span>
+<span class="fc" id="L138">        LOG.debug().$(&quot;closed&quot;).$();</span>
+<span class="fc" id="L139">    }</span>
+
+    @Override
+    public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+<span class="fc" id="L143">        LOG.info().$(&quot;failed to retry query [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L144">        HttpRequestProcessor processor = getHttpRequestProcessor(selector);</span>
+<span class="fc" id="L145">        failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);</span>
+<span class="fc" id="L146">    }</span>
+
+    @Override
+    public RetryAttemptAttributes getAttemptDetails() {
+<span class="fc" id="L150">        return retryAttemptAttributes;</span>
+    }
+
+    public CairoSecurityContext getCairoSecurityContext() {
+<span class="fc" id="L154">        return cairoSecurityContext;</span>
+    }
+
+    public HttpChunkedResponseSocket getChunkedResponseSocket() {
+<span class="fc" id="L158">        return responseSink.getChunkedSocket();</span>
+    }
+
+    public long getLastRequestBytesSent() {
+<span class="fc" id="L162">        return responseSink.getTotalBytesSent();</span>
+    }
+
+    @Override
+    public LocalValueMap getMap() {
+<span class="fc" id="L167">        return localValueMap;</span>
+    }
+
+    public Metrics getMetrics() {
+<span class="fc" id="L171">        return metrics;</span>
+    }
+
+    public int getNCompletedRequests() {
+<span class="fc" id="L175">        return nCompletedRequests;</span>
+    }
+
+    public HttpRawSocket getRawResponseSocket() {
+<span class="fc" id="L179">        return responseSink.getRawSocket();</span>
+    }
+
+    public HttpRequestHeader getRequestHeader() {
+<span class="fc" id="L183">        return headerParser;</span>
+    }
+
+    public HttpResponseHeader getResponseHeader() {
+<span class="fc" id="L187">        return responseSink.getHeader();</span>
+    }
+
+    @Override
+    public SuspendEvent getSuspendEvent() {
+<span class="fc" id="L192">        return suspendEvent;</span>
+    }
+
+    public long getTotalBytesSent() {
+<span class="fc" id="L196">        return totalBytesSent;</span>
+    }
+
+    public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        boolean keepGoing;
+<span class="pc bpc" id="L201" title="1 of 3 branches missed.">        switch (operation) {</span>
+            case IOOperation.READ:
+<span class="fc" id="L203">                keepGoing = handleClientRecv(selector, rescheduleContext);</span>
+<span class="fc" id="L204">                break;</span>
+            case IOOperation.WRITE:
+<span class="fc" id="L206">                keepGoing = handleClientSend();</span>
+<span class="fc" id="L207">                break;</span>
+            default:
+<span class="nc" id="L209">                dispatcher.disconnect(this, DISCONNECT_REASON_UNKNOWN_OPERATION);</span>
+<span class="nc" id="L210">                keepGoing = false;</span>
+                break;
+        }
+
+<span class="fc" id="L214">        boolean useful = keepGoing;</span>
+<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (keepGoing) {</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">            if (serverKeepAlive) {</span>
+                do {
+<span class="fc" id="L218">                    keepGoing = handleClientRecv(selector, rescheduleContext);</span>
+<span class="fc bfc" id="L219" title="All 2 branches covered.">                } while (keepGoing);</span>
+            } else {
+<span class="fc" id="L221">                dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF);</span>
+            }
+        }
+<span class="fc" id="L224">        return useful;</span>
+    }
+
+    @Override
+    public boolean invalid() {
+<span class="pc bpc" id="L229" title="2 of 6 branches missed.">        return pendingRetry || receivedBytes &gt; 0 || this.fd == -1;</span>
+    }
+
+    @Override
+    public HttpConnectionContext of(int fd, IODispatcher&lt;HttpConnectionContext&gt; dispatcher) {
+<span class="fc" id="L234">        HttpConnectionContext r = super.of(fd, dispatcher);</span>
+<span class="fc bfc" id="L235" title="All 2 branches covered.">        if (fd == -1) {</span>
+            // The context is about to be returned to the pool, so we should release the memory.
+<span class="fc" id="L237">            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="fc" id="L238">            this.responseSink.close();</span>
+        } else {
+            // The context is obtained from the pool, so we should initialize the memory.
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">            if (recvBuffer == 0) {</span>
+<span class="fc" id="L242">                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);</span>
+            }
+<span class="fc" id="L244">            this.responseSink.of(fd);</span>
+        }
+<span class="fc" id="L246">        return r;</span>
+    }
+
+    public void resumeResponseSend() throws PeerIsSlowToReadException, PeerDisconnectedException {
+<span class="fc" id="L250">        responseSink.resumeSend();</span>
+<span class="fc" id="L251">    }</span>
+
+    public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) {
+        try {
+<span class="fc" id="L255">            pendingRetry = true;</span>
+<span class="fc" id="L256">            rescheduleContext.reschedule(this);</span>
+<span class="fc" id="L257">        } catch (RetryFailedOperationException e) {</span>
+<span class="fc" id="L258">            failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);</span>
+<span class="fc" id="L259">        }</span>
+<span class="fc" id="L260">    }</span>
+
+    public HttpResponseSink.SimpleResponseImpl simpleResponse() {
+<span class="fc" id="L263">        return responseSink.getSimple();</span>
+    }
+
+    public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">        if (pendingRetry) {</span>
+<span class="fc" id="L268">            pendingRetry = false;</span>
+<span class="fc" id="L269">            HttpRequestProcessor processor = getHttpRequestProcessor(selector);</span>
+            try {
+<span class="fc" id="L271">                LOG.info().$(&quot;retrying query [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L272">                processor.onRequestRetry(this);</span>
+<span class="fc bfc" id="L273" title="All 2 branches covered.">                if (multipartParserState.multipartRetry) {</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">                    if (continueConsumeMultipart(</span>
+                            fd,
+                            multipartParserState.start,
+                            multipartParserState.buf,
+                            multipartParserState.bufRemaining,
+                            (HttpMultipartContentListener) processor,
+                            processor,
+                            retryRescheduleContext
+                    )) {
+<span class="fc" id="L283">                        LOG.info().$(&quot;success retried multipart import [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L284">                        busyRcvLoop(selector, rescheduleContext);</span>
+                    } else {
+<span class="fc" id="L286">                        LOG.info().$(&quot;retry success but import not finished [fd=&quot;).$(fd).$(']').$();</span>
+                    }
+                } else {
+<span class="fc" id="L289">                    busyRcvLoop(selector, rescheduleContext);</span>
+                }
+<span class="fc" id="L291">            } catch (RetryOperationException e2) {</span>
+<span class="fc" id="L292">                pendingRetry = true;</span>
+<span class="fc" id="L293">                return false;</span>
+<span class="fc" id="L294">            } catch (PeerDisconnectedException ignore) {</span>
+<span class="fc" id="L295">                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);</span>
+<span class="fc" id="L296">            } catch (PeerIsSlowToReadException e2) {</span>
+<span class="fc" id="L297">                LOG.info().$(&quot;peer is slow on running the rerun [fd=&quot;).$(fd).$(&quot;, thread=&quot;)</span>
+<span class="fc" id="L298">                        .$(Thread.currentThread().getId()).$(']').$();</span>
+<span class="fc" id="L299">                processor.parkRequest(this, false);</span>
+<span class="fc" id="L300">                resumeProcessor = processor;</span>
+<span class="fc" id="L301">                dispatcher.registerChannel(this, IOOperation.WRITE);</span>
+<span class="nc" id="L302">            } catch (QueryPausedException e) {</span>
+<span class="nc" id="L303">                LOG.info().$(&quot;partition is in cold storage, suspending query [fd=&quot;).$(fd).$(&quot;, thread=&quot;)</span>
+<span class="nc" id="L304">                        .$(Thread.currentThread().getId()).$(']').$();</span>
+<span class="nc" id="L305">                processor.parkRequest(this, true);</span>
+<span class="nc" id="L306">                resumeProcessor = processor;</span>
+<span class="nc" id="L307">                suspendEvent = e.getEvent();</span>
+<span class="nc" id="L308">                dispatcher.registerChannel(this, IOOperation.WRITE);</span>
+<span class="fc" id="L309">            } catch (ServerDisconnectException e) {</span>
+<span class="fc" id="L310">                LOG.info().$(&quot;kicked out [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L311">                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RERUN);</span>
+<span class="pc" id="L312">            }</span>
+        }
+<span class="fc" id="L314">        return true;</span>
+    }
+
+    @SuppressWarnings(&quot;StatementWithEmptyBody&quot;)
+    private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+<span class="fc" id="L319">        clear();</span>
+<span class="pc bpc" id="L320" title="1 of 2 branches missed.">        if (serverKeepAlive) {</span>
+<span class="pc bpc" id="L321" title="1 of 2 branches missed.">            while (handleClientRecv(selector, rescheduleContext)) ;</span>
+        } else {
+<span class="nc" id="L323">            dispatcher.disconnect(this, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);</span>
+        }
+<span class="fc" id="L325">    }</span>
+
+    private void completeRequest(
+            HttpRequestProcessor processor,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+<span class="fc" id="L331">        LOG.debug().$(&quot;complete [fd=&quot;).$(fd).$(']').$();</span>
+        try {
+<span class="fc" id="L333">            processor.onRequestComplete(this);</span>
+<span class="fc" id="L334">            clear();</span>
+<span class="nc" id="L335">        } catch (RetryOperationException e) {</span>
+<span class="nc" id="L336">            pendingRetry = true;</span>
+<span class="nc" id="L337">            scheduleRetry(processor, rescheduleContext);</span>
+<span class="fc" id="L338">        }</span>
+<span class="fc" id="L339">    }</span>
+
+    private boolean consumeMultipart(
+            int fd,
+            HttpRequestProcessor processor,
+            long headerEnd,
+            int read,
+            boolean newRequest,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+<span class="fc bfc" id="L349" title="All 2 branches covered.">        if (newRequest) {</span>
+<span class="fc" id="L350">            processor.onHeadersReady(this);</span>
+<span class="fc" id="L351">            multipartContentParser.of(headerParser.getBoundary());</span>
+        }
+
+<span class="fc" id="L354">        processor.resumeRecv(this);</span>
+
+<span class="fc" id="L356">        final HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;</span>
+<span class="fc" id="L357">        final long bufferEnd = recvBuffer + read;</span>
+
+<span class="fc" id="L359">        LOG.debug().$(&quot;multipart&quot;).$();</span>
+
+        // read socket into buffer until there is nothing to read
+        long start;
+        long buf;
+        int bufRemaining;
+
+<span class="fc bfc" id="L366" title="All 2 branches covered.">        if (headerEnd &lt; bufferEnd) {</span>
+<span class="fc" id="L367">            start = headerEnd;</span>
+<span class="fc" id="L368">            buf = bufferEnd;</span>
+<span class="fc" id="L369">            bufRemaining = (int) (recvBufferSize - (bufferEnd - recvBuffer));</span>
+        } else {
+<span class="fc" id="L371">            start = recvBuffer;</span>
+<span class="fc" id="L372">            buf = start + receivedBytes;</span>
+<span class="fc" id="L373">            bufRemaining = recvBufferSize - receivedBytes;</span>
+<span class="fc" id="L374">            receivedBytes = 0;</span>
+        }
+
+<span class="fc" id="L377">        return continueConsumeMultipart(fd, start, buf, bufRemaining, multipartListener, processor, rescheduleContext);</span>
+    }
+
+    private boolean continueConsumeMultipart(
+            int fd,
+            long start,
+            long buf,
+            int bufRemaining,
+            HttpMultipartContentListener multipartListener,
+            HttpRequestProcessor processor,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+<span class="fc" id="L389">        boolean keepGoing = false;</span>
+
+<span class="fc bfc" id="L391" title="All 2 branches covered.">        if (buf &gt; start) {</span>
+            try {
+<span class="fc bfc" id="L393" title="All 2 branches covered.">                if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {</span>
+<span class="fc" id="L394">                    return true;</span>
+                }
+
+<span class="fc" id="L397">                buf = start = recvBuffer;</span>
+<span class="fc" id="L398">                bufRemaining = recvBufferSize;</span>
+<span class="fc" id="L399">            } catch (TooFewBytesReceivedException e) {</span>
+<span class="fc" id="L400">                start = multipartContentParser.getResumePtr();</span>
+<span class="fc" id="L401">            }</span>
+        }
+
+<span class="fc" id="L404">        long spinsRemaining = multipartIdleSpinCount;</span>
+
+        while (true) {
+<span class="fc" id="L407">            final int n = nf.recv(fd, buf, bufRemaining);</span>
+<span class="fc bfc" id="L408" title="All 2 branches covered.">            if (n &lt; 0) {</span>
+<span class="fc" id="L409">                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_MULTIPART_RECV);</span>
+<span class="fc" id="L410">                break;</span>
+            }
+
+<span class="fc bfc" id="L413" title="All 2 branches covered.">            if (n == 0) {</span>
+                // Text loader needs as big of a data chunk as possible
+                // to analyse columns and delimiters correctly. To make sure we
+                // can deliver large data chunk we have to implement mini-Nagle
+                // algorithm by accumulating small data chunks client could be
+                // sending into our receive buffer. To make sure we don't
+                // sit around accumulating for too long we have spin limit
+<span class="fc bfc" id="L420" title="All 2 branches covered.">                if (spinsRemaining-- &gt; 0) {</span>
+<span class="fc" id="L421">                    continue;</span>
+                }
+
+                // do we have anything in the buffer?
+<span class="fc bfc" id="L425" title="All 2 branches covered.">                if (buf &gt; start) {</span>
+                    try {
+<span class="fc bfc" id="L427" title="All 2 branches covered.">                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {</span>
+<span class="fc" id="L428">                            keepGoing = true;</span>
+<span class="fc" id="L429">                            break;</span>
+                        }
+
+<span class="fc" id="L432">                        buf = start = recvBuffer;</span>
+<span class="fc" id="L433">                        bufRemaining = recvBufferSize;</span>
+<span class="fc" id="L434">                        continue;</span>
+<span class="nc" id="L435">                    } catch (TooFewBytesReceivedException e) {</span>
+<span class="nc" id="L436">                        start = multipartContentParser.getResumePtr();</span>
+<span class="nc" id="L437">                        shiftReceiveBufferUnprocessedBytes(start, (int) (buf - start));</span>
+<span class="nc" id="L438">                        dispatcher.registerChannel(this, IOOperation.READ);</span>
+<span class="nc" id="L439">                        break;</span>
+                    }
+                }
+
+<span class="fc" id="L443">                LOG.debug().$(&quot;peer is slow [multipart]&quot;).$();</span>
+<span class="fc" id="L444">                dispatcher.registerChannel(this, IOOperation.READ);</span>
+<span class="fc" id="L445">                break;</span>
+            }
+
+<span class="fc" id="L448">            LOG.debug().$(&quot;multipart recv [len=&quot;).$(n).$(']').$();</span>
+
+<span class="fc" id="L450">            dumpBuffer(buf, n);</span>
+
+<span class="fc" id="L452">            bufRemaining -= n;</span>
+<span class="fc" id="L453">            buf += n;</span>
+
+<span class="fc bfc" id="L455" title="All 2 branches covered.">            if (bufRemaining == 0) {</span>
+                try {
+<span class="pc bpc" id="L457" title="1 of 2 branches missed.">                    if (buf - start &gt; 1) {</span>
+<span class="pc bpc" id="L458" title="1 of 2 branches missed.">                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {</span>
+<span class="nc" id="L459">                            keepGoing = true;</span>
+<span class="nc" id="L460">                            break;</span>
+                        }
+                    }
+
+<span class="fc" id="L464">                    buf = start = recvBuffer;</span>
+<span class="fc" id="L465">                    bufRemaining = recvBufferSize;</span>
+<span class="fc" id="L466">                } catch (TooFewBytesReceivedException e) {</span>
+<span class="fc" id="L467">                    start = multipartContentParser.getResumePtr();</span>
+<span class="fc" id="L468">                    int unprocessedSize = (int) (buf - start);</span>
+                    // Shift to start
+<span class="fc bfc" id="L470" title="All 2 branches covered.">                    if (unprocessedSize &lt; recvBufferSize) {</span>
+<span class="fc" id="L471">                        start = multipartContentParser.getResumePtr();</span>
+<span class="fc" id="L472">                        shiftReceiveBufferUnprocessedBytes(start, unprocessedSize);</span>
+<span class="fc" id="L473">                        dispatcher.registerChannel(this, IOOperation.READ);</span>
+                    } else {
+                        // Header does not fit receive buffer
+<span class="fc" id="L476">                        failProcessor(processor, BufferOverflowException.INSTANCE, DISCONNECT_REASON_MULTIPART_HEADER_TOO_BIG);</span>
+                    }
+<span class="fc" id="L478">                    break;</span>
+<span class="fc" id="L479">                }</span>
+            }
+<span class="fc" id="L481">        }</span>
+<span class="fc" id="L482">        return keepGoing;</span>
+    }
+
+    private void dumpBuffer(long buffer, int size) {
+<span class="pc bpc" id="L486" title="3 of 4 branches missed.">        if (dumpNetworkTraffic &amp;&amp; size &gt; 0) {</span>
+<span class="nc" id="L487">            StdoutSink.INSTANCE.put('&gt;');</span>
+<span class="nc" id="L488">            Net.dump(buffer, size);</span>
+        }
+<span class="fc" id="L490">    }</span>
+
+    private void failProcessor(HttpRequestProcessor processor, HttpException e, int reason) {
+<span class="fc" id="L493">        pendingRetry = false;</span>
+<span class="fc" id="L494">        boolean canClear = true;</span>
+        try {
+<span class="fc" id="L496">            LOG.info()</span>
+<span class="fc" id="L497">                    .$(&quot;failed query result cannot be delivered. Kicked out [fd=&quot;).$(fd)</span>
+<span class="fc" id="L498">                    .$(&quot;, error=&quot;).$(e.getFlyweightMessage())</span>
+<span class="fc" id="L499">                    .I$();</span>
+<span class="fc" id="L500">            processor.failRequest(this, e);</span>
+<span class="fc" id="L501">            dispatcher.disconnect(this, reason);</span>
+<span class="nc" id="L502">        } catch (PeerDisconnectedException peerDisconnectedException) {</span>
+<span class="nc" id="L503">            dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);</span>
+<span class="fc" id="L504">        } catch (PeerIsSlowToReadException peerIsSlowToReadException) {</span>
+<span class="fc" id="L505">            LOG.info().$(&quot;peer is slow to receive failed to retry response [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L506">            processor.parkRequest(this, false);</span>
+<span class="fc" id="L507">            resumeProcessor = processor;</span>
+<span class="fc" id="L508">            dispatcher.registerChannel(this, IOOperation.WRITE);</span>
+<span class="fc" id="L509">            canClear = false;</span>
+<span class="fc" id="L510">        } catch (ServerDisconnectException serverDisconnectException) {</span>
+<span class="fc" id="L511">            dispatcher.disconnect(this, reason);</span>
+        } finally {
+<span class="fc bfc" id="L513" title="All 2 branches covered.">            if (canClear) {</span>
+<span class="fc" id="L514">                clear();</span>
+            }
+        }
+<span class="fc" id="L517">    }</span>
+
+    private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
+<span class="fc" id="L520">        HttpRequestProcessor processor = selector.select(headerParser.getUrl());</span>
+
+<span class="fc bfc" id="L522" title="All 2 branches covered.">        if (processor == null) {</span>
+<span class="fc" id="L523">            processor = selector.getDefaultProcessor();</span>
+        }
+<span class="fc" id="L525">        return processor;</span>
+    }
+
+    private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+<span class="fc" id="L529">        boolean busyRecv = true;</span>
+        try {
+<span class="fc" id="L531">            final int fd = this.fd;</span>
+            // this is address of where header ended in our receive buffer
+            // we need to being processing request content starting from this address
+<span class="fc" id="L534">            long headerEnd = recvBuffer;</span>
+<span class="fc" id="L535">            int read = 0;</span>
+<span class="fc" id="L536">            final boolean newRequest = headerParser.isIncomplete();</span>
+<span class="fc bfc" id="L537" title="All 2 branches covered.">            if (newRequest) {</span>
+<span class="fc bfc" id="L538" title="All 2 branches covered.">                while (headerParser.isIncomplete()) {</span>
+                    // read headers
+<span class="fc" id="L540">                    read = nf.recv(fd, recvBuffer, recvBufferSize);</span>
+<span class="fc" id="L541">                    LOG.debug().$(&quot;recv [fd=&quot;).$(fd).$(&quot;, count=&quot;).$(read).$(']').$();</span>
+<span class="fc bfc" id="L542" title="All 2 branches covered.">                    if (read &lt; 0) {</span>
+<span class="fc" id="L543">                        LOG.debug()</span>
+<span class="fc" id="L544">                                .$(&quot;done [fd=&quot;).$(fd)</span>
+<span class="fc" id="L545">                                .$(&quot;, errno=&quot;).$(nf.errno())</span>
+<span class="fc" id="L546">                                .$(']').$();</span>
+                        // peer disconnect
+<span class="fc" id="L548">                        dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_HEADER_RECV);</span>
+<span class="fc" id="L549">                        return false;</span>
+                    }
+
+<span class="fc bfc" id="L552" title="All 2 branches covered.">                    if (read == 0) {</span>
+                        // client is not sending anything
+<span class="fc" id="L554">                        dispatcher.registerChannel(this, IOOperation.READ);</span>
+<span class="fc" id="L555">                        return false;</span>
+                    }
+
+<span class="fc" id="L558">                    dumpBuffer(recvBuffer, read);</span>
+<span class="fc" id="L559">                    headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);</span>
+                }
+            }
+
+<span class="fc" id="L563">            final CharSequence url = headerParser.getUrl();</span>
+<span class="fc bfc" id="L564" title="All 2 branches covered.">            if (url == null) {</span>
+<span class="fc" id="L565">                throw HttpException.instance(&quot;missing URL&quot;);</span>
+            }
+<span class="fc" id="L567">            HttpRequestProcessor processor = getHttpRequestProcessor(selector);</span>
+
+<span class="fc" id="L569">            final boolean multipartRequest = Chars.equalsNc(&quot;multipart/form-data&quot;, headerParser.getContentType());</span>
+<span class="fc" id="L570">            final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;</span>
+
+<span class="pc bpc" id="L572" title="3 of 4 branches missed.">            if (allowDeflateBeforeSend &amp;&amp; Chars.contains(headerParser.getHeader(&quot;Accept-Encoding&quot;), &quot;gzip&quot;)) {</span>
+<span class="nc" id="L573">                responseSink.setDeflateBeforeSend(true);</span>
+            }
+
+            try {
+<span class="fc bfc" id="L577" title="All 4 branches covered.">                if (multipartRequest &amp;&amp; !multipartProcessor) {</span>
+                    // bad request - multipart request for processor that doesn't expect multipart
+<span class="fc" id="L579">                    busyRecv = rejectRequest(&quot;Bad request. non-multipart GET expected.&quot;);</span>
+<span class="fc bfc" id="L580" title="All 4 branches covered.">                } else if (!multipartRequest &amp;&amp; multipartProcessor) {</span>
+                    // bad request - regular request for processor that expects multipart
+<span class="fc" id="L582">                    busyRecv = rejectRequest(&quot;Bad request. Multipart POST expected.&quot;);</span>
+<span class="fc bfc" id="L583" title="All 2 branches covered.">                } else if (multipartProcessor) {</span>
+<span class="fc" id="L584">                    busyRecv = consumeMultipart(fd, processor, headerEnd, read, newRequest, rescheduleContext);</span>
+                } else {
+
+                    // Do not expect any more bytes to be sent to us before
+                    // we respond back to client. We will disconnect the client when
+                    // they abuse protocol. In addition, we will not call processor
+                    // if client has disconnected before we had a chance to reply.
+<span class="fc" id="L591">                    read = nf.recv(fd, recvBuffer, 1);</span>
+<span class="pc bpc" id="L592" title="1 of 2 branches missed.">                    if (read != 0) {</span>
+<span class="nc" id="L593">                        dumpBuffer(recvBuffer, read);</span>
+<span class="nc" id="L594">                        LOG.info().$(&quot;disconnect after request [fd=&quot;).$(fd).$(']').$();</span>
+<span class="nc" id="L595">                        dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);</span>
+<span class="nc" id="L596">                        busyRecv = false;</span>
+                    } else {
+<span class="fc" id="L598">                        processor.onHeadersReady(this);</span>
+<span class="fc" id="L599">                        LOG.debug().$(&quot;good [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L600">                        processor.onRequestComplete(this);</span>
+<span class="fc" id="L601">                        resumeProcessor = null;</span>
+<span class="fc" id="L602">                        clear();</span>
+                    }
+                }
+<span class="fc" id="L605">            } catch (RetryOperationException e) {</span>
+<span class="fc" id="L606">                pendingRetry = true;</span>
+<span class="fc" id="L607">                scheduleRetry(processor, rescheduleContext);</span>
+<span class="fc" id="L608">                busyRecv = false;</span>
+<span class="fc" id="L609">            } catch (PeerDisconnectedException e) {</span>
+<span class="fc" id="L610">                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV);</span>
+<span class="fc" id="L611">                busyRecv = false;</span>
+<span class="fc" id="L612">            } catch (ServerDisconnectException e) {</span>
+<span class="fc" id="L613">                LOG.info().$(&quot;kicked out [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L614">                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RECV);</span>
+<span class="fc" id="L615">                busyRecv = false;</span>
+<span class="fc" id="L616">            } catch (PeerIsSlowToReadException e) {</span>
+<span class="fc" id="L617">                LOG.debug().$(&quot;peer is slow reader [two]&quot;).$();</span>
+                // it is important to assign resume processor before we fire
+                // event off to dispatcher
+<span class="fc" id="L620">                processor.parkRequest(this, false);</span>
+<span class="fc" id="L621">                resumeProcessor = processor;</span>
+<span class="fc" id="L622">                dispatcher.registerChannel(this, IOOperation.WRITE);</span>
+<span class="fc" id="L623">                busyRecv = false;</span>
+<span class="fc" id="L624">            } catch (QueryPausedException e) {</span>
+<span class="fc" id="L625">                LOG.debug().$(&quot;partition is in cold storage&quot;).$();</span>
+                // it is important to assign resume processor before we fire
+                // event off to dispatcher
+<span class="fc" id="L628">                processor.parkRequest(this, true);</span>
+<span class="fc" id="L629">                resumeProcessor = processor;</span>
+<span class="fc" id="L630">                suspendEvent = e.getEvent();</span>
+<span class="fc" id="L631">                dispatcher.registerChannel(this, IOOperation.WRITE);</span>
+<span class="fc" id="L632">                busyRecv = false;</span>
+<span class="fc" id="L633">            }</span>
+<span class="fc" id="L634">        } catch (HttpException e) {</span>
+<span class="fc" id="L635">            LOG.error().$(&quot;http error [fd=&quot;).$(fd).$(&quot;, e=`&quot;).$(e.getFlyweightMessage()).$(&quot;`]&quot;).$();</span>
+<span class="fc" id="L636">            dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);</span>
+<span class="fc" id="L637">            busyRecv = false;</span>
+<span class="fc" id="L638">        }</span>
+<span class="fc" id="L639">        return busyRecv;</span>
+    }
+
+    private boolean handleClientSend() {
+<span class="pc bpc" id="L643" title="1 of 2 branches missed.">        if (resumeProcessor != null) {</span>
+            try {
+<span class="fc" id="L645">                resumeProcessor.resumeSend(this);</span>
+<span class="fc" id="L646">                clear();</span>
+<span class="fc" id="L647">                return true;</span>
+<span class="fc" id="L648">            } catch (PeerIsSlowToReadException ignore) {</span>
+<span class="fc" id="L649">                resumeProcessor.parkRequest(this, false);</span>
+<span class="fc" id="L650">                LOG.debug().$(&quot;peer is slow reader&quot;).$();</span>
+<span class="fc" id="L651">                dispatcher.registerChannel(this, IOOperation.WRITE);</span>
+<span class="fc" id="L652">            } catch (QueryPausedException e) {</span>
+<span class="fc" id="L653">                resumeProcessor.parkRequest(this, true);</span>
+<span class="fc" id="L654">                suspendEvent = e.getEvent();</span>
+<span class="fc" id="L655">                LOG.debug().$(&quot;partition is in cold storage&quot;).$();</span>
+<span class="fc" id="L656">                dispatcher.registerChannel(this, IOOperation.WRITE);</span>
+<span class="nc" id="L657">            } catch (PeerDisconnectedException ignore) {</span>
+<span class="nc" id="L658">                dispatcher.disconnect(this, DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);</span>
+<span class="fc" id="L659">            } catch (ServerDisconnectException ignore) {</span>
+<span class="fc" id="L660">                LOG.info().$(&quot;kicked out [fd=&quot;).$(fd).$(']').$();</span>
+<span class="fc" id="L661">                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);</span>
+<span class="pc" id="L662">            }</span>
+        } else {
+<span class="nc" id="L664">            LOG.error().$(&quot;spurious write request [fd=&quot;).$(fd).I$();</span>
+        }
+<span class="fc" id="L666">        return false;</span>
+    }
+
+    private boolean parseMultipartResult(
+            long start,
+            long buf,
+            int bufRemaining,
+            HttpMultipartContentListener multipartListener,
+            HttpRequestProcessor processor,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, TooFewBytesReceivedException {
+        boolean parseResult;
+        try {
+<span class="fc" id="L679">            parseResult = multipartContentParser.parse(start, buf, multipartListener);</span>
+<span class="fc" id="L680">        } catch (RetryOperationException e) {</span>
+<span class="fc" id="L681">            this.multipartParserState.saveFdBufferPosition(multipartContentParser.getResumePtr(), buf, bufRemaining);</span>
+<span class="fc" id="L682">            throw e;</span>
+<span class="fc" id="L683">        } catch (NotEnoughLinesException e) {</span>
+<span class="fc" id="L684">            failProcessor(processor, e, DISCONNECT_REASON_KICKED_TXT_NOT_ENOUGH_LINES);</span>
+<span class="fc" id="L685">            parseResult = false;</span>
+<span class="fc" id="L686">        }</span>
+
+<span class="fc bfc" id="L688" title="All 2 branches covered.">        if (parseResult) {</span>
+            // request is complete
+<span class="fc" id="L690">            completeRequest(processor, rescheduleContext);</span>
+<span class="fc" id="L691">            return true;</span>
+        }
+<span class="fc" id="L693">        return false;</span>
+    }
+
+    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+<span class="fc" id="L697">        clear();</span>
+<span class="fc" id="L698">        LOG.error().$(userMessage).$();</span>
+<span class="fc" id="L699">        simpleResponse().sendStatus(404, userMessage);</span>
+<span class="fc" id="L700">        dispatcher.registerChannel(this, IOOperation.READ);</span>
+<span class="fc" id="L701">        return false;</span>
+    }
+
+    private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
+        // Shift to start
+<span class="fc" id="L706">        this.receivedBytes = receivedBytes;</span>
+<span class="fc" id="L707">        Vect.memcpy(recvBuffer, start, receivedBytes);</span>
+<span class="fc" id="L708">        LOG.debug().$(&quot;peer is slow, waiting for bigger part to parse [multipart]&quot;).$();</span>
+<span class="fc" id="L709">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

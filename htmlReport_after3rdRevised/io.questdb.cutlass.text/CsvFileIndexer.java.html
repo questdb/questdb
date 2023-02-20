@@ -1,0 +1,703 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CsvFileIndexer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.text</a> &gt; <span class="el_source">CsvFileIndexer.java</span></div><h1>CsvFileIndexer.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.text;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.vm.MemoryPMARImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+
+
+/**
+ * Class is responsible for scanning whole/chunk of input csv file and building per-partition index files .
+ * Example path : workDir/targetTable/2022-06/0_1
+ * These indexes are chunked to limit memory usage and are later merged into index.m .
+ * It's a simplified version of text lexer that only:
+ * - parses
+ * - (if needed) buffers using a small buffer
+ * the timestamp field .
+ */
+public class CsvFileIndexer implements Closeable, Mutable {
+    public static final long INDEX_ENTRY_SIZE = 2 * Long.BYTES;
+<span class="fc" id="L61">    public static final CharSequence INDEX_FILE_NAME = &quot;index.m&quot;;</span>
+<span class="fc" id="L62">    private static final Log LOG = LogFactory.getLog(CsvFileIndexer.class);</span>
+    //A guess at how long could a timestamp string be, including long day, month name, etc.
+    //since we're only interested in timestamp field/col there's no point buffering whole line
+    //we'll copy field part to buffer only if current field is designated timestamp
+    private static final int MAX_TIMESTAMP_LENGTH = 100;
+    private final int dirMode;
+    private final FilesFacade ff;
+    private final int fieldRollBufLen;
+    private final CharSequence inputRoot;
+    private final long maxIndexChunkSize;
+<span class="fc" id="L72">    final private ObjList&lt;IndexOutputFile&gt; outputFileDenseList = new ObjList&lt;&gt;();</span>
+    //maps partitionFloors to output file descriptors
+<span class="fc" id="L74">    final private LongObjHashMap&lt;IndexOutputFile&gt; outputFileLookupMap = new LongObjHashMap&lt;&gt;();</span>
+    //work dir path
+    private final Path path;
+    //timestamp field of current line
+    final private DirectByteCharSequence timestampField;
+    //used for timestamp parsing
+    private final TypeManager typeManager;
+    //used for timestamp parsing
+    private final DirectCharSink utf8Sink;
+<span class="fc" id="L83">    private boolean cancelled = false;</span>
+    private @Nullable ExecutionCircuitBreaker circuitBreaker;
+    private byte columnDelimiter;
+    private boolean delayedOutQuote;
+    private boolean eol;
+<span class="fc" id="L88">    private int errorCount = 0;</span>
+    private boolean failOnTsError;
+    //input file descriptor (cached between initial boundary scan &amp; indexing phases)
+<span class="fc" id="L91">    private int fd = -1;</span>
+    private long fieldHi;
+    private int fieldIndex;
+    //these two are pointers either into file read buffer or roll buffer
+    private long fieldLo;
+    private long fieldRollBufCur;
+    private long fieldRollBufPtr;
+    //if set to true then ignore first line of input file
+    private boolean header;
+    private CharSequence importRoot;
+    private boolean inQuote;
+    private int index;
+    private CharSequence inputFileName;
+    //fields taken &amp; adjusted  from textLexer
+    private long lastLineStart;
+<span class="fc" id="L106">    private long lastQuotePos = -1;</span>
+    private long lineCount;
+    private long lineNumber;
+    //file offset of current start of buffered block
+    private long offset;
+    private DateFormat partitionDirFormatMethod;
+    //used to map timestamp to output file
+    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+<span class="fc" id="L114">    private boolean rollBufferUnusable = false;</span>
+    private long sortBufferLength;
+    private long sortBufferPtr;
+    //adapter used to parse timestamp column
+    private TimestampAdapter timestampAdapter;
+    //position of timestamp column in csv (0-based)
+    private int timestampIndex;
+    private long timestampValue;
+<span class="fc" id="L122">    private boolean useFieldRollBuf = false;</span>
+
+<span class="fc" id="L124">    public CsvFileIndexer(CairoConfiguration configuration) {</span>
+<span class="fc" id="L125">        final TextConfiguration textConfiguration = configuration.getTextConfiguration();</span>
+<span class="fc" id="L126">        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());</span>
+<span class="fc" id="L127">        this.typeManager = new TypeManager(textConfiguration, utf8Sink);</span>
+<span class="fc" id="L128">        this.ff = configuration.getFilesFacade();</span>
+<span class="fc" id="L129">        this.dirMode = configuration.getMkDirMode();</span>
+<span class="fc" id="L130">        this.inputRoot = configuration.getSqlCopyInputRoot();</span>
+<span class="fc" id="L131">        this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();</span>
+<span class="fc" id="L132">        this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;</span>
+<span class="fc" id="L133">        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);</span>
+<span class="fc" id="L134">        this.fieldRollBufCur = fieldRollBufPtr;</span>
+<span class="fc" id="L135">        this.timestampField = new DirectByteCharSequence();</span>
+<span class="fc" id="L136">        this.failOnTsError = false;</span>
+<span class="fc" id="L137">        this.path = new Path();</span>
+<span class="fc" id="L138">        this.sortBufferPtr = -1;</span>
+<span class="fc" id="L139">        this.sortBufferLength = 0;</span>
+<span class="fc" id="L140">    }</span>
+
+    @Override
+    public final void clear() {
+<span class="fc" id="L144">        this.fieldLo = 0;</span>
+<span class="fc" id="L145">        this.eol = false;</span>
+<span class="fc" id="L146">        this.fieldIndex = 0;</span>
+<span class="fc" id="L147">        this.inQuote = false;</span>
+<span class="fc" id="L148">        this.delayedOutQuote = false;</span>
+<span class="fc" id="L149">        this.lineNumber = 0;</span>
+<span class="fc" id="L150">        this.lineCount = 0;</span>
+<span class="fc" id="L151">        this.fieldRollBufCur = fieldRollBufPtr;</span>
+<span class="fc" id="L152">        this.useFieldRollBuf = false;</span>
+<span class="fc" id="L153">        this.rollBufferUnusable = false;</span>
+<span class="fc" id="L154">        this.header = false;</span>
+<span class="fc" id="L155">        this.errorCount = 0;</span>
+<span class="fc" id="L156">        this.offset = -1;</span>
+<span class="fc" id="L157">        this.timestampField.clear();</span>
+<span class="fc" id="L158">        this.lastQuotePos = -1;</span>
+<span class="fc" id="L159">        this.timestampValue = Long.MIN_VALUE;</span>
+
+<span class="fc" id="L161">        this.inputFileName = null;</span>
+<span class="fc" id="L162">        this.importRoot = null;</span>
+<span class="fc" id="L163">        this.timestampAdapter = null;</span>
+<span class="fc" id="L164">        this.timestampIndex = -1;</span>
+<span class="fc" id="L165">        this.partitionFloorMethod = null;</span>
+<span class="fc" id="L166">        this.partitionDirFormatMethod = null;</span>
+<span class="fc" id="L167">        this.columnDelimiter = -1;</span>
+
+<span class="fc" id="L169">        closeOutputFiles();</span>
+<span class="fc" id="L170">        closeSortBuffer();</span>
+
+<span class="fc bfc" id="L172" title="All 2 branches covered.">        if (ff.close(fd)) {</span>
+<span class="fc" id="L173">            fd = -1;</span>
+        }
+
+<span class="fc" id="L176">        this.failOnTsError = false;</span>
+<span class="fc" id="L177">        this.path.trimTo(0);</span>
+<span class="fc" id="L178">        this.circuitBreaker = null;</span>
+<span class="fc" id="L179">        this.cancelled = false;</span>
+<span class="fc" id="L180">    }</span>
+
+    @Override
+    public void close() {
+<span class="pc bpc" id="L184" title="1 of 2 branches missed.">        if (fieldRollBufPtr != 0) {</span>
+<span class="fc" id="L185">            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);</span>
+<span class="fc" id="L186">            fieldRollBufPtr = 0;</span>
+        }
+
+<span class="fc" id="L189">        this.path.close();</span>
+<span class="fc" id="L190">        this.typeManager.clear();</span>
+<span class="fc" id="L191">        this.utf8Sink.close();</span>
+
+<span class="fc" id="L193">        clear();</span>
+<span class="fc" id="L194">    }</span>
+
+    public int getErrorCount() {
+<span class="fc" id="L197">        return errorCount;</span>
+    }
+
+    public long getLineCount() {
+<span class="fc" id="L201">        return lineCount;</span>
+    }
+
+    public void index(
+            long chunkLo,
+            long chunkHi,
+            long lineNumber,
+            LongList partitionKeysAndSizes,
+            long fileBufAddr,
+            long fileBufSize
+    ) {
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">        assert chunkHi &gt; 0;</span>
+<span class="pc bpc" id="L213" title="2 of 4 branches missed.">        assert chunkLo &gt;= 0 &amp;&amp; chunkLo &lt; chunkHi;</span>
+
+<span class="fc" id="L215">        openInputFile();</span>
+
+<span class="fc" id="L217">        this.offset = chunkLo;</span>
+        long read;
+
+<span class="fc" id="L220">        this.lastLineStart = offset;</span>
+<span class="fc" id="L221">        this.lineNumber = lineNumber;</span>
+
+        try {
+            do {
+<span class="pc bpc" id="L225" title="1 of 4 branches missed.">                if (circuitBreaker != null &amp;&amp; circuitBreaker.checkIfTripped()) {</span>
+<span class="nc" id="L226">                    this.cancelled = true;</span>
+<span class="nc" id="L227">                    throw TextException.$(&quot;Cancelled&quot;);</span>
+                }
+<span class="fc" id="L229">                long leftToRead = Math.min(chunkHi - offset, fileBufSize);</span>
+<span class="fc" id="L230">                read = (int) ff.read(fd, fileBufAddr, leftToRead, offset);</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">                if (read &lt; 1) {</span>
+<span class="fc" id="L232">                    break;</span>
+                }
+<span class="fc" id="L234">                parse(fileBufAddr, fileBufAddr + read);</span>
+<span class="fc" id="L235">                offset += read;</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">            } while (offset &lt; chunkHi);</span>
+
+<span class="pc bpc" id="L238" title="1 of 4 branches missed.">            if (read &lt; 0 || offset &lt; chunkHi) {</span>
+<span class="fc" id="L239">                throw TextException</span>
+<span class="fc" id="L240">                        .$(&quot;could not read file [path='&quot;).put(path)</span>
+<span class="fc" id="L241">                        .put(&quot;', offset=&quot;).put(offset)</span>
+<span class="fc" id="L242">                        .put(&quot;, errno=&quot;).put(ff.errno())</span>
+<span class="fc" id="L243">                        .put(']');</span>
+            } else {
+<span class="fc" id="L245">                parseLast();</span>
+            }
+
+<span class="fc" id="L248">            collectPartitionStats(partitionKeysAndSizes);</span>
+<span class="fc" id="L249">            sortAndCloseOutputFiles();</span>
+        } finally {
+<span class="fc" id="L251">            closeOutputFiles();//close without sorting if there's an error</span>
+<span class="fc" id="L252">            closeSortBuffer();</span>
+        }
+
+<span class="fc" id="L255">        this.lineCount = this.lineNumber - lineNumber;</span>
+<span class="fc" id="L256">        LOG.info()</span>
+<span class="fc" id="L257">                .$(&quot;finished chunk [chunkLo=&quot;).$(chunkLo)</span>
+<span class="fc" id="L258">                .$(&quot;, chunkHi=&quot;).$(chunkHi)</span>
+<span class="fc" id="L259">                .$(&quot;, lines=&quot;).$(lineCount)</span>
+<span class="fc" id="L260">                .$(&quot;, errors=&quot;).$(errorCount)</span>
+<span class="fc" id="L261">                .I$();</span>
+<span class="fc" id="L262">    }</span>
+
+    public void indexLine(long ptr, long lo) throws TextException {
+        //this is fine because Long.MIN_VALUE is treated as null and would be rejected by partitioned tables
+<span class="fc bfc" id="L266" title="All 2 branches covered.">        if (timestampValue == Long.MIN_VALUE) {</span>
+<span class="fc" id="L267">            return;</span>
+        }
+
+<span class="fc" id="L270">        long lineStartOffset = lastLineStart;</span>
+<span class="fc" id="L271">        long length = offset + ptr - lo - lastLineStart;</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">        if (length &gt;= (1L &lt;&lt; 16)) {</span>
+<span class="fc" id="L273">            LOG.error().$(&quot;row exceeds maximum line length (65k) for parallel import [line=&quot;).$(lineNumber)</span>
+<span class="fc" id="L274">                    .$(&quot;, length=&quot;).$(length).I$();</span>
+<span class="fc" id="L275">            errorCount++;</span>
+<span class="fc" id="L276">            return;</span>
+        }
+
+        // second long stores:
+        //  length as 16 bits unsigned number followed by
+        //  offset as 48-bits unsigned number
+        //  allowing for importing 256TB big files with rows up to 65kB long
+<span class="fc" id="L283">        long lengthAndOffset = (length &lt;&lt; 48 | lineStartOffset);</span>
+<span class="fc" id="L284">        long partitionKey = partitionFloorMethod.floor(timestampValue);</span>
+<span class="fc" id="L285">        long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap</span>
+
+        final IndexOutputFile target;
+<span class="fc" id="L288">        int keyIndex = outputFileLookupMap.keyIndex(mapKey);</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">        if (keyIndex &gt; -1) {</span>
+<span class="fc" id="L290">            target = prepareTargetFile(partitionKey);</span>
+<span class="fc" id="L291">            outputFileDenseList.add(target);</span>
+<span class="fc" id="L292">            outputFileLookupMap.putAt(keyIndex, mapKey, target);</span>
+        } else {
+<span class="fc" id="L294">            target = outputFileLookupMap.valueAt(keyIndex);</span>
+        }
+
+<span class="fc bfc" id="L297" title="All 2 branches covered.">        if (target.indexChunkSize == maxIndexChunkSize) {</span>
+<span class="fc" id="L298">            target.nextChunk(ff, getPartitionIndexPrefix(partitionKey));</span>
+        }
+
+<span class="fc" id="L301">        target.putEntry(timestampValue, lengthAndOffset, length);</span>
+<span class="fc" id="L302">    }</span>
+
+    public boolean isCancelled() {
+<span class="fc" id="L305">        return cancelled;</span>
+    }
+
+    public void of(
+            CharSequence inputFileName,
+            CharSequence importRoot,
+            int index,
+            int partitionBy,
+            byte columnDelimiter,
+            int timestampIndex,
+            TimestampAdapter adapter,
+            boolean ignoreHeader,
+            int atomicity,
+            @Nullable ExecutionCircuitBreaker circuitBreaker
+    ) {
+<span class="fc" id="L320">        this.inputFileName = inputFileName;</span>
+<span class="fc" id="L321">        this.importRoot = importRoot;</span>
+<span class="fc" id="L322">        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);</span>
+<span class="fc" id="L323">        this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);</span>
+<span class="fc" id="L324">        this.offset = 0;</span>
+<span class="fc" id="L325">        this.columnDelimiter = columnDelimiter;</span>
+<span class="pc bpc" id="L326" title="1 of 2 branches missed.">        if (timestampIndex &lt; 0) {</span>
+<span class="nc" id="L327">            throw TextException.$(&quot;Timestamp index is not set [value=&quot;).put(timestampIndex).put(']');</span>
+        }
+<span class="fc" id="L329">        this.timestampIndex = timestampIndex;</span>
+<span class="fc" id="L330">        this.timestampAdapter = adapter;</span>
+<span class="fc" id="L331">        this.header = ignoreHeader;</span>
+<span class="fc" id="L332">        this.index = index;</span>
+<span class="fc bfc" id="L333" title="All 2 branches covered.">        this.failOnTsError = (atomicity == Atomicity.SKIP_ALL);</span>
+<span class="fc" id="L334">        this.timestampValue = Long.MIN_VALUE;</span>
+<span class="fc" id="L335">        this.circuitBreaker = circuitBreaker;</span>
+<span class="fc" id="L336">    }</span>
+
+    public void parseLast() {
+<span class="fc bfc" id="L339" title="All 2 branches covered.">        if (useFieldRollBuf) {</span>
+<span class="pc bpc" id="L340" title="2 of 4 branches missed.">            if (inQuote &amp;&amp; lastQuotePos &lt; fieldHi) {</span>
+<span class="fc" id="L341">                errorCount++;</span>
+<span class="fc" id="L342">                LOG.info().$(&quot;quote is missing [table=&quot;).$(&quot;tableName&quot;).$(']').$();</span>
+            } else {
+<span class="nc" id="L344">                this.fieldHi++;</span>
+<span class="nc" id="L345">                stashField(fieldIndex, 0);</span>
+<span class="nc" id="L346">                triggerLine(0);</span>
+            }
+        }
+<span class="fc" id="L349">    }</span>
+
+    public void sort(int srcFd, long srcSize) {
+<span class="pc bpc" id="L352" title="1 of 2 branches missed.">        if (srcSize &lt; 1) {</span>
+<span class="nc" id="L353">            return;</span>
+        }
+
+<span class="fc" id="L356">        long srcAddress = -1;</span>
+
+        try {
+<span class="fc" id="L359">            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_IMPORT);</span>
+
+<span class="fc bfc" id="L361" title="All 2 branches covered.">            if (sortBufferPtr == -1) {</span>
+<span class="fc" id="L362">                sortBufferPtr = Unsafe.malloc(maxIndexChunkSize, MemoryTag.NATIVE_IMPORT);</span>
+<span class="fc" id="L363">                sortBufferLength = maxIndexChunkSize;</span>
+            }
+
+<span class="fc" id="L366">            Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, sortBufferPtr);</span>
+        } finally {
+<span class="fc bfc" id="L368" title="All 2 branches covered.">            if (srcAddress != -1) {</span>
+<span class="fc" id="L369">                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_IMPORT);</span>
+            }
+        }
+<span class="fc" id="L372">    }</span>
+
+    private void checkEol(long lo) {
+<span class="fc bfc" id="L375" title="All 2 branches covered.">        if (eol) {</span>
+<span class="fc" id="L376">            uneol(lo);</span>
+        }
+<span class="fc" id="L378">    }</span>
+
+    private void clearRollBuffer(long ptr) {
+<span class="fc" id="L381">        useFieldRollBuf = false;</span>
+<span class="fc" id="L382">        fieldRollBufCur = fieldRollBufPtr;</span>
+<span class="fc" id="L383">        this.fieldLo = this.fieldHi = ptr;</span>
+<span class="fc" id="L384">    }</span>
+
+    private void closeOutputFiles() {
+<span class="fc" id="L387">        Misc.freeObjListAndClear(outputFileDenseList);</span>
+<span class="fc" id="L388">        this.outputFileLookupMap.clear();</span>
+<span class="fc" id="L389">    }</span>
+
+    private void closeSortBuffer() {
+<span class="fc bfc" id="L392" title="All 2 branches covered.">        if (sortBufferPtr != -1) {</span>
+<span class="fc" id="L393">            Unsafe.free(sortBufferPtr, sortBufferLength, MemoryTag.NATIVE_IMPORT);</span>
+<span class="fc" id="L394">            sortBufferPtr = -1;</span>
+<span class="fc" id="L395">            sortBufferLength = 0;</span>
+        }
+<span class="fc" id="L397">    }</span>
+
+    private void collectPartitionStats(LongList partitionKeysAndSizes) {
+<span class="fc" id="L400">        partitionKeysAndSizes.setPos(0);</span>
+<span class="fc bfc" id="L401" title="All 2 branches covered.">        for (int i = 0, n = outputFileDenseList.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L402">            final IndexOutputFile value = outputFileDenseList.getQuick(i);</span>
+<span class="fc" id="L403">            partitionKeysAndSizes.add(value.partitionKey, value.dataSize);</span>
+        }
+<span class="fc" id="L405">    }</span>
+
+    private void eol(long ptr, byte c) {
+<span class="pc bpc" id="L408" title="1 of 4 branches missed.">        if (c == '\n' || c == '\r') {</span>
+<span class="fc" id="L409">            eol = true;</span>
+<span class="fc" id="L410">            rollBufferUnusable = false;</span>
+<span class="fc" id="L411">            clearRollBuffer(ptr);</span>
+<span class="fc" id="L412">            fieldIndex = 0;</span>
+<span class="fc" id="L413">            lineNumber++;</span>
+        }
+<span class="fc" id="L415">    }</span>
+
+    private boolean fitsInBuffer(int requiredLength) {
+<span class="fc bfc" id="L418" title="All 2 branches covered.">        if (requiredLength &gt; fieldRollBufLen) {</span>
+<span class="fc" id="L419">            LOG.info()</span>
+<span class="fc" id="L420">                    .$(&quot;timestamp column value too long [path=&quot;).$(inputFileName)</span>
+<span class="fc" id="L421">                    .$(&quot;, line=&quot;).$(lineNumber)</span>
+<span class="fc" id="L422">                    .$(&quot;, requiredLen=&quot;).$(requiredLength)</span>
+<span class="fc" id="L423">                    .$(&quot;, rollLimit=&quot;).$(fieldRollBufLen)</span>
+<span class="fc" id="L424">                    .$(']').$();</span>
+<span class="fc" id="L425">            errorCount++;</span>
+<span class="fc" id="L426">            rollBufferUnusable = true;</span>
+<span class="fc" id="L427">            return false;</span>
+        }
+
+<span class="fc" id="L430">        return true;</span>
+    }
+
+    private Path getPartitionIndexDir(long partitionKey) {
+<span class="fc" id="L434">        path.of(importRoot).slash();</span>
+<span class="fc" id="L435">        partitionDirFormatMethod.format(partitionKey, null, null, path);</span>
+<span class="fc" id="L436">        return path;</span>
+    }
+
+    private Path getPartitionIndexPrefix(long partitionKey) {
+<span class="fc" id="L440">        return getPartitionIndexDir(partitionKey).slash().put(index);</span>
+    }
+
+    private void onColumnDelimiter(long lo, long ptr) {
+<span class="fc" id="L444">        checkEol(lo);</span>
+
+<span class="fc bfc" id="L446" title="All 2 branches covered.">        if (inQuote) {</span>
+<span class="fc" id="L447">            return;</span>
+        }
+<span class="fc" id="L449">        stashField(fieldIndex++, ptr);</span>
+<span class="fc" id="L450">    }</span>
+
+    private void onLineEnd(long ptr, long lo) {
+<span class="fc bfc" id="L453" title="All 2 branches covered.">        if (inQuote) {</span>
+<span class="fc" id="L454">            return;</span>
+        }
+
+<span class="fc bfc" id="L457" title="All 2 branches covered.">        if (eol) {</span>
+<span class="fc" id="L458">            this.fieldLo = this.fieldHi;</span>
+<span class="fc" id="L459">            return;</span>
+        }
+
+<span class="fc" id="L462">        stashField(fieldIndex, ptr);</span>
+<span class="fc" id="L463">        indexLine(ptr, lo);</span>
+<span class="fc" id="L464">        triggerLine(ptr);</span>
+<span class="fc" id="L465">    }</span>
+
+    private void onQuote() {
+<span class="fc bfc" id="L468" title="All 2 branches covered.">        if (inQuote) {</span>
+<span class="fc bfc" id="L469" title="All 2 branches covered.">            delayedOutQuote = !delayedOutQuote;</span>
+<span class="fc" id="L470">            lastQuotePos = this.fieldHi;</span>
+<span class="pc bpc" id="L471" title="1 of 2 branches missed.">        } else if (fieldHi - fieldLo == 1) {</span>
+<span class="fc" id="L472">            inQuote = true;</span>
+<span class="fc" id="L473">            this.fieldLo = this.fieldHi;</span>
+        }
+<span class="fc" id="L475">    }</span>
+
+    private void parse(long lo, long hi) {
+<span class="fc bfc" id="L478" title="All 2 branches covered.">        this.fieldHi = useFieldRollBuf ? fieldRollBufCur : (this.fieldLo = lo);</span>
+<span class="fc" id="L479">        long ptr = lo;</span>
+
+<span class="fc bfc" id="L481" title="All 2 branches covered.">        while (ptr &lt; hi) {</span>
+<span class="fc" id="L482">            final byte c = Unsafe.getUnsafe().getByte(ptr++);</span>
+
+<span class="fc bfc" id="L484" title="All 2 branches covered.">            if (rollBufferUnusable) {</span>
+<span class="fc" id="L485">                eol(ptr, c);</span>
+<span class="fc" id="L486">                continue;</span>
+            }
+
+<span class="fc bfc" id="L489" title="All 2 branches covered.">            if (useFieldRollBuf) {</span>
+<span class="fc" id="L490">                putToRollBuf(c);</span>
+<span class="fc bfc" id="L491" title="All 2 branches covered.">                if (rollBufferUnusable) {</span>
+<span class="fc" id="L492">                    continue;</span>
+                }
+            }
+
+<span class="fc" id="L496">            this.fieldHi++;</span>
+
+<span class="fc bfc" id="L498" title="All 4 branches covered.">            if (delayedOutQuote &amp;&amp; c != '&quot;') {</span>
+<span class="fc" id="L499">                inQuote = delayedOutQuote = false;</span>
+            }
+
+<span class="fc bfc" id="L502" title="All 2 branches covered.">            if (c == columnDelimiter) {</span>
+<span class="fc" id="L503">                onColumnDelimiter(lo, ptr);</span>
+<span class="fc bfc" id="L504" title="All 2 branches covered.">            } else if (c == '&quot;') {</span>
+<span class="fc" id="L505">                checkEol(lo);</span>
+<span class="fc" id="L506">                onQuote();</span>
+<span class="fc bfc" id="L507" title="All 4 branches covered.">            } else if (c == '\n' || c == '\r') {</span>
+<span class="fc" id="L508">                onLineEnd(ptr, lo);</span>
+            } else {
+<span class="fc" id="L510">                checkEol(lo);</span>
+            }
+<span class="fc" id="L512">        }</span>
+
+<span class="fc bfc" id="L514" title="All 2 branches covered.">        if (useFieldRollBuf) {</span>
+<span class="fc" id="L515">            return;</span>
+        }
+
+<span class="fc bfc" id="L518" title="All 2 branches covered.">        if (eol) {</span>
+<span class="fc" id="L519">            this.fieldLo = 0;</span>
+<span class="fc bfc" id="L520" title="All 2 branches covered.">        } else if (fieldIndex == timestampIndex) {</span>
+<span class="fc" id="L521">            rollField(hi);</span>
+        }
+<span class="fc" id="L523">    }</span>
+
+    private void parseTimestamp() {
+        try {
+<span class="fc" id="L527">            timestampValue = timestampAdapter.getTimestamp(timestampField);</span>
+<span class="fc" id="L528">        } catch (Exception e) {</span>
+<span class="fc bfc" id="L529" title="All 2 branches covered.">            if (failOnTsError) {</span>
+<span class="fc" id="L530">                throw TextException.$(&quot;could not parse timestamp [line=&quot;).put(lineNumber).put(&quot;, column=&quot;).put(timestampIndex).put(']');</span>
+            } else {
+<span class="fc" id="L532">                LOG.error().$(&quot;could not parse timestamp [line=&quot;).$(lineNumber).$(&quot;, column=&quot;).$(timestampIndex).I$();</span>
+<span class="fc" id="L533">                errorCount++;</span>
+            }
+<span class="fc" id="L535">        }</span>
+<span class="fc" id="L536">    }</span>
+
+    @NotNull
+    private IndexOutputFile prepareTargetFile(long partitionKey) {
+<span class="fc" id="L540">        getPartitionIndexDir(partitionKey);</span>
+<span class="fc" id="L541">        path.slash$();</span>
+
+<span class="fc bfc" id="L543" title="All 2 branches covered.">        if (!ff.exists(path)) {</span>
+<span class="fc" id="L544">            int result = ff.mkdir(path, dirMode);</span>
+<span class="fc bfc" id="L545" title="All 4 branches covered.">            if (result != 0 &amp;&amp; !ff.exists(path)) {//ignore because other worker might've created it</span>
+<span class="fc" id="L546">                throw TextException.$(&quot;Couldn't create partition dir [path='&quot;).put(path).put(&quot;']&quot;);</span>
+            }
+        }
+
+<span class="fc" id="L550">        path.put(index);</span>
+
+<span class="fc" id="L552">        return new IndexOutputFile(ff, path, partitionKey);</span>
+    }
+
+    private void putToRollBuf(byte c) {
+<span class="fc bfc" id="L556" title="All 2 branches covered.">        if (fitsInBuffer((int) (fieldRollBufCur - fieldRollBufPtr + 1L))) {</span>
+<span class="fc" id="L557">            Unsafe.getUnsafe().putByte(fieldRollBufCur++, c);</span>
+        }
+<span class="fc" id="L559">    }</span>
+
+    //roll timestamp field if it's split over  read buffer boundaries
+    private void rollField(long hi) {
+        // lastLineStart is an offset from 'lo'
+        // 'lo' is the address of incoming buffer
+<span class="fc" id="L565">        int length = (int) (hi - fieldLo);</span>
+<span class="pc bpc" id="L566" title="1 of 4 branches missed.">        if (length &gt; 0 &amp;&amp; fitsInBuffer(length)) {</span>
+<span class="pc bpc" id="L567" title="1 of 2 branches missed.">            assert fieldLo + length &lt;= hi;</span>
+<span class="fc" id="L568">            Vect.memcpy(fieldRollBufPtr, fieldLo, length);</span>
+<span class="fc" id="L569">            fieldRollBufCur = fieldRollBufPtr + length;</span>
+<span class="fc" id="L570">            shift(fieldLo - fieldRollBufPtr);</span>
+<span class="fc" id="L571">            useFieldRollBuf = true;</span>
+        }
+<span class="fc" id="L573">    }</span>
+
+    private void shift(long d) {
+<span class="fc" id="L576">        this.fieldLo -= d;</span>
+<span class="fc" id="L577">        this.fieldHi -= d;</span>
+<span class="fc bfc" id="L578" title="All 2 branches covered.">        if (lastQuotePos &gt; -1) {</span>
+<span class="fc" id="L579">            this.lastQuotePos -= d;</span>
+        }
+<span class="fc" id="L581">    }</span>
+
+    private void sortAndCloseOutputFiles() {
+<span class="fc bfc" id="L584" title="All 2 branches covered.">        for (int i = 0, n = outputFileDenseList.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L585">            outputFileDenseList.getQuick(i).sortAndClose();</span>
+        }
+<span class="fc" id="L587">        this.outputFileDenseList.clear();</span>
+<span class="fc" id="L588">        this.outputFileLookupMap.clear();</span>
+<span class="fc" id="L589">    }</span>
+
+    private void stashField(int fieldIndex, long ptr) {
+<span class="fc bfc" id="L592" title="All 4 branches covered.">        if (fieldIndex == timestampIndex &amp;&amp; !header) {</span>
+<span class="fc bfc" id="L593" title="All 2 branches covered.">            if (lastQuotePos &gt; -1) {</span>
+<span class="fc" id="L594">                timestampField.of(this.fieldLo, lastQuotePos - 1);</span>
+            } else {
+<span class="fc" id="L596">                timestampField.of(this.fieldLo, this.fieldHi - 1);</span>
+            }
+
+<span class="fc" id="L599">            parseTimestamp();</span>
+
+<span class="fc bfc" id="L601" title="All 2 branches covered.">            if (useFieldRollBuf) {</span>
+<span class="fc" id="L602">                clearRollBuffer(ptr);</span>
+            }
+        }
+
+<span class="fc" id="L606">        this.lastQuotePos = -1;</span>
+<span class="fc" id="L607">        this.fieldLo = this.fieldHi;</span>
+<span class="fc" id="L608">    }</span>
+
+    private void triggerLine(long ptr) {
+<span class="fc" id="L611">        eol = true;</span>
+<span class="fc" id="L612">        fieldIndex = 0;</span>
+<span class="fc bfc" id="L613" title="All 2 branches covered.">        if (useFieldRollBuf) {</span>
+<span class="fc" id="L614">            clearRollBuffer(ptr);</span>
+        }
+
+<span class="fc bfc" id="L617" title="All 2 branches covered.">        if (header) {</span>
+<span class="fc" id="L618">            header = false;</span>
+<span class="fc" id="L619">            return;</span>
+        }
+
+<span class="fc" id="L622">        lineNumber++;</span>
+<span class="fc" id="L623">        timestampValue = Long.MIN_VALUE;</span>
+<span class="fc" id="L624">    }</span>
+
+    private void uneol(long lo) {
+<span class="fc" id="L627">        eol = false;</span>
+<span class="fc" id="L628">        this.lastLineStart = this.offset + (this.fieldLo - lo);</span>
+<span class="fc" id="L629">    }</span>
+
+    void openInputFile() {
+<span class="pc bpc" id="L632" title="1 of 2 branches missed.">        if (fd &gt; -1) {</span>
+<span class="nc" id="L633">            return;</span>
+        }
+
+<span class="fc" id="L636">        path.of(inputRoot).slash().concat(inputFileName).$();</span>
+<span class="fc" id="L637">        this.fd = TableUtils.openRO(ff, path, LOG);</span>
+
+<span class="fc" id="L639">        long len = ff.length(fd);</span>
+<span class="pc bpc" id="L640" title="1 of 2 branches missed.">        if (len == -1) {</span>
+<span class="nc" id="L641">            throw CairoException.critical(ff.errno()).put(</span>
+<span class="nc" id="L642">                            &quot;could not get length of file [path=&quot;).put(path)</span>
+<span class="nc" id="L643">                    .put(']');</span>
+        }
+<span class="fc" id="L645">        ff.fadvise(fd, 0, len, Files.POSIX_FADV_SEQUENTIAL);</span>
+<span class="fc" id="L646">    }</span>
+
+    class IndexOutputFile implements Closeable {
+<span class="fc" id="L649">        final MemoryPMARImpl memory = new MemoryPMARImpl();</span>
+        final long partitionKey;
+        int chunkNumber;
+        long dataSize;//partition data size in bytes
+        long indexChunkSize;
+
+<span class="fc" id="L655">        IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {</span>
+<span class="fc" id="L656">            this.partitionKey = partitionKey;</span>
+<span class="fc" id="L657">            this.indexChunkSize = 0;</span>
+<span class="fc" id="L658">            this.chunkNumber = 0;</span>
+<span class="fc" id="L659">            this.dataSize = 0;</span>
+
+<span class="fc" id="L661">            nextChunk(ff, path);</span>
+<span class="fc" id="L662">        }</span>
+
+        @Override
+        public void close() {
+<span class="pc bpc" id="L666" title="1 of 2 branches missed.">            if (memory.isOpen()) {</span>
+<span class="fc" id="L667">                memory.close(true, Vm.TRUNCATE_TO_POINTER);</span>
+            }
+<span class="fc" id="L669">        }</span>
+
+        public void nextChunk(FilesFacade ff, Path path) {
+<span class="fc bfc" id="L672" title="All 2 branches covered.">            if (memory.isOpen()) {</span>
+<span class="fc" id="L673">                sortAndClose();</span>
+            }
+
+<span class="fc" id="L676">            chunkNumber++; //start with file name like $workerIndex_$chunkIndex, e.g. 1_1</span>
+<span class="fc" id="L677">            indexChunkSize = 0;</span>
+<span class="fc" id="L678">            path.put('_').put(chunkNumber).$();</span>
+
+<span class="fc bfc" id="L680" title="All 2 branches covered.">            if (ff.exists(path)) {</span>
+<span class="fc" id="L681">                throw TextException.$(&quot;index file already exists [path=&quot;).put(path).put(']');</span>
+            } else {
+<span class="fc" id="L683">                LOG.debug().$(&quot;created import index file [path='&quot;).$(path).$(&quot;']&quot;).$();</span>
+            }
+
+<span class="fc" id="L686">            this.memory.of(ff, path, ff.getMapPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);</span>
+<span class="fc" id="L687">        }</span>
+
+        private void sortAndClose() {
+<span class="pc bpc" id="L690" title="1 of 2 branches missed.">            if (memory.isOpen()) {</span>
+<span class="fc" id="L691">                CsvFileIndexer.this.sort(memory.getFd(), indexChunkSize);</span>
+<span class="fc" id="L692">                memory.close(true, Vm.TRUNCATE_TO_POINTER);</span>
+            }
+<span class="fc" id="L694">        }</span>
+
+        void putEntry(long timestamp, long offset, long length) {
+<span class="fc" id="L697">            memory.putLong128(timestamp, offset);</span>
+<span class="fc" id="L698">            indexChunkSize += INDEX_ENTRY_SIZE;</span>
+<span class="fc" id="L699">            dataSize += length;</span>
+<span class="fc" id="L700">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

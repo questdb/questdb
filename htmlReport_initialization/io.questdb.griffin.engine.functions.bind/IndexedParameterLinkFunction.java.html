@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexedParameterLinkFunction.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.bind</a> &gt; <span class="el_source">IndexedParameterLinkFunction.java</span></div><h1>IndexedParameterLinkFunction.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.bind;
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.str.CharSink;
+
+<span class="fc" id="L39">public class IndexedParameterLinkFunction implements ScalarFunction {</span>
+    private final int position;
+    private final int variableIndex;
+    private Function base;
+    private int type;
+
+<span class="fc" id="L45">    public IndexedParameterLinkFunction(int variableIndex, int type, int position) {</span>
+<span class="fc" id="L46">        this.variableIndex = variableIndex;</span>
+<span class="fc" id="L47">        this.type = type;</span>
+<span class="fc" id="L48">        this.position = position;</span>
+<span class="fc" id="L49">    }</span>
+
+    @Override
+    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+<span class="fc" id="L53">        this.type = bindVariableService.define(variableIndex, type, position);</span>
+<span class="fc" id="L54">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L58">        base = Misc.free(base);</span>
+<span class="fc" id="L59">    }</span>
+
+    @Override
+    public BinarySequence getBin(Record rec) {
+<span class="fc" id="L63">        return getBase().getBin(rec);</span>
+    }
+
+    @Override
+    public long getBinLen(Record rec) {
+<span class="fc" id="L68">        return getBase().getBinLen(rec);</span>
+    }
+
+    @Override
+    public boolean getBool(Record rec) {
+<span class="fc" id="L73">        return getBase().getBool(rec);</span>
+    }
+
+    @Override
+    public byte getByte(Record rec) {
+<span class="fc" id="L78">        return getBase().getByte(rec);</span>
+    }
+
+    @Override
+    public char getChar(Record rec) {
+<span class="fc" id="L83">        return getBase().getChar(rec);</span>
+    }
+
+    @Override
+    public long getDate(Record rec) {
+<span class="fc" id="L88">        return getBase().getDate(rec);</span>
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+<span class="fc" id="L93">        return getBase().getDouble(rec);</span>
+    }
+
+    @Override
+    public float getFloat(Record rec) {
+<span class="fc" id="L98">        return getBase().getFloat(rec);</span>
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+<span class="fc" id="L103">        return getBase().getGeoByte(rec);</span>
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+<span class="fc" id="L108">        return getBase().getGeoInt(rec);</span>
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+<span class="fc" id="L113">        return getBase().getGeoLong(rec);</span>
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+<span class="fc" id="L118">        return getBase().getGeoShort(rec);</span>
+    }
+
+    @Override
+    public int getInt(Record rec) {
+<span class="fc" id="L123">        return getBase().getInt(rec);</span>
+    }
+
+    @Override
+    public long getLong(Record rec) {
+<span class="fc" id="L128">        return getBase().getLong(rec);</span>
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+<span class="fc" id="L133">        return getBase().getLong128Hi(rec);</span>
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+<span class="fc" id="L138">        return getBase().getLong128Lo(rec);</span>
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+<span class="nc" id="L143">        getBase().getLong256(rec, sink);</span>
+<span class="nc" id="L144">    }</span>
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+<span class="fc" id="L148">        return getBase().getLong256A(rec);</span>
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+<span class="nc" id="L153">        return getBase().getLong256B(rec);</span>
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory() {
+<span class="nc" id="L158">        return getBase().getRecordCursorFactory();</span>
+    }
+
+    @Override
+    public short getShort(Record rec) {
+<span class="fc" id="L163">        return getBase().getShort(rec);</span>
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+<span class="fc" id="L168">        return getBase().getStr(rec);</span>
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+<span class="nc" id="L173">        getBase().getStr(rec, sink);</span>
+<span class="nc" id="L174">    }</span>
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+<span class="fc" id="L178">        return getBase().getStrB(rec);</span>
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+<span class="fc" id="L183">        return getBase().getStrLen(rec);</span>
+    }
+
+    @Override
+    public CharSequence getSymbol(Record rec) {
+<span class="fc" id="L188">        return getBase().getSymbol(rec);</span>
+    }
+
+    @Override
+    public CharSequence getSymbolB(Record rec) {
+<span class="nc" id="L193">        return getBase().getSymbolB(rec);</span>
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+<span class="fc" id="L198">        return getBase().getTimestamp(rec);</span>
+    }
+
+    @Override
+    public int getType() {
+<span class="fc" id="L203">        return type;</span>
+    }
+
+    public int getVariableIndex() {
+<span class="fc" id="L207">        return variableIndex;</span>
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+<span class="fc" id="L212">        base = executionContext.getBindVariableService().getFunction(variableIndex);</span>
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">        if (base == null) {</span>
+<span class="nc" id="L214">            throw SqlException.position(0).put(&quot;undefined bind variable: &quot;).put(variableIndex);</span>
+        }
+<span class="fc" id="L216">        base.init(symbolTableSource, executionContext);</span>
+<span class="fc" id="L217">    }</span>
+
+    @Override
+    public boolean isReadThreadSafe() {
+<span class="pc bpc" id="L221" title="1 of 2 branches missed.">        switch (type) {</span>
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.LONG256:
+<span class="nc" id="L225">                return false;</span>
+            default:
+<span class="fc" id="L227">                return true;</span>
+        }
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+<span class="fc" id="L233">        return true;</span>
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L238">        sink.val(&quot;$&quot;).val(variableIndex).val(&quot;::&quot;).val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));</span>
+<span class="fc" id="L239">    }</span>
+
+    private Function getBase() {
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">        assert base != null;</span>
+<span class="fc" id="L243">        return base;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

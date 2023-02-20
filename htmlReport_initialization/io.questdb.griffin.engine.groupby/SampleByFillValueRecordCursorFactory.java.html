@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SampleByFillValueRecordCursorFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.groupby</a> &gt; <span class="el_source">SampleByFillValueRecordCursorFactory.java</span></div><h1>SampleByFillValueRecordCursorFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.groupby;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.griffin.SqlKeywords.*;
+
+public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
+    private final SampleByFillValueRecordCursor cursor;
+
+    public SampleByFillValueRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
+            CairoConfiguration configuration,
+            RecordCursorFactory base,
+            @NotNull TimestampSampler timestampSampler,
+            @Transient @NotNull ListColumnFilter listColumnFilter,
+            @Transient @NotNull ObjList&lt;ExpressionNode&gt; fillValues,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
+            RecordMetadata groupByMetadata,
+            ObjList&lt;GroupByFunction&gt; groupByFunctions,
+            ObjList&lt;Function&gt; recordFunctions,
+            @Transient IntList recordFunctionPositions,
+            int timestampIndex,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
+    ) throws SqlException {
+<span class="fc" id="L67">        super(</span>
+                configuration,
+                base,
+                listColumnFilter,
+                asm,
+                keyTypes,
+                valueTypes,
+                groupByMetadata,
+                groupByFunctions,
+                recordFunctions
+        );
+        try {
+<span class="fc" id="L79">            final ObjList&lt;Function&gt; placeholderFunctions = createPlaceholderFunctions(</span>
+                    groupByFunctions,
+                    recordFunctions,
+                    recordFunctionPositions,
+                    fillValues,
+                    false
+            );
+<span class="fc" id="L86">            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);</span>
+<span class="fc" id="L87">            cursor = new SampleByFillValueRecordCursor(</span>
+                    map,
+                    mapSink,
+                    groupByFunctions,
+                    updater,
+                    recordFunctions,
+                    placeholderFunctions,
+                    timestampIndex,
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
+            );
+<span class="fc" id="L101">        } catch (Throwable e) {</span>
+<span class="fc" id="L102">            Misc.freeObjList(recordFunctions);</span>
+<span class="fc" id="L103">            Misc.free(map);</span>
+<span class="fc" id="L104">            throw e;</span>
+<span class="fc" id="L105">        }</span>
+<span class="fc" id="L106">    }</span>
+
+    @Override
+    public void toPlan(PlanSink sink) {
+<span class="fc" id="L110">        sink.type(&quot;SampleBy&quot;);</span>
+<span class="fc" id="L111">        sink.attr(&quot;fill&quot;).val(&quot;value&quot;);</span>
+<span class="fc" id="L112">        sink.optAttr(&quot;keys&quot;, GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));</span>
+<span class="fc" id="L113">        sink.optAttr(&quot;values&quot;, cursor.groupByFunctions, true);</span>
+<span class="fc" id="L114">        sink.child(base);</span>
+<span class="fc" id="L115">    }</span>
+
+    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {
+        try {
+<span class="fc bfc" id="L119" title="All 7 branches covered.">            switch (ColumnType.tagOf(type)) {</span>
+                case ColumnType.INT:
+<span class="fc" id="L121">                    return IntConstant.newInstance(Numbers.parseInt(fillNode.token));</span>
+                case ColumnType.LONG:
+<span class="fc" id="L123">                    return LongConstant.newInstance(Numbers.parseLong(fillNode.token));</span>
+                case ColumnType.FLOAT:
+<span class="fc" id="L125">                    return FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));</span>
+                case ColumnType.DOUBLE:
+<span class="fc" id="L127">                    return DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));</span>
+                case ColumnType.SHORT:
+<span class="fc" id="L129">                    return ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));</span>
+                case ColumnType.BYTE:
+<span class="fc" id="L131">                    return ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));</span>
+                default:
+<span class="fc" id="L133">                    throw SqlException.$(recordFunctionPositions.getQuick(index), &quot;Unsupported type: &quot;).put(ColumnType.nameOf(type));</span>
+            }
+<span class="fc" id="L135">        } catch (NumericException e) {</span>
+<span class="fc" id="L136">            throw SqlException.position(fillNode.position).put(&quot;invalid number: &quot;).put(fillNode.token);</span>
+        }
+    }
+
+    @NotNull
+    static ObjList&lt;Function&gt; createPlaceholderFunctions(
+            ObjList&lt;GroupByFunction&gt; groupByFunctions,
+            ObjList&lt;Function&gt; recordFunctions,
+            @Transient IntList recordFunctionPositions,
+            @NotNull @Transient ObjList&lt;ExpressionNode&gt; fillValues,
+            boolean linearSupported
+    ) throws SqlException {
+
+<span class="fc" id="L149">        final ObjList&lt;Function&gt; placeholderFunctions = new ObjList&lt;&gt;();</span>
+<span class="fc" id="L150">        int fillIndex = 0;</span>
+<span class="fc" id="L151">        final int fillValueCount = fillValues.size();</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        for (int i = 0, n = recordFunctions.size(); i &lt; n; i++) {</span>
+<span class="fc" id="L153">            Function function = recordFunctions.getQuick(i);</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">            if (function instanceof GroupByFunction) {</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">                if (fillIndex == fillValueCount) {</span>
+<span class="fc" id="L156">                    throw SqlException.position(0).put(&quot;not enough values&quot;);</span>
+                }
+<span class="fc" id="L158">                ExpressionNode fillNode = fillValues.getQuick(fillIndex++);</span>
+<span class="fc bfc" id="L159" title="All 2 branches covered.">                if (isNullKeyword(fillNode.token)) {</span>
+<span class="fc" id="L160">                    placeholderFunctions.add(SampleByFillNullRecordCursorFactory.createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">                } else if (isPrevKeyword(fillNode.token)) {</span>
+<span class="fc" id="L162">                    placeholderFunctions.add(function);</span>
+<span class="fc bfc" id="L163" title="All 2 branches covered.">                } else if (isLinearKeyword(fillNode.token)) {</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">                    if (!linearSupported) {</span>
+<span class="fc" id="L165">                        throw SqlException.position(0).put(&quot;linear interpolation is not supported when using fill values for keyed sample by expression&quot;);</span>
+                    }
+<span class="fc" id="L167">                    GroupByFunction interpolation = InterpolationGroupByFunction.newInstance((GroupByFunction) function);</span>
+<span class="fc" id="L168">                    placeholderFunctions.add(interpolation);</span>
+<span class="fc" id="L169">                    groupByFunctions.set(fillIndex - 1, interpolation);</span>
+<span class="fc" id="L170">                    recordFunctions.set(i, interpolation);</span>
+<span class="fc" id="L171">                } else {</span>
+<span class="fc" id="L172">                    placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType(), fillNode));</span>
+                }
+<span class="fc" id="L174">            } else {</span>
+<span class="fc" id="L175">                placeholderFunctions.add(function);</span>
+            }
+        }
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">        return placeholderFunctions;</span>
+    }
+
+    @Override
+    protected AbstractNoRecordSampleByCursor getRawCursor() {
+<span class="fc" id="L183">        return cursor;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

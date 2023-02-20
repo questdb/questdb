@@ -1,0 +1,530 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpHeaderParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.http</a> &gt; <span class="el_source">HttpHeaderParser.java</span></div><h1>HttpHeaderParser.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.http;
+
+import io.questdb.std.*;
+import io.questdb.std.str.DirectByteCharSequence;
+
+import java.io.Closeable;
+
+public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
+    private static final String CONTENT_DISPOSITION_HEADER = &quot;Content-Disposition&quot;;
+    private static final String CONTENT_TYPE_HEADER = &quot;Content-Type&quot;;
+<span class="fc" id="L35">    private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();</span>
+<span class="fc" id="L36">    private final LowerCaseAsciiCharSequenceObjHashMap&lt;DirectByteCharSequence&gt; headers = new LowerCaseAsciiCharSequenceObjHashMap&lt;&gt;();</span>
+    private final long hi;
+    private final ObjectPool&lt;DirectByteCharSequence&gt; pool;
+<span class="fc" id="L39">    private final DirectByteCharSequence temp = new DirectByteCharSequence();</span>
+<span class="fc" id="L40">    private final CharSequenceObjHashMap&lt;DirectByteCharSequence&gt; urlParams = new CharSequenceObjHashMap&lt;&gt;();</span>
+    private long _lo;
+    private long _wptr;
+    private DirectByteCharSequence boundary;
+    private DirectByteCharSequence charset;
+    private CharSequence contentDisposition;
+    private CharSequence contentDispositionFilename;
+    private CharSequence contentDispositionName;
+    private DirectByteCharSequence contentType;
+    private DirectByteCharSequence headerName;
+    private long headerPtr;
+    private boolean incomplete;
+<span class="fc" id="L52">    private boolean isMethod = true;</span>
+<span class="fc" id="L53">    private boolean isQueryParams = false;</span>
+<span class="fc" id="L54">    private boolean isUrl = true;</span>
+    private DirectByteCharSequence method;
+    private DirectByteCharSequence methodLine;
+    private boolean needMethod;
+<span class="fc" id="L58">    private long statementTimeout = -1L;</span>
+    private DirectByteCharSequence url;
+
+<span class="fc" id="L61">    public HttpHeaderParser(int bufferLen, ObjectPool&lt;DirectByteCharSequence&gt; pool) {</span>
+<span class="fc" id="L62">        final int sz = Numbers.ceilPow2(bufferLen);</span>
+<span class="fc" id="L63">        this.headerPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="fc" id="L64">        this._wptr = headerPtr;</span>
+<span class="fc" id="L65">        this.hi = this.headerPtr + sz;</span>
+<span class="fc" id="L66">        this.pool = pool;</span>
+<span class="fc" id="L67">        clear();</span>
+<span class="fc" id="L68">    }</span>
+
+    @Override
+    public final void clear() {
+<span class="fc" id="L72">        this.needMethod = true;</span>
+<span class="fc" id="L73">        this._wptr = this._lo = this.headerPtr;</span>
+<span class="fc" id="L74">        this.incomplete = true;</span>
+<span class="fc" id="L75">        this.headers.clear();</span>
+<span class="fc" id="L76">        this.method = null;</span>
+<span class="fc" id="L77">        this.url = null;</span>
+<span class="fc" id="L78">        this.headerName = null;</span>
+<span class="fc" id="L79">        this.contentType = null;</span>
+<span class="fc" id="L80">        this.boundary = null;</span>
+<span class="fc" id="L81">        this.contentDisposition = null;</span>
+<span class="fc" id="L82">        this.contentDispositionName = null;</span>
+<span class="fc" id="L83">        this.contentDispositionFilename = null;</span>
+<span class="fc" id="L84">        this.urlParams.clear();</span>
+<span class="fc" id="L85">        this.isMethod = true;</span>
+<span class="fc" id="L86">        this.isUrl = true;</span>
+<span class="fc" id="L87">        this.isQueryParams = false;</span>
+<span class="fc" id="L88">        this.statementTimeout = -1L;</span>
+        // do not clear the pool
+        // this.pool.clear();
+<span class="fc" id="L91">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (this.headerPtr != 0) {</span>
+<span class="fc" id="L96">            this.headerPtr = Unsafe.free(this.headerPtr, this.hi - this.headerPtr, MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="fc" id="L97">            this.boundaryAugmenter.close();</span>
+        }
+<span class="fc" id="L99">    }</span>
+
+    @Override
+    public DirectByteCharSequence getBoundary() {
+<span class="fc" id="L103">        return boundaryAugmenter.of(boundary);</span>
+    }
+
+    @Override
+    public DirectByteCharSequence getCharset() {
+<span class="fc" id="L108">        return charset;</span>
+    }
+
+    @Override
+    public CharSequence getContentDisposition() {
+<span class="fc" id="L113">        return contentDisposition;</span>
+    }
+
+    @Override
+    public CharSequence getContentDispositionFilename() {
+<span class="fc" id="L118">        return contentDispositionFilename;</span>
+    }
+
+    @Override
+    public CharSequence getContentDispositionName() {
+<span class="fc" id="L123">        return contentDispositionName;</span>
+    }
+
+    @Override
+    public CharSequence getContentType() {
+<span class="fc" id="L128">        return contentType;</span>
+    }
+
+    @Override
+    public DirectByteCharSequence getHeader(CharSequence name) {
+<span class="fc" id="L133">        return headers.get(name);</span>
+    }
+
+    @Override
+    public ObjList&lt;CharSequence&gt; getHeaderNames() {
+<span class="fc" id="L138">        return headers.keys();</span>
+    }
+
+    @Override
+    public CharSequence getMethod() {
+<span class="fc" id="L143">        return method;</span>
+    }
+
+    @Override
+    public CharSequence getMethodLine() {
+<span class="fc" id="L148">        return methodLine;</span>
+    }
+
+    @Override
+    public long getStatementTimeout() {
+<span class="fc" id="L153">        return statementTimeout;</span>
+    }
+
+    @Override
+    public CharSequence getUrl() {
+<span class="fc" id="L158">        return url;</span>
+    }
+
+    @Override
+    public DirectByteCharSequence getUrlParam(CharSequence name) {
+<span class="fc" id="L163">        return urlParams.get(name);</span>
+    }
+
+    public boolean isIncomplete() {
+<span class="fc" id="L167">        return incomplete;</span>
+    }
+
+    public long parse(long ptr, long hi, boolean _method) {
+        long p;
+<span class="fc bfc" id="L172" title="All 4 branches covered.">        if (_method &amp;&amp; needMethod) {</span>
+<span class="fc" id="L173">            int l = parseMethod(ptr, hi);</span>
+<span class="fc" id="L174">            p = ptr + l;</span>
+<span class="fc" id="L175">        } else {</span>
+<span class="fc" id="L176">            p = ptr;</span>
+        }
+
+        DirectByteCharSequence v;
+
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        while (p &lt; hi) {</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">            if (_wptr == this.hi) {</span>
+<span class="fc" id="L183">                throw HttpException.instance(&quot;header is too large&quot;);</span>
+            }
+
+<span class="fc" id="L186">            char b = (char) Unsafe.getUnsafe().getByte(p++);</span>
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">            if (b == '\r') {</span>
+<span class="fc" id="L189">                continue;</span>
+            }
+
+<span class="fc" id="L192">            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);</span>
+
+<span class="fc bfc" id="L194" title="All 3 branches covered.">            switch (b) {</span>
+                case ':':
+<span class="fc bfc" id="L196" title="All 2 branches covered.">                    if (headerName == null) {</span>
+<span class="fc" id="L197">                        headerName = pool.next().of(_lo, _wptr - 1);</span>
+<span class="fc" id="L198">                        _lo = _wptr + 1;</span>
+                    }
+                    break;
+                case '\n':
+<span class="fc bfc" id="L202" title="All 2 branches covered.">                    if (headerName == null) {</span>
+<span class="fc" id="L203">                        incomplete = false;</span>
+<span class="fc" id="L204">                        parseKnownHeaders();</span>
+<span class="fc" id="L205">                        return p;</span>
+                    }
+<span class="fc" id="L207">                    v = pool.next().of(_lo, _wptr - 1);</span>
+<span class="fc" id="L208">                    _lo = _wptr;</span>
+<span class="fc" id="L209">                    headers.put(headerName, v);</span>
+<span class="fc" id="L210">                    headerName = null;</span>
+<span class="fc" id="L211">                    break;</span>
+                default:
+                    break;
+            }
+<span class="fc" id="L215">        }</span>
+
+<span class="fc" id="L217">        return p;</span>
+    }
+
+    public int size() {
+<span class="fc" id="L221">        return headers.size();</span>
+    }
+
+    private static DirectByteCharSequence unquote(CharSequence key, DirectByteCharSequence that) {
+<span class="fc" id="L225">        int len = that.length();</span>
+<span class="fc bfc" id="L226" title="All 2 branches covered.">        if (len == 0) {</span>
+<span class="fc" id="L227">            throw HttpException.instance(&quot;missing value [key=&quot;).put(key).put(']');</span>
+        }
+
+<span class="fc bfc" id="L230" title="All 2 branches covered.">        if (that.charAt(0) == '&quot;') {</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">            if (that.charAt(len - 1) == '&quot;') {</span>
+<span class="fc" id="L232">                return that.of(that.getLo() + 1, that.getHi() - 1);</span>
+            } else {
+<span class="fc" id="L234">                throw HttpException.instance(&quot;unclosed quote [key=&quot;).put(key).put(']');</span>
+            }
+        } else {
+<span class="fc" id="L237">            return that;</span>
+        }
+    }
+
+    private void parseContentDisposition() {
+<span class="fc" id="L242">        DirectByteCharSequence contentDisposition = getHeader(CONTENT_DISPOSITION_HEADER);</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">        if (contentDisposition == null) {</span>
+<span class="fc" id="L244">            return;</span>
+        }
+
+<span class="fc" id="L247">        long p = contentDisposition.getLo();</span>
+<span class="fc" id="L248">        long _lo = p;</span>
+<span class="fc" id="L249">        long hi = contentDisposition.getHi();</span>
+
+<span class="fc" id="L251">        boolean expectFormData = true;</span>
+<span class="fc" id="L252">        boolean swallowSpace = true;</span>
+
+<span class="fc" id="L254">        DirectByteCharSequence name = null;</span>
+
+<span class="fc bfc" id="L256" title="All 2 branches covered.">        while (p &lt;= hi) {</span>
+<span class="fc" id="L257">            char b = (char) Unsafe.getUnsafe().getByte(p++);</span>
+
+<span class="pc bpc" id="L259" title="1 of 4 branches missed.">            if (b == ' ' &amp;&amp; swallowSpace) {</span>
+<span class="fc" id="L260">                _lo = p;</span>
+<span class="fc" id="L261">                continue;</span>
+            }
+
+<span class="fc bfc" id="L264" title="All 4 branches covered.">            if (p &gt; hi || b == ';') {</span>
+<span class="fc bfc" id="L265" title="All 2 branches covered.">                if (expectFormData) {</span>
+<span class="fc" id="L266">                    this.contentDisposition = pool.next().of(_lo, p - 1);</span>
+<span class="fc" id="L267">                    _lo = p;</span>
+<span class="fc" id="L268">                    expectFormData = false;</span>
+<span class="fc" id="L269">                    continue;</span>
+                }
+
+<span class="fc bfc" id="L272" title="All 2 branches covered.">                if (name == null) {</span>
+<span class="fc" id="L273">                    throw HttpException.instance(&quot;Malformed &quot;).put(CONTENT_DISPOSITION_HEADER).put(&quot; header&quot;);</span>
+                }
+
+<span class="fc bfc" id="L276" title="All 2 branches covered.">                if (Chars.equals(&quot;name&quot;, name)) {</span>
+<span class="fc" id="L277">                    this.contentDispositionName = unquote(&quot;name&quot;, pool.next().of(_lo, p - 1));</span>
+<span class="fc" id="L278">                    swallowSpace = true;</span>
+<span class="fc" id="L279">                    _lo = p;</span>
+<span class="fc" id="L280">                    name = null;</span>
+<span class="fc" id="L281">                    continue;</span>
+                }
+
+<span class="fc bfc" id="L284" title="All 2 branches covered.">                if (Chars.equals(&quot;filename&quot;, name)) {</span>
+<span class="fc" id="L285">                    this.contentDispositionFilename = unquote(&quot;filename&quot;, pool.next().of(_lo, p - 1));</span>
+<span class="fc" id="L286">                    _lo = p;</span>
+<span class="fc" id="L287">                    name = null;</span>
+<span class="fc" id="L288">                    continue;</span>
+                }
+
+<span class="pc bpc" id="L291" title="1 of 2 branches missed.">                if (p &gt; hi) {</span>
+<span class="fc" id="L292">                    break;</span>
+                }
+<span class="fc bfc" id="L294" title="All 2 branches covered.">            } else if (b == '=') {</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);</span>
+<span class="fc" id="L296">                _lo = p;</span>
+<span class="fc" id="L297">                swallowSpace = false;</span>
+            }
+<span class="fc" id="L299">        }</span>
+<span class="fc" id="L300">    }</span>
+
+    private void parseContentType() {
+<span class="fc" id="L303">        DirectByteCharSequence seq = getHeader(CONTENT_TYPE_HEADER);</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">        if (seq == null) {</span>
+<span class="fc" id="L305">            return;</span>
+        }
+
+<span class="fc" id="L308">        long p = seq.getLo();</span>
+<span class="fc" id="L309">        long _lo = p;</span>
+<span class="fc" id="L310">        long hi = seq.getHi();</span>
+
+<span class="fc" id="L312">        DirectByteCharSequence name = null;</span>
+<span class="fc" id="L313">        boolean contentType = true;</span>
+<span class="fc" id="L314">        boolean swallowSpace = true;</span>
+
+<span class="fc bfc" id="L316" title="All 2 branches covered.">        while (p &lt;= hi) {</span>
+<span class="fc" id="L317">            char b = (char) Unsafe.getUnsafe().getByte(p++);</span>
+
+<span class="fc bfc" id="L319" title="All 4 branches covered.">            if (b == ' ' &amp;&amp; swallowSpace) {</span>
+<span class="fc" id="L320">                _lo = p;</span>
+<span class="fc" id="L321">                continue;</span>
+            }
+
+<span class="fc bfc" id="L324" title="All 4 branches covered.">            if (p &gt; hi || b == ';') {</span>
+<span class="fc bfc" id="L325" title="All 2 branches covered.">                if (contentType) {</span>
+<span class="fc" id="L326">                    this.contentType = pool.next().of(_lo, p - 1);</span>
+<span class="fc" id="L327">                    _lo = p;</span>
+<span class="fc" id="L328">                    contentType = false;</span>
+<span class="fc" id="L329">                    continue;</span>
+                }
+
+<span class="fc bfc" id="L332" title="All 2 branches covered.">                if (name == null) {</span>
+<span class="fc" id="L333">                    throw HttpException.instance(&quot;Malformed &quot;).put(CONTENT_TYPE_HEADER).put(&quot; header&quot;);</span>
+                }
+
+<span class="fc bfc" id="L336" title="All 2 branches covered.">                if (Chars.equals(&quot;charset&quot;, name)) {</span>
+<span class="fc" id="L337">                    this.charset = pool.next().of(_lo, p - 1);</span>
+<span class="fc" id="L338">                    name = null;</span>
+<span class="fc" id="L339">                    _lo = p;</span>
+<span class="fc" id="L340">                    continue;</span>
+                }
+
+<span class="fc bfc" id="L343" title="All 2 branches covered.">                if (Chars.equals(&quot;boundary&quot;, name)) {</span>
+<span class="fc" id="L344">                    this.boundary = pool.next().of(_lo, p - 1);</span>
+<span class="fc" id="L345">                    _lo = p;</span>
+<span class="fc" id="L346">                    name = null;</span>
+<span class="fc" id="L347">                    continue;</span>
+                }
+
+<span class="pc bpc" id="L350" title="1 of 2 branches missed.">                if (p &gt; hi) {</span>
+<span class="fc" id="L351">                    break;</span>
+                }
+<span class="fc bfc" id="L353" title="All 2 branches covered.">            } else if (b == '=') {</span>
+<span class="pc bpc" id="L354" title="1 of 2 branches missed.">                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);</span>
+<span class="fc" id="L355">                _lo = p;</span>
+<span class="fc" id="L356">                swallowSpace = false;</span>
+            }
+<span class="fc" id="L358">        }</span>
+<span class="fc" id="L359">    }</span>
+
+    private void parseKnownHeaders() {
+<span class="fc" id="L362">        parseContentType();</span>
+<span class="fc" id="L363">        parseContentDisposition();</span>
+<span class="fc" id="L364">        parseStatementTimeout();</span>
+<span class="fc" id="L365">    }</span>
+
+    private int parseMethod(long lo, long hi) {
+<span class="fc" id="L368">        long p = lo;</span>
+<span class="fc bfc" id="L369" title="All 2 branches covered.">        while (p &lt; hi) {</span>
+<span class="fc bfc" id="L370" title="All 2 branches covered.">            if (_wptr == this.hi) {</span>
+<span class="fc" id="L371">                throw HttpException.instance(&quot;url is too long&quot;);</span>
+            }
+
+<span class="fc" id="L374">            char b = (char) Unsafe.getUnsafe().getByte(p++);</span>
+
+<span class="fc bfc" id="L376" title="All 2 branches covered.">            if (b == '\r') {</span>
+<span class="fc" id="L377">                continue;</span>
+            }
+
+<span class="fc bfc" id="L380" title="All 4 branches covered.">            switch (b) {</span>
+                case ' ':
+<span class="fc bfc" id="L382" title="All 2 branches covered.">                    if (isMethod) {</span>
+<span class="fc" id="L383">                        method = pool.next().of(_lo, _wptr);</span>
+<span class="fc" id="L384">                        _lo = _wptr + 1;</span>
+<span class="fc" id="L385">                        isMethod = false;</span>
+<span class="fc bfc" id="L386" title="All 2 branches covered.">                    } else if (isUrl) {</span>
+<span class="fc" id="L387">                        url = pool.next().of(_lo, _wptr);</span>
+<span class="fc" id="L388">                        isUrl = false;</span>
+<span class="fc" id="L389">                        _lo = _wptr + 1;</span>
+<span class="pc bpc" id="L390" title="1 of 2 branches missed.">                    } else if (isQueryParams) {</span>
+<span class="fc" id="L391">                        int o = urlDecode(_lo, _wptr, urlParams);</span>
+<span class="fc" id="L392">                        isQueryParams = false;</span>
+<span class="fc" id="L393">                        _lo = _wptr;</span>
+<span class="fc" id="L394">                        _wptr -= o;</span>
+<span class="fc" id="L395">                    }</span>
+                    break;
+                case '?':
+<span class="fc" id="L398">                    url = pool.next().of(_lo, _wptr);</span>
+<span class="fc" id="L399">                    isUrl = false;</span>
+<span class="fc" id="L400">                    isQueryParams = true;</span>
+<span class="fc" id="L401">                    _lo = _wptr + 1;</span>
+<span class="fc" id="L402">                    break;</span>
+                case '\n':
+<span class="pc bpc" id="L404" title="1 of 2 branches missed.">                    if (method == null) {</span>
+<span class="nc" id="L405">                        throw HttpException.instance(&quot;bad method&quot;);</span>
+                    }
+<span class="fc" id="L407">                    methodLine = pool.next().of(method.getLo(), _wptr);</span>
+<span class="fc" id="L408">                    needMethod = false;</span>
+<span class="fc" id="L409">                    this._lo = _wptr;</span>
+<span class="fc" id="L410">                    return (int) (p - lo);</span>
+                default:
+                    break;
+            }
+<span class="fc" id="L414">            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);</span>
+<span class="fc" id="L415">        }</span>
+<span class="fc" id="L416">        return (int) (p - lo);</span>
+    }
+
+    private void parseStatementTimeout() {
+<span class="fc" id="L420">        statementTimeout = -1L;</span>
+<span class="fc" id="L421">        DirectByteCharSequence timeout = getHeader(&quot;Statement-Timeout&quot;);</span>
+<span class="fc bfc" id="L422" title="All 2 branches covered.">        if (timeout == null) {</span>
+<span class="fc" id="L423">            return;</span>
+        }
+
+        try {
+<span class="fc" id="L427">            statementTimeout = Numbers.parseLong(timeout);</span>
+<span class="nc" id="L428">        } catch (NumericException ex) {</span>
+            // keep -1L as default
+<span class="fc" id="L430">        }</span>
+<span class="fc" id="L431">    }</span>
+
+    private int urlDecode(long lo, long hi, CharSequenceObjHashMap&lt;DirectByteCharSequence&gt; map) {
+<span class="fc" id="L434">        long _lo = lo;</span>
+<span class="fc" id="L435">        long rp = lo;</span>
+<span class="fc" id="L436">        long wp = lo;</span>
+<span class="fc" id="L437">        int offset = 0;</span>
+
+<span class="fc" id="L439">        CharSequence name = null;</span>
+
+<span class="fc bfc" id="L441" title="All 2 branches covered.">        while (rp &lt; hi) {</span>
+<span class="fc" id="L442">            char b = (char) Unsafe.getUnsafe().getByte(rp++);</span>
+
+<span class="fc bfc" id="L444" title="All 5 branches covered.">            switch (b) {</span>
+                case '=':
+<span class="fc bfc" id="L446" title="All 2 branches covered.">                    if (_lo &lt; wp) {</span>
+<span class="fc" id="L447">                        name = pool.next().of(_lo, wp);</span>
+                    }
+<span class="fc" id="L449">                    _lo = rp - offset;</span>
+<span class="fc" id="L450">                    break;</span>
+                case '&amp;':
+<span class="fc bfc" id="L452" title="All 2 branches covered.">                    if (name != null) {</span>
+<span class="fc" id="L453">                        map.put(name, pool.next().of(_lo, wp));</span>
+<span class="fc" id="L454">                        name = null;</span>
+                    }
+<span class="fc" id="L456">                    _lo = rp - offset;</span>
+<span class="fc" id="L457">                    break;</span>
+                case '+':
+<span class="fc" id="L459">                    Unsafe.getUnsafe().putByte(wp++, (byte) ' ');</span>
+<span class="fc" id="L460">                    continue;</span>
+                case '%':
+                    try {
+<span class="fc bfc" id="L463" title="All 2 branches covered.">                        if (rp + 1 &lt; hi) {</span>
+<span class="fc" id="L464">                            byte bb = (byte) Numbers.parseHexInt(temp.of(rp, rp += 2));</span>
+<span class="fc" id="L465">                            Unsafe.getUnsafe().putByte(wp++, bb);</span>
+<span class="fc" id="L466">                            offset += 2;</span>
+<span class="fc" id="L467">                            continue;</span>
+                        }
+<span class="fc" id="L469">                    } catch (NumericException ignore) {</span>
+<span class="fc" id="L470">                    }</span>
+<span class="fc" id="L471">                    throw HttpException.instance(&quot;invalid query encoding&quot;);</span>
+                default:
+                    break;
+            }
+<span class="fc" id="L475">            Unsafe.getUnsafe().putByte(wp++, (byte) b);</span>
+<span class="fc" id="L476">        }</span>
+
+<span class="fc bfc" id="L478" title="All 4 branches covered.">        if (_lo &lt; wp &amp;&amp; name != null) {</span>
+<span class="fc" id="L479">            map.put(name, pool.next().of(_lo, wp));</span>
+        }
+
+<span class="fc" id="L482">        return offset;</span>
+    }
+
+    public static class BoundaryAugmenter implements Closeable {
+        private static final String BOUNDARY_PREFIX = &quot;\r\n--&quot;;
+<span class="fc" id="L487">        private final DirectByteCharSequence export = new DirectByteCharSequence();</span>
+        private long _wptr;
+        private long lim;
+        private long lo;
+
+<span class="fc" id="L492">        public BoundaryAugmenter() {</span>
+<span class="fc" id="L493">            this.lim = 64;</span>
+<span class="fc" id="L494">            this.lo = this._wptr = Unsafe.malloc(this.lim, MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="fc" id="L495">            of0(BOUNDARY_PREFIX);</span>
+<span class="fc" id="L496">        }</span>
+
+        @Override
+        public void close() {
+<span class="pc bpc" id="L500" title="1 of 2 branches missed.">            if (lo &gt; 0) {</span>
+<span class="fc" id="L501">                this.lo = this._wptr = Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);</span>
+            }
+<span class="fc" id="L503">        }</span>
+
+        public DirectByteCharSequence of(CharSequence value) {
+<span class="fc" id="L506">            int len = value.length() + BOUNDARY_PREFIX.length();</span>
+<span class="pc bpc" id="L507" title="1 of 2 branches missed.">            if (len &gt; lim) {</span>
+<span class="nc" id="L508">                resize(len);</span>
+            }
+<span class="fc" id="L510">            _wptr = lo + BOUNDARY_PREFIX.length();</span>
+<span class="fc" id="L511">            of0(value);</span>
+<span class="fc" id="L512">            return export.of(lo, _wptr);</span>
+        }
+
+        private void of0(CharSequence value) {
+<span class="fc" id="L516">            int len = value.length();</span>
+<span class="fc" id="L517">            Chars.asciiStrCpy(value, len, _wptr);</span>
+<span class="fc" id="L518">            _wptr += len;</span>
+<span class="fc" id="L519">        }</span>
+
+        private void resize(int lim) {
+<span class="nc" id="L522">            final long prevLim = this.lim;</span>
+<span class="nc" id="L523">            this.lim = Numbers.ceilPow2(lim);</span>
+<span class="nc" id="L524">            this.lo = this._wptr = Unsafe.realloc(this.lo, prevLim, this.lim, MemoryTag.NATIVE_HTTP_CONN);</span>
+<span class="nc" id="L525">            of0(BOUNDARY_PREFIX);</span>
+<span class="nc" id="L526">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

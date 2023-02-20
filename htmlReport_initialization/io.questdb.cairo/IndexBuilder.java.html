@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IndexBuilder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo</a> &gt; <span class="el_source">IndexBuilder.java</span></div><h1>IndexBuilder.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
+
+/**
+ * Rebuild index independently of TableWriter
+ * Main purpose is for support cases when table data is corrupt and TableWriter cannot be opened
+ */
+public class IndexBuilder extends RebuildColumnBase {
+<span class="fc" id="L42">    private static final Log LOG = LogFactory.getLog(IndexBuilder.class);</span>
+<span class="fc" id="L43">    private final MemoryMAR ddlMem = Vm.getMARInstance();</span>
+<span class="fc" id="L44">    private final MemoryMR indexMem = Vm.getMRInstance();</span>
+<span class="fc" id="L45">    private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();</span>
+
+    public IndexBuilder() {
+<span class="fc" id="L48">        super();</span>
+<span class="fc" id="L49">        unsupportedColumnMessage = &quot;Column is not indexed&quot;;</span>
+<span class="fc" id="L50">    }</span>
+
+    @Override
+    public void clear() {
+<span class="fc" id="L54">        super.clear();</span>
+        // ddlMem is idempotent, we can call close() as many times as we need,
+        // but we reuse Java object after memory is closed (method of() will reopen memory)
+<span class="fc" id="L57">        ddlMem.close();</span>
+<span class="fc" id="L58">        indexer.clear();</span>
+<span class="fc" id="L59">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc" id="L63">        super.close();</span>
+<span class="fc" id="L64">        Misc.free(indexer);</span>
+<span class="fc" id="L65">    }</span>
+
+    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, long columnNameTxn) {
+        try {
+<span class="fc" id="L69">            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);</span>
+            try {
+<span class="fc" id="L71">                LOG.info().$(&quot;writing &quot;).utf8(path).$();</span>
+<span class="fc" id="L72">                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);</span>
+<span class="fc" id="L73">                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);</span>
+<span class="fc" id="L74">            } catch (CairoException e) {</span>
+                // looks like we could not create key file properly
+                // lets not leave half-baked file sitting around
+<span class="fc" id="L77">                LOG.error()</span>
+<span class="fc" id="L78">                        .$(&quot;could not create index [name=&quot;).utf8(path)</span>
+<span class="fc" id="L79">                        .$(&quot;, errno=&quot;).$(e.getErrno())</span>
+<span class="fc" id="L80">                        .$(']').$();</span>
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">                if (!ff.remove(path)) {</span>
+<span class="fc" id="L82">                    LOG.error()</span>
+<span class="fc" id="L83">                            .$(&quot;could not remove '&quot;).utf8(path).$(&quot;'. Please remove MANUALLY.&quot;)</span>
+<span class="fc" id="L84">                            .$(&quot;[errno=&quot;).$(ff.errno())</span>
+<span class="fc" id="L85">                            .$(']').$();</span>
+                }
+<span class="fc" id="L87">                throw e;</span>
+            } finally {
+                // this close() closes the underlying file, but ddlMem object remains reusable
+<span class="fc" id="L90">                ddlMem.close();</span>
+            }
+<span class="fc bfc" id="L92" title="All 2 branches covered.">            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {</span>
+<span class="fc" id="L93">                LOG.error().$(&quot;could not create index [name=&quot;).utf8(path).$(']').$();</span>
+<span class="fc" id="L94">                throw CairoException.critical(ff.errno()).put(&quot;could not create index [name=&quot;).put(path).put(']');</span>
+            }
+<span class="fc" id="L96">            LOG.info().$(&quot;writing &quot;).utf8(path).$();</span>
+        } finally {
+<span class="fc" id="L98">            path.trimTo(plen);</span>
+        }
+<span class="fc" id="L100">    }</span>
+
+    private void removeFile(Path path) {
+<span class="fc" id="L103">        LOG.info().$(&quot;deleting &quot;).utf8(path).$();</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        if (!ff.remove(this.path)) {</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">            if (!ff.exists(this.path)) {</span>
+                // This is fine, index can be corrupt, rewriting is what we try to do here
+<span class="fc" id="L107">                LOG.info().$(&quot;index file did not exist, file will be re-written [path=&quot;).utf8(path).I$();</span>
+            } else {
+<span class="fc" id="L109">                throw CairoException.critical(ff.errno()).put(&quot;cannot remove index file&quot;);</span>
+            }
+        }
+<span class="fc" id="L112">    }</span>
+
+    private void removeIndexFiles(CharSequence columnName, long columnNameTxn) {
+<span class="fc" id="L115">        final int plen = path.length();</span>
+<span class="fc" id="L116">        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);</span>
+<span class="fc" id="L117">        removeFile(path);</span>
+
+<span class="fc" id="L119">        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);</span>
+<span class="fc" id="L120">        removeFile(path);</span>
+<span class="fc" id="L121">    }</span>
+
+    protected void doReindex(
+            ColumnVersionReader columnVersionReader,
+            int columnWriterIndex,
+            CharSequence columnName,
+            CharSequence partitionName,
+            long partitionNameTxn,
+            long partitionSize,
+            long partitionTimestamp,
+            int indexValueBlockCapacity
+    ) {
+<span class="fc" id="L133">        path.trimTo(rootLen).concat(partitionName);</span>
+<span class="fc" id="L134">        TableUtils.txnPartitionConditionally(path, partitionNameTxn);</span>
+<span class="fc" id="L135">        final int plen = path.length();</span>
+
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">        if (ff.exists(path.$())) {</span>
+<span class="fc" id="L138">            try (final MemoryMR roMem = indexMem) {</span>
+<span class="fc" id="L139">                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);</span>
+<span class="fc" id="L140">                removeIndexFiles(columnName, columnNameTxn);</span>
+<span class="fc" id="L141">                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);</span>
+
+<span class="fc" id="L143">                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">                if (columnTop &gt; -1L) {</span>
+
+<span class="fc bfc" id="L146" title="All 2 branches covered.">                    if (partitionSize &gt; columnTop) {</span>
+<span class="fc" id="L147">                        LOG.info().$(&quot;indexing [path=&quot;).utf8(path).I$();</span>
+<span class="fc" id="L148">                        createIndexFiles(columnName, indexValueBlockCapacity, plen, columnNameTxn);</span>
+<span class="fc" id="L149">                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);</span>
+<span class="fc" id="L150">                        roMem.of(</span>
+                                ff,
+                                path,
+                                0,
+                                (partitionSize - columnTop) * Integer.BYTES,
+                                MemoryTag.MMAP_TABLE_WRITER
+                        );
+                        try {
+<span class="fc" id="L158">                            indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);</span>
+<span class="fc" id="L159">                            indexer.index(roMem, columnTop, partitionSize);</span>
+                        } finally {
+<span class="fc" id="L161">                            indexer.clear();</span>
+<span class="fc" id="L162">                        }</span>
+                    }
+                } else {
+<span class="fc" id="L165">                    LOG.info().$(&quot;column is empty in partition [path=&quot;).$(path).I$();</span>
+                }
+            }
+        } else {
+<span class="nc" id="L169">            LOG.info().$(&quot;partition does not exist [path=&quot;).$(path).I$();</span>
+        }
+<span class="fc" id="L171">    }</span>
+
+    @Override
+    protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
+<span class="fc" id="L175">        return metadata.isColumnIndexed(columnIndex);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

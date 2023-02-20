@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IOURingImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">IOURingImpl.java</span></div><h1>IOURingImpl.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.cairo.CairoException;
+import org.jetbrains.annotations.TestOnly;
+
+import static io.questdb.std.IOUringAccessor.*;
+
+<span class="fc" id="L32">public class IOURingImpl implements IOURing {</span>
+
+    // Holds &lt;id, res&gt; tuples for recently consumed cqes.
+    private final long[] cachedCqes;
+    private final long cqKheadAddr;
+    private final int cqKringMask;
+    private final long cqKtailAddr;
+    private final long cqesAddr;
+    private final IOURingFacade facade;
+    private final long ringAddr;
+    private final int ringFd;
+    private final long sqKheadAddr;
+    private final int sqKringEntries;
+    private final int sqKringMask;
+    private final long sqesAddr;
+    // Index of cached cqe tuple.
+    private int cachedIndex;
+    // Count of cached cqe tuples.
+    private int cachedSize;
+<span class="fc" id="L51">    private boolean closed = false;</span>
+    private long idSeq;
+
+<span class="fc" id="L54">    public IOURingImpl(IOURingFacade facade, int capacity) {</span>
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">        assert Numbers.isPow2(capacity);</span>
+<span class="fc" id="L56">        this.facade = facade;</span>
+<span class="fc" id="L57">        final long res = facade.create(capacity);</span>
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">        if (res &lt; 0) {</span>
+<span class="fc" id="L59">            throw CairoException.critical((int) -res).put(&quot;Cannot create io_uring instance&quot;);</span>
+        }
+<span class="nc" id="L61">        this.ringAddr = res;</span>
+
+<span class="nc" id="L63">        this.ringFd = Unsafe.getUnsafe().getInt(ringAddr + RING_FD_OFFSET);</span>
+
+<span class="nc" id="L65">        this.sqesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_SQES_OFFSET);</span>
+<span class="nc" id="L66">        this.sqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KHEAD_OFFSET);</span>
+<span class="nc" id="L67">        final long sqMaskAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KRING_MASK_OFFSET);</span>
+<span class="nc" id="L68">        this.sqKringMask = Unsafe.getUnsafe().getInt(sqMaskAddr);</span>
+<span class="nc" id="L69">        final long sqEntriesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KRING_ENTRIES_OFFSET);</span>
+<span class="nc" id="L70">        this.sqKringEntries = Unsafe.getUnsafe().getInt(sqEntriesAddr);</span>
+
+<span class="nc" id="L72">        this.cqesAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_CQES_OFFSET);</span>
+<span class="nc" id="L73">        this.cqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KHEAD_OFFSET);</span>
+<span class="nc" id="L74">        this.cqKtailAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KTAIL_OFFSET);</span>
+<span class="nc" id="L75">        final long cqMaskAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KRING_MASK_OFFSET);</span>
+<span class="nc" id="L76">        this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskAddr);</span>
+<span class="nc" id="L77">        final long cqEntriesAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KRING_ENTRIES_OFFSET);</span>
+<span class="nc" id="L78">        int cqKringEntries = Unsafe.getUnsafe().getInt(cqEntriesAddr);</span>
+<span class="nc" id="L79">        cachedCqes = new long[2 * cqKringEntries];</span>
+
+<span class="nc" id="L81">        Files.bumpFileCount(ringFd);</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        if (closed) {</span>
+<span class="nc" id="L87">            return;</span>
+        }
+<span class="nc" id="L89">        Files.decrementFileCount(ringFd);</span>
+<span class="nc" id="L90">        facade.close(ringAddr);</span>
+<span class="nc" id="L91">        closed = true;</span>
+<span class="nc" id="L92">    }</span>
+
+    @Override
+    @TestOnly
+    public long enqueueNop() {
+<span class="nc" id="L97">        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);</span>
+    }
+
+    @Override
+    public long enqueueRead(int fd, long offset, long bufAddr, int len) {
+<span class="nc" id="L102">        return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);</span>
+    }
+
+    @Override
+    public long getCqeId() {
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (cachedIndex &lt; cachedSize) {</span>
+<span class="nc" id="L108">            return cachedCqes[2 * cachedIndex];</span>
+        }
+<span class="nc" id="L110">        return -1;</span>
+    }
+
+    @Override
+    public int getCqeRes() {
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (cachedIndex &lt; cachedSize) {</span>
+<span class="nc" id="L116">            return (int) cachedCqes[2 * cachedIndex + 1];</span>
+        }
+<span class="nc" id="L118">        return -1;</span>
+    }
+
+    @Override
+    public boolean nextCqe() {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (++cachedIndex &lt; cachedSize) {</span>
+<span class="nc" id="L124">            return true;</span>
+        }
+        // Consume all available cqes and store them in the cache.
+<span class="nc" id="L127">        final int tail = Unsafe.getUnsafe().getInt(cqKtailAddr);</span>
+<span class="nc" id="L128">        Unsafe.getUnsafe().loadFence();</span>
+<span class="nc" id="L129">        final int head = Unsafe.getUnsafe().getInt(cqKheadAddr);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (tail == head) {</span>
+<span class="nc" id="L131">            return false;</span>
+        }
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        for (int i = head; i &lt; tail; i++) {</span>
+<span class="nc" id="L134">            final long cqeAddr = cqesAddr + (long) (i &amp; cqKringMask) * SIZEOF_CQE;</span>
+<span class="nc" id="L135">            cachedCqes[2 * (i - head)] = Unsafe.getUnsafe().getLong(cqeAddr + CQE_USER_DATA_OFFSET);</span>
+<span class="nc" id="L136">            cachedCqes[2 * (i - head) + 1] = Unsafe.getUnsafe().getInt(cqeAddr + CQE_RES_OFFSET);</span>
+        }
+<span class="nc" id="L138">        cachedSize = tail - head;</span>
+<span class="nc" id="L139">        cachedIndex = 0;</span>
+<span class="nc" id="L140">        Unsafe.getUnsafe().putInt(cqKheadAddr, tail);</span>
+<span class="nc" id="L141">        Unsafe.getUnsafe().storeFence();</span>
+<span class="nc" id="L142">        return true;</span>
+    }
+
+    @Override
+    public int submit() {
+<span class="nc" id="L147">        return facade.submit(ringAddr);</span>
+    }
+
+    @Override
+    public int submitAndWait() {
+<span class="nc" id="L152">        return facade.submitAndWait(ringAddr, 1);</span>
+    }
+
+    private long enqueueSqe(byte op, int fd, long offset, long bufAddr, int len) {
+<span class="nc" id="L156">        final long sqeAddr = nextSqe();</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (sqeAddr == 0) {</span>
+<span class="nc" id="L158">            return -1;</span>
+        }
+<span class="nc" id="L160">        Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);</span>
+<span class="nc" id="L161">        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, fd);</span>
+<span class="nc" id="L162">        Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);</span>
+<span class="nc" id="L163">        Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);</span>
+<span class="nc" id="L164">        Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);</span>
+<span class="nc" id="L165">        final long id = idSeq++;</span>
+<span class="nc" id="L166">        Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);</span>
+<span class="nc" id="L167">        return id;</span>
+    }
+
+    /**
+     * Returns a pointer to sqe to fill. If there are sqes no available, returns 0.
+     */
+    private long nextSqe() {
+<span class="nc" id="L174">        final int head = Unsafe.getUnsafe().getInt(sqKheadAddr);</span>
+<span class="nc" id="L175">        Unsafe.getUnsafe().loadFence();</span>
+<span class="nc" id="L176">        final int tail = Unsafe.getUnsafe().getInt(ringAddr + SQ_SQE_TAIL_OFFSET);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        if (tail - head &lt; sqKringEntries) {</span>
+<span class="nc" id="L178">            final long addr = sqesAddr + (long) (tail &amp; sqKringMask) * SIZEOF_SQE;</span>
+<span class="nc" id="L179">            Unsafe.getUnsafe().putInt(ringAddr + SQ_SQE_TAIL_OFFSET, tail + 1);</span>
+<span class="nc" id="L180">            return addr;</span>
+        }
+<span class="nc" id="L182">        return 0;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

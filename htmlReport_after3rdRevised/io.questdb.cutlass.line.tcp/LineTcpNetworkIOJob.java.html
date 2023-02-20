@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LineTcpNetworkIOJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cutlass.line.tcp</a> &gt; <span class="el_source">LineTcpNetworkIOJob.java</span></div><h1>LineTcpNetworkIOJob.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.line.tcp;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.std.ByteCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
+import io.questdb.std.str.DirectByteCharSequence;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
+
+class LineTcpNetworkIOJob implements NetworkIOJob {
+<span class="fc" id="L44">    private final static Log LOG = LogFactory.getLog(LineTcpNetworkIOJob.class);</span>
+    private final IODispatcher&lt;LineTcpConnectionContext&gt; dispatcher;
+    private final long maintenanceInterval;
+    private final MillisecondClock millisecondClock;
+    private final LineTcpMeasurementScheduler scheduler;
+<span class="fc" id="L49">    private final ByteCharSequenceObjHashMap&lt;TableUpdateDetails&gt; tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap&lt;&gt;();</span>
+<span class="fc" id="L50">    private final ObjList&lt;SymbolCache&gt; unusedSymbolCaches = new ObjList&lt;&gt;();</span>
+    private final int workerId;
+    // Context blocked on LineTcpMeasurementScheduler queue
+<span class="fc" id="L53">    private LineTcpConnectionContext busyContext = null;</span>
+<span class="fc" id="L54">    private final IORequestProcessor&lt;LineTcpConnectionContext&gt; onRequest = this::onRequest;</span>
+    private long maintenanceJobDeadline;
+    private long nextCommitTime;
+
+    LineTcpNetworkIOJob(
+            LineTcpReceiverConfiguration configuration,
+            LineTcpMeasurementScheduler scheduler,
+            IODispatcher&lt;LineTcpConnectionContext&gt; dispatcher,
+            int workerId
+<span class="fc" id="L63">    ) {</span>
+<span class="fc" id="L64">        this.millisecondClock = configuration.getMillisecondClock();</span>
+<span class="fc" id="L65">        this.maintenanceInterval = configuration.getMaintenanceInterval();</span>
+<span class="fc" id="L66">        this.scheduler = scheduler;</span>
+<span class="fc" id="L67">        this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;</span>
+<span class="fc" id="L68">        this.nextCommitTime = millisecondClock.getTicks();</span>
+<span class="fc" id="L69">        this.dispatcher = dispatcher;</span>
+<span class="fc" id="L70">        this.workerId = workerId;</span>
+<span class="fc" id="L71">    }</span>
+
+    @Override
+    public void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+<span class="fc" id="L75">        tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);</span>
+<span class="fc" id="L76">        tableUpdateDetails.addReference(workerId);</span>
+<span class="fc" id="L77">    }</span>
+
+    @Override
+    public void close() {
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        if (busyContext != null) {</span>
+<span class="fc" id="L82">            busyContext.getDispatcher().disconnect(busyContext, DISCONNECT_REASON_RETRY_FAILED);</span>
+<span class="fc" id="L83">            busyContext = null;</span>
+        }
+<span class="fc" id="L85">        Misc.freeObjList(unusedSymbolCaches);</span>
+
+<span class="fc bfc" id="L87" title="All 2 branches covered.">        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n &lt; sz; n++) {</span>
+<span class="fc" id="L88">            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);</span>
+<span class="fc" id="L89">            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);</span>
+<span class="pc bpc" id="L90" title="1 of 2 branches missed.">            if (tud.isWal()) {</span>
+<span class="nc" id="L91">                tud.releaseWriter(true);</span>
+<span class="nc" id="L92">                tud.close();</span>
+            }
+        }
+<span class="fc" id="L95">    }</span>
+
+    @Override
+    public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableNameUtf8) {
+<span class="fc" id="L99">        return tableUpdateDetailsUtf8.get(tableNameUtf8);</span>
+    }
+
+    @Override
+    public ObjList&lt;SymbolCache&gt; getUnusedSymbolCaches() {
+<span class="fc" id="L104">        return unusedSymbolCaches;</span>
+    }
+
+    @Override
+    public int getWorkerId() {
+<span class="fc" id="L109">        return workerId;</span>
+    }
+
+    @Override
+    public void releaseWalTableDetails() {
+<span class="fc" id="L114">        scheduler.releaseWalTableDetails(tableUpdateDetailsUtf8);</span>
+<span class="fc" id="L115">    }</span>
+
+    @Override
+    public TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+<span class="fc" id="L119">        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);</span>
+<span class="pc bpc" id="L120" title="1 of 2 branches missed.">        if (keyIndex &lt; 0) {</span>
+<span class="fc" id="L121">            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);</span>
+<span class="fc" id="L122">            tableUpdateDetailsUtf8.removeAt(keyIndex);</span>
+<span class="fc" id="L123">            return tud;</span>
+        }
+<span class="nc" id="L125">        return null;</span>
+    }
+
+    @Override
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">        assert this.workerId == workerId;</span>
+<span class="fc" id="L131">        boolean busy = false;</span>
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        if (busyContext != null) {</span>
+<span class="fc bfc" id="L133" title="All 2 branches covered.">            if (handleIO(busyContext)) {</span>
+                // queue is still full
+<span class="fc" id="L135">                return true;</span>
+            }
+<span class="fc" id="L137">            LOG.debug().$(&quot;context is no longer waiting on a full queue [fd=&quot;).$(busyContext.getFd()).$(']').$();</span>
+<span class="fc" id="L138">            busyContext = null;</span>
+<span class="fc" id="L139">            busy = true;</span>
+        }
+
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        if (dispatcher.processIOQueue(onRequest)) {</span>
+<span class="fc" id="L143">            busy = true;</span>
+        }
+
+<span class="fc bfc" id="L146" title="All 2 branches covered.">        if (!busy) {</span>
+<span class="fc" id="L147">            final long wallClockMillis = millisecondClock.getTicks();</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">            if (wallClockMillis &gt; nextCommitTime) {</span>
+<span class="fc" id="L149">                nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, wallClockMillis);</span>
+            }
+        }
+
+<span class="fc" id="L153">        final long millis = millisecondClock.getTicks();</span>
+<span class="fc bfc" id="L154" title="All 2 branches covered.">        if (millis &gt; maintenanceJobDeadline) {</span>
+<span class="fc" id="L155">            busy = scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, millis);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">            if (!busy) {</span>
+<span class="fc" id="L157">                maintenanceJobDeadline = millis + maintenanceInterval;</span>
+            }
+        }
+
+<span class="fc" id="L161">        return busy;</span>
+    }
+
+    private boolean handleIO(LineTcpConnectionContext context) {
+<span class="pc bpc" id="L165" title="1 of 2 branches missed.">        if (!context.invalid()) {</span>
+<span class="pc bpc" id="L166" title="1 of 5 branches missed.">            switch (context.handleIO(this)) {</span>
+                case NEEDS_READ:
+<span class="fc" id="L168">                    context.getDispatcher().registerChannel(context, IOOperation.READ);</span>
+<span class="fc" id="L169">                    return false;</span>
+                case NEEDS_WRITE:
+<span class="fc" id="L171">                    context.getDispatcher().registerChannel(context, IOOperation.WRITE);</span>
+<span class="fc" id="L172">                    return false;</span>
+                case QUEUE_FULL:
+<span class="fc" id="L174">                    return true;</span>
+                case NEEDS_DISCONNECT:
+<span class="fc" id="L176">                    context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);</span>
+<span class="fc" id="L177">                    return false;</span>
+            }
+        }
+<span class="nc" id="L180">        return false;</span>
+    }
+
+    private boolean onRequest(int operation, LineTcpConnectionContext context) {
+<span class="fc bfc" id="L184" title="All 2 branches covered.">        if (handleIO(context)) {</span>
+<span class="fc" id="L185">            busyContext = context;</span>
+<span class="fc" id="L186">            LOG.debug().$(&quot;context is waiting on a full queue [fd=&quot;).$(context.getFd()).$(']').$();</span>
+<span class="fc" id="L187">            return false;</span>
+        }
+<span class="fc" id="L189">        return true;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

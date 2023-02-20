@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ObjHashSet.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results, io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.std</a> &gt; <span class="el_source">ObjHashSet.java</span></div><h1>ObjHashSet.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import org.jetbrains.annotations.NotNull;
+
+import java.util.AbstractSet;
+import java.util.Arrays;
+import java.util.Iterator;
+
+
+public class ObjHashSet&lt;T&gt; extends AbstractSet&lt;T&gt; implements Mutable {
+
+    private static final int MIN_INITIAL_CAPACITY = 16;
+<span class="fc" id="L37">    private static final Object noEntryKey = new Object();</span>
+    private final ObjList&lt;T&gt; list;
+    private final double loadFactor;
+    private int capacity;
+    private int free;
+    private T[] keys;
+    private int mask;
+
+    public ObjHashSet() {
+<span class="fc" id="L46">        this(MIN_INITIAL_CAPACITY);</span>
+<span class="fc" id="L47">    }</span>
+
+    public ObjHashSet(int initialCapacity) {
+<span class="fc" id="L50">        this(initialCapacity, 0.4f, 0.3f);</span>
+<span class="fc" id="L51">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L54">    private ObjHashSet(int initialCapacity, double loadFactor, double hashFactor) {</span>
+<span class="pc bpc" id="L55" title="2 of 4 branches missed.">        assert loadFactor &gt; 0 &amp;&amp; loadFactor &lt; 1d;</span>
+<span class="pc bpc" id="L56" title="2 of 4 branches missed.">        assert hashFactor &gt; 0 &amp;&amp; hashFactor &lt; 1d;</span>
+
+<span class="fc" id="L58">        initialCapacity = (int) (initialCapacity * (1 + hashFactor));</span>
+<span class="fc" id="L59">        this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);</span>
+<span class="fc" id="L60">        this.loadFactor = loadFactor;</span>
+<span class="fc" id="L61">        keys = (T[]) new Object[Numbers.ceilPow2(capacity)];</span>
+<span class="fc" id="L62">        mask = keys.length - 1;</span>
+<span class="fc" id="L63">        this.list = new ObjList&lt;&gt;(free);</span>
+<span class="fc" id="L64">        clear();</span>
+<span class="fc" id="L65">    }</span>
+
+    public boolean add(T key) {
+<span class="fc" id="L68">        return addAt(keyIndex(key), key);</span>
+    }
+
+    public void addAll(ObjHashSet&lt;? extends T&gt; that) {
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        for (int i = 0, n = that.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L73">            this.add(that.get(i));</span>
+        }
+<span class="nc" id="L75">    }</span>
+
+    public boolean addAt(int index, T key) {
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        if (addAt0(index, key)) {</span>
+<span class="fc" id="L79">            list.add(key);</span>
+<span class="fc" id="L80">            return true;</span>
+        }
+<span class="fc" id="L82">        return false;</span>
+    }
+
+    public final void clear() {
+<span class="fc" id="L86">        free = capacity;</span>
+<span class="fc" id="L87">        Arrays.fill(keys, noEntryKey);</span>
+<span class="fc" id="L88">        list.clear();</span>
+<span class="fc" id="L89">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Override
+    public boolean contains(Object o) {
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        return keyIndex((T) o) &lt; 0;</span>
+    }
+
+    public T get(int index) {
+<span class="fc" id="L98">        return list.getQuick(index);</span>
+    }
+
+    @Override
+    @NotNull
+    public Iterator&lt;T&gt; iterator() {
+<span class="nc" id="L104">        throw new UnsupportedOperationException();</span>
+    }
+
+    public int keyIndex(T key) {
+<span class="fc" id="L108">        int index = idx(key);</span>
+
+<span class="fc" id="L110">        T kv = keys[index];</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        if (kv == noEntryKey) {</span>
+<span class="fc" id="L112">            return index;</span>
+        }
+
+<span class="fc bfc" id="L115" title="All 4 branches covered.">        if (kv == key || key.equals(kv)) {</span>
+<span class="fc" id="L116">            return -index - 1;</span>
+        }
+
+<span class="fc" id="L119">        return probe(key, index);</span>
+    }
+
+    @Override
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public boolean remove(Object key) {
+<span class="fc" id="L125">        int keyIndex = keyIndex((T) key);</span>
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (keyIndex &lt; 0) {</span>
+<span class="fc" id="L127">            list.remove(keys[-keyIndex - 1]);</span>
+<span class="fc" id="L128">            removeAt(keyIndex);</span>
+<span class="fc" id="L129">            return true;</span>
+        }
+<span class="fc" id="L131">        return false;</span>
+    }
+
+    public int size() {
+<span class="fc" id="L135">        return capacity - free;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L140">        return list.toString();</span>
+    }
+
+    private boolean addAt0(int index, T key) {
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        if (index &gt; -1) {</span>
+<span class="fc" id="L145">            keys[index] = key;</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">            if (--free == 0) {</span>
+<span class="fc" id="L147">                rehash();</span>
+            }
+<span class="fc" id="L149">            return true;</span>
+        }
+<span class="fc" id="L151">        return false;</span>
+    }
+
+    private void erase(int index) {
+<span class="fc" id="L155">        ((Object[]) keys)[index] = noEntryKey;</span>
+<span class="fc" id="L156">    }</span>
+
+    private int idx(T key) {
+<span class="fc bfc" id="L159" title="All 2 branches covered.">        return key == null ? 0 : (Hash.spread(key.hashCode()) &amp; mask);</span>
+    }
+
+    private void move(int from, int to) {
+<span class="fc" id="L163">        keys[to] = keys[from];</span>
+<span class="fc" id="L164">        erase(from);</span>
+<span class="fc" id="L165">    }</span>
+
+    private int probe(T key, int index) {
+        do {
+<span class="fc" id="L169">            index = (index + 1) &amp; mask;</span>
+<span class="fc" id="L170">            final T kv = keys[index];</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">            if (kv == noEntryKey) {</span>
+<span class="fc" id="L172">                return index;</span>
+            }
+<span class="fc bfc" id="L174" title="All 4 branches covered.">            if (kv == key || key.equals(kv)) {</span>
+<span class="fc" id="L175">                return -index - 1;</span>
+            }
+<span class="fc" id="L177">        } while (true);</span>
+    }
+
+    @SuppressWarnings({&quot;unchecked&quot;})
+    private void rehash() {
+<span class="fc" id="L182">        free = capacity = this.capacity * 2;</span>
+<span class="fc" id="L183">        T[] oldKeys = keys;</span>
+<span class="fc" id="L184">        this.keys = (T[]) new Object[Numbers.ceilPow2((int) (this.capacity / loadFactor))];</span>
+<span class="fc" id="L185">        Arrays.fill(keys, noEntryKey);</span>
+<span class="fc" id="L186">        mask = keys.length - 1;</span>
+
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        for (int i = oldKeys.length; i-- &gt; 0; ) {</span>
+<span class="fc" id="L189">            T key = oldKeys[i];</span>
+<span class="fc bfc" id="L190" title="All 2 branches covered.">            if (key != noEntryKey) {</span>
+<span class="fc" id="L191">                addAt0(keyIndex(key), key);</span>
+            }
+<span class="fc" id="L193">        }</span>
+<span class="fc" id="L194">    }</span>
+
+    private void removeAt(int index) {
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">        if (index &lt; 0) {</span>
+<span class="fc" id="L198">            int from = -index - 1;</span>
+<span class="fc" id="L199">            erase(from);</span>
+<span class="fc" id="L200">            free++;</span>
+
+            // after we have freed up a slot
+            // consider non-empty keys directly below
+            // they may have been a direct hit but because
+            // directly hit slot wasn't empty these keys would
+            // have moved.
+            //
+            // After slot if freed these keys require re-hash
+<span class="fc" id="L209">            from = (from + 1) &amp; mask;</span>
+            for (
+<span class="fc" id="L211">                    T key = keys[from];</span>
+<span class="fc bfc" id="L212" title="All 2 branches covered.">                    key != noEntryKey;</span>
+<span class="fc" id="L213">                    from = (from + 1) &amp; mask, key = keys[from]</span>
+            ) {
+<span class="fc" id="L215">                int idealHit = Hash.spread(key.hashCode()) &amp; mask;</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">                if (idealHit != from) {</span>
+                    int to;
+<span class="fc bfc" id="L218" title="All 2 branches covered.">                    if (keys[idealHit] != noEntryKey) {</span>
+<span class="fc" id="L219">                        to = probe(key, idealHit);</span>
+                    } else {
+<span class="fc" id="L221">                        to = idealHit;</span>
+                    }
+
+<span class="fc bfc" id="L224" title="All 2 branches covered.">                    if (to &gt; -1) {</span>
+<span class="fc" id="L225">                        move(from, to);</span>
+                    }
+                }
+            }
+        }
+<span class="fc" id="L230">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

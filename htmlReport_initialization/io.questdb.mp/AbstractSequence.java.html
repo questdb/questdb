@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractSequence.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">io.questdb in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.mp</a> &gt; <span class="el_source">AbstractSequence.java</span></div><h1>AbstractSequence.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.mp;
+
+import io.questdb.std.Unsafe;
+
+public abstract class AbstractSequence extends RhsPadding {
+<span class="fc" id="L30">    private static final long CACHE_OFFSET = Unsafe.getFieldOffset(Value.class, &quot;cache&quot;);</span>
+<span class="fc" id="L31">    private static final long VALUE_OFFSET = Unsafe.getFieldOffset(Value.class, &quot;value&quot;);</span>
+
+    public AbstractSequence(WaitStrategy waitStrategy) {
+<span class="fc" id="L34">        super(waitStrategy);</span>
+<span class="fc" id="L35">    }</span>
+
+    protected boolean casValue(long expected, long value) {
+<span class="fc" id="L38">        return Unsafe.cas(this, VALUE_OFFSET, expected, value);</span>
+    }
+
+    protected long getValue() {
+<span class="fc" id="L42">        return Unsafe.getUnsafe().getLong(this, VALUE_OFFSET);</span>
+    }
+
+    protected void setCacheFenced(long cache) {
+<span class="fc" id="L46">        Unsafe.getUnsafe().putOrderedLong(this, CACHE_OFFSET, cache);</span>
+<span class="fc" id="L47">    }</span>
+}
+
+@SuppressWarnings(&quot;unused&quot;)
+<span class="fc" id="L51">class LhsPadding {</span>
+    protected long p1, p2, p3, p4, p5, p6, p7;
+}
+
+@SuppressWarnings(&quot;unused&quot;)
+class RhsPadding extends Value {
+    protected long p9, p10, p11, p12, p13, p14;
+
+    public RhsPadding(WaitStrategy waitStrategy) {
+<span class="fc" id="L60">        super(waitStrategy);</span>
+<span class="fc" id="L61">    }</span>
+}
+
+class Value extends LhsPadding {
+    private final WaitStrategy waitStrategy;
+<span class="fc" id="L66">    protected Barrier barrier = OpenBarrier.INSTANCE;</span>
+<span class="fc" id="L67">    protected long cache = -1;</span>
+<span class="fc" id="L68">    protected volatile long value = -1;</span>
+
+<span class="fc" id="L70">    public Value(WaitStrategy waitStrategy) {</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        this.waitStrategy = waitStrategy == null ? NullWaitStrategy.INSTANCE : waitStrategy;</span>
+<span class="fc" id="L72">    }</span>
+
+    public WaitStrategy getWaitStrategy() {
+<span class="fc" id="L75">        return waitStrategy;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

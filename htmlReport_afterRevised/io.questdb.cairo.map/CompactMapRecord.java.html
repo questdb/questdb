@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CompactMapRecord.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.cairo.map</a> &gt; <span class="el_source">CompactMapRecord.java</span></div><h1>CompactMapRecord.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.map;
+
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.IntList;
+
+public class CompactMapRecord implements MapRecord {
+
+    private final long[] columnOffsets;
+    private final MemoryARW entries;
+    private final CompactMapValue value;
+    private long offset;
+    private IntList symbolTableIndex;
+    private RecordCursor symbolTableResolver;
+
+<span class="fc" id="L42">    public CompactMapRecord(MemoryARW entries, long[] columnOffsets, CompactMapValue value) {</span>
+<span class="fc" id="L43">        this.entries = entries;</span>
+<span class="fc" id="L44">        this.columnOffsets = columnOffsets;</span>
+<span class="fc" id="L45">        this.value = value;</span>
+<span class="fc" id="L46">        this.value.linkRecord(this);</span>
+<span class="fc" id="L47">    }</span>
+
+    @SuppressWarnings(&quot;MethodDoesntCallSuperMethod&quot;)
+    @Override
+    public CompactMapRecord clone() {
+<span class="fc" id="L52">        return new CompactMapRecord(this.entries, this.columnOffsets, new CompactMapValue(this.entries, columnOffsets));</span>
+    }
+
+    @Override
+    public BinarySequence getBin(int col) {
+<span class="fc" id="L57">        long o = getLong(col);</span>
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        if (o == -1L) {</span>
+<span class="fc" id="L59">            return null;</span>
+        }
+<span class="fc" id="L61">        return entries.getBin(offset + o);</span>
+    }
+
+    @Override
+    public long getBinLen(int col) {
+<span class="fc" id="L66">        long o = getLong(col);</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        if (o == -1L) {</span>
+<span class="fc" id="L68">            return -1L;</span>
+        }
+<span class="fc" id="L70">        return entries.getBinLen(offset + o);</span>
+    }
+
+    @Override
+    public boolean getBool(int col) {
+<span class="fc" id="L75">        return entries.getBool(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public byte getByte(int col) {
+<span class="fc" id="L80">        return entries.getByte(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public double getDouble(int col) {
+<span class="fc" id="L85">        return entries.getDouble(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public float getFloat(int col) {
+<span class="fc" id="L90">        return entries.getFloat(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+<span class="fc" id="L95">        return getByte(col);</span>
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+<span class="fc" id="L100">        return getInt(col);</span>
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+<span class="fc" id="L105">        return getLong(col);</span>
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+<span class="fc" id="L110">        return getShort(col);</span>
+    }
+
+    @Override
+    public int getInt(int col) {
+<span class="fc" id="L115">        return entries.getInt(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public long getLong(int col) {
+<span class="fc" id="L120">        return entries.getLong(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+<span class="fc" id="L125">        return entries.getLong(getColumnOffset(col) + Long.BYTES);</span>
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+<span class="fc" id="L130">        return entries.getLong(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public long getRowId() {
+<span class="fc" id="L135">        return offset;</span>
+    }
+
+    @Override
+    public short getShort(int col) {
+<span class="fc" id="L140">        return entries.getShort(getColumnOffset(col));</span>
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+<span class="fc" id="L145">        long o = getLong(col);</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">        if (o == -1L) {</span>
+<span class="fc" id="L147">            return null;</span>
+        }
+<span class="fc" id="L149">        return entries.getStr(offset + o);</span>
+    }
+
+    @Override
+    public CharSequence getStrB(int col) {
+<span class="fc" id="L154">        long o = getLong(col);</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        if (o == -1L) {</span>
+<span class="fc" id="L156">            return null;</span>
+        }
+<span class="fc" id="L158">        return entries.getStr2(offset + o);</span>
+    }
+
+    @Override
+    public int getStrLen(int col) {
+<span class="fc" id="L163">        long o = getLong(col);</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        if (o == -1L) {</span>
+<span class="fc" id="L165">            return TableUtils.NULL_LEN;</span>
+        }
+<span class="fc" id="L167">        return entries.getStrLen(offset + o);</span>
+    }
+
+    @Override
+    public CharSequence getSym(int col) {
+<span class="nc" id="L172">        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueOf(getInt(col));</span>
+    }
+
+    @Override
+    public CharSequence getSymB(int col) {
+<span class="nc" id="L177">        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));</span>
+    }
+
+    @Override
+    public MapValue getValue() {
+<span class="fc" id="L182">        value.of(offset, false);</span>
+<span class="fc" id="L183">        return value;</span>
+    }
+
+    @Override
+    public void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex) {
+<span class="fc" id="L188">        this.symbolTableResolver = resolver;</span>
+<span class="fc" id="L189">        this.symbolTableIndex = symbolTableIndex;</span>
+<span class="fc" id="L190">    }</span>
+
+    private long getColumnOffset(int columnIndex) {
+<span class="fc" id="L193">        return offset + columnOffsets[columnIndex];</span>
+    }
+
+    long getNextRecordOffset() {
+<span class="fc" id="L197">        return entries.getLong(offset + 1) + offset;</span>
+    }
+
+    void of(long offset) {
+<span class="fc" id="L201">        this.offset = offset;</span>
+<span class="fc" id="L202">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

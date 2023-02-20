@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FloatFunction.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions</a> &gt; <span class="el_source">FloatFunction.java</span></div><h1>FloatFunction.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions;
+
+
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.str.CharSink;
+
+<span class="fc" id="L36">public abstract class FloatFunction implements ScalarFunction {</span>
+
+    @Override
+    public final BinarySequence getBin(Record rec) {
+<span class="fc" id="L40">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getBinLen(Record rec) {
+<span class="fc" id="L45">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final boolean getBool(Record rec) {
+<span class="fc" id="L50">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final byte getByte(Record rec) {
+<span class="fc" id="L55">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public char getChar(Record rec) {
+<span class="fc" id="L60">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final long getDate(Record rec) {
+<span class="fc" id="L65">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+<span class="fc" id="L70">        return getFloat(rec);</span>
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+<span class="fc" id="L75">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+<span class="fc" id="L80">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+<span class="fc" id="L85">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+<span class="fc" id="L90">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final int getInt(Record rec) {
+<span class="fc" id="L95">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final long getLong(Record rec) {
+<span class="fc" id="L100">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+<span class="nc" id="L105">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+<span class="nc" id="L110">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+<span class="fc" id="L115">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+<span class="fc" id="L120">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+<span class="fc" id="L125">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory() {
+<span class="fc" id="L130">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final short getShort(Record rec) {
+<span class="fc" id="L135">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final CharSequence getStr(Record rec) {
+<span class="fc" id="L140">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final void getStr(Record rec, CharSink sink) {
+<span class="fc" id="L145">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final CharSequence getStrB(Record rec) {
+<span class="fc" id="L150">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final int getStrLen(Record rec) {
+<span class="fc" id="L155">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final CharSequence getSymbol(Record rec) {
+<span class="fc" id="L160">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final CharSequence getSymbolB(Record rec) {
+<span class="fc" id="L165">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+<span class="fc" id="L170">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public final int getType() {
+<span class="fc" id="L175">        return ColumnType.FLOAT;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

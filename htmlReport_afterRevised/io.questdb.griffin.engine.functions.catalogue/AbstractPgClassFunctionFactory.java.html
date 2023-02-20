@@ -1,0 +1,452 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractPgClassFunctionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">All in questdb Coverage Results</a> &gt; <a href="index.source.html" class="el_package">io.questdb.griffin.engine.functions.catalogue</a> &gt; <span class="el_source">AbstractPgClassFunctionFactory.java</span></div><h1>AbstractPgClassFunctionFactory.java</h1><pre class="source lang-java linenums">/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.catalogue;
+
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.pgwire.PGOids;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
+
+import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
+import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
+
+<span class="fc" id="L41">public abstract class AbstractPgClassFunctionFactory implements FunctionFactory {</span>
+    private static final int INDEX_OID = 0;
+    private static final int INDEX_RELNAME = 1;
+    private static final RecordMetadata METADATA;
+<span class="fc" id="L45">    private static final String[] relNames = {&quot;pg_class&quot;};</span>
+<span class="fc" id="L46">    private static final int fixedClassLen = relNames.length;</span>
+<span class="fc" id="L47">    private static final int[] staticOid = {PGOids.PG_CLASS_OID};</span>
+<span class="fc" id="L48">    private static final int[] staticRelAllVisible = {0};</span>
+<span class="fc" id="L49">    private static final int[] staticRelAm = {0};</span>
+<span class="fc" id="L50">    private static final int[] staticRelFileNode = {0};</span>
+<span class="fc" id="L51">    private static final int[] staticRelNamespace = {PG_CATALOG_OID};</span>
+<span class="fc" id="L52">    private static final int[] staticRelOfType = {0};</span>
+<span class="fc" id="L53">    private static final int[] staticRelOwner = {0};</span>
+<span class="fc" id="L54">    private static final int[] staticRelRewrite = {0};</span>
+    // todo: adjust tablespace
+<span class="fc" id="L56">    private static final int[] staticRelTablespace = {0};</span>
+<span class="fc" id="L57">    private static final int[] staticRelToastRelId = {0};</span>
+<span class="fc" id="L58">    private static final int[] staticRelType = {0};</span>
+<span class="fc" id="L59">    private static final int[][] staticIntColumns = {</span>
+            staticOid,
+            null,
+            staticRelNamespace,
+            staticRelType,
+            staticRelOfType,
+            staticRelOwner,
+            staticRelAm,
+            staticRelFileNode,
+            staticRelTablespace,
+            null,
+            null,
+            staticRelAllVisible,
+            staticRelToastRelId,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            staticRelRewrite
+    };
+
+    @Override
+    public boolean isCursor() {
+<span class="fc" id="L92">        return true;</span>
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList&lt;Function&gt; args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+<span class="fc" id="L97">        return new CursorFunction(</span>
+                new PgClassCursorFactory(
+                        configuration,
+                        METADATA
+                )
+<span class="fc" id="L102">        ) {</span>
+            @Override
+            public boolean isRuntimeConstant() {
+<span class="nc" id="L105">                return true;</span>
+            }
+        };
+    }
+
+    private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
+
+        private final PgClassRecordCursor cursor;
+<span class="fc" id="L113">        private final Path path = new Path();</span>
+        private final long tempMem;
+
+        public PgClassCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+<span class="fc" id="L117">            super(metadata);</span>
+<span class="fc" id="L118">            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);</span>
+<span class="fc" id="L119">            this.cursor = new PgClassRecordCursor(configuration);</span>
+<span class="fc" id="L120">        }</span>
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+<span class="fc" id="L124">            cursor.of(executionContext.getCairoEngine());</span>
+<span class="fc" id="L125">            cursor.toTop();</span>
+<span class="fc" id="L126">            return cursor;</span>
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+<span class="fc" id="L131">            return false;</span>
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+<span class="fc" id="L136">            sink.type(&quot;pg_class&quot;);</span>
+<span class="fc" id="L137">        }</span>
+
+        @Override
+        protected void _close() {
+<span class="fc" id="L141">            Misc.free(path);</span>
+<span class="fc" id="L142">            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);</span>
+<span class="fc" id="L143">        }</span>
+    }
+
+    private static class PgClassRecordCursor implements NoRandomAccessRecordCursor {
+<span class="fc" id="L147">        private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();</span>
+<span class="fc" id="L148">        private final int[] intValues = new int[28];</span>
+<span class="fc" id="L149">        private final DelegatingRecord record = new DelegatingRecord();</span>
+<span class="fc" id="L150">        private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();</span>
+<span class="fc" id="L151">        private final ObjList&lt;TableToken&gt; tableBucket = new ObjList&lt;&gt;();</span>
+        private CairoEngine engine;
+<span class="fc" id="L153">        private int fixedRelPos = -1;</span>
+<span class="fc" id="L154">        private int tableIndex = -1;</span>
+        private String tableName;
+
+<span class="fc" id="L157">        public PgClassRecordCursor(CairoConfiguration configuration) {</span>
+<span class="fc" id="L158">            this.record.of(staticReadingRecord);</span>
+            // oid
+<span class="fc" id="L160">            this.intValues[0] = 0; // OID</span>
+            // relnamespace
+<span class="fc" id="L162">            this.intValues[2] = PG_PUBLIC_OID;</span>
+            // reltype
+<span class="fc" id="L164">            this.intValues[3] = 0;</span>
+            // reloftype
+<span class="fc" id="L166">            this.intValues[4] = 0;</span>
+            // relowner
+<span class="fc" id="L168">            this.intValues[5] = 0;</span>
+            // relam
+<span class="fc" id="L170">            this.intValues[6] = 0;</span>
+            // relfilenode
+<span class="fc" id="L172">            this.intValues[7] = 0;</span>
+            // reltablespace
+<span class="fc" id="L174">            this.intValues[8] = 0;</span>
+            // relallvisible
+<span class="fc" id="L176">            this.intValues[11] = 0;</span>
+            // reltoastrelid
+<span class="fc" id="L178">            this.intValues[12] = 0;</span>
+            // relrewrite
+<span class="fc" id="L180">            this.intValues[27] = 0;</span>
+<span class="fc" id="L181">        }</span>
+
+        @Override
+        public void close() {
+<span class="fc" id="L185">        }</span>
+
+        @Override
+        public Record getRecord() {
+<span class="fc" id="L189">            return record;</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="fc bfc" id="L194" title="All 2 branches covered.">            if (++fixedRelPos &lt; fixedClassLen) {</span>
+<span class="fc" id="L195">                return true;</span>
+            }
+
+<span class="fc" id="L198">            record.of(diskReadingRecord);</span>
+<span class="fc bfc" id="L199" title="All 2 branches covered.">            if (tableIndex &lt; 0) {</span>
+<span class="fc" id="L200">                engine.getTableTokens(tableBucket, false);</span>
+<span class="fc" id="L201">                tableIndex = 0;</span>
+            }
+
+<span class="fc bfc" id="L204" title="All 2 branches covered.">            if (tableIndex == tableBucket.size()) {</span>
+<span class="fc" id="L205">                return false;</span>
+            }
+<span class="fc" id="L207">            TableToken token = tableBucket.get(tableIndex++);</span>
+<span class="fc" id="L208">            tableName = token.getTableName();</span>
+<span class="fc" id="L209">            intValues[INDEX_OID] = token.getTableId();</span>
+<span class="fc" id="L210">            return true;</span>
+        }
+
+        public void of(CairoEngine engine) {
+<span class="fc" id="L214">            this.engine = engine;</span>
+<span class="fc" id="L215">        }</span>
+
+        @Override
+        public long size() {
+<span class="fc" id="L219">            return -1;</span>
+        }
+
+        @Override
+        public void toTop() {
+<span class="fc" id="L224">            fixedRelPos = -1;</span>
+<span class="fc" id="L225">            record.of(staticReadingRecord);</span>
+<span class="fc" id="L226">            tableIndex = -1;</span>
+<span class="fc" id="L227">        }</span>
+
+<span class="fc" id="L229">        private class DiskReadingRecord implements Record {</span>
+            @Override
+            public boolean getBool(int col) {
+                // most 'bool' fields are false, except 'relispopulated'
+<span class="fc bfc" id="L233" title="All 2 branches covered.">                return col == 24;</span>
+            }
+
+            @Override
+            public char getChar(int col) {
+<span class="fc bfc" id="L238" title="All 3 branches covered.">                switch (col) {</span>
+                    case 15:
+                        // relpersistence
+<span class="fc" id="L241">                        return 'p';</span>
+                    case 16:
+                        // relkind
+<span class="fc" id="L244">                        return 'r';</span>
+                    default:
+                        // relreplident
+<span class="fc" id="L247">                        return 'd';</span>
+                }
+            }
+
+            @Override
+            public float getFloat(int col) {
+<span class="fc" id="L253">                return -1;</span>
+            }
+
+            @Override
+            public int getInt(int col) {
+<span class="fc" id="L258">                return intValues[col];</span>
+            }
+
+            @Override
+            public long getLong(int col) {
+<span class="fc" id="L263">                return 0;</span>
+            }
+
+            @Override
+            public short getShort(int col) {
+                // todo: do we need the number of columns for 'relnatts'?
+<span class="fc" id="L269">                return 0;</span>
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+<span class="fc bfc" id="L274" title="All 2 branches covered.">                if (col == INDEX_RELNAME) {</span>
+                    // relname
+<span class="fc" id="L276">                    return tableName;</span>
+                }
+<span class="fc" id="L278">                return null;</span>
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+<span class="fc bfc" id="L283" title="All 2 branches covered.">                if (col == INDEX_RELNAME) {</span>
+                    // relname
+<span class="fc" id="L285">                    return tableName;</span>
+                }
+<span class="fc" id="L287">                return null;</span>
+            }
+
+            @Override
+            public int getStrLen(int col) {
+<span class="fc bfc" id="L292" title="All 2 branches covered.">                if (col == INDEX_RELNAME) {</span>
+                    // relname
+<span class="fc" id="L294">                    return tableName.length();</span>
+                }
+<span class="fc" id="L296">                return -1;</span>
+            }
+        }
+
+<span class="fc" id="L300">        private class StaticReadingRecord implements Record {</span>
+            @Override
+            public boolean getBool(int col) {
+<span class="fc" id="L303">                return false;</span>
+            }
+
+            @Override
+            public char getChar(int col) {
+<span class="fc bfc" id="L308" title="All 3 branches covered.">                switch (col) {</span>
+                    case 15:
+                        // relpersistence
+<span class="fc" id="L311">                        return 'u';</span>
+                    case 16:
+                        // relkind
+<span class="fc" id="L314">                        return 'r';</span>
+                    default:
+                        // relreplident
+<span class="fc" id="L317">                        return 'd';</span>
+                }
+            }
+
+            @Override
+            public float getFloat(int col) {
+<span class="fc" id="L323">                return -1;</span>
+            }
+
+            @Override
+            public int getInt(int col) {
+<span class="fc" id="L328">                return staticIntColumns[col][fixedRelPos];</span>
+            }
+
+            @Override
+            public long getLong(int col) {
+<span class="fc" id="L333">                return 0;</span>
+            }
+
+            @Override
+            public short getShort(int col) {
+                // todo: do we need the number of columns for 'relnatts'?
+<span class="fc" id="L339">                return 0;</span>
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+<span class="fc bfc" id="L344" title="All 2 branches covered.">                if (col == INDEX_RELNAME) {</span>
+                    // relname
+<span class="fc" id="L346">                    return relNames[fixedRelPos];</span>
+                }
+<span class="fc" id="L348">                return null;</span>
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+<span class="fc" id="L353">                return getStr(col);</span>
+            }
+
+            @Override
+            public int getStrLen(int col) {
+<span class="fc bfc" id="L358" title="All 2 branches covered.">                if (col == INDEX_RELNAME) {</span>
+                    // relname
+<span class="fc" id="L360">                    return relNames[fixedRelPos].length();</span>
+                }
+<span class="fc" id="L362">                return -1;</span>
+            }
+        }
+    }
+
+    static {
+<span class="fc" id="L368">        final GenericRecordMetadata metadata = new GenericRecordMetadata();</span>
+<span class="fc" id="L369">        metadata.add(new TableColumnMetadata(&quot;oid&quot;, ColumnType.INT));</span>
+<span class="fc" id="L370">        metadata.add(new TableColumnMetadata(&quot;relname&quot;, ColumnType.STRING));</span>
+        // The OID of the namespace that contains this relation
+        // references pg_namespace.oid)
+<span class="fc" id="L373">        metadata.add(new TableColumnMetadata(&quot;relnamespace&quot;, ColumnType.INT));</span>
+        // The OID of the data type that corresponds to this table's row type, if any; zero for indexes, sequences, and toast tables, which have no pg_type entry
+        // references pg_type.oid
+<span class="fc" id="L376">        metadata.add(new TableColumnMetadata(&quot;reltype&quot;, ColumnType.INT));</span>
+        // For typed tables, the OID of the underlying composite type; zero for all other relations
+        // references pg_type.oid
+<span class="fc" id="L379">        metadata.add(new TableColumnMetadata(&quot;reloftype&quot;, ColumnType.INT));</span>
+        // Owner of the relation
+        // references pg_authid.oid
+<span class="fc" id="L382">        metadata.add(new TableColumnMetadata(&quot;relowner&quot;, ColumnType.INT));</span>
+        // If this is a table or an index, the access method used (heap, B-tree, hash, etc.); otherwise zero (zero occurs for sequences, as well as relations without storage, such as views)
+        // references pg_am.oid
+<span class="fc" id="L385">        metadata.add(new TableColumnMetadata(&quot;relam&quot;, ColumnType.INT));</span>
+        // Name of the on-disk file of this relation; zero means this is a “mapped” relation whose disk file name is determined by low-level state
+<span class="fc" id="L387">        metadata.add(new TableColumnMetadata(&quot;relfilenode&quot;, ColumnType.INT));</span>
+        // The tablespace in which this relation is stored. If zero, the database's default tablespace is implied. (Not meaningful if the relation has no on-disk file.)
+        // references pg_tablespace.oid
+<span class="fc" id="L390">        metadata.add(new TableColumnMetadata(&quot;reltablespace&quot;, ColumnType.INT));</span>
+        // Size of the on-disk representation of this table in pages (of size BLCKSZ). This is only an estimate used by the planner. It is updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX.
+<span class="fc" id="L392">        metadata.add(new TableColumnMetadata(&quot;relpages&quot;, ColumnType.BOOLEAN));</span>
+        // Number of live rows in the table. This is only an estimate used by the planner. It is updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX. If the table has never yet been vacuumed or analyzed, reltuples contains -1 indicating that the row count is unknown.
+<span class="fc" id="L394">        metadata.add(new TableColumnMetadata(&quot;reltuples&quot;, ColumnType.FLOAT));</span>
+        // Number of pages that are marked all-visible in the table's visibility map. This is only an estimate used by the planner. It is updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX.
+<span class="fc" id="L396">        metadata.add(new TableColumnMetadata(&quot;relallvisible&quot;, ColumnType.INT));</span>
+        // OID of the TOAST table associated with this table, zero if none. The TOAST table stores large attributes “out of line” in a secondary table.
+        // references pg_class.oid
+<span class="fc" id="L399">        metadata.add(new TableColumnMetadata(&quot;reltoastrelid&quot;, ColumnType.INT));</span>
+        // True if this is a table and it has (or recently had) any indexes
+<span class="fc" id="L401">        metadata.add(new TableColumnMetadata(&quot;relhasindex&quot;, ColumnType.BOOLEAN));</span>
+        // True if this table is shared across all databases in the cluster. Only certain system catalogs (such as pg_database) are shared.
+<span class="fc" id="L403">        metadata.add(new TableColumnMetadata(&quot;relisshared&quot;, ColumnType.BOOLEAN));</span>
+        //p = permanent table, u = unlogged table, t = temporary table
+<span class="fc" id="L405">        metadata.add(new TableColumnMetadata(&quot;relpersistence&quot;, ColumnType.CHAR));</span>
+        // r = ordinary table,
+        // i = index,
+        // S = sequence,
+        // t = TOAST table,
+        // v = view,
+        // m = materialized view,
+        // c = composite type,
+        // f = foreign table,
+        // p = partitioned table,
+        // I = partitioned index
+<span class="fc" id="L416">        metadata.add(new TableColumnMetadata(&quot;relkind&quot;, ColumnType.CHAR));</span>
+        // Number of user columns in the relation (system columns not counted). There must be this many corresponding entries in pg_attribute. See also pg_attribute.attnum.
+<span class="fc" id="L418">        metadata.add(new TableColumnMetadata(&quot;relnatts&quot;, ColumnType.SHORT));</span>
+        // Number of CHECK constraints on the table; see pg_constraint catalog
+<span class="fc" id="L420">        metadata.add(new TableColumnMetadata(&quot;relchecks&quot;, ColumnType.SHORT));</span>
+        // True if table has (or once had) rules; see pg_rewrite catalog
+<span class="fc" id="L422">        metadata.add(new TableColumnMetadata(&quot;relhasrules&quot;, ColumnType.BOOLEAN));</span>
+        // True if table has (or once had) triggers; see pg_trigger catalog
+<span class="fc" id="L424">        metadata.add(new TableColumnMetadata(&quot;relhastriggers&quot;, ColumnType.BOOLEAN));</span>
+        // True if table or index has (or once had) any inheritance children
+<span class="fc" id="L426">        metadata.add(new TableColumnMetadata(&quot;relhassubclass&quot;, ColumnType.BOOLEAN));</span>
+        // True if table has row-level security enabled; see pg_policy catalog
+<span class="fc" id="L428">        metadata.add(new TableColumnMetadata(&quot;relrowsecurity&quot;, ColumnType.BOOLEAN));</span>
+        // True if row-level security (when enabled) will also apply to table owner; see pg_policy catalog
+<span class="fc" id="L430">        metadata.add(new TableColumnMetadata(&quot;relforcerowsecurity&quot;, ColumnType.BOOLEAN));</span>
+        // True if relation is populated (this is true for all relations other than some materialized views)
+<span class="fc" id="L432">        metadata.add(new TableColumnMetadata(&quot;relispopulated&quot;, ColumnType.BOOLEAN));</span>
+        // Columns used to form “replica identity” for rows: d = default (primary key, if any), n = nothing, f = all columns, i = index with indisreplident set (same as nothing if the index used has been dropped)
+<span class="fc" id="L434">        metadata.add(new TableColumnMetadata(&quot;relreplident&quot;, ColumnType.CHAR));</span>
+        // True if table or index is a partition
+<span class="fc" id="L436">        metadata.add(new TableColumnMetadata(&quot;relispartition&quot;, ColumnType.BOOLEAN));</span>
+        // For new relations being written during a DDL operation that requires a table rewrite, this contains the OID of the original relation; otherwise zero. That state is only visible internally; this field should never contain anything other than zero for a user-visible relation.
+        // references pg_class.oid
+<span class="fc" id="L439">        metadata.add(new TableColumnMetadata(&quot;relrewrite&quot;, ColumnType.INT));</span>
+        // All transaction IDs before this one have been replaced with a permanent (“frozen”) transaction ID in this table. This is used to track whether the table needs to be vacuumed in order to prevent transaction ID wraparound or to allow pg_xact to be shrunk. Zero (InvalidTransactionId) if the relation is not a table.
+<span class="fc" id="L441">        metadata.add(new TableColumnMetadata(&quot;relfrozenxid&quot;, ColumnType.LONG));</span>
+        // All multixact IDs before this one have been replaced by a transaction ID in this table. This is used to track whether the table needs to be vacuumed in order to prevent multixact ID wraparound or to allow pg_multixact to be shrunk. Zero (InvalidMultiXactId) if the relation is not a table.
+<span class="fc" id="L443">        metadata.add(new TableColumnMetadata(&quot;relminmxid&quot;, ColumnType.LONG));</span>
+<span class="fc" id="L444">        metadata.add(new TableColumnMetadata(&quot;relacl&quot;, ColumnType.STRING));</span>
+<span class="fc" id="L445">        metadata.add(new TableColumnMetadata(&quot;reloptions&quot;, ColumnType.STRING));</span>
+<span class="fc" id="L446">        metadata.add(new TableColumnMetadata(&quot;relpartbound&quot;, ColumnType.STRING));</span>
+<span class="fc" id="L447">        metadata.add(new TableColumnMetadata(&quot;relhasoids&quot;, ColumnType.BOOLEAN));</span>
+<span class="fc" id="L448">        metadata.add(new TableColumnMetadata(&quot;xmin&quot;, ColumnType.LONG));</span>
+<span class="fc" id="L449">        METADATA = metadata;</span>
+<span class="fc" id="L450">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>
