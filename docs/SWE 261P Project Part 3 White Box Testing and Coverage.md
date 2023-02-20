@@ -51,18 +51,21 @@ The results of Coverage Runner JaCoCo and IntelliJ IDEA are as show below. They 
 | Intellij IDEA | 96% (2478/2558)        | 90% (17920/19800)       | 91% (83952/91395)     | -                       |
 | JaCoCo        | 96% (2469/2551)        | 90% (17919/19807)       | 91% (90202/98193)     | 82% (65628/79334)       |
 
+<p style="page-break-after:always"></p>
 **IntelliJ IDEA Coverage**
 
 <p align="center">
   <img src="./images/IntelliJ_IDEA_coverage_before.png" />
 </p>
 
+<p style="page-break-after:always"></p>
 **JaCoCo Coverage**
 
 <p align="center">
   <img src="./images/JaCoCo_coverage_before.png" />
 </p>
 
+<p style="page-break-after:always"></p>
 ### 2.3 Uncovered Test Cases
 
 The testing of QuestDB is already quite comprehensive; however, classes and methods in components Jit, Metrics and Network have not been fully tested due to various limitations during testing. Because of these constraints, we did not write more tests for the following three components, but chose to add new test case for class `TableReaderSelectedColumnRecordCursor` in the cairo component, class `SqlKeywords` in the griffin component, and class `ConcurrentHashMap` in the std component. 
