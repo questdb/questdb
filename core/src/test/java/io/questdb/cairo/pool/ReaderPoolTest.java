@@ -413,6 +413,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         pool.close();
+                    } catch (CairoException e) {
+                        // "is left behind" exception is a valid outcome, ignore it
+                        if (!Chars.contains(e.getFlyweightMessage(), xyzTableToken.getDirName() + "' is left behind")) {
+                            exceptionCount.incrementAndGet();
+                            e.printStackTrace();
+                        }
                     } catch (Exception e) {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
