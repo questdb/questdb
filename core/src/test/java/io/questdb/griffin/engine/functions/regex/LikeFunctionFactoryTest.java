@@ -278,4 +278,53 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testLikeEscapeOneSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\_ignore';";
+        String expected1 = "name\n";
+        String expected2 = "name\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+    @Test
+    public void testLikeEscapeTwoSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\_ignore';"; // two backslashes
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is \\_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+    @Test
+    public void testLikeEscapeThreeSlashes() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\\\_ignore';"; // three backslashes
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is \\_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+    @Test
+    public void testLikeNotRealEscape() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('\\\\?\\D:\\path');"; // Four backslashes followed by question mark
+
+        String query = "SELECT * FROM myTable WHERE name LIKE '\\\\\\\\_\\\\%';"; // Four backslashes followed by one underscore
+        String expected1 = "name\n";
+        String expected2 = "name\n\\\\?\\D:\\path\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+
 }

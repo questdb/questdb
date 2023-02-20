@@ -54,7 +54,16 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < len; i++) {
             char c = pattern.charAt(i);
-            if (c == '_')
+            if (c == '\\' && i + 1 < len){
+                c = pattern.charAt(i+1);
+                if (c == '_' || c == '%'){
+                    i += 1;
+                    sink.put(c);
+                }else if (c == '\\'){
+                    i+=1;
+                    sink.put("\\\\");
+                }
+            } else if (c == '_')
                 sink.put('.');
             else if (c == '%')
                 sink.put(".*?");
