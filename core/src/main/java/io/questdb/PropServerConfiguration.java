@@ -271,6 +271,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int vectorAggregateQueueCapacity;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
+    private final int walApplyLookAheadTransactionCount;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final int[] walApplyWorkerAffinity;
@@ -359,12 +360,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpMsgBufferSize;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
+    private long lineTcpNetConnectionHeartbeatInterval;
     private boolean lineTcpNetConnectionHint;
     private int lineTcpNetConnectionLimit;
     private long lineTcpNetConnectionQueueTimeout;
     private int lineTcpNetConnectionRcvBuf;
     private long lineTcpNetConnectionTimeout;
-    private long lineTcpNetConnectionHeartbeatInterval;
     private LineProtoTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
@@ -439,7 +440,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
-    private final int walApplyLookAheadTransactionCount;
 
     public PropServerConfiguration(
             String root,
@@ -961,8 +961,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
                 this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT, this.lineTcpNetConnectionTimeout);
 
-                this.lineTcpNetConnectionHeartbeatInterval = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
-
                 // deprecated
                 this.lineTcpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT, 5_000);
                 this.lineTcpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT, this.lineTcpNetConnectionQueueTimeout);
@@ -1038,6 +1036,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$("), will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
+                final long commitInterval = (long) (this.o3MinLagUs * this.lineTcpCommitIntervalFraction) / 1000;
+                final long heartbeatInterval = commitInterval > 0 ? commitInterval : this.lineTcpCommitIntervalDefault;
+                this.lineTcpNetConnectionHeartbeatInterval = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL, heartbeatInterval);
             }
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
@@ -2204,13 +2205,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWalApplyLookAheadTransactionCount() {
-            return walApplyLookAheadTransactionCount;
+        public VolumeDefinitions getVolumeDefinitions() {
+            return volumeDefinitions;
         }
 
         @Override
-        public VolumeDefinitions getVolumeDefinitions() {
-            return volumeDefinitions;
+        public int getWalApplyLookAheadTransactionCount() {
+            return walApplyLookAheadTransactionCount;
         }
 
         @Override
@@ -2438,6 +2439,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
+
+        @Override
         public boolean getHint() {
             return httpNetConnectionHint;
         }
@@ -2491,11 +2497,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getTimeout() {
             return httpNetConnectionTimeout;
         }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return -1L;
-        }
     }
 
     private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -2522,6 +2523,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public EpollFacade getEpollFacade() {
             return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return -1L;
         }
 
         @Override
@@ -2577,11 +2583,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getTimeout() {
             return httpMinNetConnectionTimeout;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return -1L;
         }
     }
 
@@ -2977,6 +2978,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return lineTcpNetConnectionHeartbeatInterval;
+        }
+
+        @Override
         public boolean getHint() {
             return lineTcpNetConnectionHint;
         }
@@ -3028,11 +3034,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getTimeout() {
             return lineTcpNetConnectionTimeout;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return lineTcpNetConnectionHeartbeatInterval;
         }
     }
 
@@ -3408,6 +3409,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
+
+        @Override
         public boolean getHint() {
             return pgNetConnectionHint;
         }
@@ -3460,11 +3466,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getTimeout() {
             return pgNetIdleConnectionTimeout;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return -1L;
         }
     }
 
