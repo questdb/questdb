@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -596,6 +596,35 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    VirtualRecord\n" +
                         "      functions: [x,1]\n" +
                         "        long_sequence count: 10\n");
+    }
+
+    @Test
+    public void testExplainDeferredSingleSymbolFilterDataFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table tab \n" +
+                    "(\n" +
+                    "   id symbol index,\n" +
+                    "   ts timestamp,\n" +
+                    "   val double  \n" +
+                    ") timestamp(ts);");
+            compile("insert into tab values ( 'XXX', 0::timestamp, 1 );");
+
+            assertPlan("  select\n" +
+                            "   ts,\n" +
+                            "    id, \n" +
+                            "    last(val)\n" +
+                            "  from tab\n" +
+                            "  where id = 'XXX' \n" +
+                            "  sample by 15m ALIGN to CALENDAR\n",
+                    "SampleByFirstLast\n" +
+                            "  keys: [ts, id]\n" +
+                            "  values: [last(val)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id\n" +
+                            "          filter: id=1\n" +
+                            "        Frame forward scan on: tab\n");
+
+        });
     }
 
     @Test

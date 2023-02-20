@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -2906,14 +2906,9 @@ class SqlOptimiser {
     private QueryModel rewriteOrderBy(QueryModel model) throws SqlException {
         // find base model and check if there is "group-by" model in between
         // when we are dealing with "group by" model some implicit "order by" columns have to be dropped,
-        // for example:
-        // select a, sum(b) from T order by c
-        //
-        // above is valid but sorting on "c" would be redundant. However, in the following example
-        //
+        // However, in the following example
         // select a, b from T order by c
-        //
-        // ordering is does affect query result
+        // ordering does affect query result
         QueryModel result = model;
         QueryModel base = model;
         QueryModel baseParent = model;
@@ -2924,6 +2919,15 @@ class SqlOptimiser {
 
         while (base.getBottomUpColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
             baseParent = base;
+
+            final QueryModel union = base.getUnionModel();
+            if (union != null) {
+                final QueryModel rewritten = rewriteOrderBy(union);
+                if (rewritten != union) {
+                    base.setUnionModel(rewritten);
+                }
+            }
+
             base = base.getNestedModel();
             if (base.getLimitLo() != null) {
                 limitModel = base;
