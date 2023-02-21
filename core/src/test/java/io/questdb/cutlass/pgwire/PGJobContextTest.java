@@ -1512,7 +1512,7 @@ if __name__ == "__main__":
             connection.commit();
             mayDrainWalQueue();
             try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")) {
-                dropPartition.setString(1, "2023-W06");
+                dropPartition.setString(1, "2023-02-06T09");
                 Assert.assertFalse(dropPartition.execute());
             }
             mayDrainWalQueue();
