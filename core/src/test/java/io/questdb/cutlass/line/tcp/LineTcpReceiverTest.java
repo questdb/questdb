@@ -150,7 +150,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             CountDownLatch released = new CountDownLatch(walEnabled ? 2 : 1);
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (name != null && Chars.equalsNc(name.getTableName(), tableName)) {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                         released.countDown();
                     }
                 }
@@ -183,7 +183,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final SOCountDownLatch finished = new SOCountDownLatch(1);
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (Chars.equalsNc(name.getTableName(), tableName)
                             && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
@@ -549,7 +549,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         // (1 sec) to prevent false positive WAL writer releases.
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (Chars.equalsNc(name.getTableName(), tableName)
                             && name.equals(engine.getTableToken(tableName))) {
                         finished.countDown();
@@ -818,7 +818,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // One engine hook for all writers
             engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     tableIndex.get(token.getTableName()).countDown();
                 }
             });
@@ -1650,12 +1650,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void sendWaitWalReleaseCount(String lineData, int walReleaseCount) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(walReleaseCount);
-//        engine.setPoolListener((factoryType, thread, tableName1, event, segment, position) -> {
-//            if (event == PoolListener.EV_RETURN && tableName1 != null) {
-//                LOG.info().$("=== released WAL writer === ").$(tableName1.getDirName()).$(":").$(tableName1.getTableName()).$();
-//                releaseLatch.countDown();
-//            }
-//        });
+        engine.setPoolListener((factoryType, thread, tableName1, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableName1 != null) {
+                LOG.info().$("=== released WAL writer === ").$(tableName1.getDirName()).$(":").$(tableName1.getTableName()).$();
+                releaseLatch.countDown();
+            }
+        });
 
         send(lineData, "dummy", WAIT_NO_WAIT);
         releaseLatch.await(10 * Timestamps.SECOND_MICROS * 1000L);
@@ -1765,7 +1765,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             final StringBuilder[] expectedSbs = new StringBuilder[tables.size()];
 
             engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     if (tables.contains(token.getTableName())) {
                         tablesCreated.countDown();
                     }
