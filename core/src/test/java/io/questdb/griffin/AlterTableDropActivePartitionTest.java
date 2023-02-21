@@ -328,7 +328,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     try {
                         dropPartition(tableName, activePartitionTs); // drop active partition
                     } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "timestamp has too low resolution to determine partition [ts=" + activePartitionTs + ']');
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected, found [ts=2023-10]");
                     }
                     assertTableX(tableName, TableHeader +
                                     "1\t2023-10-10T00:00:00.000000Z\n" +

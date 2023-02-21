@@ -28,6 +28,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -155,60 +157,81 @@ public class PartitionByTest {
     @Test
     public void testDirectoryFormattingDay() throws NumericException {
         assertFormatAndParse("2013-03-31", "2013-03-31T00:00:00.000000Z", PartitionBy.DAY);
+        assertFormatAndParse("2013-03-31", "2013-03-31T00:00:00Z", PartitionBy.DAY);
+        assertFormatAndParse("2013-03-31", "2013-03-31T00", PartitionBy.DAY);
+        assertFormatAndParse("2013-03-31", "2013-03-31", PartitionBy.DAY);
     }
 
     @Test
     public void testDirectoryFormattingHour() throws NumericException {
         assertFormatAndParse("2014-09-03T21", "2014-09-03T21:00:00.000000Z", PartitionBy.HOUR);
+        assertFormatAndParse("2014-09-03T21", "2014-09-03T21:00:00Z", PartitionBy.HOUR);
+        assertFormatAndParse("2014-09-03T21", "2014-09-03T21", PartitionBy.HOUR);
     }
 
     @Test
     public void testDirectoryFormattingMonth() throws NumericException {
         assertFormatAndParse("2013-03", "2013-03-01T00:00:00.000000Z", PartitionBy.MONTH);
+        assertFormatAndParse("2013-03", "2013-03-01T00:00:00Z", PartitionBy.MONTH);
+        assertFormatAndParse("2013-03", "2013-03-01T00", PartitionBy.MONTH);
+        assertFormatAndParse("2013-03", "2013-03-01", PartitionBy.MONTH);
+        assertFormatAndParse("2013-03", "2013-03", PartitionBy.MONTH);
     }
 
     @Test
     public void testDirectoryFormattingWeek() throws NumericException {
         assertFormatAndParse("2020-W53", "2020-12-28T00:00:00.000000Z", PartitionBy.WEEK);
-        sink.clear();
         assertFormatAndParse("2020-W01", "2019-12-30T00:00:00.000000Z", PartitionBy.WEEK);
-        sink.clear();
         assertFormatAndParse("2021-W33", "2021-08-16T00:00:00.000000Z", PartitionBy.WEEK);
+        assertFormatAndParse("2013-W09", "2013-03-01T00:00:00.000000Z", PartitionBy.WEEK);
+        assertFormatAndParse("2013-W09", "2013-03-01T00:00:00Z", PartitionBy.WEEK);
+        assertFormatAndParse("2013-W09", "2013-03-01T00", PartitionBy.WEEK);
+        assertFormatAndParse("2013-W09", "2013-03-01", PartitionBy.WEEK);
     }
 
     @Test
     public void testDirectoryFormattingNone() throws NumericException {
         assertFormatAndParse("default", "1970-01-01T00:00:00.000000Z", PartitionBy.NONE);
+        assertFormatAndParse("default", "1970-01-01T00:00:00Z", PartitionBy.NONE);
+        assertFormatAndParse("default", "1970-01-01T00", PartitionBy.NONE);
+        assertFormatAndParse("default", "1970-01-01", PartitionBy.NONE);
+        assertFormatAndParse("default", "1970-01", PartitionBy.NONE);
+        assertFormatAndParse("default", "1970", PartitionBy.NONE);
     }
 
     @Test
     public void testDirectoryFormattingYear() throws NumericException {
         assertFormatAndParse("2014", "2014-01-01T00:00:00.000000Z", PartitionBy.YEAR);
+        assertFormatAndParse("2014", "2014-01-01T00:00:00Z", PartitionBy.YEAR);
+        assertFormatAndParse("2014", "2014-01-01T00", PartitionBy.YEAR);
+        assertFormatAndParse("2014", "2014-01-01", PartitionBy.YEAR);
+        assertFormatAndParse("2014", "2014-01", PartitionBy.YEAR);
+        assertFormatAndParse("2014", "2014", PartitionBy.YEAR);
     }
 
     @Test
     public void testDirectoryParseFailureByDay() {
-        assertParseFailure("'yyyy-MM-dd' expected", "2013-03", PartitionBy.DAY);
+        assertParseFailure("'yyyy-MM-dd' expected, found [ts=2013-03]", "2013-03", PartitionBy.DAY);
     }
 
     @Test
     public void testDirectoryParseFailureByHour() {
-        assertParseFailure("'yyyy-MM-ddTHH' expected", "2013-03-12", PartitionBy.HOUR);
+        assertParseFailure("'yyyy-MM-ddTHH' expected, found [ts=2013-03-12]", "2013-03-12", PartitionBy.HOUR);
     }
 
     @Test
     public void testDirectoryParseFailureByMonth() {
-        assertParseFailure("'yyyy-MM' expected", "2013-03-02", PartitionBy.MONTH);
+        assertParseFailure("'yyyy-MM' expected, found [ts=2013-0-]", "2013-0-12", PartitionBy.MONTH);
     }
 
     @Test
     public void testDirectoryParseFailureByWeek() {
-        assertParseFailure("'YYYY-Www' expected", "2013-03-12", PartitionBy.WEEK);
+        assertParseFailure("'YYYY-Www' or 'yyyy-MM-dd' expected, found [ts=2013-0-12]", "2013-0-12", PartitionBy.WEEK);
     }
 
     @Test
     public void testDirectoryParseFailureByYear() {
-        assertParseFailure("'yyyy' expected", "2013-03-12", PartitionBy.YEAR);
+        assertParseFailure("'yyyy' expected, found [ts=201-]", "201-03-12", PartitionBy.YEAR);
     }
 
     @Test
@@ -219,6 +242,53 @@ public class PartitionByTest {
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.HOUR));
         Assert.assertTrue(PartitionBy.isPartitioned(PartitionBy.WEEK));
         Assert.assertFalse(PartitionBy.isPartitioned(PartitionBy.NONE));
+    }
+
+    @Test
+    public void testPartitionDayToWeekForWholeYear() throws NumericException {
+        final DateFormat weekFormat = PartitionBy.getPartitionDirFormatMethod(PartitionBy.WEEK);
+        final DateFormat dayFormat = PartitionBy.getPartitionDirFormatMethod(PartitionBy.DAY);
+        StringSink weekSink = new StringSink();
+        StringSink dateSink = new StringSink();
+        dateSink.put("2023-");
+        final int yearLen = dateSink.length();
+        for (int month = 1; month < 13; month++) {
+            putWithLeadingZeroIfNeeded(dateSink, yearLen, month).put('-');
+            final int monthLen = dateSink.length(); // yyyy-MM-
+            for (int day = 1, maxDay = maxDay(month); day < maxDay + 1; day++) {
+                putWithLeadingZeroIfNeeded(dateSink, monthLen, day);
+                final String expectedDayFormatted = dateSink.toString(); // yyyy-MM-dd
+                final String expectedWeekFormatted;
+                final long timestamp = TimestampFormatUtils.parseTimestamp(expectedDayFormatted);
+                int year = Timestamps.getYear(timestamp);
+                int week = Timestamps.getWeek(timestamp);
+                if (week == 52 && month == 1) {
+                    year--;
+                }
+                weekSink.clear();
+                weekSink.put(year).put("-W");
+                putWithLeadingZeroIfNeeded(weekSink, weekSink.length(), week);
+                expectedWeekFormatted = weekSink.toString();
+
+                // check formatting for day formatter
+                sink.clear();
+                dayFormat.format(timestamp, TimestampFormatUtils.enLocale, null, sink);
+                String dayFormatted = sink.toString();
+                Assert.assertEquals(expectedDayFormatted, dayFormatted);
+
+                // check formatting for week formatter
+                sink.clear();
+                weekFormat.format(timestamp, TimestampFormatUtils.enLocale, null, sink);
+                String weekFormatted = sink.toString();
+                Assert.assertEquals(expectedWeekFormatted, weekFormatted);
+
+                // assert that regardless of the format, when partitioned by week the timestamp
+                // is the same, ie. the first day of the week
+                long weekTs = PartitionBy.parsePartitionDirName(weekFormatted, PartitionBy.WEEK);
+                long dayTs = PartitionBy.parsePartitionDirName(dayFormatted, PartitionBy.WEEK);
+                Assert.assertEquals(weekTs, dayTs);
+            }
+        }
     }
 
     @Test
@@ -369,20 +439,31 @@ public class PartitionByTest {
             PartitionBy.getPartitionDirFormatMethod(-1);
             Assert.fail();
         } catch (Exception ignored) {
+            TestUtils.assertEquals("UNKNOWN", PartitionBy.toString(-1));
         }
-
-        TestUtils.assertEquals("UNKNOWN", PartitionBy.toString(-1));
     }
 
-    private void assertFormatAndParse(CharSequence expectedDirName, CharSequence timestampString, int partitionBy) throws NumericException {
-        final long expected = TimestampFormatUtils.parseTimestamp(timestampString);
+    private static void assertFormatAndParse(CharSequence expectedDirName, CharSequence timestampString, int partitionBy) throws NumericException {
+        long expected = TimestampFormatUtils.parseTimestamp(timestampString);
         DateFormat dirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        sink.clear();
         dirFormatMethod.format(expected, TimestampFormatUtils.enLocale, null, sink);
         TestUtils.assertEquals(expectedDirName, sink);
+        if (partitionBy == PartitionBy.WEEK) {
+            int year = Timestamps.getYear(expected);
+            int week = Timestamps.getWeek(expected);
+            if (week == 52 && Timestamps.getMonthOfYear(expected) == 1) {
+                year--;
+            }
+            sink.clear();
+            sink.put(year).put("-W");
+            putWithLeadingZeroIfNeeded(sink, sink.length(), week);
+            expected = TimestampFormatUtils.parseTimestamp(sink, 0, TimestampFormatUtils.WEEK_PATTERN.length());
+        }
         Assert.assertEquals(expected, PartitionBy.parsePartitionDirName(sink, partitionBy));
     }
 
-    private void assertParseFailure(CharSequence expected, CharSequence dirName, int partitionBy) {
+    private static void assertParseFailure(CharSequence expected, CharSequence dirName, int partitionBy) {
         try {
             PartitionBy.parsePartitionDirName(dirName, partitionBy);
             Assert.fail();
@@ -391,7 +472,38 @@ public class PartitionByTest {
         }
     }
 
-    private void setSetPath(
+    private static int maxDay(int month) {
+        switch (month) {
+            case 1:
+            case 3:
+            case 5:
+            case 7:
+            case 8:
+            case 10:
+            case 12:
+                return 31;
+            case 2:
+                return 28;
+            case 4:
+            case 6:
+            case 9:
+            case 11:
+                return 30;
+            default:
+                throw new IllegalArgumentException("[1..12]");
+        }
+    }
+
+    private static AbstractCharSink putWithLeadingZeroIfNeeded(StringSink seq, int len, int value) {
+        seq.clear(len);
+        if (value < 10) {
+            seq.put('0');
+        }
+        seq.put(value);
+        return seq;
+    }
+
+    private static void setSetPath(
             CharSequence expectedCeilTimestamp2,
             CharSequence expectedDirName,
             CharSequence timestamp,
@@ -411,7 +523,7 @@ public class PartitionByTest {
         TestUtils.assertEquals(expectedDirName, sink);
     }
 
-    private void setSetPathNoCalc(
+    private static void setSetPathNoCalc(
             CharSequence expectedDirName,
             CharSequence timestamp,
             int partitionBy
@@ -429,7 +541,7 @@ public class PartitionByTest {
         TestUtils.assertEquals(expectedDirName, sink);
     }
 
-    private void testAddCeilFloor(
+    private static void testAddCeilFloor(
             CharSequence expectedNext,
             int partitionBy,
             CharSequence partitionTimestampStr,
@@ -453,7 +565,7 @@ public class PartitionByTest {
         Assert.assertEquals(expectedNextPartitionTimestamp, ceilMethod.ceil(midPartitionTimestamp));
     }
 
-    private void testPartitionByName(CharSequence expectedPartitionName, int partitionBy) {
+    private static void testPartitionByName(CharSequence expectedPartitionName, int partitionBy) {
         CharSequence partitionName = PartitionBy.toString(partitionBy);
         TestUtils.assertEquals(expectedPartitionName, partitionName);
         Assert.assertEquals(partitionBy, PartitionBy.fromString(partitionName));

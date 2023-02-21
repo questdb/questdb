@@ -1444,37 +1444,91 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testBindVariableDropLastPartitionList() throws Exception {
-        ConnectionAwareRunnable runnable = (connection, binary) -> {
+    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
+        try {
+            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
+        }
+    }
+
+    @Test
+    public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
+        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
+    }
+
+    @Test
+    public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
+        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.WEEK);
+    }
+
+    private void testBindVariableDropLastPartitionListWithDatePrecision(int partitionBy) throws Exception {
+        final ConnectionAwareRunnable runnable = (connection, binary) -> {
             connection.setAutoCommit(false);
-            connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts) partition by month").execute();
-            connection.prepareStatement("insert into x values (12, '2023-02-11T11:12:22.116234Z')").execute();
-            connection.prepareStatement("insert into x values (13, '2023-02-19T16:42:00.333999Z')").execute();
-            connection.prepareStatement("insert into x values (13, '2023-03-21T03:52:00.999999Z')").execute();
+            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY " + PartitionBy.toString(partitionBy)).execute();
+            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
             connection.commit();
-
-            mayDrainWalQueue();
-            try (PreparedStatement ps = connection.prepareStatement("alter table x drop partition list ? ;")) {
-                ps.setString(1, "2023-03-29T23");
-                Assert.assertFalse(ps.execute());
-            }
-
             mayDrainWalQueue();
             try (
-                    PreparedStatement ps = connection.prepareStatement("x");
-                    ResultSet rs = ps.executeQuery()
+                    PreparedStatement select = connection.prepareStatement("SELECT date FROM x WHERE ts = '2023-02-11T11:12:22.116234Z'");
+                    ResultSet rs = select.executeQuery();
+                    PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")
+            ) {
+                Assert.assertTrue(rs.next());
+                dropPartition.setDate(1, rs.getDate("date"));
+                Assert.assertFalse(dropPartition.execute());
+            }
+            mayDrainWalQueue();
+            try (
+                    PreparedStatement select = connection.prepareStatement("x");
+                    ResultSet rs = select.executeQuery()
             ) {
                 sink.clear();
                 assertResultSet(
-                        "l[BIGINT],ts[TIMESTAMP]\n" +
-                                "12,2023-02-11 11:12:22.116234\n" +
-                                "13,2023-02-19 16:42:00.333999\n",
+                        "l[BIGINT],ts[TIMESTAMP],date[TIMESTAMP]\n" +
+                                "14,2023-03-21 03:52:00.999999,2023-03-21 00:00:00.0\n",
                         sink,
                         rs
                 );
             }
         };
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
+        assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
+    }
 
+    @Test
+    public void testBindVariableDropLastPartitionListWithWeekPrecision() throws Exception {
+        final ConnectionAwareRunnable runnable = (connection, binary) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (13, '2023-02-12T16:42:00.333999Z', '2023-02-12'::date)").execute();
+            connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
+            connection.commit();
+            mayDrainWalQueue();
+            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")) {
+                dropPartition.setString(1, "2023-W06");
+                Assert.assertFalse(dropPartition.execute());
+            }
+            mayDrainWalQueue();
+            try (
+                    PreparedStatement select = connection.prepareStatement("x");
+                    ResultSet rs = select.executeQuery()
+            ) {
+                sink.clear();
+                assertResultSet(
+                        "l[BIGINT],ts[TIMESTAMP],date[TIMESTAMP]\n" +
+                                "14,2023-03-21 03:52:00.999999,2023-03-21 00:00:00.0\n",
+                        sink,
+                        rs
+                );
+            }
+        };
         assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
         assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
         assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);

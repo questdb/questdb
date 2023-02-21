@@ -114,10 +114,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
-    public void testAttachPartitionsWithExtraCharsInPartitionName() throws Exception {
+    public void testAttachPartitionsWithExtraCharsInPartitionNameByDay() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src3", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst3", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src3a", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst3a", PartitionBy.DAY)) {
                 createPopulateTable(
                         1,
                         src.timestamp("ts")
@@ -172,7 +172,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[39] 'yyyy-MM' expected[errno=0]", e.getMessage());
+                    Assert.assertEquals("[39] 'yyyy-MM' expected, found [ts=202A-01]", e.getMessage());
                 }
             }
         });
@@ -192,7 +192,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[40] 'yyyy' expected[errno=0]", e.getMessage());
+                    Assert.assertEquals("[40] 'yyyy' expected, found [ts=nono]", e.getMessage());
                 }
             }
         });
@@ -212,7 +212,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[40] timestamp has too low resolution to determine partition [ts=202]", e.getMessage());
+                    Assert.assertEquals("[40] 'yyyy' expected, found [ts=202]", e.getMessage());
                 }
             }
         });
@@ -232,7 +232,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[40] 'yyyy-MM' expected[errno=0]", e.getMessage());
+                    Assert.assertEquals("[40] 'yyyy-MM' expected, found [ts=2020-no]", e.getMessage());
                 }
             }
         });
@@ -252,7 +252,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[40] timestamp has too low resolution to determine partition [ts=2020]", e.getMessage());
+                    Assert.assertEquals("[40] 'yyyy-MM' expected, found [ts=2020]", e.getMessage());
                 }
             }
         });
@@ -1214,11 +1214,36 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         other.of(configuration.getRoot()).concat(tableToken0);
         int otherLen = other.length();
 
-        int len = PartitionBy.getPartitionDirNameRootLen(dst.getPartitionBy());
+
+        int hi = -1;
+        switch (dst.getPartitionBy()) {
+            case PartitionBy.DAY:
+                hi = 10; // yyyy-MM-dd;
+                break;
+            case PartitionBy.WEEK:
+                hi = 8; // YYYY-Www, or yyyy-MM-dd on failure
+                break;
+            case PartitionBy.MONTH:
+                hi = 7; // yyyy-MM
+                break;
+            case PartitionBy.YEAR:
+                hi = 4; // yyyy
+                break;
+            case PartitionBy.HOUR:
+                hi = 13; // yyyy-MM-ddTHH
+                break;
+        }
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
-            path.trimTo(pathLen).concat(partition, 0, len).$();
-            other.trimTo(otherLen).concat(partition, 0, len).put(configuration.getAttachPartitionSuffix()).$();
+            int limit;
+            if (hi == -1) {
+                // by none
+                limit = partition.length();
+            } else {
+                limit = hi;
+            }
+            path.trimTo(pathLen).concat(partition, 0, limit).$();
+            other.trimTo(otherLen).concat(partition, 0, limit).put(configuration.getAttachPartitionSuffix()).$();
             TestUtils.copyDirectory(path, other, configuration.getMkDirMode());
         }
 
@@ -1229,8 +1254,9 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         Assert.assertTrue(newRowCount > rowCount);
 
         long timestamp = 0;
-        for (String s : partitionList) {
-            long ts = TimestampFormatUtils.parseTimestamp(s.substring(0, len)
+        for (String partition : partitionList) {
+            int limit = hi == -1 ? partition.length() : hi;
+            long ts = TimestampFormatUtils.parseTimestamp(partition.substring(0, limit)
                     + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
                     + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
                     + "T23:59:59.999z");

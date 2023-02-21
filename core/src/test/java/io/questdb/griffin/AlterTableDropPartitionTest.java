@@ -67,7 +67,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "timestamp has too low resolution to determine partition [ts=2017-01]");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected, found [ts=2017-01]");
                     }
                 }
         );
@@ -194,7 +194,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropPartitionNameMissing2() throws Exception {
-        assertFailure("alter table x drop partition list '202';", 34, "timestamp has too low resolution to determine partition [ts=202]");
+        assertFailure("alter table x drop partition list '202';", 34, "'yyyy' expected, found [ts=202]");
     }
 
     @Test

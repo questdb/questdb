@@ -1011,26 +1011,16 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
             }
             final CharSequence partitionName = GenericLexer.unquote(tok); // potentially a full timestamp, or part of it
-            final int partitionNamePosition = lexer.lastTokenPosition();
+            final int lastPosition = lexer.lastTokenPosition();
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             if (reader != null) {
                 try {
-                    // rtrim partition name to appropriate size
-                    int partitionBy = reader.getPartitionedBy();
-                    int len = PartitionBy.getPartitionDirNameRootLen(partitionBy);
-                    if (len == -1) {
-                        len = partitionName.length();
-                    } else if (partitionName.length() < len) {
-                        throw SqlException.position(lexer.lastTokenPosition())
-                                .put("timestamp has too low resolution to determine partition [ts=").put(partitionName).put(']');
-                    }
-                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, 0, len, partitionBy);
-                    alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
+                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
                 } catch (CairoException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
-                            .put("[errno=").put(e.getErrno()).put(']');
+                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
                 }
             }
 
