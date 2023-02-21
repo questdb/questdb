@@ -29,12 +29,14 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.cairo.CairoTestUtils.maxDayOfMonth;
+import static io.questdb.cairo.CairoTestUtils.putWithLeadingZeroIfNeeded;
 
 public class PartitionByTest {
     private static final StringSink sink = new StringSink();
@@ -255,7 +257,7 @@ public class PartitionByTest {
         for (int month = 1; month < 13; month++) {
             putWithLeadingZeroIfNeeded(dateSink, yearLen, month).put('-');
             final int monthLen = dateSink.length(); // yyyy-MM-
-            for (int day = 1, maxDay = maxDay(month); day < maxDay + 1; day++) {
+            for (int day = 1, maxDay = maxDayOfMonth(month); day < maxDay + 1; day++) {
                 putWithLeadingZeroIfNeeded(dateSink, monthLen, day);
                 final String expectedDayFormatted = dateSink.toString(); // yyyy-MM-dd
                 final String expectedWeekFormatted;
@@ -470,37 +472,6 @@ public class PartitionByTest {
         } catch (CairoException e) {
             TestUtils.assertEquals(expected, e.getFlyweightMessage());
         }
-    }
-
-    private static int maxDay(int month) {
-        switch (month) {
-            case 1:
-            case 3:
-            case 5:
-            case 7:
-            case 8:
-            case 10:
-            case 12:
-                return 31;
-            case 2:
-                return 28;
-            case 4:
-            case 6:
-            case 9:
-            case 11:
-                return 30;
-            default:
-                throw new IllegalArgumentException("[1..12]");
-        }
-    }
-
-    private static AbstractCharSink putWithLeadingZeroIfNeeded(StringSink seq, int len, int value) {
-        seq.clear(len);
-        if (value < 10) {
-            seq.put('0');
-        }
-        seq.put(value);
-        return seq;
     }
 
     private static void setSetPath(
