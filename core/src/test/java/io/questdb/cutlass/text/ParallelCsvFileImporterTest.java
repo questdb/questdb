@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -784,6 +784,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             @Override
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
+                return exists(path);
+            }
+
+            @Override
             public int rmdir(Path name) {
                 if (Chars.endsWith(name, tab34_0)) {
                     return -1;
@@ -814,6 +819,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     return true;
                 }
                 return super.exists(path);
+            }
+
+            @Override
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
+                return exists(path);
             }
         };
 
@@ -905,6 +915,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     return true;
                 }
                 return super.exists(path);
+            }
+
+            @Override
+            public boolean isDirOrSoftLinkDir(LPSZ path) {
+                return exists(path);
             }
 
             @Override

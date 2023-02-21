@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -132,7 +132,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             if (masterHasNext) {
                 // great, we have a record no matter what
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-                if (masterTimestamp < slaveTimestamp) {
+                if (masterTimestamp <= slaveTimestamp) {
                     isMasterHasNextPending = true;
                     return true;
                 }

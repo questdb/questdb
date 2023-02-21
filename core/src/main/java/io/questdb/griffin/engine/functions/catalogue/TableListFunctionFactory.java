@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,21 +43,20 @@ import io.questdb.tasks.TelemetryTask;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
+    private static final int DESIGNATED_TIMESTAMP_COLUMN;
+    private static final int DIRECTORY_NAME_COLUMN;
+    private static final int ID_COLUMN;
     private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
+    private static final int MAX_UNCOMMITTED_ROWS_COLUMN;
     private static final RecordMetadata METADATA;
-    private static final String SIGNATURE = "tables()";
-    private static final int designatedTimestampColumn;
-    private static final int idColumn;
-    private static final int maxUncommittedRowsColumn;
-    private static final int nameColumn;
-    private static final int o3MaxLagColumn;
-    private static final int partitionByColumn;
-    private static final int systemNameColumn;
-    private static final int writeModeColumn;
+    private static final int NAME_COLUMN;
+    private static final int O3MAXLAG_COLUMN;
+    private static final int PARTITION_BY_COLUMN;
+    private static final int WAL_ENABLED_COLUMN;
 
     @Override
     public String getSignature() {
-        return SIGNATURE;
+        return "tables()";
     }
 
     @Override
@@ -92,15 +91,15 @@ public class TableListFunctionFactory implements FunctionFactory {
         public TableListCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
             path = new Path().of(configuration.getRoot()).$();
-            this.sysTablePrefix = configuration.getSystemTableNamePrefix();
+            sysTablePrefix = configuration.getSystemTableNamePrefix();
             cursor = new TableListRecordCursor();
-            this.hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
-            this.tableReaderMetadata = new TableReaderMetadata(configuration);
+            hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
+            tableReaderMetadata = new TableReaderMetadata(configuration);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            this.engine = executionContext.getCairoEngine();
+            engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
         }
@@ -130,7 +129,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 tableIndex = -1;
-                tableReaderMetadata.clear();//release FD of last table on the list
+                tableReaderMetadata.clear(); // release FD of last table on the list
             }
 
             @Override
@@ -178,6 +177,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
+                private boolean isSoftLink;
                 private int maxUncommittedRows;
                 private long o3MaxLag;
                 private int partitionBy;
@@ -185,7 +185,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public boolean getBool(int col) {
-                    if (col == writeModeColumn) {
+                    if (col == WAL_ENABLED_COLUMN) {
                         return tableReaderMetadata.isWalEnabled();
                     }
                     return false;
@@ -193,10 +193,10 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getInt(int col) {
-                    if (col == idColumn) {
+                    if (col == ID_COLUMN) {
                         return tableId;
                     }
-                    if (col == maxUncommittedRowsColumn) {
+                    if (col == MAX_UNCOMMITTED_ROWS_COLUMN) {
                         return maxUncommittedRows;
                     }
                     return Numbers.INT_NaN;
@@ -204,7 +204,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (col == o3MaxLagColumn) {
+                    if (col == O3MAXLAG_COLUMN) {
                         return o3MaxLag;
                     }
                     return Numbers.LONG_NaN;
@@ -212,18 +212,21 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStr(int col) {
-                    if (col == nameColumn) {
+                    if (col == NAME_COLUMN) {
                         return tableToken.getTableName();
                     }
-                    if (col == partitionByColumn) {
+                    if (col == PARTITION_BY_COLUMN) {
                         return PartitionBy.toString(partitionBy);
                     }
-                    if (col == designatedTimestampColumn) {
+                    if (col == DESIGNATED_TIMESTAMP_COLUMN) {
                         if (tableReaderMetadata.getTimestampIndex() > -1) {
                             return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
                         }
                     }
-                    if (col == systemNameColumn) {
+                    if (col == DIRECTORY_NAME_COLUMN) {
+                        if (isSoftLink) {
+                            return tableToken.getDirName() + " (->)";
+                        }
                         return tableToken.getDirName();
                     }
                     return null;
@@ -248,8 +251,10 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                     int pathLen = path.length();
                     try {
-                        path.concat(tableToken).concat(META_FILE_NAME).$();
-                        tableReaderMetadata.load(path.$());
+                        path.concat(tableToken).$();
+                        isSoftLink = Files.isSoftLink(path);
+                        path.concat(META_FILE_NAME).$();
+                        tableReaderMetadata.load(path);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = tableReaderMetadata.getTableId();
@@ -276,23 +281,23 @@ public class TableListFunctionFactory implements FunctionFactory {
     }
 
     static {
+        ID_COLUMN = 0;
+        NAME_COLUMN = 1;
+        DESIGNATED_TIMESTAMP_COLUMN = 2;
+        PARTITION_BY_COLUMN = 3;
+        MAX_UNCOMMITTED_ROWS_COLUMN = 4;
+        O3MAXLAG_COLUMN = 5;
+        WAL_ENABLED_COLUMN = 6;
+        DIRECTORY_NAME_COLUMN = 7;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
-        idColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
-        nameColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
-        designatedTimestampColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
-        partitionByColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));
-        maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));
-        o3MaxLagColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
-        writeModeColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("directoryName", ColumnType.STRING));
-        systemNameColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }
