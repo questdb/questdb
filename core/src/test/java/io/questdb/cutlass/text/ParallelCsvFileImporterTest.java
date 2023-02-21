@@ -2317,6 +2317,25 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampInEpochMillis() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("tab3", "test-timestamps_in_epoch_millis.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "millis", false);
+                importer.process();
+
+                refreshTablesInBaseEngine();
+
+                assertQuery("type\tts\tvalue\tdesc\tts2\n" +
+                                "line1\t2023-02-01T20:31:14.000000Z\t0.490933692472\tdesc 1\t\n" +
+                                "line2\t2024-02-01T20:31:14.000000Z\t0.105484410855\tdesc 2\t\n" +
+                                "line3\t2025-02-01T20:31:14.000000Z\t0.525414887561\tdesc 3\t\n",
+                        "select * from tab3",
+                        "ts", true, true, false);
+            }
+        });
+    }
+
+    @Test
     public void testWhenImportFailsWhenAttachingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override

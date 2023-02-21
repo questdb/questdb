@@ -420,6 +420,15 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     pos += Numbers.decodeHighInt(l);
                     break;
 
+                // EPOCH MILLIS
+                case TimestampFormatCompiler.OP_EPOCH_MILLIS:
+                    int remaining = hi - pos;
+                    if (remaining < 1 || remaining > 19) {
+                        throw NumericException.INSTANCE;
+                    }
+                    // special case - EPOCH_MILLIS cannot be combined with anything else
+                    return Numbers.parseLong(in, pos, hi) * 1000;
+
                 // MICROS
                 case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
                     TimestampFormatUtils.assertRemaining(pos, hi);

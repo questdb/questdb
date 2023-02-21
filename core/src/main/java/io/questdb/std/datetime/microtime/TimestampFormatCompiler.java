@@ -25,10 +25,9 @@
 package io.questdb.std.datetime.microtime;
 
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.*;
-import io.questdb.std.datetime.AbstractDateFormat;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.*;
 import io.questdb.std.str.CharSink;
 
 public class TimestampFormatCompiler {
@@ -40,6 +39,8 @@ public class TimestampFormatCompiler {
     static final int OP_DAY_OF_YEAR = 36;
     static final int OP_DAY_ONE_DIGIT = 9;
     static final int OP_DAY_TWO_DIGITS = 10;
+    static final int OP_EPOCH_MICROS = 54;
+    static final int OP_EPOCH_MILLIS = 53;
     static final int OP_ERA = 1;
     static final int OP_HOUR_12_GREEDY = 142;
     static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
@@ -178,6 +179,19 @@ public class TimestampFormatCompiler {
                     delimiters.add(Chars.toString(cs));
                     ops.add(-(delimiters.size()));
                     break;
+                case OP_EPOCH_MILLIS:
+                    // todo: is CairoException the right exception to throw here?
+                    // what would be a better exception? NumberException is checked and not really descriptive
+                    if (ops.size() > 0 || lexer.hasNext()) {
+                        throw CairoException.nonCritical().put("epoch millis cannot be combined with other patterns");
+                    }
+                    return EpochMillisDateFormat.INSTANCE;
+                case OP_EPOCH_MICROS:
+                    if (ops.size() > 0 || lexer.hasNext()) {
+                        // todo: is CairoException the right exception to throw here?
+                        throw CairoException.nonCritical().put("epoch micros cannot be combined with other patterns");
+                    }
+                    return EpochMicrosDateFormat.INSTANCE;
                 case OP_AM_PM:
                 case OP_TIME_ZONE_SHORT:
                     makeLastOpGreedy(ops);
@@ -1950,5 +1964,7 @@ public class TimestampFormatCompiler {
         addOp("UUU", OP_MICROS_THREE_DIGITS);
         addOp("U+", OP_MICROS_GREEDY6);
         addOp("N+", OP_NANOS_GREEDY9);
+        addOp("millis", OP_EPOCH_MILLIS);
+        addOp("micros", OP_EPOCH_MICROS);
     }
 }

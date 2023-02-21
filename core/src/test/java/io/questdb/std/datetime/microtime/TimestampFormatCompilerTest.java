@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.NumericException;
@@ -38,6 +39,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static org.junit.Assert.fail;
 
 public class TimestampFormatCompilerTest {
 
@@ -110,6 +112,50 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testEpochMicros() throws Exception {
+        assertThat("micros", "2010-09-03T18:07:40.000Z", "1283537260000000");
+    }
+
+    @Test
+    public void testEpochMicros_cannotBeCombinedWithOtherPatterns() {
+        try {
+            get("micros-YYYY");
+            fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot be combined");
+        }
+
+        try {
+            get("YYYY-micros");
+            fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot be combined");
+        }
+    }
+
+    @Test
+    public void testEpochMillis() throws Exception {
+        assertThat("millis", "2010-09-03T18:07:40.000Z", "1283537260000");
+    }
+
+    @Test
+    public void testEpochMillis_cannotBeCombinedWithOtherPatterns() {
+        try {
+            get("millis-YYYY");
+            fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot be combined");
+        }
+
+        try {
+            get("YYYY-millis");
+            fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot be combined");
+        }
+    }
+
+    @Test
     public void testEra() throws Exception {
         assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 AD");
         assertThat("E, dd-MM-yyyy G", "-2013-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 BC");
@@ -146,6 +192,16 @@ public class TimestampFormatCompilerTest {
         assertFormat("1", "D", "2010-01-01T00:00:00.000Z");
         assertFormat("69", "D", "2010-03-10T00:00:00.000Z");
         assertFormat("70", "D", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatEpochMicros() throws Exception {
+        assertFormat("1283537260000000", "micros", "2010-09-03T18:07:40.000Z");
+    }
+
+    @Test
+    public void testFormatEpochMillis() throws Exception {
+        assertFormat("1283537260000", "millis", "2010-09-03T18:07:40.000Z");
     }
 
     @Test
