@@ -112,6 +112,15 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getCommitInterval() {
+            return LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                    configuration.getO3MinLag(),
+                    getCommitIntervalFraction(),
+                    getCommitIntervalDefault()
+            );
+        }
+
+        @Override
         public long getCommitIntervalDefault() {
             return commitIntervalDefault;
         }

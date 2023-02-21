@@ -34,6 +34,7 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
@@ -1036,8 +1037,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$("), will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
-                final long commitInterval = (long) (this.o3MinLagUs * this.lineTcpCommitIntervalFraction) / 1000;
-                final long heartbeatInterval = commitInterval > 0 ? commitInterval : this.lineTcpCommitIntervalDefault;
+                final long heartbeatInterval = LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                        this.o3MinLagUs,
+                        this.lineTcpCommitIntervalFraction,
+                        this.lineTcpCommitIntervalDefault
+                );
                 this.lineTcpNetConnectionHeartbeatInterval = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL, heartbeatInterval);
             }
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
@@ -2820,6 +2824,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getCommitInterval() {
+            return LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                    cairoConfiguration.getO3MinLag(),
+                    getCommitIntervalFraction(),
+                    getCommitIntervalDefault()
+            );
+        }
+
         public long getCommitIntervalDefault() {
             return lineTcpCommitIntervalDefault;
         }

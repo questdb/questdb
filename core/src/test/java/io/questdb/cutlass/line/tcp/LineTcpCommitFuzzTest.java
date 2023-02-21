@@ -86,7 +86,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     @Test
     public void testCommitIntervalBasedFraction() throws Exception {
         // This test makes sense for only non-WAL tables since they support commit lag.
-        Assume.assumeFalse(walEnabled);
+//        Assume.assumeFalse(walEnabled);
 
         // rows based commit every 110 rows -> will never happen, we ingest only 100 rows per table -> test would timeout
         configOverrideMaxUncommittedRows(110);

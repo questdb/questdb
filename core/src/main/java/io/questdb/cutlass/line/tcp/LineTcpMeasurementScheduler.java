@@ -115,7 +115,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
-        long commitIntervalDefault = configuration.getCommitIntervalDefault();
+        long commitInterval = configuration.getCommitInterval();
         int nWriterThreads = writerWorkerPool.getWorkerCount();
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
@@ -153,7 +153,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     q,
                     subSeq,
                     milliClock,
-                    commitIntervalDefault,
+                    commitInterval,
                     this,
                     engine.getMetrics(),
                     assignedTables[i]
@@ -213,8 +213,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
         // if no tables, just use the default commit interval
-        long commitIntervalDefault = configuration.getCommitIntervalDefault();
-        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
+        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + configuration.getCommitInterval();
     }
 
     public boolean doMaintenance(
