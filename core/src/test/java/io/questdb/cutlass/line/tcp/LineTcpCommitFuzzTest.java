@@ -28,7 +28,6 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import org.junit.Assume;
 import org.junit.Test;
 
 public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
@@ -41,8 +40,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
-        // This test only makes sense for non-WAL tables since they support commit lag.
-        Assume.assumeFalse(walEnabled);
 
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
         configOverrideMaxUncommittedRows(22);
@@ -63,9 +60,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedDefaultLagZero() throws Exception {
-        // This test only makes sense for non-WAL tables since they support commit lag.
-        Assume.assumeFalse(walEnabled);
-
         // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
         configOverrideMaxUncommittedRows(22);
 
@@ -85,9 +79,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedFraction() throws Exception {
-        // This test makes sense for only non-WAL tables since they support commit lag.
-        Assume.assumeFalse(walEnabled);
-
         // rows based commit every 110 rows -> will never happen, we ingest only 100 rows per table -> test would timeout
         configOverrideMaxUncommittedRows(110);
 
@@ -107,9 +98,6 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitNumOfRowsBased() throws Exception {
-        // This test makes sense for only non-WAL tables since WalWriter has no unlock event.
-        Assume.assumeFalse(walEnabled);
-
         // rows based commit every 10 rows -> will commit 10 times 10 rows per table -> make test pass
         configOverrideMaxUncommittedRows(10);
 
@@ -163,7 +151,10 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     void handleWriterReturnEvent(CharSequence name) {
-        setError("Table writer is not expected to be released, maintenanceInterval and minIdleMsBeforeWriterRelease are set very high");
+        // ApplyWal2TableJob releases TableWriter
+        if (!walEnabled) {
+            setError("Table writer is not expected to be released, maintenanceInterval and minIdleMsBeforeWriterRelease are set very high");
+        }
     }
 
     @Override
