@@ -212,7 +212,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
 //                    #like
-            io.questdb.griffin.engine.functions.regex.LikeCharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory,
 //                    # '!~',
