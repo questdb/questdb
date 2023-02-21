@@ -373,16 +373,16 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
             executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
-            String expected = "ts\tcolumn\n" +
-                    "2021-07-26T02:36:02.566000Z\tNaN\n" +
-                    "2021-07-26T02:36:03.094000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n";
-            String query = "select w1.ts ts, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
+            String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
+                    "2021-07-26T02:36:02.566000Z\t1\tNaN\tNaN\n" +
+                    "2021-07-26T02:36:03.094000Z\t2\t1\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t3\t2\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t4\t2\t2\n" +
+                    "2021-07-26T02:36:03.097000Z\t5\t2\t3\n" +
+                    "2021-07-26T02:36:03.097000Z\t6\t2\t4\n" +
+                    "2021-07-26T02:36:03.098000Z\t7\t6\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t8\t6\t2\n";
+            String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
             printSqlResult(expected, query, "ts", false, true);
         });
     }
