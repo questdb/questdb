@@ -445,8 +445,8 @@ public class TimestampFormatUtils {
                 UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
                 HOUR_PATTERN,                      // yyyy-MM-ddTHH
                 DAY_PATTERN,                       // yyyy-MM-dd
-                MONTH_PATTERN,                     // yyyy-MM
                 WEEK_PATTERN,                      // YYYY-Www
+                MONTH_PATTERN,                     // yyyy-MM
                 YEAR_PATTERN                       // yyyy
         };
         FORMATS = new DateFormat[patterns.length];
