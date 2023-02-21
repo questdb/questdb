@@ -164,7 +164,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
         if (operation == IOOperation.HEARTBEAT) {
-            context.doMaintenance(millisecondClock.getTicks(), workerId);
+            context.doMaintenance(millisecondClock.getTicks());
             context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
             return false;
         }

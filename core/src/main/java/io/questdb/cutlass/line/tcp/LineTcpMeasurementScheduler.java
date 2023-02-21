@@ -190,32 +190,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    public long commitWalTables(ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8, long wallClockMillis) {
-        long minTableNextCommitTime = Long.MAX_VALUE;
-        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
-            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-
-            if (tud.isWal()) {
-                final MillisecondClock millisecondClock = tud.getMillisecondClock();
-                try {
-                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
-                    // get current time again, commit is not instant and take quite some time.
-                    wallClockMillis = millisecondClock.getTicks();
-                    if (tableNextCommitTime < minTableNextCommitTime) {
-                        // taking the earliest commit time
-                        minTableNextCommitTime = tableNextCommitTime;
-                    }
-                } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
-                    engine.getMetrics().health().incrementUnhandledErrors();
-                }
-            }
-        }
-        // if no tables, just use the default commit interval
-        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + configuration.getCommitInterval();
-    }
-
     public boolean doMaintenance(
             ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
@@ -246,10 +220,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     } else {
                         tableUpdateDetailsUtf8.remove(tableNameUtf8);
                         tud.removeReference(readerWorkerId);
-
-                        if (tud.isWal()) {
-                            tud.close();
-                        }
                     }
                     return sz > 1;
                 } finally {

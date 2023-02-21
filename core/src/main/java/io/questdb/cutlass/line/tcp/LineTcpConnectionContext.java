@@ -41,8 +41,10 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
+    private final long checkIdleInterval;
+    private final long commitInterval;
     private final boolean disconnectOnError;
-    private final long maintenanceInterval;
+    private final long idleTimeout;
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
@@ -55,7 +57,7 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     protected long recvBufStartOfMeasurement;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
-    private long maintenanceJobDeadline;
+    private long nextCheckIdleTime;
     private long nextCommitTime;
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
@@ -68,9 +70,23 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
-        this.maintenanceInterval = configuration.getMaintenanceInterval();
-        this.maintenanceJobDeadline = milliClock.getTicks() + maintenanceInterval;
-        this.nextCommitTime = milliClock.getTicks();
+        this.checkIdleInterval = configuration.getMaintenanceInterval();
+        this.commitInterval = configuration.getCommitInterval();
+        long now = milliClock.getTicks();
+        this.nextCheckIdleTime = now + checkIdleInterval;
+        this.nextCommitTime = now + commitInterval;
+        this.idleTimeout = configuration.getWriterIdleTimeout();
+    }
+
+    public void checkIdle(long millis) {
+        for (int n = tableUpdateDetailsUtf8.size() - 1; n >= 0; n--) {
+            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            if (millis - tud.getLastMeasurementMillis() >= idleTimeout) {
+                tableUpdateDetailsUtf8.remove(tableNameUtf8);
+                tud.close();
+            }
+        }
     }
 
     @Override
@@ -94,15 +110,39 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         clear();
     }
 
-    public void doMaintenance(long now, int workerId) {
+    public long commitWalTables(long wallClockMillis) {
+        long minTableNextCommitTime = Long.MAX_VALUE;
+        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
+            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+
+            if (tud.isWal()) {
+                final MillisecondClock millisecondClock = tud.getMillisecondClock();
+                try {
+                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
+                    // get current time again, commit is not instant and take quite some time.
+                    wallClockMillis = millisecondClock.getTicks();
+                    if (tableNextCommitTime < minTableNextCommitTime) {
+                        // taking the earliest commit time
+                        minTableNextCommitTime = tableNextCommitTime;
+                    }
+                } catch (Throwable ex) {
+                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                }
+            }
+        }
+        // if no tables, just use the default commit interval
+        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitInterval;
+    }
+
+    public void doMaintenance(long now) {
         if (now > nextCommitTime) {
-            nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, now);
+            nextCommitTime = commitWalTables(now);
         }
 
-        if (now > maintenanceJobDeadline) {
-            if (!scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, now)) {
-                maintenanceJobDeadline = now + maintenanceInterval;
-            }
+        if (now > nextCheckIdleTime) {
+            checkIdle(now);
+            nextCheckIdleTime = now + checkIdleInterval;
         }
     }
 
