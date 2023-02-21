@@ -84,7 +84,6 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         for (int n = keys.size() - 1; n >= 0; --n) {
             final ByteCharSequence tableNameUtf8 = keys.get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-            tud.releaseWriter(true);
             tud.close();
             if (listener != null) {
                 // table going idle

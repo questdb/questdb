@@ -259,7 +259,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 // table going idle
                                 listener.onEvent(tud.getTableToken(), 1);
                             }
-                            tud.releaseWriter(true);
                             tud.close();
                         }
                     }
@@ -817,7 +816,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             } else if (tud.isWriterInError()) {
                 TableUpdateDetails removed = ctx.removeTableUpdateDetails(measurementName);
                 assert tud == removed;
-                removed.releaseWriter(true);
                 removed.close();
                 tud = getTableUpdateDetailsFromSharedArea(netIoJob, ctx, parser);
             }

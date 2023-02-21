@@ -144,9 +144,7 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (null != writerAPI) {
                 try {
-                    if (!writerInError) {
-                        writerAPI.commit();
-                    }
+                    writerAPI.commit();
                 } catch (Throwable ex) {
                     LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$(ex).I$();
                 } finally {
