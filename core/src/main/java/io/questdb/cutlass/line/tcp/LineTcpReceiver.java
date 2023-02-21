@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -35,7 +34,6 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -86,15 +84,5 @@ public class LineTcpReceiver implements Closeable {
     public void close() {
         Misc.free(scheduler);
         Misc.free(dispatcher);
-    }
-
-    @TestOnly
-    void setSchedulerListener(SchedulerListener listener) {
-        scheduler.setListener(listener);
-    }
-
-    @FunctionalInterface
-    public interface SchedulerListener {
-        void onEvent(TableToken tableToken, int event);
     }
 }

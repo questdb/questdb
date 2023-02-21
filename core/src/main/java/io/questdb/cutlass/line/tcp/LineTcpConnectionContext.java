@@ -35,7 +35,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
-import org.jetbrains.annotations.TestOnly;
 
 class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -56,7 +55,6 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     protected long recvBufStartOfMeasurement;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
-    private LineTcpReceiver.SchedulerListener listener;
     private long maintenanceJobDeadline;
     private long nextCommitTime;
 
@@ -85,10 +83,6 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
             final ByteCharSequence tableNameUtf8 = keys.get(n);
             final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
             tud.close();
-            if (listener != null) {
-                // table going idle
-                listener.onEvent(tud.getTableToken(), 1);
-            }
             tableUpdateDetailsUtf8.remove(tableNameUtf8);
         }
     }
@@ -307,11 +301,6 @@ class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
         parser.of(recvBufStart);
         goodMeasurement = true;
         recvBufStartOfMeasurement = recvBufStart;
-    }
-
-    @TestOnly
-    void setListener(LineTcpReceiver.SchedulerListener listener) {
-        this.listener = listener;
     }
 
     enum IOContextResult {

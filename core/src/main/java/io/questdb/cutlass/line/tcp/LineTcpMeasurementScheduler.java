@@ -48,7 +48,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -81,7 +80,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
     private final long writerIdleTimeout;
-    private LineTcpReceiver.SchedulerListener listener;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -243,10 +241,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);
                             tud.removeReference(readerWorkerId);
                             pubSeq[writerWorkerId].done(seq);
-                            if (listener != null) {
-                                // table going idle
-                                listener.onEvent(tud.getTableToken(), 1);
-                            }
                             LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
                         }
                         return true;
@@ -255,10 +249,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                         tud.removeReference(readerWorkerId);
 
                         if (tud.isWal()) {
-                            if (listener != null) {
-                                // table going idle
-                                listener.onEvent(tud.getTableToken(), 1);
-                            }
                             tud.close();
                         }
                     }
@@ -789,11 +779,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);
     }
 
-    @TestOnly
-    LineTcpReceiver.SchedulerListener getListener() {
-        return this.listener;
-    }
-
     long getNextPublisherEventSequence(int writerWorkerId) {
         assert isOpen();
         long seq;
@@ -853,10 +838,5 @@ class LineTcpMeasurementScheduler implements Closeable {
             return false;
         }
         return dispatchEvent(netIoJob, parser, tud);
-    }
-
-    @TestOnly
-    void setListener(LineTcpReceiver.SchedulerListener listener) {
-        this.listener = listener;
     }
 }

@@ -292,49 +292,34 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
     }
 
-    protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
-        send(receiver, wait, sendToSocket, tableName);
+    protected void send(CharSequence tableName, int wait, Runnable sendToSocket) {
+        send(wait, sendToSocket, tableName);
     }
 
-    protected void send(LineTcpReceiver receiver, int wait, Runnable sendToSocket, CharSequence... tableNames) {
+    protected void send(int wait, Runnable sendToSocket, CharSequence... tableNames) {
+
+        if (wait == WAIT_NO_WAIT) {
+            sendToSocket.run();
+            return;
+        }
+
         ConcurrentHashMap<CharSequence> tablesToWaitFor = new ConcurrentHashMap<>();
         for (CharSequence tableName : tableNames) {
             tablesToWaitFor.put(tableName, tableName);
         }
         SOCountDownLatch releaseLatch = new SOCountDownLatch(tablesToWaitFor.size());
-        switch (wait) {
-            case WAIT_ENGINE_TABLE_RELEASE:
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                        if (name != null && tablesToWaitFor.remove(name.getTableName()) != null) {
-                            releaseLatch.countDown();
-                        }
-                    }
-                });
-                break;
-            case WAIT_ILP_TABLE_RELEASE:
-                receiver.setSchedulerListener((tableName1, event) -> {
-                    if (event == PoolListener.EV_RETURN && tableName1 != null && tablesToWaitFor.remove(tableName1.getTableName()) != null) {
+        try {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (name != null && tablesToWaitFor.remove(name.getTableName()) != null) {
                         releaseLatch.countDown();
                     }
-                });
-                break;
-        }
-
-        try {
+                }
+            });
             sendToSocket.run();
-            if (wait != WAIT_NO_WAIT) {
-                releaseLatch.await();
-            }
+            releaseLatch.await();
         } finally {
-            switch (wait) {
-                case WAIT_ENGINE_TABLE_RELEASE:
-                    engine.setPoolListener(null);
-                    break;
-                case WAIT_ILP_TABLE_RELEASE:
-                    receiver.setSchedulerListener(null);
-                    break;
-            }
+            engine.setPoolListener(null);
         }
     }
 
