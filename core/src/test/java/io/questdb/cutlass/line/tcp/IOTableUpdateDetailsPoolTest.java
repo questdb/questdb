@@ -156,7 +156,7 @@ public class IOTableUpdateDetailsPoolTest extends AbstractCairoTest {
                     try {
                         barrier.await();
                         while (done.get() != threadCount) {
-                            pool.closeIdle(Long.MAX_VALUE, 0, null);
+                            pool.closeIdle(Long.MAX_VALUE, 0);
                         }
                     } catch (Throwable e) {
                         error.set(e);

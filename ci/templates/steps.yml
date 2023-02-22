@@ -18,7 +18,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile)  -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
     condition:
       or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
@@ -32,7 +32,7 @@ steps:
       options:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dhttp.keepAlive=false
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
@@ -52,7 +52,7 @@ steps:
       options:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"

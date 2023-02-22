@@ -94,4 +94,6 @@ public interface IODispatcherConfiguration {
     int getTestConnectionBufferSize();
 
     long getTimeout();
+
+    long getHeartbeatInterval();
 }

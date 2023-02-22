@@ -42,7 +42,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
 
     @Override
     protected byte getListenerSrc() {
-        return PoolListener.SRC_WRITER;
+        return PoolListener.SRC_WAL_WRITER;
     }
 
     @Override

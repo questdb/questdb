@@ -221,6 +221,92 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByGeoByte() throws Exception {
+        assertQuery("id\tgeo\n",
+                "select * from pos order by geo desc",
+                "CREATE TABLE pos (" +
+                        "  id int," +
+                        "  geo GEOHASH(5b) " +
+                        ")", null,
+                "insert into pos  values ( 1,##00001), ( 2,##00010), ( 3, ##00011 ), ( 16, ##10000 )",
+                "id\tgeo\n" +
+                        "16\th\n" +
+                        "3\t3\n" +
+                        "2\t2\n" +
+                        "1\t1\n",
+                true, false, true, false);
+    }
+
+    @Test
+    public void testOrderByGeoInt1() throws Exception {
+        assertQuery("id\tgeo\n",
+                "select * from pos order by geo desc",
+                "CREATE TABLE pos (" +
+                        "  id int," +
+                        "  geo GEOHASH(20b) " +
+                        ")", null,
+                "insert into pos  values ( 1,##00000000000000000001), ( 2,##00000000000000000010), ( 3, ##00000000000000000011 ), ( 16, ##00000000000000010000 )",
+                "id\tgeo\n" +
+                        "16\t000h\n" +
+                        "3\t0003\n" +
+                        "2\t0002\n" +
+                        "1\t0001\n",
+                true, false, true, false);
+    }
+
+    @Test
+    public void testOrderByGeoInt2() throws Exception {
+        assertQuery("id\tgeo\n",
+                "select * from pos order by geo desc",
+                "CREATE TABLE pos (" +
+                        "  id int," +
+                        "  geo GEOHASH(17b) " +
+                        ")", null,
+                "insert into pos  values ( 1,##00000000000000001), ( 2,##00000000000000010), ( 3, ##00000000000000011 ), ( 16, ##00000000000010000 )",
+                "id\tgeo\n" +
+                        "16\t00000000000010000\n" +
+                        "3\t00000000000000011\n" +
+                        "2\t00000000000000010\n" +
+                        "1\t00000000000000001\n",
+                true, false, true, false);
+    }
+
+    @Test
+    public void testOrderByGeoLong() throws Exception {
+        assertQuery("id\tgeo\n",
+                "select * from pos order by geo desc",
+                "CREATE TABLE pos (" +
+                        "  id int," +
+                        "  geo GEOHASH(35b) " +
+                        ")", null,
+                "insert into pos  values ( 1,##00000000000000000000000000000000001), ( 2,##00000000000000000000000000000000010), " +
+                        "( 3, ##00000000000000000000000000000000011 ), ( 16, ##00000000000000000000000000000010000 )",
+                "id\tgeo\n" +
+                        "16\t000000h\n" +
+                        "3\t0000003\n" +
+                        "2\t0000002\n" +
+                        "1\t0000001\n",
+                true, false, true, false);
+    }
+
+    @Test
+    public void testOrderByGeoShort() throws Exception {
+        assertQuery("id\tgeo\n",
+                "select * from pos order by geo desc",
+                "CREATE TABLE pos (" +
+                        "  id int," +
+                        "  geo GEOHASH(10b) " +
+                        ")", null,
+                "insert into pos  values ( 1,##0000000001), ( 2,##0000000010), ( 3, ##0000000011 ), ( 16, ##0000010000 )",
+                "id\tgeo\n" +
+                        "16\t0h\n" +
+                        "3\t03\n" +
+                        "2\t02\n" +
+                        "1\t01\n",
+                true, false, true, false);
+    }
+
+    @Test
     public void testOrderByMultipleColumns() throws Exception {
         final String expected = "sym\tprice\tts\n" +
                 "AA\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
@@ -378,6 +464,41 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true, true, true);
+    }
+
+    @Test
+    public void testOrderByTwoGeoHashes1() throws Exception {
+        assertQuery("id\tgeo1\tgeo3\n",
+                "select * from pos order by geo1 asc, geo3 desc",
+                "CREATE TABLE pos (" +
+                        "  id int," +
+                        "  geo1 GEOHASH(1c)," +
+                        "  geo3 GEOHASH(3c)" +
+                        ")", null,
+                "insert into pos  values ( 1, #1, #001), ( 2, #1, #002), ( 4, #4, #004) ",
+                "id\tgeo1\tgeo3\n" +
+                        "2\t1\t002\n" +
+                        "1\t1\t001\n" +
+                        "4\t4\t004\n",
+                true, false, true, false);
+    }
+
+    @Test
+    public void testOrderByTwoGeoHashes2() throws Exception {
+        assertQuery("id\tgeo1\tgeo3\n",
+                "select * from pos order by geo1 asc, geo3 desc",
+                "CREATE TABLE pos (" +
+                        "  id int," +
+                        "  geo1 GEOHASH(7b)," +
+                        "  geo3 GEOHASH(15b)" +
+                        ")", null,
+                "insert into pos  values ( 1, ##0000001, ##000000000000001), " +
+                        "( 2, ##1000000, ##100000000000000), ( 3, ##0000001, ##100000000000000) ",
+                "id\tgeo1\tgeo3\n" +
+                        "3\t0000001\th00\n" +
+                        "1\t0000001\t001\n" +
+                        "2\t1000000\th00\n",
+                true, false, true, false);
     }
 
     @Test
