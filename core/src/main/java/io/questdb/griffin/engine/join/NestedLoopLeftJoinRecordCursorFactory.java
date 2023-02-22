@@ -76,6 +76,11 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

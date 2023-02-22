@@ -974,7 +974,10 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                                           RecordCursorFactory factory,
                                           SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expectedTimestamp == null) {
-            Assert.assertEquals("Expected -1 as timestamp index", -1, factory.getMetadata().getTimestampIndex());
+            int timestampIdx = factory.getMetadata().getTimestampIndex();
+            if (timestampIdx != -1) {
+                Assert.fail("Expected no timestamp but found " + factory.getMetadata().getColumnName(timestampIdx) + ", idx=" + timestampIdx);
+            }
         } else {
             boolean expectAscendingOrder = true;
             String tsDesc = expectedTimestamp.toString();
@@ -1227,6 +1230,17 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    protected void assertQuery(String expected, String query, boolean expectSize) throws Exception {
+        assertQuery(
+                expected,
+                query,
+                null,
+                null,
+                true,
+                false,
+                expectSize
+        );
+    }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp) throws SqlException {
         assertQuery(expected, query, expectedTimestamp, false);
