@@ -2159,7 +2159,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int orderByColumnCount = columnNames.size();
 
             if (orderByColumnCount > 0) {
-
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
                 final int timestampIndex = metadata.getTimestampIndex();
 
@@ -2207,17 +2206,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int index = metadata.getColumnIndexQuiet(column);
                     if (index == timestampIndex) {
                         if (orderByColumnCount == 1) {
-                            if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                            if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING && !recordCursorFactory.hasDescendingOrder()) {
                                 return recordCursorFactory;
-                            } else if (orderBy.get(column) == ORDER_DIRECTION_DESCENDING &&
-                                    recordCursorFactory.hasDescendingOrder()) {
+                            } else if (orderBy.get(column) == ORDER_DIRECTION_DESCENDING && recordCursorFactory.hasDescendingOrder()) {
                                 return recordCursorFactory;
                             }
                         }
                     }
                 }
 
-                RecordMetadata orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+                RecordMetadata orderedMetadata;
+                if (metadata.getColumnIndexQuiet(columnNames.getQuick(0)) == timestampIndex) {
+                    orderedMetadata = GenericRecordMetadata.copyOf(metadata);
+                } else {
+                    orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+                }
                 final Function loFunc = getLoFunction(model, executionContext);
                 final Function hiFunc = getHiFunction(model, executionContext);
 
@@ -2827,8 +2830,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // analyze order by clause on the current model and optimise out
                 // order by on analytic function if it matches the one on the model
                 final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                boolean dismissOrder;
-                if (osz > 0 && orderHash.size() > 0) {
+                boolean dismissOrder = false;
+                if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                     dismissOrder = true;
                     for (int j = 0; j < osz; j++) {
                         ExpressionNode node = ac.getOrderBy().getQuick(j);
@@ -2838,8 +2841,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             break;
                         }
                     }
-                } else {
-                    dismissOrder = false;
                 }
 
                 if (osz > 0 && !dismissOrder) {
@@ -3824,7 +3825,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                dfcFactory = new IntervalFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
+                if (isOrderDescendingByDesignatedTimestampOnly(model)) {
+                    dfcFactory = new IntervalBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
+                } else {
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex, dfcFactoryMeta);
+                }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
                 dfcFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
@@ -4045,10 +4050,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean isOrderByTimestampDesc = isOrderDescendingByDesignatedTimestampOnly(model);
             RowCursorFactory rowFactory;
 
-            if (isOrderByTimestampDesc && !intrinsicModel.hasIntervalFilters()) {
-                Misc.free(dfcFactory);
-                dfcFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+            if (isOrderByTimestampDesc) {
                 rowFactory = new BwdDataFrameRowCursorFactory();
+
+                if (!intrinsicModel.hasIntervalFilters()) {
+                    Misc.free(dfcFactory);
+                    dfcFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getTableId(), model.getTableVersion(), dfcFactoryMeta);
+                }
             } else {
                 rowFactory = new DataFrameRowCursorFactory();
             }
@@ -4633,13 +4641,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         joinsRequiringTimestamp[JOIN_SPLICE] = true;
         joinsRequiringTimestamp[JOIN_LT] = true;
         joinsRequiringTimestamp[JOIN_ONE] = false;
-    }
-
-    static {
-        limitTypes.add(ColumnType.LONG);
-        limitTypes.add(ColumnType.BYTE);
-        limitTypes.add(ColumnType.SHORT);
-        limitTypes.add(ColumnType.INT);
     }
 
     static {
