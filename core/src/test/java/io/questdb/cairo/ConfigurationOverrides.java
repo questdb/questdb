@@ -108,6 +108,8 @@ public interface ConfigurationOverrides {
 
     int getSqlJoinMetadataPageSize();
 
+    int getTableRegistryCompactionThreshold();
+
     MicrosecondClock getTestMicrosClock();
 
     long getWalPurgeInterval();
@@ -205,6 +207,8 @@ public interface ConfigurationOverrides {
     void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity);
 
     void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts);
+
+    void setRegistryCompactionThreshold(int value);
 
     void setRndFunctionMemoryMaxPages(int rndFunctionMemoryMaxPages);
 

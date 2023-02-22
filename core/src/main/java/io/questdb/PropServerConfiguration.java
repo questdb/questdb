@@ -91,6 +91,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
     private final long cairoTableRegistryAutoReloadFrequency;
+    private final int cairoTableRegistryCompactionThreshold;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final long circuitBreakerTimeout;
@@ -453,6 +454,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
+        this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 100);
 
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -2187,6 +2189,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getTableRegistryAutoReloadFrequency() {
             return cairoTableRegistryAutoReloadFrequency;
+        }
+
+        @Override
+        public int getTableRegistryCompactionThreshold() {
+            return cairoTableRegistryCompactionThreshold;
         }
 
         public TelemetryConfiguration getTelemetryConfiguration() {

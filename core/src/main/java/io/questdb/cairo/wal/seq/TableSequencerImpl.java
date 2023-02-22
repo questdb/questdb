@@ -48,8 +48,8 @@ public class TableSequencerImpl implements TableSequencer {
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
-    private final MicrosecondClock microClock;
     private final SequencerMetadataService metadataSvc;
+    private final MicrosecondClock microClock;
     private final int mkDirMode;
     private final Path path;
     private final int rootLen;
@@ -319,7 +319,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void checkDropped() {
         if (metadata.isDropped()) {
-            throw CairoException.nonCritical().put("table is dropped [dirName=").put(tableToken.getDirName()).put(']');
+            throw CairoException.tableDropped(tableToken);
         }
     }
 

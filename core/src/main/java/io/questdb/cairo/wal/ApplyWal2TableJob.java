@@ -65,6 +65,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final long commitSquashRowLimit;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
+    private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationCompiler operationCompiler;
@@ -75,7 +76,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
-    private final int lookAheadTransactionCount;
     private long rowsSinceLastCommit;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
@@ -669,7 +669,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
                 // and got picked up for processing in this apply job.
                 lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);
-                engine.getTableSequencerAPI().suspendTable(tableToken);
+                try {
+                    engine.getTableSequencerAPI().suspendTable(tableToken);
+                } catch (CairoException e) {
+                    LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
+                }
             }
         } else {
             LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableToken).$(", txn=").$(seqTxn).I$();

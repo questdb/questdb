@@ -196,10 +196,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             discoveredWalIds.clear();
             nextToApplyWalSegments.clear();
 
+            boolean tableDropped = false;
             discoverWalSegments();
             if (discoveredWalSegments.size() != 0) {
 
-                populateNextToApplyWalSegments();
+                tableDropped = populateNextToApplyWalSegments();
                 accumDebugState();
 
                 // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
@@ -210,9 +211,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 deleteOutstandingWalDirectories();
             }
 
-            if (lastTxn < 0 && engine.isTableDropped(tableToken)) {
-                // Delete sequencer files
-                deleteTableSequencerFiles(tableToken);
+            if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
 
                 if (
                         TableUtils.exists(
@@ -222,6 +221,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                 tableToken.getDirName()
                         ) != TableUtils.TABLE_EXISTS
                 ) {
+                    // Delete sequencer files
+                    deleteTableSequencerFiles(tableToken);
+
                     // Fully deregister the table
                     LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
                     ff.rmdir(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).slash$());
@@ -387,7 +389,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void populateNextToApplyWalSegments() {
+    private boolean populateNextToApplyWalSegments() {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
@@ -406,11 +408,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         }
                     }
                     nextToApplyWalSegments.sort();
+                } catch (CairoException e) {
+                    if (e.isTableDropped()) {
+                        LOG.info().$("table is dropped but table name registry is not aware [table=").$(tableToken).$();
+                        return true;
+                    } else {
+                        throw e;
+                    }
                 }
             } finally {
                 txReader.close();
             }
         }
+        return false;
         // If table is dropped, all wals can be deleted.
         // No need to do anything, all discovered segments / wals will be deleted
     }
