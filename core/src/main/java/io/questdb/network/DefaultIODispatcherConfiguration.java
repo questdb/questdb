@@ -103,4 +103,10 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     public long getTimeout() {
         return 5 * 60 * 1000L;
     }
+
+    @Override
+    public long getHeartbeatInterval() {
+        // don't send heartbeat messages by default
+        return -1L;
+    }
 }

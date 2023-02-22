@@ -47,7 +47,12 @@ public interface PoolListener {
     short EV_UNLOCKED = 8;
     byte SRC_METADATA = 3;
     byte SRC_READER = 2;
+    byte SRC_WAL_WRITER = 4;
     byte SRC_WRITER = 1;
+
+    static boolean isWalOrWriter(byte factoryType) {
+        return factoryType == PoolListener.SRC_WRITER || factoryType == PoolListener.SRC_WAL_WRITER;
+    }
 
     void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position);
 }

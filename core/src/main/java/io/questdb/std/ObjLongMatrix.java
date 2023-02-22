@@ -61,12 +61,13 @@ public class ObjLongMatrix<T> {
             int mid = (low + high - 1) >>> 1;
             long midVal = get(mid, index);
 
-            if (midVal < v)
+            if (midVal < v) {
                 low = mid + 1;
-            else if (midVal > v)
+            } else if (midVal > v) {
                 high = mid - 1;
-            else
+            } else {
                 return mid;
+            }
         }
         return -(low + 1);
     }
