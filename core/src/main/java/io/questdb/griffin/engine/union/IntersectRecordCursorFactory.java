@@ -61,6 +61,11 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return factoryA.hasDescendingOrder();
+    }
+
+    @Override
     protected void _close() {
         Misc.free(cursor);
         super._close();

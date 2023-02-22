@@ -132,7 +132,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             if (masterHasNext) {
                 // great, we have a record no matter what
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-                if (masterTimestamp < slaveTimestamp) {
+                if (masterTimestamp <= slaveTimestamp) {
                     isMasterHasNextPending = true;
                     return true;
                 }
