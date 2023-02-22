@@ -241,7 +241,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                 // so that we know when the table writer is returned to the pool
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
-                    if (token != null && Chars.equalsNc(tableName, token.getTableName()) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (token != null && Chars.equalsNc(tableName, token.getTableName()) && PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                         tableWriterReturnedToPool.countDown();
                     }
                 });

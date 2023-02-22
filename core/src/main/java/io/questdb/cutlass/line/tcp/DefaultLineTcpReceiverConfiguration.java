@@ -77,6 +77,15 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public long getCommitInterval() {
+        return LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                1_000_000,
+                getCommitIntervalFraction(),
+                getCommitIntervalDefault()
+        );
+    }
+
+    @Override
     public long getCommitIntervalDefault() {
         return 2000;
     }

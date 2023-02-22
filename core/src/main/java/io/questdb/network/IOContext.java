@@ -24,24 +24,55 @@
 
 package io.questdb.network;
 
-import java.io.Closeable;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 
-public interface IOContext extends Closeable {
-    default void clearSuspendEvent() {
-    }
+public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
+    protected IODispatcher<T> dispatcher;
+    protected int fd = -1;
+    protected long heartbeatId = -1;
 
     @Override
-    void close();
+    public void clear() {
+        heartbeatId = -1;
+        fd = -1;
+        dispatcher = null;
+    }
 
-    IODispatcher<?> getDispatcher();
+    public void clearSuspendEvent() {
+        // no-op
+    }
 
-    int getFd();
+    public long getAndResetHeartbeatId() {
+        long id = heartbeatId;
+        heartbeatId = -1;
+        return id;
+    }
 
-    default SuspendEvent getSuspendEvent() {
+    public IODispatcher<T> getDispatcher() {
+        return dispatcher;
+    }
+
+    public int getFd() {
+        return fd;
+    }
+
+    public SuspendEvent getSuspendEvent() {
         return null;
     }
 
-    default boolean invalid() {
-        return getFd() == -1;
+    public boolean invalid() {
+        return fd == -1;
+    }
+
+    @SuppressWarnings("unchecked")
+    public T of(int fd, IODispatcher<T> dispatcher) {
+        this.fd = fd;
+        this.dispatcher = dispatcher;
+        return (T) this;
+    }
+
+    public void setHeartbeatId(long heartbeatId) {
+        this.heartbeatId = heartbeatId;
     }
 }

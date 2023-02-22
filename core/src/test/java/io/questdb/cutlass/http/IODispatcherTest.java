@@ -118,55 +118,6 @@ public class IODispatcherTest {
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
-    public static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
-    ) {
-        return Services.createHttpServer(
-                configuration,
-                cairoEngine,
-                workerPool,
-                workerPool.getWorkerCount(),
-                null,
-                null,
-                metrics
-        );
-    }
-
-    public static void createTestTable(CairoEngine engine, int n) {
-        try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
-            model.col("j", ColumnType.SYMBOL);
-            CairoTestUtils.create(model, engine);
-        }
-
-        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
-            for (int i = 0; i < n; i++) {
-                TableWriter.Row row = writer.newRow();
-                row.putSym(0, "ok\0ok");
-                row.append();
-            }
-            writer.commit();
-        }
-    }
-
-    @Test
-    public void queryReturnsEncodedNonprintableCharacters() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                        "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
-                        "81\r\n" +
-                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"timestamp\":-1,\"count\":1}\r\n"
-                                + "00\r\n"
-                                + "\r\n"
-                ));
-    }
-
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -174,7 +125,6 @@ public class IODispatcherTest {
 
     @Test
     public void testBiasWrite() throws Exception {
-
         LOG.info().$("started testBiasWrite").$();
 
         assertMemoryLeak(() -> {
@@ -205,7 +155,7 @@ public class IODispatcherTest {
                                     (operation, context) -> {
                                         if (operation == IOOperation.WRITE) {
                                             Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                            context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                         }
                                         return true;
                                     }
@@ -5606,6 +5556,22 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testQueryReturnsEncodedNonPrintableCharacters() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                        "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
+                        "81\r\n" +
+                                "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"timestamp\":-1,\"count\":1}\r\n"
+                                + "00\r\n"
+                                + "\r\n"
+                ));
+    }
+
+    @Test
     public void testQueryWithDoubleQuotesParsedCorrectly() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -7619,6 +7585,39 @@ public class IODispatcherTest {
         }
     }
 
+    private static HttpServer createHttpServer(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            Metrics metrics
+    ) {
+        return Services.createHttpServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                workerPool.getWorkerCount(),
+                null,
+                null,
+                metrics
+        );
+    }
+
+    private static void createTestTable(CairoEngine engine, int n) {
+        try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
+            model.col("j", ColumnType.SYMBOL);
+            CairoTestUtils.create(model, engine);
+        }
+
+        try (TableWriter writer = new TableWriter(engine.getConfiguration(), engine.getTableToken("y"), metrics)) {
+            for (int i = 0; i < n; i++) {
+                TableWriter.Row row = writer.newRow();
+                row.putSym(0, "ok\0ok");
+                row.append();
+            }
+            writer.commit();
+        }
+    }
+
     private static void sendAndReceive(
             NetworkFacade nf,
             String request,
@@ -8139,6 +8138,48 @@ public class IODispatcherTest {
             final int activeConnectionLimit = 5;
             final long queuedConnectionTimeoutInMs = 250;
 
+            class TestIOContext extends IOContext<TestIOContext> {
+                private final int fd;
+                private final IntHashSet serverConnectedFds;
+                private long heartbeatId;
+
+                public TestIOContext(int fd, IntHashSet serverConnectedFds) {
+                    this.fd = fd;
+                    this.serverConnectedFds = serverConnectedFds;
+                }
+
+                @Override
+                public void close() {
+                    LOG.info().$(fd).$(" disconnected").$();
+                    serverConnectedFds.remove(fd);
+                }
+
+                @Override
+                public long getAndResetHeartbeatId() {
+                    return heartbeatId;
+                }
+
+                @Override
+                public IODispatcher<TestIOContext> getDispatcher() {
+                    return dispatcher;
+                }
+
+                @Override
+                public int getFd() {
+                    return fd;
+                }
+
+                @Override
+                public boolean invalid() {
+                    return !serverConnectedFds.contains(fd);
+                }
+
+                @Override
+                public void setHeartbeatId(long heartbeatId) {
+                    this.heartbeatId = heartbeatId;
+                }
+            }
+
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
                 public int getBindPort() {
@@ -8161,32 +8202,11 @@ public class IODispatcherTest {
             final AtomicInteger nConnected = new AtomicInteger();
             final IntHashSet serverConnectedFds = new IntHashSet();
             final IntHashSet clientActiveFds = new IntHashSet();
-            IOContextFactory<IOContext> contextFactory = (fd, dispatcher) -> {
+            IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
                 nConnected.incrementAndGet();
-                return new IOContext() {
-                    @Override
-                    public void close() {
-                        LOG.info().$(fd).$(" disconnected").$();
-                        serverConnectedFds.remove(fd);
-                    }
-
-                    @Override
-                    public IODispatcher<?> getDispatcher() {
-                        return dispatcher;
-                    }
-
-                    @Override
-                    public int getFd() {
-                        return fd;
-                    }
-
-                    @Override
-                    public boolean invalid() {
-                        return !serverConnectedFds.contains(fd);
-                    }
-                };
+                return new TestIOContext(fd, serverConnectedFds);
             };
             final String request = "\n";
             long mem = TestUtils.toMemory(request);
@@ -8194,14 +8214,14 @@ public class IODispatcherTest {
             Thread serverThread;
             long sockAddr = 0;
             final CountDownLatch serverLatch = new CountDownLatch(1);
-            try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+            try (IODispatcher<TestIOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
                 final int resolvedPort = dispatcher.getPort();
                 sockAddr = Net.sockaddr("127.0.0.1", resolvedPort);
                 serverThread = new Thread("test-io-dispatcher") {
                     @Override
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-                        IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
+                        IORequestProcessor<TestIOContext> requestProcessor = (operation, context) -> {
                             int fd = context.getFd();
                             int rc;
                             switch (operation) {
@@ -8220,6 +8240,9 @@ public class IODispatcherTest {
                                     } else {
                                         dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                     }
+                                    break;
+                                case IOOperation.HEARTBEAT:
+                                    dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                                     break;
                                 default:
                                     dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
@@ -8381,11 +8404,9 @@ public class IODispatcherTest {
         }
     }
 
-    private static class HelloContext implements IOContext {
+    private static class HelloContext extends IOContext<HelloContext> {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
-        private final IODispatcher<HelloContext> dispatcher;
-        private final int fd;
 
         public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             this.fd = fd;
@@ -8397,16 +8418,6 @@ public class IODispatcherTest {
         public void close() {
             Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
             closeLatch.countDown();
-        }
-
-        @Override
-        public IODispatcher<HelloContext> getDispatcher() {
-            return dispatcher;
-        }
-
-        @Override
-        public int getFd() {
-            return fd;
         }
 
         @Override

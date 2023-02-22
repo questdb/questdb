@@ -57,11 +57,6 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default long getCommitInterval() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     default long getMetaMaxUncommittedRows() {
         throw new UnsupportedOperationException();
     }
@@ -94,11 +89,6 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void tick() {
         // no-op
-    }
-
-    @Override
-    default void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
-        throw CairoException.critical(0).put("change commit interval does not update sequencer metadata");
     }
 }
 

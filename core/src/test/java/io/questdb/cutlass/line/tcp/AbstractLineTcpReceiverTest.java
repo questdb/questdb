@@ -76,9 +76,15 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         public int getBindPort() {
             return bindPort;
         }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return 15;
+        }
     };
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
+    protected boolean autoCreateNewColumns = true;
     protected long commitIntervalDefault = 2000;
     protected double commitIntervalFraction = 0.5;
     protected boolean disconnectOnError = false;
@@ -89,8 +95,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
-    protected boolean autoCreateNewColumns = true;
-
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public String getAuthDbPath() {
@@ -100,6 +104,20 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             URL u = getClass().getResource("authDb.txt");
             assert u != null;
             return u.getFile();
+        }
+
+        @Override
+        public boolean getAutoCreateNewColumns() {
+            return autoCreateNewColumns;
+        }
+
+        @Override
+        public long getCommitInterval() {
+            return LineTcpReceiverConfigurationHelper.calcCommitInterval(
+                    configuration.getO3MinLag(),
+                    getCommitIntervalFraction(),
+                    getCommitIntervalDefault()
+            );
         }
 
         @Override
@@ -165,11 +183,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
-        }
-
-        @Override
-        public boolean getAutoCreateNewColumns() {
-            return autoCreateNewColumns;
         }
     };
 
@@ -288,49 +301,34 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
     }
 
-    protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
-        send(receiver, wait, sendToSocket, tableName);
+    protected void send(CharSequence tableName, int wait, Runnable sendToSocket) {
+        send(wait, sendToSocket, tableName);
     }
 
-    protected void send(LineTcpReceiver receiver, int wait, Runnable sendToSocket, CharSequence... tableNames) {
+    protected void send(int wait, Runnable sendToSocket, CharSequence... tableNames) {
+
+        if (wait == WAIT_NO_WAIT) {
+            sendToSocket.run();
+            return;
+        }
+
         ConcurrentHashMap<CharSequence> tablesToWaitFor = new ConcurrentHashMap<>();
         for (CharSequence tableName : tableNames) {
             tablesToWaitFor.put(tableName, tableName);
         }
         SOCountDownLatch releaseLatch = new SOCountDownLatch(tablesToWaitFor.size());
-        switch (wait) {
-            case WAIT_ENGINE_TABLE_RELEASE:
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                        if (name != null && tablesToWaitFor.remove(name.getTableName()) != null) {
-                            releaseLatch.countDown();
-                        }
-                    }
-                });
-                break;
-            case WAIT_ILP_TABLE_RELEASE:
-                receiver.setSchedulerListener((tableName1, event) -> {
-                    if (event == PoolListener.EV_RETURN && tableName1 != null && tablesToWaitFor.remove(tableName1.getTableName()) != null) {
+        try {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                    if (name != null && tablesToWaitFor.remove(name.getTableName()) != null) {
                         releaseLatch.countDown();
                     }
-                });
-                break;
-        }
-
-        try {
+                }
+            });
             sendToSocket.run();
-            if (wait != WAIT_NO_WAIT) {
-                releaseLatch.await();
-            }
+            releaseLatch.await();
         } finally {
-            switch (wait) {
-                case WAIT_ENGINE_TABLE_RELEASE:
-                    engine.setPoolListener(null);
-                    break;
-                case WAIT_ILP_TABLE_RELEASE:
-                    receiver.setSchedulerListener(null);
-                    break;
-            }
+            engine.setPoolListener(null);
         }
     }
 
