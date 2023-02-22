@@ -731,7 +731,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "HYRX\t2\n" +
                         "VTJW\t2\n" +
                         "RXGZ\t1\n",
-                "select b col_1, count(a) col_cnt from x order by 2 desc",
+                "select b col_1, count(a) col_cnt from x order by 2 desc, 1 asc",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1879,17 +1879,17 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " from long_sequence(200)" +
                     ") timestamp(k) partition by DAY", sqlExecutionContext);
 
-            String query = "select s, count() from x";
+            String query = "select s, count() from x order by s";
             try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("s\tcount\n" + expectedData, factory, true, true, true);
             }
 
-            query = "select s as symbol, count() from x";
+            query = "select s as symbol, count() from x order by symbol";
             try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("symbol\tcount\n" + expectedData, factory, true, true, true);
             }
 
-            query = "select s as symbol, count() as cnt from x group by symbol";
+            query = "select s as symbol, count() as cnt from x group by symbol order by symbol";
             try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("symbol\tcnt\n" + expectedData, factory, true, true, true);
             }
