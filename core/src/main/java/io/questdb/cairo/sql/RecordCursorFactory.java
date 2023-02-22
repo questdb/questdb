@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -87,7 +87,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     // that key read from symbol column map to symbol values unambiguously.
     // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
     // key 1 at row 100 it might map to 'BBB'.
-    // Such factories cannot be used in multi-threaded execution and cannot be tested
+    // Such factories cannot be used in multithreaded execution and cannot be tested
     // via `testSymbolAPI()` call.
     default boolean fragmentedSymbolTables() {
         return false;

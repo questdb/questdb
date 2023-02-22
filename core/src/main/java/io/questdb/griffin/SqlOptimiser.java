@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,6 +62,8 @@ class SqlOptimiser {
     private final static IntHashSet joinBarriers;
     private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
     private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
+
+    private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final CharacterStore characterStore;
@@ -121,6 +123,11 @@ class SqlOptimiser {
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
+    }
+
+    private static boolean isOrderedByDesignatedTimestamp(QueryModel baseModel) {
+        return baseModel.getTimestamp() != null && baseModel.getOrderBy().size() == 1 &&
+                Chars.equals(baseModel.getOrderBy().getQuick(0).token, baseModel.getTimestamp().token);
     }
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
@@ -1607,6 +1614,15 @@ class SqlOptimiser {
         return null;
     }
 
+    private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
+        final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
+        final int type = func.getType();
+        if (limitTypes.excludes(type)) {
+            return null;
+        }
+        return func;
+    }
+
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
         orderByAdvice.clear();
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -2411,13 +2427,15 @@ class SqlOptimiser {
 
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model);
         final IntList orderByDirectionAdvice = model.getOrderByDirection();
-        final ObjList<QueryModel> jm = model.getJoinModels();
+        final ObjList<QueryModel> jm = model.getJoinModels();//order by should not copy through group by 
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                qm.setOrderByAdviceMnemonic(orderByMnemonic);
-                qm.copyOrderByAdvice(orderByAdvice);
-                qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                if (model.getGroupBy().size() == 0) {
+                    qm.setOrderByAdviceMnemonic(orderByMnemonic);
+                    qm.copyOrderByAdvice(orderByAdvice);
+                    qm.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+                }
                 optimiseOrderBy(qm, orderByMnemonic);
             }
         }
@@ -2888,6 +2906,98 @@ class SqlOptimiser {
         }
 
         return agg;
+    }
+
+    /**
+     * For queries on tables with designated timestamp, no where clause and no order by or order by ts only :
+     * <p>
+     * For example:
+     * select a,b from X limit -10 -> select a,b from (select * from X order by ts desc limit 10) order by ts asc
+     * select a,b from X order by ts limit -10 -> select a,b  from (select * from X order by ts desc limit 10) order by ts asc
+     * select a,b from X order by ts desc limit -10 -> select a,b from (select * from X order by ts asc limit 10) order by ts desc
+     *
+     * @param model            input model
+     * @param executionContext execution context
+     */
+    private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        QueryModel current = model;
+
+        while (current != null) {
+            QueryModel nested = current.getNestedModel();
+            Function loFunction;
+            ObjList<ExpressionNode> orderBy;
+            long limitValue;
+
+            if (current.getLimitLo() != null
+                    && current.getLimitHi() == null
+                    && current.getUnionModel() == null
+                    && current.getJoinModels().size() == 1
+                    && !current.isDistinct()
+                    && nested != null
+                    && nested.getTimestamp() != null
+                    && nested.getWhereClause() == null
+                    && (loFunction = getLoFunction(current.getLimitLo(), executionContext)) != null
+                    && loFunction.isConstant()
+                    && (limitValue = loFunction.getLong(null)) < 0
+                    && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
+                    && ((orderBy = nested.getOrderBy()).size() == 0 ||
+                    (orderBy.size() == 1 && Chars.equals(orderBy.getQuick(0).token, nested.getTimestamp().token)))
+            ) {
+                IntList orderByDirection = nested.getOrderByDirection();
+                ExpressionNode limitNode = current.getLimitLo();
+                limitNode = limitNode.rhs != null ? limitNode.rhs : limitNode.lhs;
+                current.setLimit(null, null);
+
+                QueryModel limit = queryModelPool.next();
+                limit.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                SqlUtil.addSelectStar(limit, queryColumnPool, expressionNodePool);
+                limit.setLimit(limitNode, null);
+                limit.setNestedModel(nested);
+                limit.setTimestamp(nested.getTimestamp());
+
+                int timestampKey = current.getColumnNameToAliasMap().keyIndex(nested.getTimestamp().token);
+                if (timestampKey < 0) {
+                    int timestampIdx = current.getColumnAliasIndex(current.getColumnNameToAliasMap().valueAt(timestampKey));
+                    current.setTimestamp(current.getColumns().get(timestampIdx).getAst());
+                }
+                //not needed if limit = -1
+                QueryModel order = null;
+                if (limitValue < -1) {
+                    order = queryModelPool.next();
+                    order.setNestedModel(limit);
+                }
+
+                if (orderBy.size() == 0) {
+                    if (order != null) {
+                        order.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_ASCENDING);
+                    }
+
+                    nested.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_DESCENDING);
+                } else {
+                    if (order != null) {
+                        order.addOrderBy(orderBy.getQuick(0), orderByDirection.getQuick(0));
+                    }
+
+                    int newOrder;
+                    if (orderByDirection.getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                        newOrder = QueryModel.ORDER_DIRECTION_DESCENDING;
+                    } else {
+                        newOrder = QueryModel.ORDER_DIRECTION_ASCENDING;
+                    }
+                    orderByDirection.setQuick(0, newOrder);
+                }
+
+                if (order != null) {
+                    current.setNestedModel(order);
+                } else {
+                    current.setNestedModel(limit);
+                }
+
+                current = nested.getNestedModel();
+                continue;
+            }
+            current = nested;
+        }
     }
 
     /**
@@ -3533,8 +3643,11 @@ class SqlOptimiser {
             // translating model has limits to ensure clean factory separation
             // during code generation. However, in some cases limit could also
             // be implemented by nested model. Nested model must not implement limit
-            // when parent model is order by or join
-            if (baseModel.getOrderBy().size() == 0 && baseModel.getJoinModels().size() < 2) {
+            // when parent model is order by or join. 
+            // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .   
+            if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) &&
+                    baseModel.getJoinModels().size() < 2 &&
+                    !useDistinctModel) {
                 baseModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
             }
 
@@ -3783,6 +3896,7 @@ class SqlOptimiser {
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
+            rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
             rewrittenModel = rewriteOrderBy(
                     rewriteOrderByPositionForUnionModels(
                             rewriteOrderByPosition(
@@ -4055,5 +4169,12 @@ class SqlOptimiser {
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_VIRTUAL);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_ANALYTIC);
         flexColumnModelTypes.add(QueryModel.SELECT_MODEL_GROUP_BY);
+    }
+
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
     }
 }
