@@ -30,7 +30,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest=$(includeTests)
+        "-X --batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dhttp.keepAlive=false
         -DfailIfNoTests=false
