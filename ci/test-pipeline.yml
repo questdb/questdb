@@ -11,6 +11,10 @@ variables:
   DIFF_COVER_THRESHOLD_PCT: 50
   includeTests: ""
   excludeTests: ""
+  MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
+  MAVEN_VERSION: 3.8.7
+  MAVEN_VERSION_OPTION: "Default"
 
 stages:
   - stage: CheckChanges
@@ -98,7 +102,6 @@ stages:
         variables:
           SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
-          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
         condition: |
           and(

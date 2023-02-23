@@ -19,20 +19,22 @@ steps:
       restoreKeys: mykey | "$(MAVEN_VERSION)"
       path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
       cacheHitVar: MVN_CACHE_RESTORED
+    condition: ne(variables['MAVEN_VERSION_OPTION'], 'Default')
+
   - script: 'wget https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
-    condition: and(ne(variables.MVN_CACHE_RESTORED, 'true'), neq(variables['os'], 'Windows'))
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), ne(variables['os'], 'Windows'))
   - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
-    condition: and(ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
   - task: ExtractFiles@1
     inputs:
       archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
       destinationFolder: '$(build.sourcesdirectory)/maven'
-    condition: ne(variables.MVN_CACHE_RESTORED, 'true')
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
-      mavenVersionOption: 'Path'
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
@@ -45,7 +47,7 @@ steps:
   - task: Maven@3
     displayName: "Run tests"
     inputs:
-      mavenVersionOption: 'Path'
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
@@ -67,7 +69,7 @@ steps:
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:
-      mavenVersionOption: 'Path'
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
