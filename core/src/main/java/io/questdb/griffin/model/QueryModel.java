@@ -981,7 +981,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 } else {
                     addParsedWhereNode(n, false);
                     n = null;
-
                 }
             } else {
                 n = sqlNodeStack.poll();
