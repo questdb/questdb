@@ -230,7 +230,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 break;
         }
-        scheduler.commitWalTables(noNetworkIOJob.localTableUpdateDetailsByTableName, Long.MAX_VALUE);
+        context.commitWalTables(Long.MAX_VALUE);
         scheduler.doMaintenance(noNetworkIOJob.localTableUpdateDetailsByTableName, noNetworkIOJob.getWorkerId(), Long.MAX_VALUE);
         return false;
     }
@@ -287,11 +287,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpConnectionContext context, LineTcpParser parser) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.scheduleEvent(netIoJob, parser);
+                return super.scheduleEvent(netIoJob, context, parser);
             }
         };
         noNetworkIOJob.setScheduler(scheduler);

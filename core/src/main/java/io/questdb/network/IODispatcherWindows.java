@@ -29,11 +29,13 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
+public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final LongIntHashMap fds = new LongIntHashMap();
     private final FDSet readFdSet;
     private final SelectFacade sf;
     private final FDSet writeFdSet;
+    // used for heartbeats
+    private long idSeq = 1;
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
@@ -58,22 +60,61 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         LOG.info().$("closed").$();
     }
 
+    private long nextOpId() {
+        return idSeq++;
+    }
+
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
         while ((cursor = interestSubSeq.next()) > -1) {
-            IOEvent<C> evt = interestQueue.get(cursor);
-            C context = evt.context;
+            final IOEvent<C> evt = interestQueue.get(cursor);
+            final C context = evt.context;
             int operation = evt.operation;
+            final long srcOpId = context.getAndResetHeartbeatId();
+
+            final long opId = nextOpId();
+            final int fd = context.getFd();
+
             interestSubSeq.done(cursor);
+            if (operation == IOOperation.HEARTBEAT) {
+                assert srcOpId != -1;
 
+                int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
+                if (heartbeatRow < 0) {
+                    continue; // The connection is already closed.
+                } else {
+                    operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
+
+                    LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", srcId=").$(srcOpId)
+                            .$(", id=").$(opId).I$();
+
+                    int r = pending.addRow();
+                    pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
+                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                    pending.set(r, OPM_FD, fd);
+                    pending.set(r, OPM_ID, opId);
+                    pending.set(r, OPM_OPERATION, operation);
+                    pending.set(r, context);
+
+                    pendingHeartbeats.deleteRow(heartbeatRow);
+                }
+            } else {
+                LOG.debug().$("processing registration [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(opId).I$();
+
+                int r = pending.addRow();
+                pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
+                pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(r, OPM_FD, context.getFd());
+                pending.set(r, OPM_ID, opId);
+                pending.set(r, OPM_OPERATION, operation);
+                pending.set(r, context);
+            }
             useful = true;
-
-            int r = pending.addRow();
-            pending.set(r, OPM_TIMESTAMP, timestamp);
-            pending.set(r, OPM_FD, context.getFd());
-            pending.set(r, OPM_OPERATION, operation);
-            pending.set(r, context);
         }
         return useful;
     }
@@ -129,7 +170,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
         boolean useful = false;
         fds.clear();
-
+        int watermark = pending.size();
         // collect reads into hash map
         if (count > 0) {
             queryFdSets(timestamp);
@@ -145,6 +186,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         readFdSet.reset();
         writeFdSet.reset();
         long deadline = timestamp - idleConnectionTimeout;
+        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
         for (int i = 0, n = pending.size(); i < n; ) {
             final C context = pending.get(i);
 
@@ -157,7 +199,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 }
             }
 
-            final long ts = pending.get(i, OPM_TIMESTAMP);
             final int fd = (int) pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
@@ -166,27 +207,49 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 // new operation case
 
                 // check if the connection was idle for too long
-                if (ts < deadline) {
+                if (pending.get(i, OPM_CREATE_TIMESTAMP) < deadline) {
                     doDisconnect(context, DISCONNECT_SRC_IDLE);
                     pending.deleteRow(i);
                     n--;
+                    if (i < watermark) {
+                        watermark--;
+                    }
                     useful = true;
                     continue;
                 }
 
-                int operation = (int) pending.get(i, OPM_OPERATION);
-                i++;
-                if (suspendEvent != null) {
-                    // if the operation was suspended, we request a read to be able to detect a client disconnect
-                    operation = IOOperation.READ;
-                }
+                // check if we have heartbeats to be sent
+                if (i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
+                    final long opId = pending.get(i, OPM_ID);
+                    context.setHeartbeatId(opId);
+                    publishOperation(IOOperation.HEARTBEAT, context);
 
-                if (operation == IOOperation.READ) {
-                    readFdSet.add(fd);
-                    readFdCount++;
+                    int r = pendingHeartbeats.addRow();
+                    pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                    pendingHeartbeats.set(r, OPM_FD, fd);
+                    pendingHeartbeats.set(r, OPM_ID, opId);
+                    pendingHeartbeats.set(r, OPM_OPERATION, pending.get(i, OPM_OPERATION));
+                    pendingHeartbeats.set(r, context);
+
+                    pending.deleteRow(i);
+                    n--;
+                    watermark--;
+                    useful = true;
                 } else {
-                    writeFdSet.add(fd);
-                    writeFdCount++;
+                    int operation = (int) pending.get(i, OPM_OPERATION);
+                    i++;
+                    if (suspendEvent != null) {
+                        // if the operation was suspended, we request a read to be able to detect a client disconnect
+                        operation = IOOperation.READ;
+                    }
+
+                    if (operation == IOOperation.READ) {
+                        readFdSet.add(fd);
+                        readFdCount++;
+                    } else {
+                        writeFdSet.add(fd);
+                        writeFdCount++;
+                    }
                 }
             } else {
                 // select()'ed operation case
@@ -196,6 +259,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                         doDisconnect(context, DISCONNECT_SRC_PEER_DISCONNECT);
                         pending.deleteRow(i);
                         n--;
+                        watermark--;
                     } else {
                         i++; // just skip to the next operation
                     }
@@ -214,6 +278,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
                 pending.deleteRow(i);
                 n--;
+                watermark--;
             }
         }
 

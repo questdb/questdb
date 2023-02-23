@@ -161,7 +161,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 final SOCountDownLatch tableWriterReturnedToPool = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (name != null && Chars.equalsNc(tableName, name.getTableName())) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                             tableWriterReturnedToPool.countDown();
                         }
                     }

@@ -81,8 +81,6 @@ public interface MetadataService {
 
     void dropIndex(CharSequence columnName);
 
-    long getCommitInterval();
-
     long getMetaMaxUncommittedRows();
 
     TableRecordMetadata getMetadata();
@@ -104,6 +102,4 @@ public interface MetadataService {
     void setMetaO3MaxLag(long o3MaxLagUs);
 
     void tick();
-
-    void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault);
 }

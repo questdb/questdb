@@ -42,7 +42,7 @@ import java.io.Closeable;
 class LineTcpWriterJob implements Job, Closeable {
     private final static Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
     private final ObjList<TableUpdateDetails> assignedTables;
-    private final long commitIntervalDefault;
+    private final long commitInterval;
     private final Metrics metrics;
     private final MillisecondClock millisecondClock;
     private final Path path = new Path();
@@ -57,7 +57,7 @@ class LineTcpWriterJob implements Job, Closeable {
             RingQueue<LineTcpMeasurementEvent> queue,
             Sequence sequence,
             MillisecondClock millisecondClock,
-            long commitIntervalDefault,
+            long commitInterval,
             LineTcpMeasurementScheduler scheduler,
             Metrics metrics,
             ObjList<TableUpdateDetails> assignedTables
@@ -66,7 +66,7 @@ class LineTcpWriterJob implements Job, Closeable {
         this.queue = queue;
         this.sequence = sequence;
         this.millisecondClock = millisecondClock;
-        this.commitIntervalDefault = commitIntervalDefault;
+        this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks();
         this.scheduler = scheduler;
         this.metrics = metrics;
@@ -127,7 +127,7 @@ class LineTcpWriterJob implements Job, Closeable {
                 }
             }
             // if no tables, just use the default commit interval
-            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
+            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitInterval;
         }
     }
 
