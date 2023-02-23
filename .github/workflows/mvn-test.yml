@@ -13,5 +13,13 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+                  # Workaround to provide additional free space for testing.
+        #   https://github.com/actions/virtual-environments/issues/2840
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
       - name: Build with Maven
         run: mvn --batch-mode --update-snapshots package
