@@ -731,7 +731,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "HYRX\t2\n" +
                         "VTJW\t2\n" +
                         "RXGZ\t1\n",
-                "select b col_1, count(a) col_cnt from x order by 2 desc",
+                "select b col_1, count(a) col_cnt from x order by 2 desc, 1 asc",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -971,7 +971,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnIndexAndExpression() throws Exception {
-
         TestMatchFunctionFactory.clear();
 
         assertQuery("contactId\n" +
@@ -1176,7 +1175,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnSubQueryIndexedDeferred() throws Exception {
-
         assertQuery(null,
                 "select * from x where b in (select rnd_symbol('ABC') a from long_sequence(10))",
                 "create table x as " +
@@ -1206,7 +1204,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnSubQueryIndexedFiltered() throws Exception {
-
         TestMatchFunctionFactory.clear();
 
         final String expected = "a\tb\tk\n" +
@@ -1252,7 +1249,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnSubQueryIndexedFilteredEmpty() throws Exception {
-
         TestMatchFunctionFactory.clear();
 
         final String expected = "a\tb\tk\n";
@@ -1281,7 +1277,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnSubQueryIndexedStrColumn() throws Exception {
-
         assertQuery(null,
                 "select * from x where b in (select 'ABC' a from long_sequence(10))",
                 "create table x as " +
@@ -1408,7 +1403,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnValuesAndFilter() throws Exception {
-
         TestMatchFunctionFactory.clear();
 
         assertQuery("a\tb\tk\n" +
@@ -1867,6 +1861,39 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 false,
                 false,
                 true);
+    }
+
+    @Test
+    public void testGroupByDoesNotDependOnAliases() throws Exception {
+        // Here we verify that the same data set is returned no matter what column aliases are in a GROUP BY query.
+        assertMemoryLeak(() -> {
+            final String expectedData = "a\t60\n" +
+                    "b\t65\n" +
+                    "c\t75\n";
+
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_symbol('a','b','c') s," +
+                    " timestamp_sequence(0, 1000000000) k" +
+                    " from long_sequence(200)" +
+                    ") timestamp(k) partition by DAY", sqlExecutionContext);
+
+            String query = "select s, count() from x order by s";
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor("s\tcount\n" + expectedData, factory, true, true, true);
+            }
+
+            query = "select s as symbol, count() from x order by symbol";
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor("symbol\tcount\n" + expectedData, factory, true, true, true);
+            }
+
+            query = "select s as symbol, count() as cnt from x group by symbol order by symbol";
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor("symbol\tcnt\n" + expectedData, factory, true, true, true);
+            }
+        });
     }
 
     @Test

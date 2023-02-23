@@ -85,7 +85,7 @@ public class UuidTest extends AbstractGriffinTest {
 
     @Test
     public void testComparisonWithSymbols() throws Exception {
-        // UUID is implicitly casted to String
+        // UUID is implicitly cast to String
         // and we can compare strings to symbols
         assertCompile("create table x (u UUID, s SYMBOL)");
         assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
