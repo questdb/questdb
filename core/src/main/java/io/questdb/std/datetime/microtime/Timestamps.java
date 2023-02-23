@@ -227,7 +227,11 @@ public final class Timestamps {
     }
 
     public static long floorDD(long micros) {
-        long result = micros - getTimeMicros(micros);
+        return floorDD(micros, 1);
+    }
+
+    public static long floorDD(long micros, int stride) {
+        long result = micros - getTimeMicros(micros, stride);
         return Math.min(result, micros);
     }
 
@@ -262,15 +266,19 @@ public final class Timestamps {
     }
 
     public static long floorHH(long micros) {
-        return micros - micros % HOUR_MICROS;
+        return floorHH(micros, 1);
     }
 
-    public static long floorWW(long micros) {
-        return (micros - micros % WEEK_MICROS) + getIsoWeekMicrosOffset(micros);
+    public static long floorHH(long micros, int stride) {
+        return micros - micros % (stride * HOUR_MICROS);
     }
 
     public static long floorMI(long micros) {
-        return micros - micros % MINUTE_MICROS;
+        return floorMI(micros, 1);
+    }
+
+    public static long floorMI(long micros, int stride) {
+        return micros - micros % (stride * MINUTE_MICROS);
     }
 
     public static long floorMM(long micros) {
@@ -280,7 +288,11 @@ public final class Timestamps {
     }
 
     public static long floorMS(long micros) {
-        return micros - micros % MILLI_MICROS;
+        return floorMS(micros, 1);
+    }
+
+    public static long floorMS(long micros, int stride) {
+        return micros - micros % (stride * MILLI_MICROS);
     }
 
     /**
@@ -318,7 +330,19 @@ public final class Timestamps {
     }
 
     public static long floorSS(long micros) {
-        return micros - micros % SECOND_MICROS;
+        return floorSS(micros, 1);
+    }
+
+    public static long floorSS(long micros, int stride) {
+        return micros - micros % (stride * SECOND_MICROS);
+    }
+
+    public static long floorWW(long micros) {
+        return floorWW(micros, 1);
+    }
+
+    public static long floorWW(long micros, int stride) {
+        return (micros - micros % (stride * WEEK_MICROS)) + getIsoWeekMicrosOffset(micros);
     }
 
     public static long floorYYYY(long micros) {
@@ -1024,6 +1048,11 @@ public final class Timestamps {
 
     private static long getTimeMicros(long micros) {
         return micros < 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;
+    }
+
+    private static long getTimeMicros(long micros, int stride) {
+        final long us = stride * DAY_MICROS;
+        return micros < 0 ? us - 1 + (micros % us) : micros % us;
     }
 
     private static boolean isDigit(char c) {

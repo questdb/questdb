@@ -30,6 +30,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class TimestampFloorFunctionFactory implements FunctionFactory {
@@ -40,28 +42,44 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final char c = args.getQuick(0).getChar(null);
+        final CharSequence str = args.getQuick(0).getStr(null);
+        char c = (str != null && str.length() == 1) ? str.charAt(0) : 0;
         switch (c) {
-            case 'd':
-                return new TimestampFloorFunctions.TimestampFloorDDFunction(args.getQuick(1));
             case 'M':
                 return new TimestampFloorFunctions.TimestampFloorMMFunction(args.getQuick(1));
             case 'y':
                 return new TimestampFloorFunctions.TimestampFloorYYYYFunction(args.getQuick(1));
-            case 'w':
-                return new TimestampFloorFunctions.TimestampFloorWWFunction(args.getQuick(1));
-            case 'h':
-                return new TimestampFloorFunctions.TimestampFloorHHFunction(args.getQuick(1));
-            case 'm':
-                return new TimestampFloorFunctions.TimestampFloorMIFunction(args.getQuick(1));
-            case 's':
-                return new TimestampFloorFunctions.TimestampFloorSSFunction(args.getQuick(1));
-            case 'T':
-                return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1));
-            case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
             default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(c).put('\'');
+                int stride = 1;
+                if (c == 0 && str != null && str.length() > 1) {
+                    c = str.charAt(str.length() - 1);
+                    try {
+                        stride = Numbers.parseInt(str.subSequence(0, str.length() - 1));
+                        if (stride <= 0) {
+                            c = 1;
+                        }
+                    } catch (NumericException ignored) {
+                        c = 1;
+                    }
+                }
+                switch (c) {
+                    case 'w':
+                        return new TimestampFloorFunctions.TimestampFloorWWFunction(args.getQuick(1), stride);
+                    case 'd':
+                        return new TimestampFloorFunctions.TimestampFloorDDFunction(args.getQuick(1), stride);
+                    case 'h':
+                        return new TimestampFloorFunctions.TimestampFloorHHFunction(args.getQuick(1), stride);
+                    case 'm':
+                        return new TimestampFloorFunctions.TimestampFloorMIFunction(args.getQuick(1), stride);
+                    case 's':
+                        return new TimestampFloorFunctions.TimestampFloorSSFunction(args.getQuick(1), stride);
+                    case 'T':
+                        return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1), stride);
+                    case 0:
+                        throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
+                    default:
+                        throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(str).put('\'');
+                }
         }
     }
 }
