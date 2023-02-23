@@ -12,21 +12,22 @@ steps:
       restoreKeys: |
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
-  - script: 'wget https://www.apache.org/dist/maven/maven-3/3.8.7/binaries/apache-maven-3.8.7-bin.zip'
+
+  - script: 'wget https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
     condition: or(eq(variables['os'], 'Linux'), eq(variables['os'], 'macOS'))
 
-  - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/3.8.7/binaries/apache-maven-3.8.7-bin.zip','$(build.sourcesdirectory)\\apache-maven-3.8.7-bin.zip')\""
+  - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
     condition: eq(variables['os'], 'Windows')
 
   - task: ExtractFiles@1
     inputs:
-      archiveFilePatterns: 'apache-maven-3.8.7-bin.zip'
+      archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
       destinationFolder: '$(build.sourcesdirectory)/maven'
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
       mavenVersionOption: 'Path'
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-3.8.7'
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
@@ -39,7 +40,7 @@ steps:
     displayName: "Run tests"
     inputs:
       mavenVersionOption: 'Path'
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-3.8.7'
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
@@ -61,7 +62,7 @@ steps:
     displayName: "Run tests with Coverage"
     inputs:
       mavenVersionOption: 'Path'
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-3.8.7'
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
