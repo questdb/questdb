@@ -13,16 +13,22 @@ steps:
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
 
+  - task: Cache@2
+    inputs:
+      key: '"maven_version" | "$(MAVEN_VERSION)"'
+      restoreKeys: mykey | "$(MAVEN_VERSION)"
+      path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
+      cacheHitVar: MVN_CACHE_RESTORED
   - script: 'wget https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
-    condition: or(eq(variables['os'], 'Linux'), eq(variables['os'], 'macOS'))
-
+    condition: and(ne(variables.MVN_CACHE_RESTORED, 'true'), neq(variables['os'], 'Windows'))
   - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
-    condition: eq(variables['os'], 'Windows')
-
+    condition: and(ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
   - task: ExtractFiles@1
     inputs:
       archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
       destinationFolder: '$(build.sourcesdirectory)/maven'
+    condition: ne(variables.MVN_CACHE_RESTORED, 'true')
+
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
