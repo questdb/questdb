@@ -290,12 +290,13 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
 
         assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
     }
+
     @Test
     public void testLikeEscapeTwoSlashes() throws Exception {
         String createTable = "CREATE TABLE myTable (name string)";
         String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
 
-        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\_ignore';"; // two backslashes
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\_ignore';";
         String expected1 = "name\n";
         String expected2 = "name\nThe path is \\_ignore\n";
 
@@ -307,7 +308,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
         String createTable = "CREATE TABLE myTable (name string)";
         String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";
 
-        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\\\_ignore';"; // three backslashes
+        String query = "SELECT * FROM myTable WHERE name LIKE 'The path is \\\\\\_ignore';";
         String expected1 = "name\n";
         String expected2 = "name\nThe path is \\_ignore\n";
 
@@ -317,11 +318,23 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeNotRealEscape() throws Exception {
         String createTable = "CREATE TABLE myTable (name string)";
-        String insertRow = "INSERT INTO myTable  (name) VALUES ('\\\\?\\D:\\path');"; // Four backslashes followed by question mark
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('\\\\?\\D:\\path');";
 
-        String query = "SELECT * FROM myTable WHERE name LIKE '\\\\\\\\_\\\\%';"; // Four backslashes followed by one underscore
+        String query = "SELECT * FROM myTable WHERE name LIKE '\\\\\\\\_\\\\%';";
         String expected1 = "name\n";
         String expected2 = "name\n\\\\?\\D:\\path\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
+    }
+
+    @Test
+    public void testLikeEscapeAtEnd() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
+
+        String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
+        String expected1 = "name\n";
+        String expected2 = "name\n.\\docs\\\n";
 
         assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true, true);
     }
