@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -2802,6 +2802,130 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByFirstLastFactoryIsChosenIfNotKeyedByFilteredSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE pos (" +
+                    "  time TIMESTAMP," +
+                    "  ts TIMESTAMP," +
+                    "  id SYMBOL INDEX," +
+                    "  lat DOUBLE," +
+                    "  lon DOUBLE," +
+                    "  geo6 GEOHASH(6c)" +
+                    ") timestamp (time) PARTITION BY DAY;");
+
+            assertPlan("select time, last(lat) lat, last(lon) lon " +
+                            " from pos " +
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
+                    "SampleByFirstLast\n" +
+                            "  keys: [time]\n" +
+                            "  values: [last(lat), last(lon)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id deferred: true\n" +
+                            "          filter: id='A'\n" +
+                            "        Frame forward scan on: pos\n");
+
+        });
+    }
+
+    @Test
+    public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE pos (" +
+                    "  time TIMESTAMP," +
+                    "  ts TIMESTAMP," +
+                    "  id SYMBOL INDEX," +
+                    "  lat DOUBLE," +
+                    "  lon DOUBLE," +
+                    "  geo6 GEOHASH(6c)" +
+                    ") timestamp (time) PARTITION BY DAY;");
+
+            assertPlan("select   id, time, ts, last(lat) lat, last(lon) lon " +
+                            " from pos " +
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
+                    "SampleBy\n" +
+                            "  keys: [id,time,ts]\n" +
+                            "  values: [last(lat),last(lon)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id deferred: true\n" +
+                            "          filter: id='A'\n" +
+                            "        Frame forward scan on: pos\n");
+
+        });
+    }
+
+    @Test
+    public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonFilteredSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE pos (" +
+                    "  time TIMESTAMP," +
+                    "  id SYMBOL INDEX," +
+                    "  lat DOUBLE," +
+                    "  lon DOUBLE," +
+                    "  geo6 GEOHASH(6c)," +
+                    "  type SYMBOL " +
+                    ") timestamp (time) PARTITION BY DAY;");
+
+            assertPlan("select time, type, last(lat) lat, last(lon) lon " +
+                            " from pos " +
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
+                    "SampleBy\n" +
+                            "  keys: [time,type]\n" +
+                            "  values: [last(lat),last(lon)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id deferred: true\n" +
+                            "          filter: id='A'\n" +
+                            "        Frame forward scan on: pos\n");
+
+            assertPlan("select   id, time, type, last(lat) lat, last(lon) lon " +
+                            " from pos " +
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
+                    "SampleBy\n" +
+                            "  keys: [id,time,type]\n" +
+                            "  values: [last(lat),last(lon)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id deferred: true\n" +
+                            "          filter: id='A'\n" +
+                            "        Frame forward scan on: pos\n");
+
+        });
+    }
+
+    @Test
+    public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE pos (" +
+                    "  time TIMESTAMP," +
+                    "  id SYMBOL INDEX," +
+                    "  lat DOUBLE," +
+                    "  lon DOUBLE," +
+                    "  geo6 GEOHASH(6c)" +
+                    ") timestamp (time) PARTITION BY DAY;");
+
+            assertPlan("select   id, time, geo6, last(lat) lat, last(lon) lon " +
+                            " from pos " +
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
+                    "SampleBy\n" +
+                            "  keys: [id,time,geo6]\n" +
+                            "  values: [last(lat),last(lon)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id deferred: true\n" +
+                            "          filter: id='A'\n" +
+                            "        Frame forward scan on: pos\n");
+
+            assertPlan("select   id, time, lat, last(lat) lastlat, last(lon) lon " +
+                            " from pos " +
+                            " where id = 'A' sample by 15m ALIGN to CALENDAR",
+                    "SampleBy\n" +
+                            "  keys: [id,time,lat]\n" +
+                            "  values: [last(lat),last(lon)]\n" +
+                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "        Index forward scan on: id deferred: true\n" +
+                            "          filter: id='A'\n" +
+                            "        Frame forward scan on: pos\n");
+        });
+    }
+
+    @Test
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
@@ -2870,6 +2994,36 @@ public class SampleByTest extends AbstractGriffinTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "expected first() or last() functions but got min");
         }
+    }
+
+    @Test
+    public void testSampleByFirstLastWithNonTsOrFilteredSymbolColumn() throws Exception {
+        assertQuery("id\ttime\tgeo6\tlat\tlon\n",
+                "select   id, time, geo6, last(lat) lat, last(lon) lon " +
+                        "from pos " +
+                        "where id = 'A' sample by 15m ALIGN to CALENDAR",
+                "CREATE TABLE pos (" +
+                        "  time TIMESTAMP," +
+                        "  id SYMBOL INDEX," +
+                        "  lat DOUBLE," +
+                        "  lon DOUBLE," +
+                        "  geo6 GEOHASH(6c)" +
+                        ") timestamp (time) PARTITION BY DAY",
+                "time",
+                "insert into pos " +
+                        "select dateadd('m',x::int, '1970-01-01T00:00:00.000000Z') , 'A', x, x, " +
+                        "case when x%2 = 0 then 'yyyyyy' else 'zzzzzz' end  from long_sequence(40) " +
+                        "union all " +
+                        "select '1970-01-01T01:01:00.000000Z'::timestamp, 'A', 101, 101, #zzzzzz from long_sequence(1)",
+                "id\ttime\tgeo6\tlat\tlon\n" +
+                        "A\t1970-01-01T00:00:00.000000Z\tzzzzzz\t13.0\t13.0\n" +
+                        "A\t1970-01-01T00:00:00.000000Z\tyyyyyy\t14.0\t14.0\n" +
+                        "A\t1970-01-01T00:15:00.000000Z\tzzzzzz\t29.0\t29.0\n" +
+                        "A\t1970-01-01T00:15:00.000000Z\tyyyyyy\t28.0\t28.0\n" +
+                        "A\t1970-01-01T00:30:00.000000Z\tyyyyyy\t40.0\t40.0\n" +
+                        "A\t1970-01-01T00:30:00.000000Z\tzzzzzz\t39.0\t39.0\n" +
+                        "A\t1970-01-01T01:00:00.000000Z\tzzzzzz\t101.0\t101.0\n",
+                false, false, false, false);
     }
 
     @Test
@@ -3398,7 +3552,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(172800000000, 3600000) created_at" +
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day",
-                null,
+                "timestamp###DESC",
                 true,
                 false,
                 false);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -57,11 +57,6 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default long getCommitInterval() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     default long getMetaMaxUncommittedRows() {
         throw new UnsupportedOperationException();
     }
@@ -94,11 +89,6 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void tick() {
         // no-op
-    }
-
-    @Override
-    default void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
-        throw CairoException.critical(0).put("change commit interval does not update sequencer metadata");
     }
 }
 

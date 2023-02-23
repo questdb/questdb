@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -81,6 +81,10 @@ public class PGWireServer implements Closeable {
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
+                        if (operation == IOOperation.HEARTBEAT) {
+                            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+                            return false;
+                        }
                         jobContext.handleClientOperation(context, operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                         return true;
@@ -147,7 +151,7 @@ public class PGWireServer implements Closeable {
         return workerPool;
     }
 
-    public static class PGConnectionContextFactory extends MutableIOContextFactory<PGConnectionContext> {
+    public static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,

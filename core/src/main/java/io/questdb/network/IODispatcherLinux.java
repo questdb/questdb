@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,10 @@ package io.questdb.network;
 
 import io.questdb.std.LongMatrix;
 
-public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher<C> {
+public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private static final int EVM_DEADLINE = 1;
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
-    private static final int OPM_ID = 3;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final Epoll epoll;
     // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
@@ -49,7 +48,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     @Override
     public void close() {
         super.close();
-        this.epoll.close();
+        epoll.close();
         LOG.info().$("closed").$();
     }
 
@@ -80,14 +79,11 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             final long id = pending.get(i, OPM_ID);
-            if (
-                    epoll.control(
-                            (int) pending.get(i, OPM_FD),
-                            id,
-                            EpollAccessor.EPOLL_CTL_ADD,
-                            initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                    ) < 0
-            ) {
+            final int fd = (int) pending.get(i, OPM_FD);
+            int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
+            pending.set(i, OPM_OPERATION, operation);
+            int event = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
+            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, event) < 0) {
                 LOG.critical().$("internal error: epoll_ctl failure [id=").$(id)
                         .$(", err=").$(nf.errno()).I$();
             }
@@ -115,7 +111,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             }
         } else {
             publishOperation(
-                    (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
+                    // Check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
+                    (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0 ? IOOperation.WRITE : IOOperation.READ,
                     context
             );
             pending.deleteRow(row);
@@ -155,53 +152,121 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         return idSeq++ << 1;
     }
 
-    private void processIdleConnections(long idleTimestamp) {
+    private void processHeartbeats(int watermark, long timestamp) {
         int count = 0;
-        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_TIMESTAMP) < idleTimestamp; i++, count++) {
+        for (int i = 0; i < watermark && pending.get(i, OPM_HEARTBEAT_TIMESTAMP) < timestamp; i++, count++) {
+            final C context = pending.get(i);
+
+            // De-register pending operation from epoll. We'll register it later when we get a heartbeat pong.
+            final int fd = context.getFd();
+            final long opId = pending.get(i, OPM_ID);
+            if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(opId)
+                        .$(", err=").$(nf.errno()).I$();
+            } else {
+                context.setHeartbeatId(opId);
+                publishOperation(IOOperation.HEARTBEAT, context);
+
+                final int operation = (int) pending.get(i, OPM_OPERATION);
+                int r = pendingHeartbeats.addRow();
+                pendingHeartbeats.set(r, OPM_CREATE_TIMESTAMP, pending.get(i, OPM_CREATE_TIMESTAMP));
+                pendingHeartbeats.set(r, OPM_FD, fd);
+                pendingHeartbeats.set(r, OPM_ID, opId);
+                pendingHeartbeats.set(r, OPM_OPERATION, operation);
+                pendingHeartbeats.set(r, context);
+
+                LOG.debug().$("published heartbeat [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(opId).I$();
+            }
+
+            final SuspendEvent suspendEvent = context.getSuspendEvent();
+            if (suspendEvent != null) {
+                // Also, de-register suspend event from epoll.
+                int eventRow = pendingEvents.binarySearch(opId, EVM_OPERATION_ID);
+                if (eventRow < 0) {
+                    LOG.critical().$("internal error: suspend event not found on heartbeat [id=").$(opId).I$();
+                } else {
+                    final long eventId = pendingEvents.get(eventRow, EVM_ID);
+                    if (epoll.control(suspendEvent.getFd(), eventId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                        LOG.critical().$("internal error: epoll_ctl remove suspend event failure [eventId=").$(eventId)
+                                .$(", err=").$(nf.errno()).I$();
+                    }
+                    pendingEvents.deleteRow(eventRow);
+                }
+            }
+        }
+        pending.zapTop(count);
+    }
+
+    private int processIdleConnections(long idleTimestamp) {
+        int count = 0;
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, OPM_CREATE_TIMESTAMP) < idleTimestamp; i++, count++) {
             doDisconnect(pending.get(i), pending.get(i, OPM_ID), DISCONNECT_SRC_IDLE);
         }
         pending.zapTop(count);
+        return count;
     }
 
     private boolean processRegistrations(long timestamp) {
         boolean useful = false;
         long cursor;
         while ((cursor = interestSubSeq.next()) > -1) {
-            IOEvent<C> event = interestQueue.get(cursor);
-            C context = event.context;
-            int requestedOperation = event.operation;
+            final IOEvent<C> event = interestQueue.get(cursor);
+            final C context = event.context;
+            final int requestedOperation = event.operation;
+            final long srcOpId = context.getAndResetHeartbeatId();
             interestSubSeq.done(cursor);
 
             useful = true;
             final long opId = nextOpId();
             final int fd = context.getFd();
+
             int operation = requestedOperation;
-            LOG.debug().$("processing registration [fd=").$(fd)
-                    .$(", op=").$(operation)
-                    .$(", id=").$(opId).I$();
-
             final SuspendEvent suspendEvent = context.getSuspendEvent();
+            int epollCmd = EpollAccessor.EPOLL_CTL_MOD;
+            if (requestedOperation == IOOperation.HEARTBEAT) {
+                assert srcOpId != -1;
+
+                int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
+                if (heartbeatRow < 0) {
+                    continue; // The connection is already closed.
+                } else {
+                    epollCmd = EpollAccessor.EPOLL_CTL_ADD;
+                    operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
+
+                    LOG.debug().$("processing heartbeat registration [fd=").$(fd)
+                            .$(", op=").$(operation)
+                            .$(", srcId=").$(srcOpId)
+                            .$(", id=").$(opId).I$();
+
+                    int r = pending.addRow();
+                    pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
+                    pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                    pending.set(r, OPM_FD, fd);
+                    pending.set(r, OPM_ID, opId);
+                    pending.set(r, OPM_OPERATION, operation);
+                    pending.set(r, context);
+
+                    pendingHeartbeats.deleteRow(heartbeatRow);
+                }
+            } else {
+                LOG.debug().$("processing registration [fd=").$(fd)
+                        .$(", op=").$(operation)
+                        .$(", id=").$(opId).I$();
+
+                int opRow = pending.addRow();
+                pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                pending.set(opRow, OPM_FD, fd);
+                pending.set(opRow, OPM_ID, opId);
+                pending.set(opRow, OPM_OPERATION, requestedOperation);
+                pending.set(opRow, context);
+            }
+
             if (suspendEvent != null) {
-                // if the operation was suspended, we request a read to be able to detect a client disconnect 
+                // if the operation was suspended, we request a read to be able to detect a client disconnect
                 operation = IOOperation.READ;
-            }
-
-            int opRow = pending.addRow();
-            pending.set(opRow, OPM_TIMESTAMP, timestamp);
-            pending.set(opRow, OPM_FD, fd);
-            pending.set(opRow, OPM_ID, opId);
-            pending.set(opRow, OPM_OPERATION, requestedOperation);
-            pending.set(opRow, context);
-
-            // we re-arm epoll globally, in that even when we disconnect
-            // because we have to remove FD from epoll
-            final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
-            if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_MOD, epollOp) < 0) {
-                LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
-                        .$(", err=").$(nf.errno()).I$();
-            }
-
-            if (suspendEvent != null) {
                 // ok, the operation was suspended, so we need to track the suspend event
                 final long eventId = nextEventId();
                 LOG.debug().$("registering suspend event [fd=").$(fd)
@@ -219,6 +284,14 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                     LOG.critical().$("internal error: epoll_ctl add suspend event failure [id=").$(eventId)
                             .$(", err=").$(nf.errno()).I$();
                 }
+            }
+
+            // we re-arm epoll globally, in that even when we disconnect
+            // because we have to remove FD from epoll
+            final int epollOp = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
+            if (epoll.control(fd, opId, epollCmd, epollOp) < 0) {
+                LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(opId)
+                        .$(", err=").$(nf.errno()).I$();
             }
         }
         return useful;
@@ -325,8 +398,15 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
         // process timed out connections
         final long idleTimestamp = timestamp - idleConnectionTimeout;
-        if (pending.size() > 0 && pending.get(0, OPM_TIMESTAMP) < idleTimestamp) {
-            processIdleConnections(idleTimestamp);
+        if (pending.size() > 0 && pending.get(0, OPM_CREATE_TIMESTAMP) < idleTimestamp) {
+            watermark -= processIdleConnections(idleTimestamp);
+            useful = true;
+        }
+
+        // process heartbeat timers
+        final long heartbeatTimestamp = timestamp - heartbeatIntervalMs;
+        if (watermark > 0 && pending.get(0, OPM_HEARTBEAT_TIMESTAMP) < heartbeatTimestamp) {
+            processHeartbeats(watermark, heartbeatTimestamp);
             useful = true;
         }
 
@@ -335,6 +415,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
 
     @Override
     protected void unregisterListenerFd() {
-        this.epoll.removeListen(serverFd);
+        epoll.removeListen(serverFd);
     }
 }

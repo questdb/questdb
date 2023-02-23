@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,24 +29,27 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.AbstractMutableIOContext;
+import io.questdb.network.IOContext;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.ByteCharSequence;
 import io.questdb.std.str.DirectByteCharSequence;
 
-class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectionContext> {
+class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
+    private final long checkIdleInterval;
+    private final long commitInterval;
     private final boolean disconnectOnError;
+    private final long idleTimeout;
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
     private final LineTcpMeasurementScheduler scheduler;
+    private final ByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new ByteCharSequenceObjHashMap<>();
     protected boolean peerDisconnected;
     protected long recvBufEnd;
     protected long recvBufPos;
@@ -54,6 +57,8 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
     protected long recvBufStartOfMeasurement;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
+    private long nextCheckIdleTime;
+    private long nextCommitTime;
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
@@ -65,6 +70,23 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
+        this.checkIdleInterval = configuration.getMaintenanceInterval();
+        this.commitInterval = configuration.getCommitInterval();
+        long now = milliClock.getTicks();
+        this.nextCheckIdleTime = now + checkIdleInterval;
+        this.nextCommitTime = now + commitInterval;
+        this.idleTimeout = configuration.getWriterIdleTimeout();
+    }
+
+    public void checkIdle(long millis) {
+        for (int n = tableUpdateDetailsUtf8.size() - 1; n >= 0; n--) {
+            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            if (millis - tud.getLastMeasurementMillis() >= idleTimeout) {
+                tableUpdateDetailsUtf8.remove(tableNameUtf8);
+                tud.close();
+            }
+        }
     }
 
     @Override
@@ -72,12 +94,60 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         recvBufPos = recvBufStart;
         peerDisconnected = false;
         resetParser();
+        ObjList<ByteCharSequence> keys = tableUpdateDetailsUtf8.keys();
+        for (int n = keys.size() - 1; n >= 0; --n) {
+            final ByteCharSequence tableNameUtf8 = keys.get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            tud.close();
+            tableUpdateDetailsUtf8.remove(tableNameUtf8);
+        }
     }
 
     @Override
     public void close() {
         this.fd = -1;
         recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
+        clear();
+    }
+
+    public long commitWalTables(long wallClockMillis) {
+        long minTableNextCommitTime = Long.MAX_VALUE;
+        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
+            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
+
+            if (tud.isWal()) {
+                final MillisecondClock millisecondClock = tud.getMillisecondClock();
+                try {
+                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
+                    // get current time again, commit is not instant and take quite some time.
+                    wallClockMillis = millisecondClock.getTicks();
+                    if (tableNextCommitTime < minTableNextCommitTime) {
+                        // taking the earliest commit time
+                        minTableNextCommitTime = tableNextCommitTime;
+                    }
+                } catch (Throwable ex) {
+                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                }
+            }
+        }
+        // if no tables, just use the default commit interval
+        return minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitInterval;
+    }
+
+    public void doMaintenance(long now) {
+        if (now > nextCommitTime) {
+            nextCommitTime = commitWalTables(now);
+        }
+
+        if (now > nextCheckIdleTime) {
+            checkIdle(now);
+            nextCheckIdleTime = now + checkIdleInterval;
+        }
+    }
+
+    public TableUpdateDetails getTableUpdateDetails(DirectByteCharSequence tableName) {
+        return tableUpdateDetailsUtf8.get(tableName);
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -128,6 +198,10 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         }
     }
 
+    void addTableUpdateDetails(ByteCharSequence tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+        tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
+    }
+
     /**
      * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
      * context and protocol parser such that all pointers that point to the incomplete measurement will remain
@@ -173,7 +247,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(netIoJob, parser)) {
+                            if (scheduler.scheduleEvent(netIoJob, this, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();
@@ -251,6 +325,16 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
             return bufferRemaining < orig;
         }
         return !peerDisconnected;
+    }
+
+    TableUpdateDetails removeTableUpdateDetails(DirectByteCharSequence tableNameUtf8) {
+        final int keyIndex = tableUpdateDetailsUtf8.keyIndex(tableNameUtf8);
+        if (keyIndex < 0) {
+            TableUpdateDetails tud = tableUpdateDetailsUtf8.valueAtQuick(keyIndex);
+            tableUpdateDetailsUtf8.removeAt(keyIndex);
+            return tud;
+        }
+        return null;
     }
 
     protected void resetParser() {

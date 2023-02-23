@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1620,24 +1620,6 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.rollback();
             Assert.assertEquals(0, writer.size());
         }
-    }
-
-    @Test
-    public void testCommitInterval() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            create(FF, PartitionBy.NONE, 4);
-            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-                writer.updateCommitInterval(0.0, 1000);
-                Assert.assertEquals(1000, writer.getCommitInterval());
-
-                writer.updateCommitInterval(0.5, 1000);
-                Assert.assertEquals(500, writer.getCommitInterval());
-
-                writer.updateCommitInterval(-0.5, 3000);
-                writer.setMetaO3MaxLag(0);
-                Assert.assertEquals(3000, writer.getCommitInterval());
-            }
-        });
     }
 
     @Test

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -399,11 +399,11 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         runTest((factoryType, thread, token, event, segment, position) -> {
             String tableName = token.getTableName();
             if (walEnabled) {
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
                     handleWriterGetEvent(tableName);
                 }
                 // There is no locking as such in WAL, so we treat writer return as an unlock event.
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     handleWriterUnlockEvent(tableName);
                     handleWriterReturnEvent(tableName);
                 }
@@ -411,10 +411,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
                     handleWriterUnlockEvent(tableName);
                 }
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_GET) {
                     handleWriterGetEvent(tableName);
                 }
-                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
                     handleWriterReturnEvent(tableName);
                 }
             }

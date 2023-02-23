@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     public void test2partitionsSelectLastN() throws Exception {
         prepare2partitionsTable();
 
-        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3");
+        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
     }
 
     @Test
@@ -413,7 +413,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     public void testNormalTableSelectLastN() throws Exception {
         prepareNormalTable();
 
-        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3");
+        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
     }
 
     @Test
@@ -579,9 +579,17 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     public void testPartitionPerRowSelectFirstNwithDifferentNameInSubqueryV3() throws Exception {
         preparePartitionPerRowTableWithLongNames();
         // order by advice is not available in the sub-query ... sort performed by limitRecordCursor
-        assertQueryExpectSize(EXPECTED, "select rectype, creaton from " +
-                "( select record_Type as rectype, CREATED_ON creaton from trips) " +
-                "order by creaton desc limit 5");
+        assertQuery(
+                EXPECTED,
+                "select rectype, creaton from " +
+                        "( select record_Type as rectype, CREATED_ON creaton from trips) " +
+                        "order by creaton desc limit 5",
+                null,
+                "creaton###DESC",
+                true,
+                false,
+                true
+        );
     }
 
     @Test
@@ -595,7 +603,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     public void testPartitionPerRowSelectLastN() throws Exception {
         preparePartitionPerRowTable();
 
-        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3");
+        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
     }
 
     @Test
