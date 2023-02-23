@@ -221,9 +221,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                 tableToken.getDirName()
                         ) != TableUtils.TABLE_EXISTS
                 ) {
-                    // Delete sequencer files
-                    deleteTableSequencerFiles(tableToken);
-
                     // Fully deregister the table
                     LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
                     ff.rmdir(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).slash$());

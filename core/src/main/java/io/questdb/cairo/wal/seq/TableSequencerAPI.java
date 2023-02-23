@@ -134,16 +134,10 @@ public class TableSequencerAPI implements QuietCloseable {
                         // Slow path.
                         try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
                             lastTxn = tableSequencer.lastTxn();
-                        } catch (CairoException e) {
-                            if (e.isTableDropped()) {
-                                lastTxn = -1;
-                            } else {
-                                throw e;
-                            }
                         }
                     }
                 } catch (CairoException ex) {
-                    if (ex.errnoReadPathDoesNotExist()) {
+                    if (ex.errnoReadPathDoesNotExist() || ex.isTableDropped()) {
                         // Table is partially dropped, but not fully.
                         lastTxn = -1;
                     } else {

@@ -31,9 +31,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -50,9 +48,11 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
 @SuppressWarnings("SameParameterValue")
 public class WalTableSqlTest extends AbstractGriffinTest {
@@ -665,6 +665,129 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropTableAndConvertAnother() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            TableToken sysTableName1 = engine.getTableToken(tableName);
+
+            compile("create table " + tableName + "2 as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY"
+            );
+            TableToken sysTableName2 = engine.getTableToken(tableName + "2");
+
+            compile("alter table " + tableName + "2 set type wal", sqlExecutionContext);
+            compile("drop table " + tableName);
+            engine.releaseInactive();
+
+            final ObjList<TableToken> convertedTables = new ObjList<>();
+            convertedTables.add(sysTableName2);
+            engine.reloadTableNames(convertedTables);
+
+            drainWalQueue();
+            runWalPurgeJob();
+
+            engine.releaseInactive();
+
+            drainWalQueue();
+            runWalPurgeJob();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
+        });
+    }
+
+    @Test
+    public void testDropTableHalfDeleted() throws Exception {
+        AtomicReference<String> pretendNotExist = new AtomicReference<>("<>");
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int count = 0;
+
+            @Override
+            public boolean exists(LPSZ name) {
+                if (Chars.startsWith(name, pretendNotExist.get()) && count++ == 0) {
+                    return false;
+                }
+                return super.exists(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            TableToken sysTableName1 = engine.getTableToken(tableName);
+            compile("drop table " + tableName);
+
+            pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).toString());
+            engine.reloadTableNames();
+
+            runWalPurgeJob();
+
+            engine.reloadTableNames();
+
+            drainWalQueue();
+            runWalPurgeJob();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
+        });
+    }
+
+    @Test
+    public void testDropTableLeftSomeFilesOnDisk() throws Exception {
+        AtomicReference<String> pretendNotExist = new AtomicReference<>("<>");
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int count = 0;
+
+            @Override
+            public int rmdir(Path path) {
+                if (Chars.equals(path, pretendNotExist.get()) && count++ == 0) {
+                    super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR).$());
+                    return -1;
+                }
+                return super.rmdir(path);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            TableToken sysTableName1 = engine.getTableToken(tableName);
+            compile("drop table " + tableName);
+
+            pretendNotExist.set(Path.getThreadLocal(root).concat(sysTableName1).slash$().toString());
+            engine.reloadTableNames();
+
+            runWalPurgeJob();
+
+            drainWalQueue();
+            runWalPurgeJob();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "sym.d", false);
+        });
+    }
+
+    @Test
     public void testDropTxnNotificationQueueOverflow() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -1184,7 +1307,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
         MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
 
-        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.SEQ_DIR);
+        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(SEQ_DIR);
         MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
     }
 

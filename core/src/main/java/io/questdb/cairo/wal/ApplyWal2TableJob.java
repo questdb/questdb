@@ -139,7 +139,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
             } while (lastWriterTxn < lastSequencerTxn && !runStatus.isTerminating());
         } catch (CairoException ex) {
-            if (engine.isTableDropped(tableToken)) {
+            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
                 // Table is dropped, and we received cairo exception in the middle of apply
                 return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
             }
