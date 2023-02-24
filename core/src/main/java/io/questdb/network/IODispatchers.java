@@ -31,7 +31,7 @@ public class IODispatchers {
     private IODispatchers() {
     }
 
-    public static <C extends IOContext> IODispatcher<C> create(
+    public static <C extends IOContext<C>> IODispatcher<C> create(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory
     ) {

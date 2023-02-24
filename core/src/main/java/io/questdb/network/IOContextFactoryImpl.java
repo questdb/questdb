@@ -32,13 +32,12 @@ import io.questdb.std.WeakMutableObjectPool;
 
 import java.io.Closeable;
 
-public class MutableIOContextFactory<C extends MutableIOContext<C>>
-        implements IOContextFactory<C>, Closeable, EagerThreadSetup {
+public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFactory<C>, Closeable, EagerThreadSetup {
 
     private final ThreadLocal<WeakMutableObjectPool<C>> contextPool;
     private volatile boolean closed = false;
 
-    public MutableIOContextFactory(ObjectFactory<C> factory, int poolSize) {
+    public IOContextFactoryImpl(ObjectFactory<C> factory, int poolSize) {
         // todo: this is very slow, refactor
         this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(factory, poolSize));
     }
@@ -63,7 +62,6 @@ public class MutableIOContextFactory<C extends MutableIOContext<C>>
         Misc.free(this.contextPool);
     }
 
-    @Override
     public C newInstance(int fd, IODispatcher<C> dispatcher) {
         return contextPool.get().pop().of(fd, dispatcher);
     }

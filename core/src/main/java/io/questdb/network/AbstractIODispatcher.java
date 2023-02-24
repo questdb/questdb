@@ -32,15 +32,17 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
+public abstract class AbstractIODispatcher<C extends IOContext<C>> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int DISCONNECT_SRC_IDLE = 1;
     protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
-    // OPM_XYZ = 3 is defined in the child classes
+    protected static final int OPM_CREATE_TIMESTAMP = 0;
     protected static final int OPM_FD = 1;
+    protected static final int OPM_HEARTBEAT_TIMESTAMP = 3;
+    protected static final int OPM_ID = 4;
+    protected static final int OPM_COLUMN_COUNT = OPM_ID + 1;
     protected static final int OPM_OPERATION = 2;
-    protected static final int OPM_TIMESTAMP = 0;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     protected final int activeConnectionLimit;
@@ -58,7 +60,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final RingQueue<IOEvent<C>> ioEventQueue;
     protected final MCSequence ioEventSubSeq;
     protected final NetworkFacade nf;
-    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(4);
+    protected final ObjLongMatrix<C> pending = new ObjLongMatrix<>(OPM_COLUMN_COUNT);
+    protected final ObjLongMatrix<C> pendingHeartbeats = new ObjLongMatrix<>(OPM_COLUMN_COUNT);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
@@ -67,6 +70,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     private final int sndBufSize;
     private final int testConnectionBufSize;
     protected boolean closed = false;
+    protected long heartbeatIntervalMs;
     protected int serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
@@ -110,7 +114,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
-
+        this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
         createListenFd();
         listening = true;
     }
@@ -124,8 +128,15 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             doDisconnect(pending.get(i), DISCONNECT_SRC_SHUTDOWN);
         }
 
-        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
-        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
+        interestSubSeq.consumeAll(interestQueue, disconnectContextRef);
+        ioEventSubSeq.consumeAll(ioEventQueue, disconnectContextRef);
+
+        // Important: we need to process all queues before we iterate through pending heartbeats.
+        // Otherwise, we may end up closing the same context twice.
+        for (int i = 0, n = pendingHeartbeats.size(); i < n; i++) {
+            doDisconnect(pendingHeartbeats.get(i), DISCONNECT_SRC_SHUTDOWN);
+        }
+
         if (serverFd > 0) {
             nf.close(serverFd, LOG);
             serverFd = -1;
@@ -203,7 +214,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         // all rows below watermark will be registered with epoll (or similar)
         int r = pending.addRow();
         LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
-        pending.set(r, OPM_TIMESTAMP, timestamp);
+        pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
+        pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, ioContextFactory.newInstance(fd, this));
@@ -239,7 +251,19 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
+        C context = event.context;
+        if (context != null && !context.invalid()) {
+            final long heartbeatOpId = context.getAndResetHeartbeatId();
+            if (heartbeatOpId != -1) {
+                int r = pendingHeartbeats.binarySearch(heartbeatOpId, OPM_ID);
+                if (r < 0) {
+                    LOG.critical().$("internal error: heartbeat not found [opId=").$(heartbeatOpId).I$();
+                } else {
+                    pendingHeartbeats.deleteRow(r);
+                }
+            }
+        }
+        doDisconnect(context, DISCONNECT_SRC_QUEUE);
     }
 
     protected void accept(long timestamp) {
@@ -329,9 +353,10 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected abstract void pendingAdded(int index);
 
     protected void processDisconnects(long epochMs) {
-        disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);
+        disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
-            LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs).$("ms, closing listener [serverFd=").$(serverFd).I$();
+            LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
+                    .$("ms, closing listener [serverFd=").$(serverFd).I$();
             nf.close(serverFd);
             serverFd = -1;
         }
@@ -343,7 +368,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         evt.context = context;
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
-        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(operation).$(", pos=").$(cursor).$(']').$();
+        LOG.debug().$("fired [fd=").$(context.getFd())
+                .$(", op=").$(operation)
+                .$(", pos=").$(cursor).I$();
     }
 
     protected abstract void registerListenerFd();

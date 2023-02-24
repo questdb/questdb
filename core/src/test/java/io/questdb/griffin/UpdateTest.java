@@ -1384,6 +1384,46 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateString() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                            " (select" +
+                            " rnd_str('foo','bar') as s," +
+                            " timestamp_sequence(0, 1000000) ts," +
+                            " x" +
+                            " from long_sequence(5)) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""),
+                    sqlExecutionContext);
+
+            // char
+            executeUpdate("update up set s = 'a' where s = 'bar'");
+            assertSql("up", "s\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "a\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "a\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "a\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            // string
+            executeUpdate("update up set s = 'baz' where s = 'a'");
+            assertSql("up", "s\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "baz\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "baz\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "baz\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            // UUID
+            executeUpdate("update up set s = cast('11111111-1111-1111-1111-111111111111' as uuid) where s = 'baz'");
+            assertSql("up", "s\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    @Test
     public void testUpdateStringAndFixedColumnPageSize() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +

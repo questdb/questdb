@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,35 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.QuietCloseable;
-import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
+public class LineTcpReceiverConfigurationHelperTest {
+    @Test
+    public void testILPCommitInterval() {
+        Assert.assertEquals(1000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.0, 1000));
+        Assert.assertEquals(500, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.5, 1000));
+        Assert.assertEquals(3000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, -0.5, 3000));
+    }
 
-    @Override
-    void close(); // we don't throw IOException
-
-    /**
-     * Return the REAL row id of given row on current page.
-     * This is used for e.g. updating rows.
-     *
-     * @param rowIndex - page index of row
-     * @return real row id
-     */
-    long getUpdateRowId(long rowIndex);
-
-    @Nullable PageFrame next();
-
-    /**
-     * @return size of page in bytes
-     */
-    long size();
-
-    /**
-     * Return the cursor to the beginning of the page frame.
-     * Sets page address to first column.
-     */
-    void toTop();
 }

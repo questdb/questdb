@@ -3366,13 +3366,13 @@ class SqlOptimiser {
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         useGroupByModel = true;
 
-                        if (groupByModel.getSampleByFill().size() > 0) {//file breaks if column is de-duplicated
+                        if (groupByModel.getSampleByFill().size() > 0) { // fill breaks if column is de-duplicated
                             continue;
                         }
 
                         ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel);
-                        if (repl == qc.getAst()) {//no rewrite
-                            if (!useOuterModel) {//so try to push duplicate aggregates to nested model    
+                        if (repl == qc.getAst()) { // no rewrite
+                            if (!useOuterModel) { // so try to push duplicate aggregates to nested model
                                 for (int j = i + 1; j < k; j++) {
                                     if (ExpressionNode.compareNodesExact(qc.getAst(), columns.get(j).getAst())) {
                                         useOuterModel = true;
@@ -3461,7 +3461,7 @@ class SqlOptimiser {
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         QueryColumn matchingCol = groupByModel.findBottomUpColumnByAst(qc.getAst());
-                        //reuse existing aggregate column in group by model
+                        // reuse existing aggregate column in group by model
                         if (useOuterModel && matchingCol != null) {
                             QueryColumn ref = nextColumn(qc.getAlias(), matchingCol.getAlias());
                             ref = ensureAliasUniqueness(outerVirtualModel, ref);

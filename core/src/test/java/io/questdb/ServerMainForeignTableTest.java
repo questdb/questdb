@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.log.LogFactory;
-
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -51,7 +50,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.tools.TestUtils.*;
-import static io.questdb.test.tools.TestUtils.assertSql;
 
 public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
@@ -369,7 +367,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
@@ -377,23 +375,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getCairoEngine();
                 TableToken tableToken = createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), engine, compiler, context, tableName);
                 assertTableExists(tableToken, true, true);
-                int maxFails = 20;
-                int fails = 0;
-                for (int i = 0; i < maxFails; i++) {
-                    try {
-                        assertSql(
-                                compiler,
-                                context,
-                                "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                                new StringSink(),
-                                TABLE_START_CONTENT);
-                        break;
-                    } catch (AssertionError ignore) {
-                        fails++;
-                        Os.sleep(50L);
-                    }
-                }
-                Assert.assertTrue(fails < maxFails);
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        new StringSink(),
+                        TABLE_START_CONTENT);
                 dropWalTable(engine, compiler, context, tableToken, true);
             }
         });
