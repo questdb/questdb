@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1380,6 +1380,46 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:01:42.000000Z\t12\t42\n" +
                     "1970-01-01T00:01:43.000000Z\t13\t40\n" +
                     "1970-01-01T00:01:44.000000Z\t14\t42\n");
+        });
+    }
+
+    @Test
+    public void testUpdateString() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                            " (select" +
+                            " rnd_str('foo','bar') as s," +
+                            " timestamp_sequence(0, 1000000) ts," +
+                            " x" +
+                            " from long_sequence(5)) timestamp(ts)" + (walEnabled ? " partition by DAY WAL" : ""),
+                    sqlExecutionContext);
+
+            // char
+            executeUpdate("update up set s = 'a' where s = 'bar'");
+            assertSql("up", "s\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "a\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "a\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "a\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            // string
+            executeUpdate("update up set s = 'baz' where s = 'a'");
+            assertSql("up", "s\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "baz\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "baz\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "baz\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            // UUID
+            executeUpdate("update up set s = cast('11111111-1111-1111-1111-111111111111' as uuid) where s = 'baz'");
+            assertSql("up", "s\tts\tx\n" +
+                    "foo\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "foo\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "11111111-1111-1111-1111-111111111111\t1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
 

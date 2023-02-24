@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -85,7 +85,7 @@ public class UuidTest extends AbstractGriffinTest {
 
     @Test
     public void testComparisonWithSymbols() throws Exception {
-        // UUID is implicitly casted to String
+        // UUID is implicitly cast to String
         // and we can compare strings to symbols
         assertCompile("create table x (u UUID, s SYMBOL)");
         assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");

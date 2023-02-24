@@ -22,33 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.cutlass.line.tcp;
 
-public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
-    protected IODispatcher<T> dispatcher;
-    protected int fd = -1;
-
-    @Override
-    public void clear() {
-        this.fd = -1;
-        this.dispatcher = null;
-    }
-
-    @Override
-    public IODispatcher<T> getDispatcher() {
-        return dispatcher;
-    }
-
-    @Override
-    public int getFd() {
-        return fd;
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public T of(int fd, IODispatcher<T> dispatcher) {
-        this.fd = fd;
-        this.dispatcher = dispatcher;
-        return (T) this;
+public class LineTcpReceiverConfigurationHelper {
+    public static long calcCommitInterval(long o3MinLag, double fraction, long defInterval) {
+        long commitIntervalMicros = (long) (o3MinLag * fraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : defInterval;
     }
 }

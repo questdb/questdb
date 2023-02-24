@@ -22,10 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb;
 
-import io.questdb.std.Mutable;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.mp.WorkerPool;
+import org.jetbrains.annotations.Nullable;
 
-public interface MutableIOContext<T extends MutableIOContext<T>> extends IOContext, Mutable {
-    T of(int fd, IODispatcher<T> dispatcher);
+public class TestServerMain extends ServerMain {
+    public TestServerMain(String... args) {
+        super(args);
+    }
+
+    public TestServerMain(final Bootstrap bootstrap) {
+        super(bootstrap);
+    }
+
+    @Override
+    protected void setupWalApplyJob(
+            WorkerPool workerPool,
+            CairoEngine engine,
+            int sharedWorkerCount,
+            @Nullable FunctionFactoryCache ffCache
+    ) {
+        // do nothing
+    }
 }

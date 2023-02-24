@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -230,7 +230,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 break;
         }
-        scheduler.commitWalTables(noNetworkIOJob.localTableUpdateDetailsByTableName, Long.MAX_VALUE);
+        context.commitWalTables(Long.MAX_VALUE);
         scheduler.doMaintenance(noNetworkIOJob.localTableUpdateDetailsByTableName, noNetworkIOJob.getWorkerId(), Long.MAX_VALUE);
         return false;
     }
@@ -287,11 +287,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpConnectionContext context, LineTcpParser parser) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.scheduleEvent(netIoJob, parser);
+                return super.scheduleEvent(netIoJob, context, parser);
             }
         };
         noNetworkIOJob.setScheduler(scheduler);

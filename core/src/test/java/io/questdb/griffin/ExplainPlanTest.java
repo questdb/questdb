@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -410,7 +410,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//where clause predicate can't be pushed to join clause because asof is and outer join 
+    @Test // where clause predicate can't be pushed to join clause because asof is and outer join
     public void testAsOfJoin5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -568,6 +568,393 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCrossJoinWithSort1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            compile("insert into t select x, x::timestamp from long_sequence(2)");
+            String[] queries = {"select * from t t1 cross join t t2 order by t1.ts",
+                    "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"};
+            for (String query : queries) {
+                assertPlan(query,
+                        "SelectedRecord\n" +
+                                "    Cross Join\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: t\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: t\n");
+
+                assertQuery("x\tts\tx1\tts1\n" +
+                        "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                        "1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                        "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                        "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\n", query, "ts", false, true);
+            }
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithSort2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            compile("insert into t select x, x::timestamp from long_sequence(2)");
+
+            String query = "select * from " +
+                    "((select * from t order by ts desc) limit 10) t1 " +
+                    "cross join t t2 " +
+                    "order by t1.ts desc";
+
+            assertPlan(query,
+                    "SelectedRecord\n" +
+                            "    Cross Join\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: t\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithSort3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x int, ts timestamp) timestamp(ts)");
+
+            assertPlan("select * from " +
+                            "((select * from t order by ts asc) limit 10) t1 " +
+                            "cross join t t2 " +
+                            "order by t1.ts asc",
+                    "SelectedRecord\n" +
+                            "    Cross Join\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithSort4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x int, ts timestamp) timestamp(ts)");
+
+            assertPlan("select * from " +
+                            "((select * from t order by ts asc) limit 10) t1 " +
+                            "cross join t t2 " +
+                            "order by t1.ts desc",
+                    "Sort\n" +
+                            "  keys: [ts desc]\n" +
+                            "    SelectedRecord\n" +
+                            "        Cross Join\n" +
+                            "            Limit lo: 10\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithSort5() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x int, ts timestamp) timestamp(ts)");
+
+            assertPlan("select * from " +
+                            "((select * from t order by ts asc) limit 10) t1 " +
+                            "cross join t t2 " +
+                            "order by t1.ts asc",
+                    "SelectedRecord\n" +
+                            "    Cross Join\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
+        });
+    }
+
+    @Test
+    public void testDistinctTsWithLimit1() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di order by 1 limit 10",
+                "Limit lo: 10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit2() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di order by 1 desc limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [ts desc]\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit3() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di limit 10",
+                "Limit lo: 10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit4() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di limit -10",
+                "Limit lo: -10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit5a() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di where y = 5 limit 10",
+                "Limit lo: 10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter\n" +
+                        "              filter: y=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit5b() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di where y = 5 limit -10",
+                "Limit lo: -10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter\n" +
+                        "              filter: y=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit6a() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di where abs(y) = 5 limit 10",
+                "Limit lo: 10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        SelectedRecord\n" +
+                        "            Async Filter\n" +
+                        "              filter: abs(y)=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit6b() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di where abs(y) = 5 limit -10",
+                "Limit lo: -10\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        SelectedRecord\n" +
+                        "            Async Filter\n" +
+                        "              filter: abs(y)=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctTsWithLimit7() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select distinct ts from di where abs(y) = 5 limit 10, 20",
+                "Limit lo: 10 hi: 20\n" +
+                        "    DistinctTimeSeries\n" +
+                        "      keys: ts\n" +
+                        "        SelectedRecord\n" +
+                        "            Async Filter\n" +
+                        "              filter: abs(y)=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit1() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di order by 1 limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [x]\n" +
+                        "    DistinctKey\n" +
+                        "        GroupBy vectorized: true\n" +
+                        "          keys: [x]\n" +
+                        "          values: [count(*)]\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit2() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di order by 1 desc limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [x desc]\n" +
+                        "    DistinctKey\n" +
+                        "        GroupBy vectorized: true\n" +
+                        "          keys: [x]\n" +
+                        "          values: [count(*)]\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit3() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di limit 10",
+                "Limit lo: 10\n" +
+                        "    DistinctKey\n" +
+                        "        GroupBy vectorized: true\n" +
+                        "          keys: [x]\n" +
+                        "          values: [count(*)]\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit4() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di limit -10",
+                "Limit lo: -10\n" +
+                        "    DistinctKey\n" +
+                        "        GroupBy vectorized: true\n" +
+                        "          keys: [x]\n" +
+                        "          values: [count(*)]\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit5a() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di where y = 5 limit 10",
+                "Limit lo: 10\n" +
+                        "    Distinct\n" +
+                        "      keys: x\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter\n" +
+                        "              filter: y=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit5b() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di where y = 5 limit -10",
+                "Limit lo: -10\n" +
+                        "    Distinct\n" +
+                        "      keys: x\n" +
+                        "        SelectedRecord\n" +
+                        "            Async JIT Filter\n" +
+                        "              filter: y=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit6a() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di where abs(y) = 5 limit 10",
+                "Limit lo: 10\n" +
+                        "    Distinct\n" +
+                        "      keys: x\n" +
+                        "        SelectedRecord\n" +
+                        "            Async Filter\n" +
+                        "              filter: abs(y)=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit6b() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di where abs(y) = 5 limit -10",
+                "Limit lo: -10\n" +
+                        "    Distinct\n" +
+                        "      keys: x\n" +
+                        "        SelectedRecord\n" +
+                        "            Async Filter\n" +
+                        "              filter: abs(y)=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testDistinctWithLimit7() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select distinct x from di where abs(y) = 5 limit 10, 20",
+                "Limit lo: 10 hi: 20\n" +
+                        "    Distinct\n" +
+                        "      keys: x\n" +
+                        "        SelectedRecord\n" +
+                        "            Async Filter\n" +
+                        "              filter: abs(y)=5\n" +
+                        "              workers: 1\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: di\n");
+    }
+
+    @Test
     public void testExcept() throws Exception {
         assertPlan("create table a ( i int, s string);",
                 "select * from a except select * from a",
@@ -579,6 +966,82 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testExceptAndSort1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc",
+                    "Except\n" +
+                            "    Limit lo: 10\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: a\n" +
+                            "    Hash\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testExceptAndSort2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc",
+                    "Except\n" +
+                            "    Limit lo: 10\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "    Hash\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testExceptAndSort3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Except\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: a\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testExceptAndSort4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc",
+                    "Sort light\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Except\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
+        });
     }
 
     @Test
@@ -1082,7 +1545,6 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testFunctions() throws Exception {
-
         assertMemoryLeak(() -> {//test table for show_columns
             compile("create table bbb( a int )");
         });
@@ -1315,7 +1777,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//only none, single int|symbol key cases are vectorized   
+    @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByBoolean() throws Exception {
         assertPlan("create table a ( l long, b boolean)",
                 "select b, min(l)  from a group by b",
@@ -1341,7 +1803,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame forward scan on: a\n");
     }
 
-    @Test//only none, single int|symbol key cases are vectorized   
+    @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByDouble() throws Exception {
         assertPlan("create table a ( l long, d double)",
                 "select d, min(l) from a group by d",
@@ -1353,7 +1815,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//only none, single int|symbol key cases are vectorized   
+    @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByFloat() throws Exception {
         assertPlan("create table a ( l long, f float)",
                 "select f, min(l) from a group by f",
@@ -1391,12 +1853,39 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//repeated int key disables vectorized impl
+    @Test // repeated int key disables vectorized impl
     public void testGroupByInt2() throws Exception {
         assertPlan("create table a ( i int, d double)", "select i, i, min(d) from a group by i, i",
                 "GroupBy vectorized: false\n" +
                         "  keys: [i,i1]\n" +
                         "  values: [min(d)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testGroupByKeyedAliased() throws Exception {
+        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
+                "select s as symbol, count() from a",
+                "GroupBy vectorized: true\n" +
+                        "  keys: [symbol]\n" +
+                        "  values: [count(*)]\n" +
+                        "  workers: 1\n" +
+                        "    SelectedRecord\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testGroupByKeyedNoAlias() throws Exception {
+        assertPlan("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;",
+                "select s, count() from a",
+                "GroupBy vectorized: true\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count(*)]\n" +
+                        "  workers: 1\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
@@ -1472,7 +1961,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame forward scan on: a\n");
     }
 
-    @Test//only none, single int|symbol key cases are vectorized   
+    @Test // only none, single int|symbol key cases are vectorized
     public void testGroupByLong() throws Exception {
         assertPlan("create table a ( l long, d double)",
                 "select l, min(d) from a group by l",
@@ -1524,7 +2013,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//expressions in aggregates disable vectorized impl
+    @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select min(d), max(d*d) from a",
@@ -1535,7 +2024,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//expressions in aggregates disable vectorized impl
+    @Test // expressions in aggregates disable vectorized impl
     public void testGroupByNotKeyed3() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(d+1) from a",
@@ -1557,7 +2046,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//constant values used in aggregates disable vectorization
+    @Test // constant values used in aggregates disable vectorization
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select first(10), last(d), avg(10), min(10), max(10) from a",
@@ -1568,7 +2057,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//group by on filtered data is not vectorized 
+    @Test // group by on filtered data is not vectorized
     public void testGroupByNotKeyed6() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from a where i < 10",
@@ -1582,7 +2071,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame forward scan on: a\n");
     }
 
-    @Test//order by is ignored and grouped by - vectorized
+    @Test // order by is ignored and grouped by - vectorized
     public void testGroupByNotKeyed7() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a order by d)",
@@ -1593,7 +2082,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//order by can't be ignored; group by is not vectorized 
+    @Test // order by can't be ignored; group by is not vectorized
     public void testGroupByNotKeyed8() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a order by d limit 10)",
@@ -1606,7 +2095,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame forward scan on: a\n");
     }
 
-    @Test//TODO: group by could be vectorized for union tables and result merged 
+    @Test // TODO: group by could be vectorized for union tables and result merged
     public void testGroupByNotKeyed9() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select max(i) from (select * from a union all select * from a)",
@@ -1619,6 +2108,161 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit1() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di group by x order by 1 limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [x]\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit2() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di group by x order by 1 desc limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [x desc]\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit3() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di group by x limit 10",
+                "Limit lo: 10\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit4() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di group by x limit -10",
+                "Limit lo: -10\n" +
+                        "    GroupBy vectorized: true\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit5a() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di where y = 5 group by x limit 10",
+                "Limit lo: 10\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        Async JIT Filter\n" +
+                        "          filter: y=5\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit5b() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di where y = 5 group by x limit -10",
+                "Limit lo: -10\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        Async JIT Filter\n" +
+                        "          filter: y=5\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit6a() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di where abs(y) = 5 group by x limit 10",
+                "Limit lo: 10\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        Async Filter\n" +
+                        "          filter: abs(y)=5\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit6b() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di where abs(y) = 5 group by x limit -10",
+                "Limit lo: -10\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        Async Filter\n" +
+                        "          filter: abs(y)=5\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit7() throws Exception {
+        assertPlan("create table di (x int, y long)",
+                "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20",
+                "Limit lo: 10 hi: 20\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        Async Filter\n" +
+                        "          filter: abs(y)=5\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
+    }
+
+    @Test
+    public void testGroupByWithLimit8() throws Exception {
+        assertPlan("create table di (x int, y long, ts timestamp) timestamp(ts)",
+                "select ts, count(*) from di where y=5 group by ts  order by ts desc limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [ts desc]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [ts]\n" +
+                        "      values: [count(*)]\n" +
+                        "        Async JIT Filter\n" +
+                        "          filter: y=5\n" +
+                        "          workers: 1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n");
     }
 
     @Test
@@ -1754,6 +2398,82 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntersectAndSort1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc",
+                    "Intersect\n" +
+                            "    Limit lo: 10\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: a\n" +
+                            "    Hash\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testIntersectAndSort2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc",
+                    "Intersect\n" +
+                            "    Limit lo: 10\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n" +
+                            "    Hash\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testIntersectAndSort3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Intersect\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: a\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testIntersectAndSort4() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc",
+                    "Sort light\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Intersect\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        Hash\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
     public void testLatestOn0() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts);",
                 "select i from a latest on ts partition by i",
@@ -1848,7 +2568,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: should use index
+    @Test // TODO: should use index
     public void testLatestOn10() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s",
@@ -1866,7 +2586,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: subquery should just read symbols from map
+    @Test // TODO: subquery should just read symbols from map
     public void testLatestOn12() throws Exception {
         assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
@@ -1886,7 +2606,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     }
 
-    @Test//TODO: subquery should just read symbols from map
+    @Test // TODO: subquery should just read symbols from map
     public void testLatestOn12a() throws Exception {
         assertPlan("create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
@@ -1905,7 +2625,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     }
 
-    @Test//TODO: subquery should just read symbols from map
+    @Test // TODO: subquery should just read symbols from map
     public void testLatestOn13() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
@@ -1924,7 +2644,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: subquery should just read symbols from map
+    @Test // TODO: subquery should just read symbols from map
     public void testLatestOn13a() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
@@ -1942,7 +2662,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: should use one or two indexes
+    @Test // TODO: should use one or two indexes
     public void testLatestOn14() throws Exception {
         assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2",
@@ -1953,7 +2673,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//TODO: should use one or two indexes
+    @Test // TODO: should use one or two indexes
     public void testLatestOn15() throws Exception {
         assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);",
                 "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2",
@@ -2108,7 +2828,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//key outside list of symbols
+    @Test // key outside list of symbols
     public void testLatestOn8a() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
@@ -2122,7 +2842,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//columns in order different to table's
+    @Test // columns in order different to table's
     public void testLatestOn9() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
@@ -2132,7 +2852,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    Frame backward scan on: a\n");
     }
 
-    @Test//columns in table's order
+    @Test // columns in table's order
     public void testLatestOn9a() throws Exception {
         assertPlan("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s",
@@ -2196,7 +2916,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME: there should be no separate filter
+    @Test // FIXME: there should be no separate filter
     public void testLeftJoinWithEquality3() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2215,7 +2935,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME: join and where clause filters should be separated
+    @Test // FIXME: join and where clause filters should be separated
     public void testLeftJoinWithEquality4() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2235,7 +2955,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME: ORed predicates should be applied as filter in hash join
+    @Test // FIXME: ORed predicates should be applied as filter in hash join
     public void testLeftJoinWithEquality5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2257,8 +2977,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    //left join conditions aren't transitive because left record + null right is produced if they fail
-    //that means select * from a left join b on a.i = b.i and a.i=10 doesn't mean resulting records will have a.i = 10 !
+    // left join conditions aren't transitive because left record + null right is produced if they fail
+    // that means select * from a left join b on a.i = b.i and a.i=10 doesn't mean resulting records will have a.i = 10 !
     @Test
     public void testLeftJoinWithEquality6() throws Exception {
         assertMemoryLeak(() -> {
@@ -2350,7 +3070,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    //FIXME provably false predicate like x!=x in left join means we can skip join and return left + nulls or join with empty right table
+    // FIXME provably false predicate like x!=x in left join means we can skip join and return left + nulls or join with empty right table
     @Test
     public void testLeftJoinWithEqualityAndExpressions4() throws Exception {
         assertMemoryLeak(() -> {
@@ -2372,7 +3092,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//FIXME: a2=a2 run as past of left join or be optimized away !
+    @Test // FIXME: a2=a2 run as past of left join or be optimized away !
     public void testLeftJoinWithEqualityAndExpressions5() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2393,7 +3113,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//left join filter must remain intact !
+    @Test // left join filter must remain intact !
     public void testLeftJoinWithEqualityAndExpressions6() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 string)");
@@ -2415,7 +3135,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test //FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
+    @Test // FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
     public void testLeftJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2483,7 +3203,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//FIXME: this should work as hash outer join of function results
+    @Test // FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2502,7 +3222,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//FIXME: this should work as hash outer join of function results
+    @Test // FIXME: this should work as hash outer join of function results
     public void testLeftJoinWithExpressions2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table taba (a1 int, a2 long)");
@@ -2562,8 +3282,8 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testLtJoin1a() throws Exception {
-        //lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
-        //CONCLUSION: a join b on X  can't always be translated to a join b on a.X = b.X
+        // lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
+        // CONCLUSION: a join b on X can't always be translated to a join b on a.X = b.X
         assertMemoryLeak(() -> {
             compile("create table a ( i int, ts timestamp) timestamp(ts)");
             compile("create table b ( i int, ts timestamp) timestamp(ts)");
@@ -2785,6 +3505,59 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testNestedLoopLeftJoinWithSort1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            compile("insert into t select x, x::timestamp from long_sequence(2)");
+            String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts",
+                    "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
+            for (String query : queries) {
+                assertPlan(query,
+                        "SelectedRecord\n" +
+                                "    Nested Loop Left Join\n" +
+                                "      filter: 0<t1.x*t2.x\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: t\n" +
+                                "        DataFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: t\n");
+
+                assertQuery("x\tts\tx1\tts1\n" +
+                        "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                        "1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                        "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                        "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\n", query, "ts", false, false);
+            }
+        });
+    }
+
+    @Test
+    public void testNestedLoopLeftJoinWithSort2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t (x int, ts timestamp) timestamp(ts)");
+            compile("insert into t select x, x::timestamp from long_sequence(2)");
+
+            String query = "select * from " +
+                    "((select * from t order by ts desc) limit 10) t1 " +
+                    "left join t t2 on t1.x*t2.x > 0 " +
+                    "order by t1.ts desc";
+
+            assertPlan(query,
+                    "SelectedRecord\n" +
+                            "    Nested Loop Left Join\n" +
+                            "      filter: 0<t1.x*t2.x\n" +
+                            "        Limit lo: 10\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: t\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t\n");
+        });
     }
 
     @Test
@@ -3054,15 +3827,15 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByFirstLast() throws Exception {
-        assertPlan("create table a ( l long, s string, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;",
-                "select s, first(i), last(sym), first(l) " +
+        assertPlan("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;",
+                "select sym, first(i), last(s), first(l) " +
                         "from a " +
                         "where sym in ('S') " +
                         "and   ts > 0::timestamp and ts < 100::timestamp " +
                         "sample by 1h",
                 "SampleByFirstLast\n" +
-                        "  keys: [s]\n" +
-                        "  values: [first(i), last(sym), first(l)]\n" +
+                        "  keys: [sym]\n" +
+                        "  values: [first(i), last(s), first(l)]\n" +
                         "    DeferredSingleSymbolFilterDataFrame\n" +
                         "        Index forward scan on: sym deferred: true\n" +
                         "          filter: sym='S'\n" +
@@ -3186,7 +3959,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: a\n");
     }
 
-    @Test//TODO: should return count on first table instead
+    @Test // TODO: should return count on first table instead
     public void testSelectCount11() throws Exception {
         assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)",
                 "select count(*) from (select * from a lt join a b) ",
@@ -3201,7 +3974,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: a\n");
     }
 
-    @Test//TODO: should return count on first table instead
+    @Test // TODO: should return count on first table instead
     public void testSelectCount12() throws Exception {
         assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)",
                 "select count(*) from (select * from a asof join a b) ",
@@ -3216,7 +3989,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                Frame forward scan on: a\n");
     }
 
-    @Test//TODO: should return count(first table)*count(second_table) instead
+    @Test // TODO: should return count(first table)*count(second_table) instead
     public void testSelectCount13() throws Exception {
         assertPlan("create table a ( i int, ts timestamp ) timestamp(ts)",
                 "select count(*) from (select * from a cross join a b) ",
@@ -3253,7 +4026,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: this should use Count factory same as queries above
+    @Test // TODO: this should use Count factory same as queries above
     public void testSelectCount3() throws Exception {
         assertPlan("create table a ( i int, d double)",
                 "select count(2) from a",
@@ -3336,10 +4109,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: should use symbol list
+    @Test // TODO: should use symbol list
     public void testSelectCountDistinct1() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
-                "select count_distinct(s)  from tab",
+                "select count_distinct(s) from tab",
                 "GroupBy vectorized: false\n" +
                         "  values: [count_distinct(s)]\n" +
                         "    DataFrame\n" +
@@ -3347,10 +4120,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should use symbol list
+    @Test // TODO: should use symbol list
     public void testSelectCountDistinct2() throws Exception {
         assertPlan("create table tab ( s symbol index, ts timestamp);",
-                "select count_distinct(s)  from tab",
+                "select count_distinct(s) from tab",
                 "GroupBy vectorized: false\n" +
                         "  values: [count_distinct(s)]\n" +
                         "    DataFrame\n" +
@@ -3361,7 +4134,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     @Test
     public void testSelectCountDistinct3() throws Exception {
         assertPlan("create table tab ( s string, l long );",
-                "select count_distinct(l)  from tab",
+                "select count_distinct(l) from tab",
                 "GroupBy vectorized: false\n" +
                         "  values: [count_distinct(l)]\n" +
                         "    DataFrame\n" +
@@ -3416,7 +4189,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Ignore
-    @Test//FIXME: somehow only ts gets included, pg returns record type
+    @Test // FIXME: somehow only ts gets included, pg returns record type
     public void testSelectDistinct0a() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select distinct (l, ts) from tab",
@@ -3438,7 +4211,9 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should scan symbols table
+    @Test
+    // TODO: should scan symbols table (note: some symbols from the symbol table may be
+    //  not present in the end table due to, say, UPDATE)
     public void testSelectDistinct2() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
@@ -3452,7 +4227,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "            Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should scan symbols table
+    @Test // TODO: should scan symbols table
     public void testSelectDistinct3() throws Exception {
         assertPlan("create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
@@ -3477,7 +4252,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//there's no interval scan because sysdate is evaluated per-row
+    @Test // there's no interval scan because sysdate is evaluated per-row
     public void testSelectDynamicTsInterval1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > sysdate()",
@@ -3489,7 +4264,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//there's no interval scan because systimestamp is evaluated per-row
+    @Test // there's no interval scan because systimestamp is evaluated per-row
     public void testSelectDynamicTsInterval2() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > systimestamp()",
@@ -3531,16 +4306,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "      intervals: [static=[0,9223372036854775807,281481419161601,4294967296,1640995200000001,9223372036854775807,2147483649,4294967296] dynamic=[now(),null]]\n");
     }
 
-    @Test//TODO: should use backward interval scan
+    @Test
     public void testSelectDynamicTsInterval6() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc",
-                "Sort light\n" +
-                        "  keys: [ts desc]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Interval forward scan on: tab\n" +
-                        "          intervals: [static=[0,9223372036854775807,281481419161601,4294967296,1640995200000001,9223372036854775807,2147483649,4294967296] dynamic=[now(),null]]\n");
+                "DataFrame\n" +
+                        "    Row backward scan\n" +
+                        "    Interval backward scan on: tab\n" +
+                        "      intervals: [static=[0,9223372036854775807,281481419161601,4294967296,1640995200000001,9223372036854775807,2147483649,4294967296] dynamic=[now(),null]]\n");
     }
 
     @Test
@@ -3601,7 +4374,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: having multiple cursors on the same level isn't very clear
+    @Test // TODO: having multiple cursors on the same level isn't very clear
     public void testSelectIndexedSymbols10() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in ('S1', 'S2') limit 1",
@@ -3615,7 +4388,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: having multiple cursors on the same level isn't very clear
+    @Test // TODO: having multiple cursors on the same level isn't very clear
     public void testSelectIndexedSymbols11() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s symbol index, ts timestamp) timestamp(ts)");
@@ -3677,7 +4450,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
+    @Test // backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
     public void testSelectIndexedSymbols15() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
@@ -3714,7 +4487,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//TODO: should use the same plan as above
+    @Test // TODO: should use the same plan as above
     public void testSelectIndexedSymbols17() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
@@ -3752,33 +4525,33 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test //TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
+    @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols2() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = $1 or s = $2 order by ts desc limit 1",
-                "Limit lo: 1\n" +
-                        "    Async JIT Filter\n" +
-                        "      filter: (s=$0::string or s=$1::string)\n" +
-                        "      workers: 1\n" +
-                        "        DataFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: a\n");
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: (s=$0::string or s=$1::string)\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n");
     }
 
-    @Test //TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
+    @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols3() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
-                "Limit lo: 1\n" +
-                        "    Async JIT Filter\n" +
-                        "      filter: (s='S1' or s='S2')\n" +
-                        "      workers: 1\n" +
-                        "        DataFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: a\n");
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: (s='S1' or s='S2')\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n");
     }
 
-    @Test//TODO: it would be better to get rid of unnecessary sort and limit factories
+    @Test // TODO: it would be better to get rid of unnecessary sort and limit factories
     public void testSelectIndexedSymbols4() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
@@ -3823,7 +4596,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: this one should scan index/data file backward and skip sorting
+    @Test // TODO: this one should scan index/data file backward and skip sorting
     public void testSelectIndexedSymbols6() throws Exception {
         assertPlan("create table a ( s symbol index) ;",
                 "select * from a where s = 'S1' order by s asc limit 10",
@@ -3872,12 +4645,101 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectNoOrderByWithNegativeLimit() throws Exception {
+        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        compile("insert into a select x,x::timestamp from long_sequence(10)");
+
+        assertPlan(
+                "select * from a limit -5",
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Limit lo: 5\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n");
+    }
+
+    @Test
     public void testSelectOrderByTsAsc() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts asc",
                 "DataFrame\n" +
                         "    Row forward scan\n" +
                         "    Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectOrderByTsAscAndDesc() throws Exception {
+        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        compile("insert into a select x,x::timestamp from long_sequence(10)");
+
+        assertPlan(
+                "select * from (select * from a order by ts asc limit 5) order by ts desc",
+                "Sort light\n" +
+                        "  keys: [ts desc]\n" +
+                        "    Limit lo: 5\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectOrderByTsDescAndAsc() throws Exception {
+        compile("create table a ( i int, ts timestamp) timestamp(ts)");
+        compile("insert into a select x,x::timestamp from long_sequence(10)");
+
+        assertPlan(
+                "select * from (select * from a order by ts desc limit 5) order by ts asc",
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Limit lo: 5\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectOrderByTsDescLargeNegativeLimit1() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "select * from a order by ts desc limit 9223372036854775806L+3L ",
+                "Limit lo: -9223372036854775807L\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectOrderByTsDescLargeNegativeLimit2() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "select * from a order by ts desc limit -1000000 ",
+                "Limit lo: -1000000\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectOrderByTsDescNegativeLimit() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "select * from a order by ts desc limit -10",
+                "Sort light\n" +
+                        "  keys: [ts desc]\n" +
+                        "    Limit lo: 10\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectOrderByTsWithNegativeLimit() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts)",
+                "select * from a order by ts  limit -5",
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Limit lo: 5\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n");
     }
 
     @Test
@@ -3965,7 +4827,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "      intervals: [static=[1583020800000000,1583107199999999]\n");
     }
 
-    @Test//TODO: this should use interval scan with two ranges !
+    @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval3() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
@@ -3977,14 +4839,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//ranges don't overlap so result is empty
+    @Test // ranges don't overlap so result is empty
     public void testSelectStaticTsInterval4() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' and ts in '2020-03-10'",
                 "Empty table\n");
     }
 
-    @Test//only 2020-03-10->2020-03-31 needs to be scanned
+    @Test // only 2020-03-10->2020-03-31 needs to be scanned
     public void testSelectStaticTsInterval5() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03' and ts > '2020-03-10'",
@@ -3994,7 +4856,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "      intervals: [static=[1583798400000001,1585699199999999]\n");
     }
 
-    @Test//TODO: this should use interval scan with two ranges !
+    @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval6() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
@@ -4006,7 +4868,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this should use interval scan with two ranges !
+    @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval7() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ",
@@ -4028,16 +4890,14 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "      intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
     }
 
-    @Test//TODO: this should use backward interval scan without sorting
+    @Test
     public void testSelectStaticTsInterval9() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);",
-                "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc ",
-                "Sort light\n" +
-                        "  keys: [ts desc]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Interval forward scan on: tab\n" +
-                        "          intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
+                "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc",
+                "DataFrame\n" +
+                        "    Row backward scan\n" +
+                        "    Interval backward scan on: tab\n" +
+                        "      intervals: [static=[1577847600000000,1577851200999999,1577934000000000,1577937600999999,1578020400000000,1578024000999999]\n");
     }
 
     @Test
@@ -4053,6 +4913,20 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectWhereOrderByLimit() throws Exception {
+        assertPlan("create table xx ( x long, str string) ",
+                "select * from xx where str = 'A' order by str,x limit 10",
+                "Sort light lo: 10\n" +
+                        "  keys: [str, x]\n" +
+                        "    Async Filter\n" +
+                        "      filter: str='A'\n" +
+                        "      workers: 1\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: xx\n");
+    }
+
+    @Test
     public void testSelectWithJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 ",
@@ -4064,7 +4938,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should use jit
+    @Test // TODO: this one should use jit
     public void testSelectWithJittedFilter10() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select * from tab where s in ( 'A', 'B' )",
@@ -4076,7 +4950,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should interval scan without filter
+    @Test // TODO: this one should interval scan without filter
     public void testSelectWithJittedFilter11() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-02' )",
@@ -4088,7 +4962,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should interval scan with jit filter
+    @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter12() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
@@ -4100,7 +4974,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should interval scan with jit filter
+    @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter13() throws Exception {
         assertPlan("create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'",
@@ -4248,39 +5122,52 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectWithJittedFilter24a() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts limit 1 ",
-                "Limit lo: 1\n" +
-                        "    Async JIT Filter\n" +
-                        "      filter: d=1.2\n" +
-                        "      workers: 1\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n");
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should scan from the end like in testSelectWithJittedFilter24c()
+    @Test
     public void testSelectWithJittedFilter24b() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts limit -1 ",
-                "Limit lo: -1\n" +
-                        "    Async JIT Filter\n" +
-                        "      filter: d=1.2\n" +
-                        "      workers: 1\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n");
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
+    }
+
+    @Test
+    public void testSelectWithJittedFilter24b2() throws Exception {
+        assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
+                "select * from tab where d = 1.2 limit -1 ",
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
     }
 
     @Test
     public void testSelectWithJittedFilter24c() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
-                "Limit lo: 1\n" +
-                        "    Async JIT Filter\n" +
-                        "      filter: d=1.2\n" +
-                        "      workers: 1\n" +
-                        "        DataFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: tab\n");
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
     }
 
     @Test
@@ -4315,30 +5202,29 @@ public class ExplainPlanTest extends AbstractGriffinTest {
     public void testSelectWithJittedFilter25() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
-                "Limit lo: 1\n" +
-                        "    Async JIT Filter\n" +
-                        "      filter: d=1.2\n" +
-                        "      workers: 1\n" +
-                        "        DataFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: tab\n");
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
     }
 
-    //TODO: this is misleading because actual scan order is determined in getCursor() and depends on base order and actual limit value
     @Test
     public void testSelectWithJittedFilter26() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp) timestamp(ts);",
                 "select * from tab where d = 1.2 order by ts limit -1 ",
-                "Limit lo: -1\n" +
-                        "    Async JIT Filter\n" +
-                        "      filter: d=1.2\n" +
-                        "      workers: 1\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n");
+                "Async JIT Filter\n" +
+                        "  limit: 1\n" +
+                        "  filter: d=1.2\n" +
+                        "  workers: 1\n" +
+                        "    DataFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n");
     }
 
-    @Test//TODO: this one should use jit !
+    @Test // TODO: this one should use jit !
     public void testSelectWithJittedFilter3() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
@@ -4386,7 +5272,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: this one should use jit
+    @Test // TODO: this one should use jit
     public void testSelectWithJittedFilter7() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
@@ -4411,7 +5297,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "          intervals: [static=[1609459200000000,1609545599999999]\n");
     }
 
-    @Test//TODO: this one should use jit
+    @Test // TODO: this one should use jit
     public void testSelectWithJittedFilter9() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l in ( 100, 200 )",
@@ -4453,17 +5339,19 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: a\n");
     }
 
-    @Test//TODO: query should scan from end of table with limit = 10
+    @Test
     public void testSelectWithLimitLoNegative() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit -10",
-                "Limit lo: -10\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: a\n");
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Limit lo: 10\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n");
     }
 
-    @Test//jit is not used due to type mismatch
+    @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::short ",
@@ -4475,7 +5363,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work with type casts
+    @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter10() throws Exception {
         assertPlan("create table tab ( s short, ts timestamp);",
                 "select * from tab where s = 1::short ",
@@ -4487,7 +5375,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like b = true
+    @Test // TODO: should run with jitted filter just like b = true
     public void testSelectWithNonJittedFilter11() throws Exception {
         assertPlan("create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = true::boolean ",
@@ -4499,7 +5387,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like l = 1024
+    @Test // TODO: should run with jitted filter just like l = 1024
     public void testSelectWithNonJittedFilter12() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 1024::long ",
@@ -4511,7 +5399,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like d = 1024.1
+    @Test // TODO: should run with jitted filter just like d = 1024.1
     public void testSelectWithNonJittedFilter13() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1::double ",
@@ -4523,7 +5411,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//TODO: should run with jitted filter just like d = null
+    @Test // TODO: should run with jitted filter just like d = null
     public void testSelectWithNonJittedFilter14() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null::double ",
@@ -4535,7 +5423,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit doesn't work for bitwise operators
+    @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter15() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where (l | l) > 0  ",
@@ -4547,7 +5435,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit doesn't work for bitwise operators
+    @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter16() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where (l & l) > 0  ",
@@ -4559,7 +5447,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit doesn't work for bitwise operators
+    @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter17() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where (l ^ l) > 0  ",
@@ -4600,7 +5488,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame backward scan on: tab\n");
     }
 
-    @Test//jit is not used due to type mismatch
+    @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter2() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::byte ",
@@ -4612,7 +5500,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit is not used due to type mismatch
+    @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter3() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l = '123' ",
@@ -4624,7 +5512,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit is not because rnd_long() value is not stable
+    @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
@@ -4648,7 +5536,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//interval scan is not used because of type mismatch
+    @Test // interval scan is not used because of type mismatch
     public void testSelectWithNonJittedFilter6() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1::string ",
@@ -4660,7 +5548,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work for string type
+    @Test // jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter7() throws Exception {
         assertPlan("create table tab ( s string, ts timestamp);",
                 "select * from tab where s = 'test' ",
@@ -4672,7 +5560,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work for string type
+    @Test // jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter8() throws Exception {
         assertPlan("create table tab ( s string, ts timestamp);",
                 "select * from tab where s = null ",
@@ -4684,7 +5572,7 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame forward scan on: tab\n");
     }
 
-    @Test//jit filter doesn't work with type casts
+    @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan("create table tab ( b byte, ts timestamp);",
                 "select * from tab where b = 1::byte ",
@@ -4718,24 +5606,54 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "        Frame backward scan on: a\n");
     }
 
-    @Test//TODO: query should scan from start of table with limit = 10
-    public void testSelectWithOrderByTsDescLimitLoNegative() throws Exception {
+    @Test
+    public void testSelectWithOrderByTsDescLimitLoNegative1() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -10",
-                "Limit lo: -10\n" +
-                        "    DataFrame\n" +
-                        "        Row backward scan\n" +
-                        "        Frame backward scan on: a\n");
+                "Sort light\n" +
+                        "  keys: [ts desc]\n" +
+                        "    Limit lo: 10\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n");
     }
 
-    @Test//TODO: query should scan from end of table with limit = 10
-    public void testSelectWithOrderByTsLimitLoNegative() throws Exception {
+    @Test
+    public void testSelectWithOrderByTsDescLimitLoNegative2() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "select i from a order by ts desc limit -10",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts desc]\n" +
+                        "        Limit lo: 10\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectWithOrderByTsLimitLoNegative1() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts limit -10",
-                "Limit lo: -10\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: a\n");
+                "Sort light\n" +
+                        "  keys: [ts]\n" +
+                        "    Limit lo: 10\n" +
+                        "        DataFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n");
+    }
+
+    @Test
+    public void testSelectWithOrderByTsLimitLoNegative2() throws Exception {
+        assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "select i from a order by ts limit -10",
+                "SelectedRecord\n" +
+                        "    Sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Limit lo: 10\n" +
+                        "            DataFrame\n" +
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: a\n");
     }
 
     @Test
@@ -4838,6 +5756,232 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "                DataFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testSortAscLimitAndSortAgain1a() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts asc limit 10) order by ts asc",
+                    "Limit lo: 10\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortAscLimitAndSortAgain1b() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc",
+                    "Sort light lo: 10\n" +
+                            "  keys: [ts desc, l desc]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortAscLimitAndSortAgain2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc",
+                    "SelectedRecord\n" +
+                            "    Lt Join\n" +
+                            "        Sort light lo: 10\n" +
+                            "          keys: [ts, l]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortAscLimitAndSortAgain3a() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from " +
+                            "(select * from (select * from a order by ts asc, l) limit 10) " +
+                            "lt join " +
+                            "(select * from a) order by ts asc",
+                    "SelectedRecord\n" +
+                            "    Lt Join\n" +
+                            "        Limit lo: 10\n" +
+                            "            Sort light\n" +
+                            "              keys: [ts, l]\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortAscLimitAndSortAgain3b() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from " +
+                            "(select * from (select * from a order by ts desc, l desc) limit 10) " +
+                            "order by ts asc",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 10\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts desc, l desc]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortAscLimitAndSortAgain4a() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from " +
+                            "(select * from " +
+                            "   (select * from a) " +
+                            "    cross join " +
+                            "   (select * from a) " +
+                            " order by ts asc, l  " +
+                            " limit 10" +
+                            ") " +
+                            "lt join (select * from a) " +
+                            "order by ts asc",
+                    "SelectedRecord\n" +
+                            "    Lt Join\n" +
+                            "        Limit lo: 10\n" +
+                            "            Sort\n" +
+                            "              keys: [ts, l]\n" +
+                            "                SelectedRecord\n" +
+                            "                    Cross Join\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: a\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: a\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortAscLimitAndSortAgain4b() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from " +
+                            "(select * from " +
+                            "   (select * from a) " +
+                            "    cross join " +
+                            "   (select * from a) " +
+                            " order by ts desc " +
+                            " limit 10" +
+                            ") " +
+                            "order by ts desc",
+                    "Limit lo: 10\n" +
+                            "    Sort\n" +
+                            "      keys: [ts desc]\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: a\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortAscLimitAndSortDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts asc limit 10) order by ts desc",
+                    "Sort light\n" +
+                            "  keys: [ts desc]\n" +
+                            "    Limit lo: 10\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortDescLimitAndSortAgain() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts desc limit 10) order by ts desc",
+                    "Limit lo: 10\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: a\n");
+        });
+    }
+
+    @Test
+    public void testSortDescLimitAndSortAsc1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+
+            assertPlan("select * from (select * from a order by ts desc limit 10) order by ts asc",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Limit lo: 10\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: a\n");
+        });
+    }
+
+    @Test//TODO: sorting by ts, l again is not necessary
+    public void testSortDescLimitAndSortAsc2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long)");
+
+            assertPlan("select * from (select * from a order by ts, l limit 10) order by ts, l",
+                    "Sort light\n" +
+                            "  keys: [ts, l]\n" +
+                            "    Sort light lo: 10\n" +
+                            "      keys: [ts, l]\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n");
+        });
+    }
+
+    @Test//TODO: sorting by ts, l again is not necessary
+    public void testSortDescLimitAndSortAsc3() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table a ( i int, ts timestamp, l long)");
+
+            assertPlan("select * from (select * from a order by ts, l limit 10,-10) order by ts, l",
+                    "Sort light\n" +
+                            "  keys: [ts, l]\n" +
+                            "    Limit lo: 10 hi: -10\n" +
+                            "        Sort light\n" +
+                            "          keys: [ts, l]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n");
+        });
     }
 
     @Test
@@ -4984,6 +6128,32 @@ public class ExplainPlanTest extends AbstractGriffinTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n");
+    }
+
+    @Test
+    public void testWhereOrderByTsLimit1() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t ( x long, ts timestamp) timestamp(ts)");
+
+            String query = "select * from t where x < 100 order by ts desc limit -5";
+            assertPlan(query,
+                    "Async JIT Filter\n" +
+                            "  limit: 5\n" +
+                            "  filter: x<100\n" +
+                            "  workers: 1\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n");
+
+            compile("insert into t select x, x::timestamp from long_sequence(10000)");
+
+            assertQuery("x\tts\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\n", query, "ts###DESC", true, true);
+        });
     }
 
     @Test
