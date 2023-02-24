@@ -204,6 +204,33 @@
                     </properties>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>io.questdb</groupId>
+                <artifactId>rust-maven-plugin</artifactId>
+                <version>1.0.0-SNAPSHOT</version>
+                <executions>
+                    <execution>
+                        <id>questdb-jni-build</id>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                        <configuration>
+                            <path>src/main/rust/questdb-jni</path>
+                            <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
+                            <copyWithPlatformDir>true</copyWithPlatformDir>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>questdb-jni-test</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <path>src/main/rust/questdb-jni</path>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -628,6 +655,21 @@
     </profiles>
 
     <dependencies>
+        <!--
+            TODO: Upload dependency to Maven Central.
+            In the meantime you need to build and install the jar-jni dependency locally:
+
+            $ git clone https://github.com/questdb/rust-maven-plugin.git
+            $ cd rust-maven-plugin
+            $ cd jar-jni
+            $ mvn install
+        -->
+<!--        <dependency>-->
+<!--            <groupId>io.questdb</groupId>-->
+<!--            <artifactId>jar-jni</artifactId>-->
+<!--            <version>1.0.0-SNAPSHOT</version>-->
+<!--        </dependency>-->
+
         <!-- test dependencies -->
         <dependency>
             <groupId>junit</groupId>

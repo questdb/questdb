@@ -28,6 +28,7 @@ import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.CharSequenceZ;
 import io.questdb.std.str.Path;
+import io.questdb.jar.jni.JarJniLoader;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -244,5 +245,26 @@ public final class Os {
         } else {
             type = _32Bit;
         }
+
+//            // TODO [amunra]: Enable below, replace above. This requires some CMake changes.
+//            // CMake-built JNI code.
+//            import io.questdb.jar.jni.LibInfo;
+//            import io.questdb.jar.jni.OsInfo;
+//            JarJniLoader.loadLib(
+//                    Os.class,
+//                    "/io/questdb/bin/",
+//
+//                    // TODO [amunra]: Can we stick to platform conventions and call it `questdb.dll` on Windows?
+//                    new LibInfo(
+//                        OsInfo.INSTANCE.getPlatform(),
+//                        name,
+//                        "lib",  // Custom: We prefix all our CMake-built libs, even on Windows.
+//                        OsInfo.INSTANCE.getLibSuffix()));
+
+        // Rust-built JNI code.
+        JarJniLoader.loadLib(
+                Os.class,
+                "/io/questdb/bin/",
+                "questdb-jni");
     }
 }
