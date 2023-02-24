@@ -9,19 +9,18 @@
 
 **GitHub username: [SiyaoIsHiding](https://github.com/SiyaoIsHiding), [SoniaSun810](https://github.com/SoniaSun810), [alimhtsai](https://github.com/alimhtsai)**
 
-- [SWE 261P Project Part 4: Continuous Integration of QuestDB](#swe-261p-project-part-4-continuous-integration-of-questdb)
-  - [Continuous Integration Overview](#continuous-integration-overview)
-    - [What is Continuous Integration (CI)?](#what-is-continuous-integration-ci)
-    - [Why do Continuous Integration (CI)?](#why-do-continuous-integration-ci)
-    - [Common practices of Continuous Integration (CI)](#common-practices-of-continuous-integration-ci)
-  - [Our Github Action 1: Maven Build and Test](#our-github-action-1-maven-build-and-test)
-    - [Configuration](#configuration)
-    - [Outcome](#outcome)
-  - [Our Github Action 2: Markdown To PDF](#our-github-action-2-markdown-to-pdf)
-    - [Configuration](#configuration-1)
-    - [Outcome](#outcome-1)
-  - [Existing Github Action: Danger - Validate PR Title](#existing-github-action-danger---validate-pr-title)
-  - [Existing Azure Pipelines](#existing-azure-pipelines)
+- [Continuous Integration Overview](#continuous-integration-overview)
+  - [What is Continuous Integration (CI)?](#what-is-continuous-integration-ci)
+  - [Why do Continuous Integration (CI)?](#why-do-continuous-integration-ci)
+  - [Common practices of Continuous Integration (CI)](#common-practices-of-continuous-integration-ci)
+- [Our Github Action 1: Maven Build and Test](#our-github-action-1-maven-build-and-test)
+  - [Configuration](#configuration)
+  - [Outcome](#outcome)
+- [Our Github Action 2: Markdown To PDF](#our-github-action-2-markdown-to-pdf)
+  - [Configuration](#configuration-1)
+  - [Outcome](#outcome-1)
+- [Existing Github Action: Danger - Validate PR Title](#existing-github-action-danger---validate-pr-title)
+- [Existing Azure Pipelines](#existing-azure-pipelines)
 
 ----
 
