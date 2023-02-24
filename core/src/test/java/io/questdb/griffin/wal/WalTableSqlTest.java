@@ -27,10 +27,7 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.*;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -53,6 +50,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static org.hamcrest.number.OrderingComparison.lessThan;
 
 @SuppressWarnings("SameParameterValue")
 public class WalTableSqlTest extends AbstractGriffinTest {
@@ -892,6 +890,31 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
             checkWalFilesRemoved(sysTableName1);
+        });
+    }
+
+    @Test
+    public void testDroppedTableTriggersWalCheckJob() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            compile("drop table " + tableName);
+
+            engine.reloadTableNames();
+
+            long walNotification = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
+            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            checkWalTransactionsJob.run(0);
+
+            drainWalQueue();
+
+            MatcherAssert.assertThat(walNotification, lessThan(engine.getMessageBus().getWalTxnNotificationPubSequence().current()));
         });
     }
 

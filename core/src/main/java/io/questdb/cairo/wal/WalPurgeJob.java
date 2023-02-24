@@ -47,15 +47,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final StringSink debugBuffer = new StringSink();
-    private final IntHashSet onDiskWalIDSet = new IntHashSet();
-    private final LongList onDiskWalIDSegmentIDPairs = new LongList();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final IntHashSet lockedWalIDSet = new IntHashSet();
     private final MillisecondClock millisecondClock;
-    private final LongList sequencerWalIDSegmentIDPairs = new LongList();
+    private final LongList onDiskWalIDSegmentIDPairs = new LongList();
+    private final IntHashSet onDiskWalIDSet = new IntHashSet();
     private final Path path = new Path();
     private final SimpleWaitingLock runLock = new SimpleWaitingLock();
+    private final LongList sequencerWalIDSegmentIDPairs = new LongList();
     private final long spinLockTimeout;
     private final ObjList<TableToken> tableTokenBucket = new ObjList<>();
     private final TxReader txReader;
@@ -223,7 +223,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 ) {
                     // Fully deregister the table
                     LOG.info().$("table is fully dropped [tableDir=").$(tableToken.getDirName()).I$();
-                    ff.rmdir(Path.getThreadLocal(configuration.getRoot()).concat(tableToken).slash$());
+                    Path pathToDelete = Path.getThreadLocal(configuration.getRoot()).concat(tableToken).$();
+                    ff.rmdir(pathToDelete);
+                    TableUtils.lockName(pathToDelete);
+                    ff.remove(pathToDelete);
                     engine.removeTableToken(tableToken);
                 } else {
                     LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [tableDir=").$(tableToken.getDirName()).I$();
@@ -373,13 +376,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void mayLogDebugInfo() {
-        if (debugBuffer.length() > 0) {
-            LOG.info().utf8(debugBuffer).$();
-            debugBuffer.clear();
-        }
-    }
-
     private boolean fetchSequencerPairs() {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
@@ -413,6 +409,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return false;
         // If table is dropped, all wals can be deleted.
         // No need to do anything, all discovered segments / wals will be deleted
+    }
+
+    private void mayLogDebugInfo() {
+        if (debugBuffer.length() > 0) {
+            LOG.info().utf8(debugBuffer).$();
+            debugBuffer.clear();
+        }
     }
 
     private void recursiveDelete(Path path) {

@@ -61,8 +61,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final int TXN_METADATA_LONGS_SIZE = 3;
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
-    private static final int WAL_APPLY_IGNORE_ERROR = -1;
     private static final int WAL_APPLY_FAILED = -2;
+    private static final int WAL_APPLY_IGNORE_ERROR = -1;
     private final long commitSquashRowLimit;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
@@ -111,7 +111,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             do {
                 // security context is checked on writing to the WAL and can be ignored here
                 TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
-                if (updatedToken == null) {
+                if (engine.isTableDropped(tableToken) || updatedToken == null) {
                     if (engine.isTableDropped(tableToken)) {
                         return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
                     }
