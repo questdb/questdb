@@ -25,27 +25,16 @@
 package io.questdb.cairo;
 
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_FORMAT;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.HOUR_FORMAT;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.MONTH_FORMAT;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.WEEK_FORMAT;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.YEAR_FORMAT;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.HOUR_PATTERN;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_PATTERN;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.MONTH_PATTERN;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.WEEK_PATTERN;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.YEAR_PATTERN;
+import static io.questdb.std.datetime.microtime.TimestampFormatUtils.*;
 
 /**
  * Collection of static assets to provide time partitioning API. It should be
@@ -220,32 +209,13 @@ public final class PartitionBy {
         } catch (NumericException e) {
             if (partitionBy == PartitionBy.WEEK) {
                 // maybe the user used a timestamp, or a date, string.
-                int local_limit = DAY_PATTERN.length();
-                long timestamp;
+                int localLimit = DAY_PATTERN.length();
                 try {
                     // trim to lowest precision needed and get the timestamp
-                    timestamp = DAY_FORMAT.parse(partitionName, 0, local_limit, null);
+                    // convert timestamp to first day of the week
+                    return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, null));
                 } catch (NumericException ignore) {
-                    throw expectedPartitionDirNameFormatCairoException(partitionName, Math.min(partitionName.length(), local_limit), partitionBy);
-                }
-
-                // convert timestamp to first day of the week
-                int year = Timestamps.getYear(timestamp);
-                int week = Timestamps.getWeek(timestamp);
-                if (week == 52 && Timestamps.getMonthOfYear(timestamp) == 1) {
-                    year--;
-                }
-                StringSink sink = Misc.getThreadLocalBuilder();
-                sink.put(year).put("-W");
-                if (week < 10) {
-                    sink.put('0');
-                }
-                sink.put(week);
-                local_limit = sink.length();
-                try {
-                    return WEEK_FORMAT.parse(sink, 0, local_limit, null);
-                } catch (NumericException ignore) {
-                    throw expectedPartitionDirNameFormatCairoException(sink, local_limit, partitionBy);
+                    throw expectedPartitionDirNameFormatCairoException(partitionName, Math.min(partitionName.length(), localLimit), partitionBy);
                 }
             }
             throw expectedPartitionDirNameFormatCairoException(partitionName, limit, partitionBy);

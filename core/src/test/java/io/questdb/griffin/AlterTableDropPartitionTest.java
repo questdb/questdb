@@ -183,6 +183,48 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropPartitionListWithMixedWeekDayFormats() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trade as (" +
+                            "select" +
+                            "  rnd_symbol('A', 'B', 'C') sym," +
+                            "  rnd_long(1, 10000000000, 0) px," +
+                            "  rnd_float() * 100 leverage," +
+                            "  rnd_timestamp(" +
+                            "    to_timestamp('2015-01-01', 'yyyy-MM-dd')," +
+                            "    to_timestamp('2023-12-31', 'yyyy-MM-dd')," +
+                            "    0) ts" +
+                            "  from long_sequence(500)" +
+                            "), index(sym capacity 128) timestamp(ts) partition by week;",
+                    sqlExecutionContext);
+            assertSql(
+                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "  SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMIT 10",
+                    "year\tweek_of_year\twoy\n" +
+                            "2023\t51\t2023-W51\n" +
+                            "2023\t50\t2023-W50\n" +
+                            "2023\t49\t2023-W49\n" +
+                            "2023\t47\t2023-W47\n" +
+                            "2023\t46\t2023-W46\n" +
+                            "2023\t45\t2023-W45\n" +
+                            "2023\t43\t2023-W43\n" +
+                            "2023\t40\t2023-W40\n" +
+                            "2023\t38\t2023-W38\n" +
+                            "2023\t37\t2023-W37\n"
+            );
+            compile("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2022-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
+            assertSql(
+                    "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
+                            "  SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMIT 10",
+                    "year\tweek_of_year\twoy\n" +
+                            "2023\t47\t2023-W47\n"
+            );
+        });
+    }
+
+    @Test
     public void testDropPartitionNameMissing0() throws Exception {
         assertFailure("alter table x drop partition list ,", 34, "partition name missing");
     }

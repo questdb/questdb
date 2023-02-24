@@ -1221,7 +1221,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 hi = 10; // yyyy-MM-dd;
                 break;
             case PartitionBy.WEEK:
-                hi = 8; // YYYY-Www, or yyyy-MM-dd on failure
+                hi = 8; // YYYY-Www
                 break;
             case PartitionBy.MONTH:
                 hi = 7; // yyyy-MM
