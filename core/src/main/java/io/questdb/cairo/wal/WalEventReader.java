@@ -83,11 +83,16 @@ public class WalEventReader implements Closeable {
                     long size = ff.readNonNegativeLong(fdi, (maxTxn + 1L) << 3);
                     if (offset < 0 || size < WALE_HEADER_SIZE + Integer.BYTES || offset >= size) {
                         int errno = offset < 0 || size < 0 ? ff.errno() : 0;
+                        long fileSize = ff.length(fdi);
                         throw CairoException.critical(errno).put("segment ")
-                                .put(path).put(" does not have txn with id ").put(segmentTxn);
+                                .put(path).put(" does not have txn with id ").put(segmentTxn)
+                                .put(", offset=").put(offset)
+                                .put(", indexFileSize=").put(fileSize)
+                                .put(", maxTxn=").put(maxTxn)
+                                .put(", size=").put(size);
                     }
 
-                    // WAL-E file has record indicator for the next record always present 
+                    // WAL-E file has record indicator for the next record always present
                     // so file size is the size read + 4 bytes
                     eventMem.extend(size + Integer.BYTES);
                     eventCursor.openOffset(offset);
