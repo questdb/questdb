@@ -103,7 +103,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void forAllWalTables(ObjList<TableToken> tableTokenBucket, boolean includeDropped, RegisteredTable callback) {
+    public void forAllWalTables(ObjList<TableToken> tableTokenBucket, boolean includeDropped, TableSequencerCallback callback) {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.PATH.get();
@@ -455,7 +455,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @FunctionalInterface
-    public interface RegisteredTable {
+    public interface TableSequencerCallback {
         void onTable(int tableId, final TableToken tableName, long lastTxn);
     }
 

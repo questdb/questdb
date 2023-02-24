@@ -108,9 +108,14 @@ public class TableNameRegistryFileStore implements Closeable {
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
     }
 
-    private void compactTableNameFile(Map<CharSequence, TableToken> nameTableTokenMap,
-                                      Map<CharSequence, ReverseTableMapItem> reverseNameMap,
-                                      int lastFileVersion, FilesFacade ff, Path path, long currentOffset) {
+    private void compactTableNameFile(
+            Map<CharSequence, TableToken> nameTableTokenMap,
+            Map<CharSequence, ReverseTableMapItem> reverseNameMap,
+            int lastFileVersion,
+            FilesFacade ff,
+            Path path,
+            long currentOffset
+    ) {
         // compact the memory, remove deleted entries.
         // write to the tmp file.
         int pathRootLen = path.length();

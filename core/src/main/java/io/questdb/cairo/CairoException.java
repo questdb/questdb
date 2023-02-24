@@ -111,7 +111,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException tableDropped(TableToken tableToken) {
-        return critical(TABLE_DROPPED).put("table is dropped [dirName=").put(tableToken.getDirName()).put(']');
+        return critical(TABLE_DROPPED)
+                .put("table is dropped [dirName=").put(tableToken.getDirName())
+                .put(", tableName=").put(tableToken.getTableName())
+                .put(']');
     }
 
     public boolean errnoReadPathDoesNotExist() {
