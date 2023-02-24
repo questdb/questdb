@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.AbstractBootstrapTest;
-import io.questdb.Bootstrap;
-import io.questdb.PropertyKey;
-import io.questdb.ServerMain;
+import io.questdb.*;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
