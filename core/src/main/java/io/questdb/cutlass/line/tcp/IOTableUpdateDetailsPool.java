@@ -56,13 +56,13 @@ class IOTableUpdateDetailsPool implements Closeable {
             for (int n = tudArray.length, i = 0; i < n; i++) {
                 TableUpdateDetails tud = getVolatile(tudArray, i);
                 if (tud != null) {
-                    releaseTud(tud, null);
+                    releaseTud(tud);
                 }
             }
         }
     }
 
-    public void closeIdle(long nowMillis, long idleTimeout, LineTcpReceiver.SchedulerListener listener) {
+    public void closeIdle(long nowMillis, long idleTimeout) {
         for (CharSequence key : pool.keySet()) {
             final TableUpdateDetails[] tudArray = pool.get(key);
             if (tudArray != null) {
@@ -71,7 +71,7 @@ class IOTableUpdateDetailsPool implements Closeable {
                     if (tud != null && nowMillis - tud.getLastMeasurementMillis() >= idleTimeout) {
                         if (casTabAt(tudArray, i, tud, null)) {
                             LOG.info().$("active table going idle [tableName=").$(tud.getTableNameUtf16()).I$();
-                            releaseTud(tud, listener);
+                            releaseTud(tud);
                         }
                     }
                 }
@@ -96,7 +96,7 @@ class IOTableUpdateDetailsPool implements Closeable {
         TableUpdateDetails[] tudArray = pool.computeIfAbsent(tableNameUtf8, createNewTableUpdateDetails);
         while (true) {
             if (closed) {
-                releaseTud(tud, null);
+                releaseTud(tud);
                 return;
             }
             // There must be a place to return the tud, arrays are pre-allocate to hold enough for all IO threads
@@ -108,12 +108,8 @@ class IOTableUpdateDetailsPool implements Closeable {
         }
     }
 
-    private void releaseTud(TableUpdateDetails tud, LineTcpReceiver.SchedulerListener listener) {
-        tud.releaseWriter(true);
+    private void releaseTud(TableUpdateDetails tud) {
         Misc.free(tud);
-        if (listener != null) {
-            listener.onEvent(tud.getTableToken(), 1);
-        }
     }
 
     static boolean casTabAt(TableUpdateDetails[] tab, int i, TableUpdateDetails expected, TableUpdateDetails v) {

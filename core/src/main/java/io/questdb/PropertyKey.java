@@ -272,6 +272,7 @@ public enum PropertyKey {
     LINE_TCP_NET_BIND_TO("line.tcp.net.bind.to"),
     LINE_TCP_NET_IDLE_TIMEOUT("line.tcp.net.idle.timeout"),
     LINE_TCP_NET_CONNECTION_TIMEOUT("line.tcp.net.connection.timeout"),
+    LINE_TCP_NET_CONNECTION_HEARTBEAT_INTERVAL("line.tcp.net.connection.heartbeat.interval"),
     LINE_TCP_NET_QUEUED_TIMEOUT("line.tcp.net.queued.timeout"),
     LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT("line.tcp.net.connection.queue.timeout"),
     LINE_TCP_NET_RECV_BUF_SIZE("line.tcp.net.recv.buf.size"),

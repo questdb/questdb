@@ -1623,24 +1623,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCommitInterval() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            create(FF, PartitionBy.NONE, 4);
-            try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
-                writer.updateCommitInterval(0.0, 1000);
-                Assert.assertEquals(1000, writer.getCommitInterval());
-
-                writer.updateCommitInterval(0.5, 1000);
-                Assert.assertEquals(500, writer.getCommitInterval());
-
-                writer.updateCommitInterval(-0.5, 3000);
-                writer.setMetaO3MaxLag(0);
-                Assert.assertEquals(3000, writer.getCommitInterval());
-            }
-        });
-    }
-
-    @Test
     public void testConstructorTruncatedTodo() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override

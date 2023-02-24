@@ -209,11 +209,6 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         private long partitionLo;
 
         @Override
-        public void copyColumnAddressesTo(LongList destColumnAddresses) {
-            destColumnAddresses.add(columnPageAddress);
-        }
-
-        @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }

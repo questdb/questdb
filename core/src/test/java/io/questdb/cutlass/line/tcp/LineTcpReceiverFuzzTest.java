@@ -52,34 +52,6 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testOnSingleConnectionSingeWalUsed() throws Exception {
-        Assume.assumeTrue(walEnabled);
-        runInContext((receiver) -> {
-            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    for (int i = 0; i < 300; i++) {
-                        lineTcpSender
-                                .metric("table")
-                                .longColumn("tag1", i)
-                                .$();
-                        lineTcpSender.flush();
-
-                        if (i % 100 == 0) {
-                            Os.sleep(20);
-                        }
-
-                    }
-                }
-            });
-
-            // Assert all data went into WAL1 and WAL2 does not exist
-            TableToken token = engine.getTableToken("table");
-            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.WAL_NAME_BASE).put("2");
-            Assert.assertFalse(engine.getConfiguration().getFilesFacade().exists(path.slash$()));
-        });
-    }
-
-    @Test
     public void testAddColumnsNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
         initFuzzParameters(-1, -1, -1, 4, -1, false, false, true, false);
@@ -125,6 +97,34 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 4, 8, 20);
         initFuzzParameters(-1, -1, -1, -1, -1, false, true, false, true);
         runTest();
+    }
+
+    @Test
+    public void testOnSingleConnectionSingeWalUsed() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        runInContext((receiver) -> {
+            send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    for (int i = 0; i < 300; i++) {
+                        lineTcpSender
+                                .metric("table")
+                                .longColumn("tag1", i)
+                                .$();
+                        lineTcpSender.flush();
+
+                        if (i % 100 == 0) {
+                            Os.sleep(20);
+                        }
+
+                    }
+                }
+            });
+
+            // Assert all data went into WAL1 and WAL2 does not exist
+            TableToken token = engine.getTableToken("table");
+            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.WAL_NAME_BASE).put("2");
+            Assert.assertFalse(engine.getConfiguration().getFilesFacade().exists(path.slash$()));
+        });
     }
 
     @Test

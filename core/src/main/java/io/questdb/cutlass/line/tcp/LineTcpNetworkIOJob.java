@@ -53,7 +53,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     private LineTcpConnectionContext busyContext = null;
     private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
     private long maintenanceJobDeadline;
-    private long nextCommitTime;
 
     LineTcpNetworkIOJob(
             LineTcpReceiverConfiguration configuration,
@@ -65,7 +64,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         this.maintenanceInterval = configuration.getMaintenanceInterval();
         this.scheduler = scheduler;
         this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;
-        this.nextCommitTime = millisecondClock.getTicks();
         this.dispatcher = dispatcher;
         this.workerId = workerId;
     }
@@ -83,15 +81,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             busyContext = null;
         }
         Misc.freeObjList(unusedSymbolCaches);
-
-        for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final ByteCharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
-            final TableUpdateDetails tud = tableUpdateDetailsUtf8.get(tableNameUtf8);
-            if (tud.isWal()) {
-                tud.releaseWriter(true);
-                tud.close();
-            }
-        }
     }
 
     @Override
@@ -143,13 +132,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             busy = true;
         }
 
-        if (!busy) {
-            final long wallClockMillis = millisecondClock.getTicks();
-            if (wallClockMillis > nextCommitTime) {
-                nextCommitTime = scheduler.commitWalTables(tableUpdateDetailsUtf8, wallClockMillis);
-            }
-        }
-
         final long millis = millisecondClock.getTicks();
         if (millis > maintenanceJobDeadline) {
             busy = scheduler.doMaintenance(tableUpdateDetailsUtf8, workerId, millis);
@@ -181,6 +163,11 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     private boolean onRequest(int operation, LineTcpConnectionContext context) {
+        if (operation == IOOperation.HEARTBEAT) {
+            context.doMaintenance(millisecondClock.getTicks());
+            context.getDispatcher().registerChannel(context, IOOperation.HEARTBEAT);
+            return false;
+        }
         if (handleIO(context)) {
             busyContext = context;
             LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();

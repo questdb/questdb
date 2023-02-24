@@ -31,6 +31,8 @@ import io.questdb.griffin.SqlExecutionContext;
 public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullBwdDataFrameCursor cursor = new FullBwdDataFrameCursor();
 
+    private FullFwdDataFrameCursor fwdCursor;
+
     public FullBwdDataFrameCursorFactory(TableToken tableToken, int tableId, long tableVersion, GenericRecordMetadata metadata) {
         super(tableToken, tableVersion, metadata);
     }
@@ -41,7 +43,12 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
             return cursor.of(getReader(executionContext));
         }
 
-        throw new UnsupportedOperationException();
+        // Create forward scanning cursor when needed. Factory requesting forward cursor must
+        // still return records in descending timestamp order.
+        if (fwdCursor == null) {
+            fwdCursor = new FullFwdDataFrameCursor();
+        }
+        return fwdCursor.of(getReader(executionContext));
     }
 
     @Override
@@ -51,7 +58,11 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Frame backward scan");
+        if (sink.getOrder() == ORDER_ASC) {
+            sink.type("Frame forward scan");
+        } else {
+            sink.type("Frame backward scan");
+        }
         super.toPlan(sink);
     }
 }

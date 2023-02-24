@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,10 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.Mutable;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface MutableIOContext<T extends MutableIOContext<T>> extends IOContext, Mutable {
-    T of(int fd, IODispatcher<T> dispatcher);
+public class LineTcpReceiverConfigurationHelperTest {
+    @Test
+    public void testILPCommitInterval() {
+        Assert.assertEquals(1000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.0, 1000));
+        Assert.assertEquals(500, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.5, 1000));
+        Assert.assertEquals(3000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, -0.5, 3000));
+    }
+
 }
