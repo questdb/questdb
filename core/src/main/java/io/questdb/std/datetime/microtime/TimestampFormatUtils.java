@@ -428,6 +428,7 @@ public class TimestampFormatUtils {
         prevCenturyLow = thisCenturyLow - 100;
         newYear = Timestamps.endOfYear(referenceYear);
     }
+
     static {
         updateReferenceYear(Os.currentTimeMicros());
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
@@ -465,8 +466,8 @@ public class TimestampFormatUtils {
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
         HOUR_FORMAT = dateFormats.get(HOUR_PATTERN);
         DAY_FORMAT = dateFormats.get(DAY_PATTERN);
-        MONTH_FORMAT = dateFormats.get(MONTH_PATTERN);
         WEEK_FORMAT = dateFormats.get(WEEK_PATTERN);
+        MONTH_FORMAT = dateFormats.get(MONTH_PATTERN);
         YEAR_FORMAT = dateFormats.get(YEAR_PATTERN);
     }
 }

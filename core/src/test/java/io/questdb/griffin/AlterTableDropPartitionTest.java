@@ -191,35 +191,46 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                             "  rnd_long(1, 10000000000, 0) px," +
                             "  rnd_float() * 100 leverage," +
                             "  rnd_timestamp(" +
-                            "    to_timestamp('2015-01-01', 'yyyy-MM-dd')," +
-                            "    to_timestamp('2023-12-31', 'yyyy-MM-dd')," +
+                            "    to_timestamp('2022-06-01', 'yyyy-MM-dd')," +
+                            "    to_timestamp('2024-01-03', 'yyyy-MM-dd')," +
                             "    0) ts" +
-                            "  from long_sequence(500)" +
+                            "  from long_sequence(360)" +
                             "), index(sym capacity 128) timestamp(ts) partition by week;",
                     sqlExecutionContext);
             assertSql(
                     "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "  SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMIT 10",
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10",
                     "year\tweek_of_year\twoy\n" +
+                            "2024\t1\t2024-W01\n" +
+                            "2023\t52\t2023-W52\n" +
                             "2023\t51\t2023-W51\n" +
                             "2023\t50\t2023-W50\n" +
                             "2023\t49\t2023-W49\n" +
+                            "2023\t48\t2023-W48\n" +
                             "2023\t47\t2023-W47\n" +
                             "2023\t46\t2023-W46\n" +
                             "2023\t45\t2023-W45\n" +
-                            "2023\t43\t2023-W43\n" +
-                            "2023\t40\t2023-W40\n" +
-                            "2023\t38\t2023-W38\n" +
-                            "2023\t37\t2023-W37\n"
+                            "2023\t44\t2023-W44\n"
             );
-            compile("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2022-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
+
+            compile("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
+
             assertSql(
                     "WITH timestamps AS (SELECT first(ts) ts FROM trade SAMPLE BY d ALIGN TO CALENDAR)" +
-                            "  SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
-                            "  LIMIT 10",
+                            "SELECT DISTINCT year(ts), week_of_year(ts), to_str(ts, 'yyyy-Www') woy FROM timestamps ORDER BY year DESC, week_of_year DESC" +
+                            "  LIMiT 10",
                     "year\tweek_of_year\twoy\n" +
-                            "2023\t47\t2023-W47\n"
+                            "2024\t1\t2024-W01\n" +
+                            "2023\t52\t2023-W52\n" +
+                            "2023\t48\t2023-W48\n" +
+                            "2023\t47\t2023-W47\n" +
+                            "2023\t46\t2023-W46\n" +
+                            "2023\t45\t2023-W45\n" +
+                            "2023\t44\t2023-W44\n" +
+                            "2023\t43\t2023-W43\n" +
+                            "2023\t42\t2023-W42\n" +
+                            "2023\t41\t2023-W41\n"
             );
         });
     }
