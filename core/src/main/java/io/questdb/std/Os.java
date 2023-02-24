@@ -265,6 +265,6 @@ public final class Os {
         JarJniLoader.loadLib(
                 Os.class,
                 "/io/questdb/bin/",
-                "questdb-jni");
+                "questdb_jni");
     }
 }

@@ -2,6 +2,9 @@ pub fn add(left: usize, right: usize) -> usize {
     left + right
 }
 
+mod tokio;
+mod s3;
+
 #[cfg(test)]
 mod tests {
     use super::*;

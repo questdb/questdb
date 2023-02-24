@@ -8,3 +8,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 jni = "0.20.0"
+aws-config = "0.54.1"
+aws-sdk-s3 = "0.24.0"
+tokio = { version = "1", features = ["full"] }

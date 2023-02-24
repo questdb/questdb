@@ -218,6 +218,9 @@
                             <path>src/main/rust/questdb-jni</path>
                             <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
                             <copyWithPlatformDir>true</copyWithPlatformDir>
+                            <environmentVariables>
+                                <RUSTFLAGS>-D warnings</RUSTFLAGS>
+                            </environmentVariables>
                         </configuration>
                     </execution>
                     <execution>
