@@ -53,7 +53,6 @@ public final class PartitionBy {
      */
     public static final int NONE = 3;
     public static final int YEAR = 2;
-
     private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
     private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
     private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
