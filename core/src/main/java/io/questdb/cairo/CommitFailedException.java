@@ -28,12 +28,17 @@ import io.questdb.std.ThreadLocal;
 
 public class CommitFailedException extends Exception {
     private static final ThreadLocal<CommitFailedException> tlException = new ThreadLocal<>(CommitFailedException::new);
+    private boolean tableDropped;
 
-    public static CommitFailedException instance(Throwable reason) {
+    public static CommitFailedException instance(Throwable reason, boolean tableDropped) {
         CommitFailedException ex = tlException.get();
         assert (ex = new CommitFailedException()) != null;
         ex.initCause(reason);
+        ex.tableDropped = tableDropped;
         return ex;
     }
 
+    public boolean isTableDropped() {
+        return tableDropped;
+    }
 }

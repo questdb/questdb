@@ -145,6 +145,10 @@ public class TableUpdateDetails implements Closeable {
             if (null != writerAPI) {
                 try {
                     writerAPI.commit();
+                } catch (CairoException ex) {
+                    if (!ex.isTableDropped()) {
+                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$((Throwable) ex).I$();
+                    }
                 } catch (Throwable ex) {
                     LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableToken).$(",ex=").$(ex).I$();
                 } finally {
@@ -166,15 +170,14 @@ public class TableUpdateDetails implements Closeable {
                 } else {
                     writerAPI.commit();
                 }
-            } catch (Throwable ex) {
-                setWriterInError();
-                LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
-                try {
-                    writerAPI.rollback();
-                } catch (Throwable th) {
-                    LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
+            } catch (CairoException ex) {
+                if (!ex.isTableDropped()) {
+                    handleCommitException(ex);
                 }
-                throw CommitFailedException.instance(ex);
+                throw CommitFailedException.instance(ex, ex.isTableDropped());
+            } catch (Throwable ex) {
+                handleCommitException(ex);
+                throw CommitFailedException.instance(ex, false);
             }
         }
         if (isWal() && tableToken != engine.getTableTokenIfExists(tableToken.getTableName())) {
@@ -263,6 +266,16 @@ public class TableUpdateDetails implements Closeable {
         return defaultMaxUncommittedRows;
     }
 
+    private void handleCommitException(Throwable ex) {
+        setWriterInError();
+        LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();
+        try {
+            writerAPI.rollback();
+        } catch (Throwable th) {
+            LOG.error().$("could not perform emergency rollback [table=").$(tableToken).$(", e=").$(th).I$();
+        }
+    }
+
     long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
@@ -298,7 +311,7 @@ public class TableUpdateDetails implements Closeable {
                     .$(th)
                     .I$();
             writerAPI.rollback();
-            throw CommitFailedException.instance(th);
+            throw CommitFailedException.instance(th, false);
         }
 
         // Tick after commit.
