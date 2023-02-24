@@ -12,6 +12,8 @@ steps:
       restoreKeys: |
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
+  - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin -b fix_build_issues
+  - bash: cd rust-maven-plugin && mvn install -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
