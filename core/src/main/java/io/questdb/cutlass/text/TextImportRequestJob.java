@@ -97,7 +97,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         "rows_handled long," + // 7
                         "rows_imported long," + // 8
                         "errors long" + // 9
-                        ") timestamp(ts) partition by DAY",
+                        ") timestamp(ts) partition by DAY BYPASS WAL",
                 sqlExecutionContext
         );
         this.statusTableToken = engine.getTableToken(statusTableName);

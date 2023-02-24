@@ -99,7 +99,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         "partition_timestamp timestamp, " + // 9
                         "partition_name_txn long," + // 10
                         "completed timestamp" + // 11
-                        ") timestamp(ts) partition by MONTH",
+                        ") timestamp(ts) partition by MONTH BYPASS WAL",
                 sqlExecutionContext
         );
         this.tableToken = engine.getTableToken(tableName);
