@@ -367,7 +367,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
             try (
-                    ServerMain qdb = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+                    ServerMain qdb = new TestServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
                     SqlCompiler compiler = new SqlCompiler(qdb.getCairoEngine());
                     SqlExecutionContext context = executionContext(qdb.getCairoEngine())
             ) {
@@ -375,23 +375,12 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getCairoEngine();
                 TableToken tableToken = createWalTableInVolume(qdb.getConfiguration().getCairoConfiguration(), engine, compiler, context, tableName);
                 assertTableExists(tableToken, true, true);
-                int maxFails = 20;
-                int fails = 0;
-                for (int i = 0; i < maxFails; i++) {
-                    try {
-                        assertSql(
-                                compiler,
-                                context,
-                                "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                                new StringSink(),
-                                TABLE_START_CONTENT);
-                        break;
-                    } catch (AssertionError ignore) {
-                        fails++;
-                        Os.sleep(50L);
-                    }
-                }
-                Assert.assertTrue(fails < maxFails);
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        new StringSink(),
+                        TABLE_START_CONTENT);
                 dropWalTable(engine, compiler, context, tableToken, true);
             }
         });

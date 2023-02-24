@@ -29,10 +29,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.*;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
@@ -55,7 +52,7 @@ import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 
@@ -141,6 +138,20 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             assertSql(tableName.getTableName(), "x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+        });
+    }
+
+    @Test
+    public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param' or 'type' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass", "'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type wall", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass wa", "'wal' expected");
         });
     }
 
@@ -435,6 +446,29 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             alterBuilder.ofDropColumn("ts");
 
             return alterBuilder.build();
+        });
+    }
+
+    @Test
+    public void testErrorReadingWalEFileSuspendTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+
+            TableToken tableToken = createStandardWalTable(tableName);
+
+            FilesFacade ff = configuration.getFilesFacade();
+            int waldFd = TableUtils.openRW(
+                    ff,
+                    Path.getThreadLocal(root).concat(tableToken).concat(WAL_NAME_BASE).put(1).concat("0").concat(EVENT_INDEX_FILE_NAME).$(),
+                    LOG,
+                    configuration.getWriterFileOpenOpts()
+            );
+            Files.truncate(waldFd, 0);
+            ff.close(waldFd);
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.getTableToken(tableName)));
         });
     }
 
@@ -1024,29 +1058,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
-        assertMemoryLeak(ff, () -> {
-            TableToken tableToken = createStandardWalTable(testName.getMethodName());
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param' or 'type' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param' or 'type' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass", "'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type wall", "'bypass' or 'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass wa", "'wal' expected");
-        });
-    }
-
-    private static void assertAlterTableTypeFail(String alterStmt, String expected) {
-        try {
-            compile(alterStmt);
-            Assert.fail("expected SQLException is not thrown");
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), expected);
-        }
-    }
-
-    @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
@@ -1106,12 +1117,17 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         });
     }
 
-    private TableToken createStandardNonWalTable(String tableName) throws SqlException {
-        return createStandardTable(tableName, false);
+    private static void assertAlterTableTypeFail(String alterStmt, String expected) {
+        try {
+            compile(alterStmt);
+            Assert.fail("expected SQLException is not thrown");
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), expected);
+        }
     }
 
-    private TableToken createStandardWalTable(String tableName) throws SqlException {
-        return createStandardTable(tableName, true);
+    private TableToken createStandardNonWalTable(String tableName) throws SqlException {
+        return createStandardTable(tableName, false);
     }
 
     private TableToken createStandardTable(String tableName, boolean isWal) throws SqlException {
@@ -1123,6 +1139,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 " from long_sequence(1)" +
                 ") timestamp(ts) partition by DAY " + (isWal ? "" : "BYPASS ") + "WAL");
         return engine.getTableToken(tableName);
+    }
+
+    private TableToken createStandardWalTable(String tableName) throws SqlException {
+        return createStandardTable(tableName, true);
     }
 
     private void failToApplyAlter(String error, Function<TableToken, AlterOperation> alterOperationFunc) throws Exception {
