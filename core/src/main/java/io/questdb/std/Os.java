@@ -214,57 +214,49 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
-    static {
-        if ("64".equals(System.getProperty("sun.arch.data.model"))) {
-            String osName = System.getProperty("os.name");
-            if (osName.contains("Linux")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = LINUX_ARM64;
-                    loadLib("/io/questdb/bin/armlinux/libquestdb.so");
-                } else {
-                    type = LINUX_AMD64;
-                    loadLib("/io/questdb/bin/linux/libquestdb.so");
-                }
-            } else if (osName.contains("Mac")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = OSX_ARM64;
-                    loadLib("/io/questdb/bin/armosx/libquestdb.dylib");
-                } else {
-                    type = OSX_AMD64; // darwin
-                    loadLib("/io/questdb/bin/osx/libquestdb.dylib");
-                }
-            } else if (osName.contains("Windows")) {
-                type = WINDOWS;
-                loadLib("/io/questdb/bin/windows/libquestdb.dll");
-            } else if (osName.contains("FreeBSD")) {
-                type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                loadLib("/io/questdb/bin/freebsd/libquestdb.so");
-            } else {
-                throw new Error("Unsupported OS: " + osName);
-            }
-        } else {
-            type = _32Bit;
+    private static int determinePlatformType() {
+        if ("32".equals(System.getProperty("sun.arch.data.model"))) {
+            return _32Bit;
         }
 
-//            // TODO [amunra]: Enable below, replace above. This requires some CMake changes.
-//            // CMake-built JNI code.
-//            import io.questdb.jar.jni.LibInfo;
-//            import io.questdb.jar.jni.OsInfo;
-//            JarJniLoader.loadLib(
-//                    Os.class,
-//                    "/io/questdb/bin/",
-//
-//                    // TODO [amunra]: Can we stick to platform conventions and call it `questdb.dll` on Windows?
-//                    new LibInfo(
-//                        OsInfo.INSTANCE.getPlatform(),
-//                        name,
-//                        "lib",  // Custom: We prefix all our CMake-built libs, even on Windows.
-//                        OsInfo.INSTANCE.getLibSuffix()));
+        String osName = System.getProperty("os.name");
+        if (osName.contains("Linux")) {
+            if ("aarch64".equals(System.getProperty("os.arch"))) {
+                return LINUX_ARM64;
+            } else {
+                return LINUX_AMD64;
+            }
+        } else if (osName.contains("Mac")) {
+            if ("aarch64".equals(System.getProperty("os.arch"))) {
+                return OSX_ARM64;
+            } else {
+                return OSX_AMD64; // darwin
+            }
+        } else if (osName.contains("Windows")) {
+            return WINDOWS;
+        } else if (osName.contains("FreeBSD")) {
+            return FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
+        } else {
+            throw new Error("Unsupported OS: " + osName);
+        }
+    }
 
-        // Rust-built JNI code.
-        JarJniLoader.loadLib(
-                Os.class,
-                "/io/questdb/bin/",
-                "questdb_jni");
+    static {
+        type = determinePlatformType();
+        if (type != _32Bit) {
+            // Load the libs via `System.load` after extracting them from the JAR.
+
+            // C++ lib built with CMake.
+            JarJniLoader.loadLib(
+                    Os.class,
+                    "/io/questdb/bin/",
+                    "questdb");
+
+            // Rust lib built via rust-maven-plugin.
+            JarJniLoader.loadLib(
+                    Os.class,
+                    "/io/questdb/bin/",
+                    "questdb_jni");
+        }
     }
 }

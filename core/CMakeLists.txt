@@ -18,6 +18,12 @@ if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
 endif ($ENV{JAVA_HOME})
 
+# Use OS conventions and drop the lib prefix when compiling with MINGW on Windows.
+if(MINGW)
+   set(CMAKE_SHARED_LIBRARY_PREFIX "")
+   set(CMAKE_STATIC_LIBRARY_PREFIX "")
+endif()
+
 set(
         VCL_FILES
         src/main/c/share/vec_agg.cpp
@@ -66,9 +72,9 @@ if (APPLE)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
     if (CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64")
         set(AARCH64 1)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armosx)
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/mac_os_x-aarch64)
     else()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/osx)
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/mac_os_x-x86_64)
     endif()
     set(
             SOURCE_FILES ${SOURCE_FILES}
@@ -82,7 +88,7 @@ elseif (UNIX)
     if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
         MESSAGE("Building for FreeBSD")
         include_directories($ENV{JAVA_HOME}/include/freebsd/)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd-x86_64)
         set(
                 SOURCE_FILES ${SOURCE_FILES}
                 src/main/c/freebsd/kqueue.c
@@ -95,10 +101,10 @@ elseif (UNIX)
         MESSAGE("Building for GNU/Linux")
         include_directories($ENV{JAVA_HOME}/include/linux/)
         if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
+            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux-aarch64)
             set(AARCH64 1)
         else ()
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
+            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux-x86_64)
         endif ()
         set(
                 SOURCE_FILES ${SOURCE_FILES}
@@ -116,7 +122,7 @@ endif (APPLE)
 
 if (WIN32)
     include_directories($ENV{JAVA_HOME}/include/win32/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows)
+    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows-x86_64)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
