@@ -122,7 +122,7 @@ endif (APPLE)
 
 if (WIN32)
     include_directories($ENV{JAVA_HOME}/include/win32/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows-x86_64)
+    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows-amd64)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c

@@ -12,6 +12,11 @@ steps:
       restoreKeys: |
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
+  - bash: |
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh
+      sh ./rustup.sh -y --profile minimal
+    displayName: "Installing Rust"
+    condition: eq(variables['install_rust'], 'true')
   - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin -b fix_build_issues
   - task: Maven@3
     displayName: "mvn install jar-jni"
@@ -22,7 +27,7 @@ steps:
         "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
   - task: Maven@3
-    displayName: "Compile with Maven"
+    displayName: "mvn install rust-maven-plugin"
     inputs:
       mavenPomFile: "rust-maven-plugin/rust-maven-plugin/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
@@ -30,7 +35,7 @@ steps:
         "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
       jdkVersionOption: $(jdk)
   - task: Maven@3
-    displayName: "mvn install rust-maven-plugin"
+    displayName: "Compile with Maven"
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
