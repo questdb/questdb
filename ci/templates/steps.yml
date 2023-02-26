@@ -13,10 +13,24 @@ steps:
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
   - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin -b fix_build_issues
-  - bash: cd rust-maven-plugin/jar-jni && mvn install -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)
-  - bash: cd rust-maven-plugin/rust-maven-plugin && mvn install -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)
+  - task: Maven@3
+    displayName: "mvn install jar-jni"
+    inputs:
+      mavenPomFile: "rust-maven-plugin/jar-jni/pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      options:
+        "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+      jdkVersionOption: $(jdk)
   - task: Maven@3
     displayName: "Compile with Maven"
+    inputs:
+      mavenPomFile: "rust-maven-plugin/rust-maven-plugin/pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      options:
+        "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+      jdkVersionOption: $(jdk)
+  - task: Maven@3
+    displayName: "mvn install rust-maven-plugin"
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
