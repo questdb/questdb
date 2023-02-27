@@ -1199,6 +1199,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
+                        // Set errno to path does not exist
+                        this.openRO(Path.getThreadLocal2("does-not-exist").$());
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
