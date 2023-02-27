@@ -268,6 +268,15 @@ class LineTcpMeasurementScheduler implements Closeable {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
     }
 
+    private static void handleAppendException(DirectByteCharSequence measurementName, TableUpdateDetails tud, Throwable ex) {
+        tud.setWriterInError();
+        LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
+                .$(",ex=")
+                .$(ex)
+                .I$();
+        throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+    }
+
     private void appendToWal(NetworkIOJob netIoJob, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         final boolean stringToCharCastAllowed = configuration.isStringToCharCastAllowed();
         LineProtoTimestampAdapter timestampAdapter = configuration.getTimestampAdapter();
@@ -796,13 +805,17 @@ class LineTcpMeasurementScheduler implements Closeable {
         if (tud.isWal()) {
             try {
                 appendToWal(netIoJob, parser, tud);
+            } catch (CommitFailedException ex) {
+                if (ex.isTableDropped()) {
+                    // table dropped, nothing to worry about
+                    tud.setWriterInError();
+                    tud.releaseWriter(false);
+                    // continue to next line
+                    return false;
+                }
+                handleAppendException(measurementName, tud, ex);
             } catch (Throwable ex) {
-                tud.setWriterInError();
-                LOG.critical().$("closing writer because of error [table=").$(tud.getTableNameUtf16())
-                        .$(",ex=")
-                        .$(ex)
-                        .I$();
-                throw CairoException.critical(0).put("could not append to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+                handleAppendException(measurementName, tud, ex);
             }
             return false;
         }

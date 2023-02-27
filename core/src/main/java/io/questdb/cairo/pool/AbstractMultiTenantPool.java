@@ -187,7 +187,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                 e = e.next;
             } while (e != null);
         } else {
-            LOG.error().$("' already locked [table=`").utf8(tableToken.getDirName()).$("`, owner=").$(e.lockOwner).$(']').$();
+            LOG.error().$("already locked [table=`").utf8(tableToken.getDirName()).$("`, owner=").$(e.lockOwner).$(']').$();
             notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY, -1, -1);
             return false;
         }

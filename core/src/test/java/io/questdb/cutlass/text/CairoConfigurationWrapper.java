@@ -749,6 +749,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getTableRegistryCompactionThreshold() {
+        return conf.getTableRegistryCompactionThreshold();
+    }
+
+    @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return conf.getTelemetryConfiguration();
     }
@@ -769,6 +774,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return conf.getVolumeDefinitions();
+    }
+
+    @Override
     public int getWalApplyLookAheadTransactionCount() {
         return conf.getWalApplyLookAheadTransactionCount();
     }
@@ -776,11 +786,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalCommitSquashRowLimit() {
         return conf.getWalCommitSquashRowLimit();
-    }
-
-    @Override
-    public VolumeDefinitions getVolumeDefinitions() {
-        return conf.getVolumeDefinitions();
     }
 
     @Override

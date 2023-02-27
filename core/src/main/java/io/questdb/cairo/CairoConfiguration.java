@@ -398,6 +398,8 @@ public interface CairoConfiguration {
 
     long getTableRegistryAutoReloadFrequency();
 
+    int getTableRegistryCompactionThreshold();
+
     TelemetryConfiguration getTelemetryConfiguration();
 
     TextConfiguration getTextConfiguration();
@@ -406,11 +408,11 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    VolumeDefinitions getVolumeDefinitions();
+
     int getWalApplyLookAheadTransactionCount();
 
     int getWalCommitSquashRowLimit();
-
-    VolumeDefinitions getVolumeDefinitions();
 
     boolean getWalEnabledDefault();
 
