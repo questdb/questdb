@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.VolumeDefinitions;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
@@ -81,6 +81,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public CharSequence getBackupRoot() {
         return conf.getBackupRoot();
+    }
+
+    @Override
+    public int getO3LagCalculationWindowsSize() {
+        return conf.getO3LagCalculationWindowsSize();
     }
 
     @Override

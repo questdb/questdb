@@ -146,6 +146,7 @@ public enum PropertyKey {
     CAIRO_O3_PARTITION_QUEUE_CAPACITY("cairo.o3.partition.queue.capacity"),
     CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY("cairo.o3.open.column.queue.capacity"),
     CAIRO_O3_COPY_QUEUE_CAPACITY("cairo.o3.copy.queue.capacity"),
+    CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE("cairo.o3.lag.calculation.windows.size"),
     CAIRO_O3_UPD_PARTITION_SIZE_QUEUE_CAPACITY("cairo.o3.upd.partition.size.queue.capacity"),
     CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY("cairo.o3.purge.discovery.queue.capacity"),
     CAIRO_O3_COLUMN_MEMORY_SIZE("cairo.o3.column.memory.size"),
