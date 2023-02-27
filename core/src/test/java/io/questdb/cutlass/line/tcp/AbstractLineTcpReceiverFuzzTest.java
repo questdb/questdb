@@ -29,8 +29,12 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
@@ -68,7 +72,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             {"city", "ciTY", "CITY"}
     };
     private final String[] tagValueBases = new String[]{"us-midwest", "London"};
-    private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
+    private final AtomicLong timestampMicros = new AtomicLong(1465839830102300L);
     protected int numOfIterations;
     protected int numOfLines;
     protected int numOfTables;
@@ -89,6 +93,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private boolean sendStringsAsSymbols = false;
     private boolean sendSymbolsWithSpace = false;
     private SOCountDownLatch threadPushFinished;
+    private long timestampMark = -1;
 
     public AbstractLineTcpReceiverFuzzTest(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
@@ -173,17 +178,31 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             final CharSequence expected = table.generateRows(metadata);
             getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
 
-            final TableReaderRecordCursor cursor = reader.getCursor();
-            // Assert reader min timestamp
-            long txnMinTs = reader.getMinTimestamp();
-            int timestampIndex = reader.getMetadata().getTimestampIndex();
-            if (cursor.hasNext()) {
-                long dataMinTs = cursor.getRecord().getLong(timestampIndex);
-                Assert.assertEquals(dataMinTs, txnMinTs);
-                cursor.toTop();
+            if (timestampMark < 0) {
+                final TableReaderRecordCursor cursor = reader.getCursor();
+                // Assert reader min timestamp
+                long txnMinTs = reader.getMinTimestamp();
+                int timestampIndex = reader.getMetadata().getTimestampIndex();
+                if (cursor.hasNext()) {
+                    long dataMinTs = cursor.getRecord().getLong(timestampIndex);
+                    Assert.assertEquals(dataMinTs, txnMinTs);
+                    cursor.toTop();
+                }
+                assertCursorTwoPass(expected, cursor, metadata);
+            } else {
+                try (SqlCompiler compiler = new SqlCompiler(engine, null, null)) {
+                    final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+                    sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+                    final String sql = tableName + " where timestamp > " + timestampMark;
+                    try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            assertCursorTwoPass(expected, cursor, metadata);
+                        }
+                    }
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
             }
-
-            assertCursorTwoPass(expected, cursor, metadata);
         }
     }
 
@@ -293,15 +312,31 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             getLog().info().$(table.getName()).$(" has not been created yet").$();
             return false;
         }
-        try (TableReader reader = getReader(tableName)) {
-            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
-                    .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
-            return table.size() <= reader.size();
+
+        if (timestampMark < 0) {
+            try (TableReader reader = getReader(tableName)) {
+                getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                        .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
+                return table.size() <= reader.size();
+            }
+        }
+
+        try (SqlCompiler compiler = new SqlCompiler(engine, null, null)) {
+            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+            final String sql = tableName + " where timestamp > " + timestampMark;
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    return table.size() <= cursor.size();
+                }
+            }
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
         }
     }
 
     protected LineData generateLine() {
-        final LineData line = new LineData(timestampMillis.incrementAndGet());
+        final LineData line = new LineData(timestampMicros.incrementAndGet());
         if (exerciseTags) {
             final int[] tagIndexes = getTagIndexes();
             for (final int tagIndex : tagIndexes) {
@@ -388,6 +423,19 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     protected void mayDrainWalQueue() {
         if (walEnabled) {
             drainWalQueue();
+        }
+    }
+
+    protected void markTimestamp() {
+        timestampMark = timestampMicros.get();
+    }
+
+    protected void clearTables() {
+        final ObjList<CharSequence> names = tables.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            final CharSequence tableName = names.get(i);
+            final TableData table = tables.get(tableName);
+            table.clear();
         }
     }
 

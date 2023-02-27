@@ -162,24 +162,9 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         // wait for drop threads to finish
         dropsDone.await();
 
-        // drop all tables
-        final SCSequence waitSequence = new SCSequence();
-        try (SqlCompiler compiler = new SqlCompiler(engine, null, null)) {
-            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
-            final ObjList<CharSequence> names = tables.keys();
-            for (int i = 0, n = names.size(); i < n; i++) {
-                final CharSequence tableName = names.get(i);
-                final TableData table = tables.get(tableName);
-                table.clear();
-                executeDrop(compiler, sqlExecutionContext, "drop table " + tableName, waitSequence);
-            }
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
-        }
-
-        // this makes sure that all txn notifications are dropped
-        drainWalQueue();
+        // reset tables
+        markTimestamp();
+        clearTables();
 
         // ingest again
         ingest(sockets);
