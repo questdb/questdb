@@ -386,6 +386,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
     }
 
@@ -1147,6 +1148,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
             Assert.assertEquals(23, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
             Assert.assertFalse(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
+            Assert.assertEquals(120, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         }
     }
 
