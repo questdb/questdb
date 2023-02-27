@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.VolumeDefinitions;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -210,6 +210,8 @@ public interface CairoConfiguration {
     long getO3MaxLag();
 
     long getO3MinLag();
+
+    int getO3LagCalculationWindowsSize();
 
     int getO3OpenColumnQueueCapacity();
 
@@ -396,6 +398,8 @@ public interface CairoConfiguration {
 
     long getTableRegistryAutoReloadFrequency();
 
+    int getTableRegistryCompactionThreshold();
+
     TelemetryConfiguration getTelemetryConfiguration();
 
     TextConfiguration getTextConfiguration();
@@ -404,11 +408,11 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    VolumeDefinitions getVolumeDefinitions();
+
     int getWalApplyLookAheadTransactionCount();
 
     int getWalCommitSquashRowLimit();
-
-    VolumeDefinitions getVolumeDefinitions();
 
     boolean getWalEnabledDefault();
 
