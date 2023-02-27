@@ -62,9 +62,9 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
 
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        filter.init(this, executionContext);
         isMapPrepared = false;
         super.of(dataFrameCursor, executionContext);
+        filter.init(this, executionContext);
     }
 
     @Override
