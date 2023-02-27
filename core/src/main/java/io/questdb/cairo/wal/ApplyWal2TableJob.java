@@ -252,6 +252,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
                     try {
                         writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON, false);
+                    } catch (EntryUnavailableException ex) {
+                        // Table is being written to, we cannot destroy it at the moment
+                        return false;
                     } catch (CairoException ex) {
                         // Ignore it, table can be half deleted.
                     }

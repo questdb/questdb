@@ -304,6 +304,8 @@ public class TableUpdateDetails implements Closeable {
 
         try {
             commit(true);
+        } catch (CommitFailedException ex) {
+            throw ex;
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableToken())

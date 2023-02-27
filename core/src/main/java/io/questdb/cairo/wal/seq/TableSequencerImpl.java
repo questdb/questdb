@@ -279,6 +279,23 @@ public class TableSequencerImpl implements TableSequencer {
             walIdGenerator.open(path);
             metadata.open(path, rootLen);
             tableTransactionLog.open(path);
+        } catch (CairoException ex) {
+            closeLocked();
+            if (ex.isTableDropped()) {
+                throw ex;
+            }
+            if (ex.errnoReadPathDoesNotExist()) {
+                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
+                        .$(", path=").$(path)
+                        .$(", error=").$(ex.getMessage())
+                        .I$();
+                throw CairoException.tableDropped(tableToken);
+            }
+            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+                    .$(", path=").$(path)
+                    .$(", error=").$(ex.getMessage())
+                    .I$();
+            throw ex;
         } catch (Throwable th) {
             LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
                     .$(", path=").$(path)
