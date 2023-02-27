@@ -1301,21 +1301,40 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             pDirNameLen = pathToPartition.length();
 
             if (srcDataTop > 0) {
-                final long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
-                final long srcDataMaxBytes = srcDataMax << shl;
+                // Size of data actually in the file.
+                long srcDataActualBytes = (srcDataMax - srcDataTop) << shl;
+                // Size of data in the file if it didn't have column top.
+                long srcDataMaxBytes = srcDataMax << shl;
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
-                    // extend the existing column down, we will be discarding it anyway
+                    // Extend the existing column down, we will be discarding it anyway.
+                    // Materialize nulls at the end of the column and add non-null data to merge.
+                    // Do all of this beyond existing written data, using column as a buffer.
+                    srcDataFixOffset = srcDataActualBytes;
+                    if (prefixType == O3_BLOCK_NONE) {
+                        // This is partition split, prefix will not be copied anyway.
+//                        srcDataMaxBytes = (srcDataMax - prefixHi - 1) << shl;
+//                        srcDataTop -= prefixHi + 1;
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);//prefixHi + 1);
+//                        srcDataFixOffset -= (prefixHi + 1) << shl;
+                        // TODO: allocate 2 values in column top sink
+                    }
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
                     TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
                     Vect.memcpy(srcDataFixAddr + srcDataMaxBytes, srcDataFixAddr, srcDataActualBytes);
                     srcDataTop = 0;
-                    srcDataFixOffset = srcDataActualBytes;
                 } else {
                     // when we are shuffling "empty" space we can just reduce column top instead
                     // of moving data
-                    Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                    if (prefixType == O3_BLOCK_NONE) {
+                        // Split partition.
+                        assert false; // todo: solve this
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, prefixHi + 1);
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop - prefixHi - 1);
+                    } else {
+                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                    }
                     srcDataFixSize = srcDataActualBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);

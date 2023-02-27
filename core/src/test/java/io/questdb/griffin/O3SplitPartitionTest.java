@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Vect;
 import io.questdb.test.tools.TestUtils;
@@ -38,6 +40,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     private final StringBuilder tstData = new StringBuilder();
     @Rule
     public TestName name = new TestName();
+    protected static final Log LOG = LogFactory.getLog(O3SplitPartitionTest.class);
 
     @Before
     public void setUp4() {
@@ -233,7 +236,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                         " cast(x as int) * 1000000 i," +
                         " -x - 1000000L as j," +
                         " rnd_str(5,16,2) as str," +
-                        " timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts," +
+                        " timestamp_sequence('2020-02-05T17:01:05', 60*1000000L) ts," +
                         " 1 as k" +
                         " from long_sequence(1000))",
                 executionContext
@@ -246,11 +249,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
         compiler.compile("insert into x select * from z", executionContext);
 
-        TestUtils.assertEquals(
+        String limit = "";// " limit 3120, 3140";
+        TestUtils.assertSqlCursors(
                 compiler,
                 executionContext,
-                "y order by ts",
-                "x"
+                "y order by ts" + limit,
+                "x" + limit,
+                LOG
         );
     }
 }

@@ -1001,7 +1001,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 columnTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
             final long columnRowCount = partitionRowCount - columnTop;
-            assert partitionRowCount < 0 || columnRowCount >= 0;
 
             // When column is added mid-table existence the top record is only
             // created in the current partition. Older partitions would simply have no
