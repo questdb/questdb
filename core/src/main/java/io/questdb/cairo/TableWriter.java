@@ -92,7 +92,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
-    private static final int WINDOW_SIZE = 4;
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
@@ -134,7 +133,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MemoryCR> o3ColumnOverrides;
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
-    private final long[] o3LastTimestampSpreads = new long[WINDOW_SIZE];
+    private final long[] o3LastTimestampSpreads;
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final boolean o3QuickSortEnabled;
@@ -341,6 +340,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
             walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
+            o3LastTimestampSpreads = new long[configuration.getO3LagCalculationWindowsSize()];
             Arrays.fill(o3LastTimestampSpreads, 0);
         } catch (Throwable e) {
             doClose(false);
@@ -3526,7 +3526,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     lagError = getMaxTimestamp() - o3CommitBatchTimestampMin;
 
-                    int n = WINDOW_SIZE - 1;
+                    int n = o3LastTimestampSpreads.length - 1;
 
                     if (lagError > 0) {
                         o3EffectiveLag += lagError * configuration.getO3LagIncreaseFactor();

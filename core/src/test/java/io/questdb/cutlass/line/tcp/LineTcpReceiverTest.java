@@ -350,7 +350,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     weather + ",location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
                     weather + ",location=us-westcost,source=sensor1 temp=82 1465839830102500200\n" +
                     "done ok=t\n";
-            sendWaitWalReleaseCount(lineData, 3);
+
+            // Wait for 2 WAL writer, dropped table WAL writer will not be returned to the pool
+            sendWaitWalReleaseCount(lineData, 2);
 
             mayDrainWalQueue();
 
