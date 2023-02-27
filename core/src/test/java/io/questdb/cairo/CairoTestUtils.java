@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public class CairoTestUtils {
 
@@ -244,5 +245,36 @@ public class CairoTestUtils {
                 .col("hi", ColumnType.getGeoHashTypeWithBits(27))
                 .col("hl", ColumnType.getGeoHashTypeWithBits(44))
                 .timestamp();
+    }
+
+    public static int maxDayOfMonth(int month) {
+        switch (month) {
+            case 1:
+            case 3:
+            case 5:
+            case 7:
+            case 8:
+            case 10:
+            case 12:
+                return 31;
+            case 2:
+                return 28;
+            case 4:
+            case 6:
+            case 9:
+            case 11:
+                return 30;
+            default:
+                throw new IllegalArgumentException("[1..12]");
+        }
+    }
+
+    public static StringSink putWithLeadingZeroIfNeeded(StringSink seq, int len, int value) {
+        seq.clear(len);
+        if (value < 10) {
+            seq.put('0');
+        }
+        seq.put(value);
+        return seq;
     }
 }

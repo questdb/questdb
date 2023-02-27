@@ -417,8 +417,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             e.printStackTrace();
                         }
                     } catch (Exception e) {
-                        exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        if (e instanceof CairoException) {
+                            TestUtils.assertContains(((CairoException) e).getFlyweightMessage(), "'xyz~' is left behind");
+                        } else {
+                            exceptionCount.incrementAndGet();
+                            e.printStackTrace();
+                        }
                     } finally {
                         stopLatch.countDown();
                     }

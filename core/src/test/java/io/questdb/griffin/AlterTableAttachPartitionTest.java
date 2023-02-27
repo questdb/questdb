@@ -114,6 +114,27 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachPartitionsWithExtraCharsInPartitionNameByDay() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src3a", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst3a", PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        src.timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG),
+                        10000,
+                        "2020-01-01",
+                        12);
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+                attachFromSrcIntoDst(src, dst, "2020-01-09.10", "2020-01-10T19", "2020-01-01T20:22:24.262829Z");
+            }
+        });
+    }
+
+    @Test
     public void testAttachActiveWrittenPartition() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src4", PartitionBy.DAY);
@@ -151,47 +172,87 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[39] 'YYYY-MM' expected[errno=0]", e.getMessage());
+                    Assert.assertEquals("[39] 'yyyy-MM' expected, found [ts=202A-01]", e.getMessage());
                 }
             }
         });
     }
 
     @Test
-    public void testAttachFailsInvalidFormatPartitionsAnnually() throws Exception {
+    public void testAttachFailsInvalidFormatPartitionsAnnually0() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel dst = new TableModel(configuration, "dst6", PartitionBy.YEAR)) {
+            try (TableModel dst = new TableModel(configuration, "dst6a", PartitionBy.YEAR)) {
 
                 CairoTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
+                String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST 'nono'";
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[39] 'YYYY' expected[errno=0]", e.getMessage());
+                    Assert.assertEquals("[40] 'yyyy' expected, found [ts=nono]", e.getMessage());
                 }
             }
         });
     }
 
     @Test
-    public void testAttachFailsInvalidFormatPartitionsMonthly() throws Exception {
+    public void testAttachFailsInvalidFormatPartitionsAnnually1() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel dst = new TableModel(configuration, "dst7", PartitionBy.MONTH)) {
+            try (TableModel dst = new TableModel(configuration, "dst6b", PartitionBy.YEAR)) {
 
                 CairoTestUtils.create(dst.timestamp("ts")
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
+                String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '202'";
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[39] 'YYYY-MM' expected[errno=0]", e.getMessage());
+                    Assert.assertEquals("[40] 'yyyy' expected, found [ts=202]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidFormatPartitionsMonthly0() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst7a", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-no'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[40] 'yyyy-MM' expected, found [ts=2020-no]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidFormatPartitionsMonthly1() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst7b", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[40] 'yyyy-MM' expected, found [ts=2020]", e.getMessage());
                 }
             }
         });
@@ -1153,10 +1214,36 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         other.of(configuration.getRoot()).concat(tableToken0);
         int otherLen = other.length();
 
+
+        int hi = -1;
+        switch (dst.getPartitionBy()) {
+            case PartitionBy.DAY:
+                hi = 10; // yyyy-MM-dd;
+                break;
+            case PartitionBy.WEEK:
+                hi = 8; // YYYY-Www
+                break;
+            case PartitionBy.MONTH:
+                hi = 7; // yyyy-MM
+                break;
+            case PartitionBy.YEAR:
+                hi = 4; // yyyy
+                break;
+            case PartitionBy.HOUR:
+                hi = 13; // yyyy-MM-ddTHH
+                break;
+        }
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
-            path.trimTo(pathLen).concat(partition).$();
-            other.trimTo(otherLen).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+            int limit;
+            if (hi == -1) {
+                // by none
+                limit = partition.length();
+            } else {
+                limit = hi;
+            }
+            path.trimTo(pathLen).concat(partition, 0, limit).$();
+            other.trimTo(otherLen).concat(partition, 0, limit).put(configuration.getAttachPartitionSuffix()).$();
             TestUtils.copyDirectory(path, other, configuration.getMkDirMode());
         }
 
@@ -1167,8 +1254,9 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         Assert.assertTrue(newRowCount > rowCount);
 
         long timestamp = 0;
-        for (String s : partitionList) {
-            long ts = TimestampFormatUtils.parseTimestamp(s
+        for (String partition : partitionList) {
+            int limit = hi == -1 ? partition.length() : hi;
+            long ts = TimestampFormatUtils.parseTimestamp(partition.substring(0, limit)
                     + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
                     + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
                     + "T23:59:59.999z");
