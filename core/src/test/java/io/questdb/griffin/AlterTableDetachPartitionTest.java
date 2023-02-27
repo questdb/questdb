@@ -1147,6 +1147,39 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testDetachPartitionLongerName() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        tab.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        5,
+                        "2022-06-01",
+                        4);
+
+                String timestampDay = "2022-06-02";
+                try (TableWriter writer = getWriter(tableName)) {
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
+                }
+                renameDetachedToAttachable(tableName, timestampDay);
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
+                assertContent(
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T19:11:59.800000Z\n" +
+                                "2\t2\t2022-06-02T14:23:59.600000Z\n" +
+                                "3\t3\t2022-06-03T09:35:59.400000Z\n" +
+                                "4\t4\t2022-06-04T04:47:59.200000Z\n" +
+                                "5\t5\t2022-06-04T23:59:59.000000Z\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDetachPartitionIndexFilesGetIndexed() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabIndexFilesIndex";
