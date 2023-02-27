@@ -71,8 +71,8 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
         if (!isOpen()) {
             map.reopen();
         }
-        filter.init(this, executionContext);
         super.of(dataFrameCursor, executionContext);
+        filter.init(this, executionContext);
     }
 
     @Override
