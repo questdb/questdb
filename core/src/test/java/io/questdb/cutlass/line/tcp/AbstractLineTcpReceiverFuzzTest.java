@@ -380,7 +380,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         this.waitBetweenIterationsMillis = waitBetweenIterationsMillis;
         this.pinTablesToThreads = pinTablesToThreads;
 
-        threadPushFinished = new SOCountDownLatch(numOfThreads);
+        threadPushFinished = new SOCountDownLatch();
         tables = new LowerCaseCharSequenceObjHashMap<>();
         tableNames = new ConcurrentHashMap<>();
     }
@@ -436,10 +436,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 for (int i = 0; i < numOfThreads; i++) {
                     final Socket socket = newSocket();
                     sockets.add(socket);
-                    startThread(i, socket, threadPushFinished);
                 }
-                threadPushFinished.await();
-                waitDone();
+                ingest(sockets);
+                waitDone(sockets);
 
                 for (int i = 0; i < numOfTables; i++) {
                     final CharSequence tableName = getTableName(i);
@@ -462,6 +461,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         if (errorMsg != null) {
             Assert.fail(errorMsg);
         }
+    }
+
+    void ingest(ObjList<Socket> sockets) {
+        threadPushFinished.setCount(numOfThreads);
+        for (int i = 0; i < numOfThreads; i++) {
+            startThread(i, sockets.get(i), threadPushFinished);
+        }
+        threadPushFinished.await();
     }
 
     void setError(String errorMsg) {
@@ -490,22 +497,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }).start();
     }
 
-    void waiForTable(TableData table) {
-        // if CI is very slow the table could be released before ingestion stops
-        // then acquired again for further data ingestion
-        // because of the above we will wait in a loop with a timeout for the data to appear in the table
-        // in most cases we should not hit the sleep() below
-        table.await();
-        for (int i = 0; i < 180; i++) {
-            if (checkTable(table)) {
-                return;
-            }
-            Os.sleep(1000);
-        }
-        throw new RuntimeException("Timed out on waiting for the data, table=" + table.getName());
-    }
-
-    protected void waitDone() {
+    protected void waitDone(ObjList<Socket> sockets) {
         for (int i = 0; i < numOfTables; i++) {
             final CharSequence tableName = getTableName(i);
             final TableData table = tables.get(tableName);
