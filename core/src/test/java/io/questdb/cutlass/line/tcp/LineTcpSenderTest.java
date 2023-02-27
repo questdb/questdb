@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -358,7 +358,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testServerIgnoresUnfinishedRows() throws Exception {
         String tableName = "myTable";
         runInContext(r -> {
-            send(r, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+            send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
                 try (Sender sender = Sender.builder()
                         .address("127.0.0.1")
                         .port(bindPort)
@@ -495,6 +495,31 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
                         "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
+    public void testWriteLongMinMax() throws Exception {
+        runInContext(r -> {
+            String table = "table";
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-02-22");
+                sender.table(table)
+                        .longColumn("max", Long.MAX_VALUE)
+                        .longColumn("min", Long.MIN_VALUE)
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, table, 1);
+            try (TableReader reader = getReader(table)) {
+                TestUtils.assertReader("max\tmin\ttimestamp\n" +
+                        "9223372036854775807\tNaN\t2023-02-22T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
     }

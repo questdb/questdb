@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -221,7 +221,7 @@ public class LimitTest extends AbstractGriffinTest {
                 "60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tNaN\tNaN\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT\n";
 
         String query = "select * from y limit -5";
-        testLimit(expected, expected2, query);
+        testLimit(expected, expected2, query, true);
     }
 
     @Test
@@ -700,6 +700,10 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     private void testLimit(String expected1, String expected2, String query) throws Exception {
+        testLimit(expected1, expected2, query, false);
+    }
+
+    private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
                     "create table y as (" +
@@ -724,7 +728,8 @@ public class LimitTest extends AbstractGriffinTest {
                             ") timestamp(timestamp)",
                     sqlExecutionContext
             );
-            assertQueryAndCache(expected1, query, "timestamp", true, false);
+
+            assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
 
             compiler.compile(
                     "insert into y select * from " +
@@ -750,7 +755,7 @@ public class LimitTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQuery(expected2, query, "timestamp", true, false);
+            assertQuery(expected2, query, "timestamp", true, expectSize);
         });
     }
 

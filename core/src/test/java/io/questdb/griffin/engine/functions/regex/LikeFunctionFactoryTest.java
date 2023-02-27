@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -277,5 +277,22 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testSingleCharacterLikeString() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s string ) ");
+            compile("insert into x values ( 'v' ), ( 'vv' ) ");
+
+            assertLike("s\nv\n", "select * from x where s like 'v'");
+            assertLike("s\nv\n", "select * from x where s like '_'");
+            assertLike("s\nv\nvv\n", "select * from x where s like '%'");
+        });
+    }
+
+    private void assertLike(String expected, String query) throws SqlException {
+        assertQuery(expected, query, null, true, false);
+        assertQuery(expected, query.replace("like", "ilike"), null, true, false);
     }
 }

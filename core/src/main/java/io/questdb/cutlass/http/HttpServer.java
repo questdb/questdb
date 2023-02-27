@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,10 +36,10 @@ import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.network.MutableIOContextFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -231,7 +231,7 @@ public class HttpServer implements Closeable {
         HttpRequestProcessor newInstance();
     }
 
-    private static class HttpContextFactory extends MutableIOContextFactory<HttpConnectionContext> {
+    private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
         public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
             super(() -> new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());
         }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -99,6 +99,9 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
 
         // in this edge case, type is guessed as best as possible, later the parser would fail, its a feature
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123a4i");
+
+        assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "-9223372036854775808i");
+        assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "9223372036854775807i");
     }
 
     private static void assertError(int type, String value) throws Exception {

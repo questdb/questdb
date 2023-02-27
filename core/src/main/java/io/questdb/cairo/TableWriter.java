@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -175,10 +175,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private boolean avoidIndexOnCommit = false;
     private int columnCount;
-    private long commitInterval;
-    private long commitIntervalDefault;
-    // ILP related
-    private double commitIntervalFraction;
     private long committedMasterRef;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
@@ -327,7 +323,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 this.partitionDirFmt = null;
             }
-            this.commitInterval = calculateCommitInterval();
 
             configureColumnMemory();
             configureTimestampSetter();
@@ -1111,11 +1106,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
-    }
-
-    @Override
-    public long getCommitInterval() {
-        return commitInterval;
     }
 
     @TestOnly
@@ -2099,13 +2089,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
     }
 
-    @Override
-    public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
-        this.commitIntervalFraction = commitIntervalFraction;
-        this.commitIntervalDefault = commitIntervalDefault;
-        this.commitInterval = calculateCommitInterval();
-    }
-
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
@@ -2665,11 +2648,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
-    }
-
-    private long calculateCommitInterval() {
-        long commitIntervalMicros = (long) (configuration.getO3MinLag() * commitIntervalFraction);
-        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
     }
 
     private void cancelRowAndBump() {

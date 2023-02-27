@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -168,26 +168,6 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
             fail("Expected exception has not been thrown");
         } catch (PSQLException psqlException) {
             TestUtils.assertContains(psqlException.getMessage(), "Connection to 127.0.0.1:" + PG_PORT + " refused.");
-        }
-    }
-
-    static class TestServerMain extends ServerMain {
-        TestServerMain(String... args) {
-            super(args);
-        }
-
-        TestServerMain(final Bootstrap bootstrap) {
-            super(bootstrap);
-        }
-
-        @Override
-        protected void setupWalApplyJob(
-                WorkerPool workerPool,
-                CairoEngine engine,
-                int sharedWorkerCount,
-                @Nullable FunctionFactoryCache ffCache
-        ) {
-            // do nothing
         }
     }
 }

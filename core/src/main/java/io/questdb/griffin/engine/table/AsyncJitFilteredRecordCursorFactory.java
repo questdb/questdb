@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -82,7 +82,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.hasDescendingOrder());
         MemoryCARW bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
         IntList preTouchColumnTypes = null;
@@ -145,7 +145,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             order = baseOrder;
         }
 
-        if (order == ORDER_DESC && rowsRemaining != Long.MAX_VALUE) {
+        if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
             if (rowsRemaining > maxNegativeLimit) {
                 throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
             }

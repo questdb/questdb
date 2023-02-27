@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -168,6 +168,15 @@ public abstract class AbstractBootstrapTest {
         createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, extra);
     }
 
+    protected static void drainWalQueue(CairoEngine engine) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+            walApplyJob.drain(0);
+            new CheckWalTransactionsJob(engine).run(0);
+            // run once again as there might be notifications to handle now
+            walApplyJob.drain(0);
+        }
+    }
+
     static String[] extendArgsWith(String[] args, String... moreArgs) {
         int argsLen = args.length;
         int extLen = moreArgs.length;
@@ -179,15 +188,6 @@ public abstract class AbstractBootstrapTest {
         System.arraycopy(args, 0, extendedArgs, 0, argsLen);
         System.arraycopy(moreArgs, 0, extendedArgs, argsLen, extLen);
         return extendedArgs;
-    }
-
-    protected static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
-            walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
-            // run once again as there might be notifications to handle now
-            walApplyJob.drain(0);
-        }
     }
 
     protected static String getPgConnectionUri(int pgPort) {

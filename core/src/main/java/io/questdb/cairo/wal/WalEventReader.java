@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -93,7 +93,7 @@ public class WalEventReader implements Closeable {
                                 .put(", size=").put(size);
                     }
 
-                    // WAL-E file has record indicator for the next record always present 
+                    // WAL-E file has record indicator for the next record always present
                     // so file size is the size read + 4 bytes
                     eventMem.extend(size + Integer.BYTES);
                     eventCursor.openOffset(offset);

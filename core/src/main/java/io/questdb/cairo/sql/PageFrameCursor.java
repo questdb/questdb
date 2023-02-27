@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,17 +24,16 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
-public interface PageFrameCursor extends Closeable, SymbolTableSource {
+public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
     @Override
     void close(); // we don't throw IOException
 
     /**
-     * Return the REAL row id of given row on current page .
+     * Return the REAL row id of given row on current page.
      * This is used for e.g. updating rows.
      *
      * @param rowIndex - page index of row

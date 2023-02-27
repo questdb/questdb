@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,9 +62,9 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
 
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        filter.init(this, executionContext);
         isMapPrepared = false;
         super.of(dataFrameCursor, executionContext);
+        filter.init(this, executionContext);
     }
 
     @Override

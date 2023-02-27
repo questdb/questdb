@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1080,7 +1080,7 @@ public class CopyTest extends AbstractGriffinTest {
                 "select line,ts,d,description from x limit -10",
                 "ts",
                 true,
-                false
+                true
         );
 
         assertQuery("cnt\n1001\n", "select count(*) cnt from x", null, false, true);
