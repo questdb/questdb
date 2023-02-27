@@ -162,6 +162,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
+    private final int o3LagCalculationWindowsSize;
     private final long o3MaxLag;
     private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
@@ -897,6 +898,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_PARTITION_QUEUE_CAPACITY, 128);
             this.o3OpenColumnQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY, 128);
             this.o3CopyQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_O3_COPY_QUEUE_CAPACITY, 128);
+            this.o3LagCalculationWindowsSize = getIntSize(properties, env, PropertyKey.CAIRO_O3_LAG_CALCULATION_WINDOW_SIZE, 4);
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
             this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
@@ -1502,6 +1504,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
+        }
+
+        @Override
+        public int getO3LagCalculationWindowsSize() {
+            return o3LagCalculationWindowsSize;
         }
 
         @Override
