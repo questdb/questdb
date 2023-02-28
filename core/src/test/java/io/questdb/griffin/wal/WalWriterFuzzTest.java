@@ -111,7 +111,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
-        runFuzz(new Rnd(1295287213717333L, 1677493652354L));//TestUtils.generateRandom(LOG));
+        runFuzz(TestUtils.generateRandom(LOG));
     }
 
     @Test
@@ -619,7 +619,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                 long endWalMicro = System.nanoTime() / 1000;
                 long walTotal = endWalMicro - endNonWalMicro;
 
-                String limit = " limit 693256, 793296";
+                String limit = "";
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal + limit, tableNameWal + limit, LOG);
 
                 startMicro = System.nanoTime() / 1000;

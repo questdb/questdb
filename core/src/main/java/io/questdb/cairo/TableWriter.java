@@ -443,6 +443,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential
     ) {
 
+        assert txWriter.getLagRowCount() == 0;
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
 
@@ -1410,9 +1411,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long commitMaxTimestamp, commitMinTimestamp;
 
             long walLagRowCount = txWriter.getLagRowCount();
+            long o3Hi = rowHi;
             try {
                 long o3Lo = rowLo;
-                long o3Hi = rowHi;
                 long commitRowCount = rowHi - rowLo;
                 final boolean copiedToMemory;
                 final boolean needsOrdering = !ordered || walLagRowCount > 0;
@@ -1530,16 +1531,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.setLagOrdered(true);
                 txWriter.setLagRowCount((int) walLagRowCount);
+
+                finishO3Commit(partitionTsHi);
+                if (walLagRowCount > 0) {
+                    o3ShiftLagRowsUp(timestampIndex, walLagRowCount, o3Hi, 0L, false, this.o3MoveWalFromFilesToLastPartitionRef);
+                }
+
             } finally {
                 finishO3Append(walLagRowCount);
                 o3Columns = o3MemColumns;
-                closeWalColumns();
             }
 
-            finishO3Commit(partitionTsHi);
             return commitMaxTimestamp;
         } finally {
             walPath.trimTo(walRootPathLen);
+            closeWalColumns();
         }
     }
 
@@ -1676,6 +1682,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void removeColumn(CharSequence name) {
+        assert txWriter.getLagRowCount() == 0;
+
         checkDistressed();
         checkColumnName(name);
 
@@ -5298,15 +5306,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        if (o3LagRowCount > 0) {
-            O3ColumnUpdateMethod o3MoveMethod = metadata.isWalEnabled() ? this.o3MoveWalFromFilesToLastPartitionRef : this.o3MoveLagRef;
-            if (metadata.isWalEnabled()) {
-                if (!isLastPartitionColumnsOpen() || lastOpenPartitionTimestamp != partitionTimestampHi) {
-                    // Lag is stored in the last partition for WAL tables.
-                    openPartition(txWriter.getMaxTimestamp());
-                }
-            }
-            o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax, 0L, false, o3MoveMethod);
+        if (o3LagRowCount > 0 && !metadata.isWalEnabled()) {
+            o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax, 0L, false, this.o3MoveLagRef);
         }
     }
 
