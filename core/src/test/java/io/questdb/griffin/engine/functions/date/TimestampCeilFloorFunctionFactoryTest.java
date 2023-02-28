@@ -74,7 +74,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit ''", e.getFlyweightMessage());
             }
         });
     }
