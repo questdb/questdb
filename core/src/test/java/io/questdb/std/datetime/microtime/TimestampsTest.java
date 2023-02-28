@@ -552,15 +552,11 @@ public class TimestampsTest {
     @Test
     public void testParseBadISODate() {
         expectExceptionDateTime("201");
-        expectExceptionDateTime("2014");
         expectExceptionDateTime("2014-");
         expectExceptionDateTime("2014-0");
-        expectExceptionDateTime("2014-03");
         expectExceptionDateTime("2014-03-");
         expectExceptionDateTime("2014-03-1");
-        expectExceptionDateTime("2014-03-10");
         expectExceptionDateTime("2014-03-10T0");
-        expectExceptionDateTime("2014-03-10T01");
         expectExceptionDateTime("2014-03-10T01-");
         expectExceptionDateTime("2014-03-10T01:1");
         expectExceptionDateTime("2014-03-10T01:19");

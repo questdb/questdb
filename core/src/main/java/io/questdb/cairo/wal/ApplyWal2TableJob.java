@@ -62,9 +62,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static final int TXN_METADATA_LONGS_SIZE = 3;
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final int WAL_APPLY_FAILED = -2;
+    private static final int WAL_APPLY_IGNORE_ERROR = -1;
     private final long commitSquashRowLimit;
     private final CairoEngine engine;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
+    private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationCompiler operationCompiler;
@@ -75,7 +77,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
-    private final int lookAheadTransactionCount;
     private long rowsSinceLastCommit;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount, @Nullable FunctionFactoryCache ffCache) {
@@ -95,6 +96,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
     }
 
+    // returns transaction number, which is always > -1. Negative values are used as status code.
     public long applyWAL(
             TableToken tableToken,
             CairoEngine engine,
@@ -102,24 +104,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             Job.RunStatus runStatus
     ) {
         long lastSequencerTxn = -1;
-        long lastWriterTxn = -1;
+        long lastWriterTxn = WAL_APPLY_IGNORE_ERROR;
         Path tempPath = Path.PATH.get();
 
         try {
             do {
                 // security context is checked on writing to the WAL and can be ignored here
                 TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
-                if (updatedToken == null) {
+                if (engine.isTableDropped(tableToken) || updatedToken == null) {
                     if (engine.isTableDropped(tableToken)) {
                         return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
                     }
                     // else: table is dropped and fully cleaned, this is late notification.
                     return Long.MAX_VALUE;
-                }
-
-                if (!engine.isWalTable(tableToken)) {
-                    LOG.info().$("table '").utf8(tableToken.getDirName()).$("' does not exist, skipping WAL application").$();
-                    return 0;
                 }
 
                 rowsSinceLastCommit = 0;
@@ -130,18 +127,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 } catch (EntryUnavailableException tableBusy) {
                     if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason()) && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
                         LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lock_reason=").$(tableBusy.getReason()).I$();
-                        // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
                     }
-                    // This is good, someone else will apply the data
+                    // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
+                    // We don't suspend table by virtue of having initial value on lastWriterTxn. It will either be
+                    // "ignore" or last txn we applied.
                     break;
                 }
 
                 lastSequencerTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
             } while (lastWriterTxn < lastSequencerTxn && !runStatus.isTerminating());
         } catch (CairoException ex) {
-            if (engine.isTableDropped(tableToken)) {
+            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
                 // Table is dropped, and we received cairo exception in the middle of apply
-                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : -1;
+                return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : WAL_APPLY_IGNORE_ERROR;
             }
             telemetryFacade.store(TelemetryOrigin.WAL_APPLY, WAL_APPLY_SUSPEND);
             LOG.critical().$("WAL apply job failed, table suspended [table=").utf8(tableToken.getDirName())
@@ -254,6 +252,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
                     try {
                         writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON, false);
+                    } catch (EntryUnavailableException ex) {
+                        // Table is being written to, we cannot destroy it at the moment
+                        return false;
                     } catch (CairoException ex) {
                         // Ignore it, table can be half deleted.
                     }
@@ -661,15 +662,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final int tableId = tableToken.getTableId();
         if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
             // Check, maybe we already processed this table to higher txn.
-            final long lastAppliedSeqTxn = applyWAL(tableToken, engine, operationCompiler, runStatus);
-            if (lastAppliedSeqTxn > -1L) {
-                lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
-            } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {
+            final long txn = applyWAL(tableToken, engine, operationCompiler, runStatus);
+            if (txn > -1L) {
+                lastAppliedSeqTxns.put(tableId, txn);
+            } else if (txn == WAL_APPLY_FAILED) {
                 // Set processed transaction marker as Long.MAX_VALUE - 1
                 // so that when the table is unsuspended it's notified with transaction Long.MAX_VALUE
                 // and got picked up for processing in this apply job.
                 lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE - 1);
-                engine.getTableSequencerAPI().suspendTable(tableToken);
+                try {
+                    engine.getTableSequencerAPI().suspendTable(tableToken);
+                } catch (CairoException e) {
+                    LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
+                }
             }
         } else {
             LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableToken).$(", txn=").$(seqTxn).I$();
