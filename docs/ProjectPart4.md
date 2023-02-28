@@ -56,8 +56,6 @@ There are several best practices that are commonly used in Continuous Integratio
 
 By implementing these best practices, software development teams can improve code quality, accelerate the development process, and deliver better software products to their customers.
 
-<p style="page-break-after:always"></p>
-
 ## 2. Our Github Action 1: Maven Build and Test
 ### 2.1 Configuration
 We added the GitHub Action configuration file `.github/workflows/mvn-test.yml` with the content below:
@@ -99,7 +97,7 @@ The Github Action turns out a pass, but with some annotations of error. We check
 
 We think the annotations may come from some test cases designated to fail.
 
-Besides, it takes 27 minutes in total to run. It is usually considered too long for a CI process. However, the QuestDB existing build and test Azure pipelines (explained [below](#existing-azure-pipelines)) also take around 10 - 20 minutes. Considering the large scale of QuestDB and that we didn't pay for higher performance runners to Github, the 27 minutes processing time is reasonable and we cannot really do anything to improve that.
+Besides, it takes 27 minutes in total to run. It is usually considered too long for a CI process. However, the QuestDB existing build and test Azure pipelines (explained [below](#5-existing-azure-pipelines)) also take around 10 - 20 minutes. Considering the large scale of QuestDB and that we didn't pay for higher performance runners to Github, the 27 minutes processing time is reasonable and we cannot really do anything to improve that.
 
 <p style="page-break-after:always"></p>
 
@@ -205,8 +203,6 @@ It means if there is a non-forked pull request in type synchronize, opened, reop
 3. install the `danger` tool
 4. run the tests in `ci/validate-pr-title/validate.test.js` to test the formatting rule
 5. let Danger validate the pull request title
-
-<p style="page-break-after:always"></p>
 
 ## 5. Existing Azure Pipelines
 
