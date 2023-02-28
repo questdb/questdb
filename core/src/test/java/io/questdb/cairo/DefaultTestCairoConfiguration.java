@@ -54,12 +54,17 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public boolean mangleTableDirNames() {
-        return true;
+    public CharSequence getSystemTableNamePrefix() {
+        return "sys.";
     }
 
     @Override
-    public CharSequence getSystemTableNamePrefix() {
-        return "sys.";
+    public int getTableRegistryCompactionThreshold() {
+        return 0;
+    }
+
+    @Override
+    public boolean mangleTableDirNames() {
+        return true;
     }
 }

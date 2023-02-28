@@ -78,6 +78,11 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return hasDescendingOrder(sortColumnFilter);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -92,6 +97,18 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    static boolean hasDescendingOrder(ListColumnFilter sortColumnFilter) {
+        assert sortColumnFilter.size() > 0;
+
+        for (int i = 0, n = sortColumnFilter.size(); i < n; i++) {
+            if (sortColumnFilter.get(i) >= 0) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     @Override

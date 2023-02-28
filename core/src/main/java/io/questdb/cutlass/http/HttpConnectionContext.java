@@ -37,7 +37,7 @@ import io.questdb.std.str.StdoutSink;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnectionContext> implements Locality, Retry {
+public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final boolean allowDeflateBeforeSend;
     private final CairoSecurityContext cairoSecurityContext;
@@ -205,6 +205,9 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             case IOOperation.WRITE:
                 keepGoing = handleClientSend();
                 break;
+            case IOOperation.HEARTBEAT:
+                dispatcher.registerChannel(this, IOOperation.HEARTBEAT);
+                return false;
             default:
                 dispatcher.disconnect(this, DISCONNECT_REASON_UNKNOWN_OPERATION);
                 keepGoing = false;
@@ -234,14 +237,14 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         HttpConnectionContext r = super.of(fd, dispatcher);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
-            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            this.responseSink.close();
+            recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            responseSink.close();
         } else {
             // The context is obtained from the pool, so we should initialize the memory.
             if (recvBuffer == 0) {
-                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             }
-            this.responseSink.of(fd);
+            responseSink.of(fd);
         }
         return r;
     }
@@ -517,10 +520,11 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
-        HttpRequestProcessor processor = selector.select(headerParser.getUrl());
-
+        HttpRequestProcessor processor = null;
+        final CharSequence url = headerParser.getUrl();
+        processor = selector.select(url);
         if (processor == null) {
-            processor = selector.getDefaultProcessor();
+            return selector.getDefaultProcessor();
         }
         return processor;
     }

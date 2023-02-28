@@ -22,33 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.cutlass.line.tcp;
 
-public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
-    protected IODispatcher<T> dispatcher;
-    protected int fd = -1;
+import org.junit.Assert;
+import org.junit.Test;
 
-    @Override
-    public void clear() {
-        this.fd = -1;
-        this.dispatcher = null;
+public class LineTcpReceiverConfigurationHelperTest {
+    @Test
+    public void testILPCommitInterval() {
+        Assert.assertEquals(1000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.0, 1000));
+        Assert.assertEquals(500, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, 0.5, 1000));
+        Assert.assertEquals(3000, LineTcpReceiverConfigurationHelper.calcCommitInterval(1_000_000, -0.5, 3000));
     }
 
-    @Override
-    public IODispatcher<T> getDispatcher() {
-        return dispatcher;
-    }
-
-    @Override
-    public int getFd() {
-        return fd;
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public T of(int fd, IODispatcher<T> dispatcher) {
-        this.fd = fd;
-        this.dispatcher = dispatcher;
-        return (T) this;
-    }
 }

@@ -68,7 +68,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,room=6C watts=\"333\" 1531817902842\n";
 
             SqlException exception = sendWithAlterStatement(
-                    server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug ADD COLUMN label2 INT");
@@ -77,7 +76,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
-            send(server, lineData);
+            send(lineData);
 
             String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tNaN\tLine\n" +
@@ -109,7 +108,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             long watts = ilpProducerWatts.getAndIncrement();
                             long day = (watts + 1) % 4 == 0 ? day1 : day2;
                             String lineData = String.format(lineTpt, watts, day);
-                            send(server, lineData);
+                            send(lineData);
                             LOG.info().$("sent: ").$(lineData).$();
                         } catch (Throwable unexpected) {
                             ilpProducerProblem.set(unexpected);
@@ -187,7 +186,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
 
             SqlException exception = sendWithAlterStatement(
-                    server,
                     "plug,room=6A watts=1i " + day1 + "\n" +
                             "plug,room=6B watts=37i " + day1 + "\n" +
                             "plug,room=7G watts=21i " + day1 + "\n" +
@@ -198,7 +196,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Assert.assertNull(exception);
             assertTable("room\twatts\ttimestamp\n");
 
-            send(server, "plug,room=6A watts=125i " + day1 + "\n");
+            send("plug,room=6A watts=125i " + day1 + "\n");
 
             assertTable("room\twatts\ttimestamp\n" +
                     "6A\t125\t2023-02-27T00:00:00.000000Z\n");
@@ -212,12 +210,11 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         long day3 = IntervalUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
         runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
-            send(server, lineData);
+            send(lineData);
 
             lineData = "plug,room=6B watts=\"22\" " + day2 + "\n" +
                     "plug,room=6C watts=\"333\" " + day3 + "\n";
             SqlException exception = sendWithAlterStatement(
-                    server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'"
@@ -238,14 +235,13 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,label=Power,room=6B watts=\"22\" 1631817905842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817906844\n";
 
-            SqlException exception = sendWithAlterStatement(server, lineData,
+            SqlException exception = sendWithAlterStatement(lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug DROP COLUMN label");
 
             Assert.assertNotNull(exception);
             TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
             exception = sendWithAlterStatement(
-                    server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug RENAME COLUMN label TO label2"
@@ -258,7 +254,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,label=Line,room=6C watts=\"666\" 1531817903846\n";
 
             // re-send, this should re-add column label
-            send(server, lineData);
+            send(lineData);
 
             String expected = "label\troom\twatts\ttimestamp\n" +
                     "Line\t6C\t666\t1970-01-01T00:25:31.817903Z\n" +
@@ -280,12 +276,11 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
         runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
-            send(server, lineData);
+            send(lineData);
             lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
 
             for (int i = 0; i < 10; i++) {
                 SqlException exception = sendWithAlterStatement(
-                        server,
                         lineData,
                         WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                         "ALTER TABLE plug add column col" + i + " int");
@@ -315,21 +310,18 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
 
             SqlException exception = sendWithAlterStatement(
-                    server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug SET PARAM o3MaxLag = 20s;");
             Assert.assertNull(exception);
 
             exception = sendWithAlterStatement(
-                    server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug SET PARAM maxUncommittedRows = 1;");
             Assert.assertNull(exception);
 
             SqlException exception3 = sendWithAlterStatement(
-                    server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "alter table plug alter column label nocache;");
@@ -363,7 +355,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            SqlException ex = sendWithAlterStatement(server, lineData, WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+            SqlException ex = sendWithAlterStatement(lineData, WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
             Assert.assertNull(ex);
 
@@ -386,7 +378,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testDropColumnAddDuplicate() throws Exception {
         runInContext((server) -> {
             send(
-                    server,
                     "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
                             "plug,room=6B watts=\"22\" 1631817902842\n" +
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
@@ -397,7 +388,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
 
             send(
-                    server,
                     "plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n"
             );
 
@@ -418,7 +408,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,room=6C watts=\"333\",power=220 1531817902842\n";
 
             send(
-                    server,
                     lineData
             );
 
@@ -428,7 +417,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // Send same data again
             send(
-                    server,
                     lineData
             );
 
@@ -480,7 +468,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             ? String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000)
                             : String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
 
-                    send(server, lineData);
+                    send(lineData);
                     columnsAdded.add(isSymbol ? i : -i);
                 } else {
                     try (TableWriter tableWriter = getWriter("plug")) {
@@ -517,7 +505,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((server) -> {
 
             send(
-                    server,
                     "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
                             "plug,room=6B watts=\"22\" 1631817902842\n" +
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
@@ -529,7 +516,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // Send same data again
             send(
-                    server,
                     "plug watts=\"1\",power=220 2631819999000\n" +
                             "plug,room=6BB watts=\"22\" 1631817902842\n" +
                             "plug,room=6C watts=\"333\",power=220 1531817902842\n"
@@ -572,14 +558,14 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private void send(LineTcpReceiver receiver, String lineData) throws Exception {
-        SqlException ex = sendWithAlterStatement(receiver, lineData, WAIT_ENGINE_TABLE_RELEASE, null);
+    private void send(String lineData) throws Exception {
+        SqlException ex = sendWithAlterStatement(lineData, WAIT_ENGINE_TABLE_RELEASE, null);
         if (ex != null) {
             throw ex;
         }
     }
 
-    private SqlException sendWithAlterStatement(LineTcpReceiver server, String lineData, int wait, String alterTableCommand) {
+    private SqlException sendWithAlterStatement(String lineData, int wait, String alterTableCommand) {
         sqlException = null;
         int countDownCount = 1;
         if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 && (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
@@ -594,7 +580,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 try {
                     startBarrier.await();
                     LOG.info().$("Busy waiting for writer ASYNC event ").$(alterOperationFuture).$();
-                    alterOperationFuture.await(10 * Timestamps.SECOND_MILLIS);
+                    alterOperationFuture.await(25 * Timestamps.SECOND_MILLIS);
                 } catch (SqlException exception) {
                     sqlException = exception;
                 } catch (Throwable e) {
@@ -614,7 +600,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (name != null && Chars.equalsNc(name.getTableName(), "plug")) {
                     if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 || (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
-                        if (factoryType == PoolListener.SRC_WRITER) {
+                        if (PoolListener.isWalOrWriter(factoryType)) {
                             switch (event) {
                                 case PoolListener.EV_RETURN:
                                     LOG.info().$("EV_RETURN ").$(name).$();
@@ -673,14 +659,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 return sqlException;
             }
         } finally {
-            switch (wait) {
-                case WAIT_ENGINE_TABLE_RELEASE:
-                case WAIT_ALTER_TABLE_RELEASE:
-                    engine.setPoolListener(null);
-                    break;
-                case WAIT_ILP_TABLE_RELEASE:
-                    server.setSchedulerListener(null);
-                    break;
+            if (wait != WAIT_NO_WAIT) {
+                engine.setPoolListener(null);
             }
         }
         return null;

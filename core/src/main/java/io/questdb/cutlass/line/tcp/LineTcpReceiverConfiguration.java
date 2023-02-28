@@ -43,6 +43,8 @@ public interface LineTcpReceiverConfiguration {
 
     CairoSecurityContext getCairoSecurityContext();
 
+    long getCommitInterval();
+
     long getCommitIntervalDefault();
 
     double getCommitIntervalFraction();
@@ -58,6 +60,8 @@ public interface LineTcpReceiverConfiguration {
     boolean getDisconnectOnError();
 
     IODispatcherConfiguration getDispatcherConfiguration();
+
+    FilesFacade getFilesFacade();
 
     WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
@@ -80,8 +84,6 @@ public interface LineTcpReceiverConfiguration {
     int getNetMsgBufferSize();
 
     NetworkFacade getNetworkFacade();
-
-    FilesFacade getFilesFacade();
 
     long getSymbolCacheWaitUsBeforeReload();
 

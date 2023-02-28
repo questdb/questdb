@@ -12,13 +12,34 @@ steps:
       restoreKeys: |
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
+
+  - task: Cache@2
+    inputs:
+      key: '"maven_version" | "$(MAVEN_VERSION)"'
+      restoreKeys: mykey | "$(MAVEN_VERSION)"
+      path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
+      cacheHitVar: MVN_CACHE_RESTORED
+    condition: ne(variables['MAVEN_VERSION_OPTION'], 'Default')
+
+  - script: 'wget https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), ne(variables['os'], 'Windows'))
+  - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
+  - task: ExtractFiles@1
+    inputs:
+      archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
+      destinationFolder: '$(build.sourcesdirectory)/maven'
+    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
+
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile)  -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition:
       or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
@@ -26,16 +47,18 @@ steps:
   - task: Maven@3
     displayName: "Run tests"
     inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-        -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
@@ -46,13 +69,16 @@ steps:
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
         "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"

@@ -170,24 +170,4 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
             TestUtils.assertContains(psqlException.getMessage(), "Connection to 127.0.0.1:" + PG_PORT + " refused.");
         }
     }
-
-    static class TestServerMain extends ServerMain {
-        TestServerMain(String... args) {
-            super(args);
-        }
-
-        TestServerMain(final Bootstrap bootstrap) {
-            super(bootstrap);
-        }
-
-        @Override
-        protected void setupWalApplyJob(
-                WorkerPool workerPool,
-                CairoEngine engine,
-                int sharedWorkerCount,
-                @Nullable FunctionFactoryCache ffCache
-        ) {
-            // do nothing
-        }
-    }
 }

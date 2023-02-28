@@ -280,6 +280,23 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSingleCharacterLikeString() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x ( s string ) ");
+            compile("insert into x values ( 'v' ), ( 'vv' ) ");
+
+            assertLike("s\nv\n", "select * from x where s like 'v'");
+            assertLike("s\nv\n", "select * from x where s like '_'");
+            assertLike("s\nv\nvv\n", "select * from x where s like '%'");
+        });
+    }
+
+    private void assertLike(String expected, String query) throws SqlException {
+        assertQuery(expected, query, null, true, false);
+        assertQuery(expected, query.replace("like", "ilike"), null, true, false);
+    }
+
+    @Test
     public void testLikeEscapeOneSlashes() throws Exception {
         String createTable = "CREATE TABLE myTable (name string)";
         String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is \\_ignore');";

@@ -94,6 +94,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return SortedRecordCursorFactory.hasDescendingOrder(sortColumnFilter);
+    }
+
+    @Override
     public boolean implementsLimit() {
         return true;
     }

@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.network;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.Mutable;
-
-public interface MutableIOContext<T extends MutableIOContext<T>> extends IOContext, Mutable {
-    T of(int fd, IODispatcher<T> dispatcher);
+public class LineTcpReceiverConfigurationHelper {
+    public static long calcCommitInterval(long o3MinLag, double fraction, long defInterval) {
+        long commitIntervalMicros = (long) (o3MinLag * fraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : defInterval;
+    }
 }

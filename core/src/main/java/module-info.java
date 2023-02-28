@@ -212,7 +212,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
 //                    #like
-            io.questdb.griffin.engine.functions.regex.LikeCharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory,
 //                    # '!~',
@@ -276,6 +275,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.DayOfWeekSundayFirstFunctionFactory,
             io.questdb.griffin.engine.functions.date.MinuteOfHourFunctionFactory,
             io.questdb.griffin.engine.functions.date.SecondOfMinuteFunctionFactory,
+            io.questdb.griffin.engine.functions.date.WeekOfYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.YearFunctionFactory,
             io.questdb.griffin.engine.functions.date.MonthOfYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.DaysPerMonthFunctionFactory,
