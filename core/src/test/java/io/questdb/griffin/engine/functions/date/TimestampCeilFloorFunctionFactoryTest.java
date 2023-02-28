@@ -42,7 +42,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'o'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'o'", e.getFlyweightMessage());
             }
         });
     }
@@ -58,7 +58,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
             }
         });
     }
@@ -74,7 +74,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
             }
         });
     }
@@ -90,7 +90,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'z'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'z'", e.getFlyweightMessage());
             }
         });
     }
@@ -105,7 +105,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 );
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind '-3m'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit '-3m'", e.getFlyweightMessage());
             }
             try {
                 compiler.compile(
@@ -114,7 +114,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 );
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind '0m'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit '0m'", e.getFlyweightMessage());
             }
         });
     }
@@ -130,7 +130,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind '3M'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit '3M'", e.getFlyweightMessage());
             }
         });
     }
@@ -146,7 +146,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
             }
         });
     }

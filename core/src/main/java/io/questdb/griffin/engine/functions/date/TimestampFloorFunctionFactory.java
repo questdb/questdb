@@ -63,7 +63,7 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
                     }
                 }
                 if (str != null && str.length() == 0) {
-                    c = 1; // report it as an empty kind rather than null
+                    c = 1; // report it as an empty unit rather than null
                 }
                 switch (c) {
                     case 'w':
@@ -79,9 +79,9 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
                     case 'T':
                         return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1), stride);
                     case 0:
-                        throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
+                        throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
                     default:
-                        throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(str).put('\'');
+                        throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(str).put('\'');
                 }
         }
     }
