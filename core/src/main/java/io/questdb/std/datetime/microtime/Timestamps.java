@@ -33,7 +33,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public final class Timestamps {
 
-    public static final long DAY_MICROS = 86400000000L;
+    public static final long DAY_MICROS = 86400000000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
     public static final long MILLI_MICROS = 1000;
@@ -50,7 +50,7 @@ public final class Timestamps {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_SIGN = 7;
     public static final int STATE_UTC = 1;
-    public static final long WEEK_MICROS = 604800000000L;
+    public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
     private static final char AFTER_NINE = '9' + 1;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;

@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.VolumeDefinitions;
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
@@ -81,6 +81,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public CharSequence getBackupRoot() {
         return conf.getBackupRoot();
+    }
+
+    @Override
+    public int getO3LagCalculationWindowsSize() {
+        return conf.getO3LagCalculationWindowsSize();
     }
 
     @Override
@@ -744,6 +749,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getTableRegistryCompactionThreshold() {
+        return conf.getTableRegistryCompactionThreshold();
+    }
+
+    @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return conf.getTelemetryConfiguration();
     }
@@ -764,6 +774,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public VolumeDefinitions getVolumeDefinitions() {
+        return conf.getVolumeDefinitions();
+    }
+
+    @Override
     public int getWalApplyLookAheadTransactionCount() {
         return conf.getWalApplyLookAheadTransactionCount();
     }
@@ -771,11 +786,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalCommitSquashRowLimit() {
         return conf.getWalCommitSquashRowLimit();
-    }
-
-    @Override
-    public VolumeDefinitions getVolumeDefinitions() {
-        return conf.getVolumeDefinitions();
     }
 
     @Override

@@ -29,6 +29,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -39,13 +40,22 @@ public class TimestampFormatUtils {
     public static final int HOUR_AM = 0;
     public static final int HOUR_PM = 1;
     public static final DateFormat NANOS_UTC_FORMAT;
+    public static final DateFormat DAY_FORMAT;
+    public static final DateFormat HOUR_FORMAT;
+    public static final DateFormat MONTH_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
     public static final DateFormat SEC_UTC_FORMAT;
-    public static final int TIMESTAMP_FORMAT_MIN_LENGTH;
     public static final DateFormat USEC_UTC_FORMAT;
     public static final DateFormat UTC_FORMAT;
+    public static final DateFormat WEEK_FORMAT;
+    public static final DateFormat YEAR_FORMAT;
+    public static final String DAY_PATTERN = "yyyy-MM-dd";
+    public static final String HOUR_PATTERN = "yyyy-MM-ddTHH";
+    public static final String MONTH_PATTERN = "yyyy-MM";
+    public static final String WEEK_PATTERN = "YYYY-Www";
+    public static final String YEAR_PATTERN = "yyyy";
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
     private static final DateFormat[] FORMATS;
@@ -360,6 +370,7 @@ public class TimestampFormatUtils {
     public static void init() {
     }
 
+    @TestOnly
     public static long parseDateTime(CharSequence seq) throws NumericException {
         return NANOS_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
     }
@@ -367,6 +378,17 @@ public class TimestampFormatUtils {
     // YYYY-MM-DDThh:mm:ss.mmmZ
     public static long parseTimestamp(CharSequence seq) throws NumericException {
         return parseTimestamp(seq, 0, seq.length());
+    }
+
+    public static long parseTimestamp(CharSequence value, int lo, int hi) throws NumericException {
+        for (int i = 0, n = FORMATS.length; i < n; i++) {
+            try {
+                return FORMATS[i].parse(value, lo, hi, enLocale);
+            } catch (NumericException ignore) {
+                // try next
+            }
+        }
+        throw NumericException.INSTANCE;
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmnnn
@@ -407,16 +429,6 @@ public class TimestampFormatUtils {
         newYear = Timestamps.endOfYear(referenceYear);
     }
 
-    private static long parseTimestamp(CharSequence value, int lo, int hi) throws NumericException {
-        for (int i = 0, n = FORMATS.length; i < n; i++) {
-            try {
-                return FORMATS[i].parse(value, lo, hi, enLocale);
-            } catch (NumericException ignore) {
-            }
-        }
-        throw NumericException.INSTANCE;
-    }
-
     static {
         updateReferenceYear(Os.currentTimeMicros());
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
@@ -425,30 +437,37 @@ public class TimestampFormatUtils {
         PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
 
-        String[] patterns = new String[]{
-                PG_TIMESTAMP_MILLI_TIME_Z_PATTERN,
-                GREEDY_MILLIS1_UTC_PATTERN,
-                USEC_UTC_PATTERN,
-                SEC_UTC_PATTERN,
-                GREEDY_MILLIS2_UTC_PATTERN,
-                UTC_PATTERN
+        String[] patterns = new String[]{ // priority sorted
+                PG_TIMESTAMP_MILLI_TIME_Z_PATTERN, // y-MM-dd HH:mm:ss.SSSz
+                GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
+                USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz
+                SEC_UTC_PATTERN,                   // yyyy-MM-ddTHH:mm:ssz
+                GREEDY_MILLIS2_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.SSz
+                UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
+                HOUR_PATTERN,                      // yyyy-MM-ddTHH
+                DAY_PATTERN,                       // yyyy-MM-dd
+                WEEK_PATTERN,                      // YYYY-Www
+                MONTH_PATTERN,                     // yyyy-MM
+                YEAR_PATTERN                       // yyyy
         };
         FORMATS = new DateFormat[patterns.length];
         CharSequenceObjHashMap<DateFormat> dateFormats = new CharSequenceObjHashMap<>();
-        int patternMinLength = Integer.MAX_VALUE;
         for (int i = 0; i < patterns.length; i++) {
             String pattern = patterns[i];
             DateFormat format = compiler.compile(pattern);
             dateFormats.put(pattern, format);
             FORMATS[i] = format;
-            patternMinLength = Math.min(patternMinLength, pattern.length());
         }
-        TIMESTAMP_FORMAT_MIN_LENGTH = patternMinLength;
         PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = dateFormats.get(PG_TIMESTAMP_MILLI_TIME_Z_PATTERN);
         GREEDY_MILLIS1_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS1_UTC_PATTERN);
         USEC_UTC_FORMAT = dateFormats.get(USEC_UTC_PATTERN);
         SEC_UTC_FORMAT = dateFormats.get(SEC_UTC_PATTERN);
         GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS2_UTC_PATTERN);
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
+        HOUR_FORMAT = dateFormats.get(HOUR_PATTERN);
+        DAY_FORMAT = dateFormats.get(DAY_PATTERN);
+        WEEK_FORMAT = dateFormats.get(WEEK_PATTERN);
+        MONTH_FORMAT = dateFormats.get(MONTH_PATTERN);
+        YEAR_FORMAT = dateFormats.get(YEAR_PATTERN);
     }
 }

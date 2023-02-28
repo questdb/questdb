@@ -36,6 +36,23 @@ import org.junit.Test;
 public class LatestByTest extends AbstractGriffinTest {
 
     @Test
+    public void testLatestByAllFilteredResolvesSymbol() throws Exception {
+        assertQuery("devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
+                "SELECT * FROM history_P4v\n" +
+                        "WHERE\n" +
+                        "  devid = 'LLLAHFZHYA'\n" +
+                        "LATEST ON ts PARTITION BY address",
+                "CREATE TABLE history_P4v (\n" +
+                        "  devid SYMBOL,\n" +
+                        "  address SHORT,\n" +
+                        "  value SHORT,\n" +
+                        "  value_decimal BYTE,\n" +
+                        "  created_at DATE,\n" +
+                        "  ts TIMESTAMP\n" +
+                        ") timestamp(ts) PARTITION BY DAY;", "ts", true, false, false);
+    }
+
+    @Test
     public void testLatestByAllIndexedIndexReaderGetsReloaded() throws Exception {
         final int iterations = 100;
         assertMemoryLeak(() -> {
@@ -486,6 +503,17 @@ public class LatestByTest extends AbstractGriffinTest {
                     true,
                     true);
         });
+    }
+
+    @Test
+    public void testLatestByValuesFilteredResolvesSymbol() throws Exception {
+        assertQuery("s\ti\tts\n",
+                "select s, i, ts " +
+                        "from a " +
+                        "where s in (select distinct s from a) " +
+                        "and s = 'ABC' " +
+                        "latest on ts partition by s",
+                "create table a ( i int, s symbol, ts timestamp ) timestamp(ts)", "ts", true, false, false);
     }
 
     @Test

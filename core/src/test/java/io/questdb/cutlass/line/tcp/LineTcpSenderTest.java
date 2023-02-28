@@ -499,6 +499,31 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Test
+    public void testWriteLongMinMax() throws Exception {
+        runInContext(r -> {
+            String table = "table";
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2023-02-22");
+                sender.table(table)
+                        .longColumn("max", Long.MAX_VALUE)
+                        .longColumn("min", Long.MIN_VALUE)
+                        .at(tsMicros * 1000);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, table, 1);
+            try (TableReader reader = getReader(table)) {
+                TestUtils.assertReader("max\tmin\ttimestamp\n" +
+                        "9223372036854775807\tNaN\t2023-02-22T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
     private static void assertControlCharacterException(Consumer<Sender> senderAction) {
         DummyLineChannel channel = new DummyLineChannel();
         try (Sender sender = new LineTcpSender(channel, 1000)) {
