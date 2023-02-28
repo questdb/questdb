@@ -99,8 +99,6 @@ We think the annotations may come from some test cases designated to fail.
 
 Besides, it takes 27 minutes in total to run. It is usually considered too long for a CI process. However, the QuestDB existing build and test Azure pipelines (explained [below](#5-existing-azure-pipelines)) also take around 10 - 20 minutes. Considering the large scale of QuestDB and that we didn't pay for higher performance runners to Github, the 27 minutes processing time is reasonable and we cannot really do anything to improve that.
 
-<p style="page-break-after:always"></p>
-
 ## 3. Our Github Action 2: Markdown To PDF
 
 When we were doing project part 2, we already added a Github Action (the [source codes](https://github.com/BaileyJM02/markdown-to-pdf)) to convert our report written in markdown to pdf automatically on each push to master.
@@ -153,8 +151,6 @@ We didn't succeed at the first trial. After adding some logging commands in the 
 But even if we put our markdown files elsewhere, it did not succeed either. We specified the `output_dir` as `docs`, but it outputs the pdf file called `docREADME.md` to the project root. Therefore, since we changed the `output_dir` to `docs/`, it works well now.
 
 They have clearly specified in their documentation that we should declare our path without the `/` suffix. Therefore, we think it is a bug in their logic, in their source code file `src/github_interface.js` around line 64. Hence, we planned to fix that bug and contribute to this GitHub Action source code in the future when we have time.
-
-<p style="page-break-after:always"></p>
 
 ## 4. Existing Github Action: Danger - Validate PR Title
 QuestDB's original repository already defined a Github Action to validate their pull request title. 
