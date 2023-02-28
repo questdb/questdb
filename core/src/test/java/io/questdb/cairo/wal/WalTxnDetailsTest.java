@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2023 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,6 +40,35 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class WalTxnDetailsTest extends AbstractCairoTest {
+
+    @Test
+    public void testCalculateCommitTimestampWhenO3IsUnavoidable() {
+        TableToken tableToken = createTable(testName.getMethodName());
+        commitWalRows(tableToken, 2, "2022-02-24T02:00", "2022-02-24T12");
+        drainWalQueue();
+
+        commitWalRows(tableToken, 200, "2022-02-24T08:00", "2022-02-24T13");
+        commitWalRows(tableToken, 200, "2022-02-24T09:00", "2022-02-24T13");
+        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalRows(tableToken, 200, "2022-02-24T10:00", "2022-02-24T15");
+        commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
+        commitWalRows(tableToken, 200, "2022-02-24T13:00", "2022-02-24T18");
+
+        try (TableWriter writer = getWriter(tableToken)) {
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
+                writer.readWalTxnDetails(cursor);
+                int startTxn = (int) writer.getAppliedSeqTxn();
+                WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
+
+                Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 3));
+                assertTimestampEquals("2022-02-24T12:05", walTnxDetails.getCommitToTimestamp(startTxn + 4));
+                assertTimestampEquals("2022-02-24T13:00", walTnxDetails.getCommitToTimestamp(startTxn + 5));
+                Assert.assertEquals(Long.MAX_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 6));
+            }
+        }
+    }
 
     @Test
     public void testCalculateMaxCommitTimestamp() {
