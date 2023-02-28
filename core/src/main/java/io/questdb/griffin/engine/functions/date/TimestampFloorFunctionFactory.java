@@ -54,13 +54,16 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
                 if (c == 0 && str != null && str.length() > 1) {
                     c = str.charAt(str.length() - 1);
                     try {
-                        stride = Numbers.parseInt(str.subSequence(0, str.length() - 1));
+                        stride = Numbers.parseInt(str, 0, str.length() - 1);
                         if (stride <= 0) {
                             c = 1;
                         }
                     } catch (NumericException ignored) {
                         c = 1;
                     }
+                }
+                if (str != null && str.length() == 0) {
+                    c = 1; // report it as an empty kind rather than null
                 }
                 switch (c) {
                     case 'w':
