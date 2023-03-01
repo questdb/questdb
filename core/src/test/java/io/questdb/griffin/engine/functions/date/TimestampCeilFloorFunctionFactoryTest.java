@@ -109,28 +109,12 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
             }
             try {
                 compiler.compile(
-                        "select timestamp_floor('0m', null)",
+                        "select timestamp_floor('0Y', null)",
                         sqlExecutionContext
                 );
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit '0m'", e.getFlyweightMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testFloorInvalidMonthKind() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "select timestamp_floor('3M', null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit '3M'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid unit '0Y'", e.getFlyweightMessage());
             }
         });
     }

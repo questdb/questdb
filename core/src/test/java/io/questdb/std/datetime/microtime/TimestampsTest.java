@@ -232,6 +232,26 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testFloorMMEpoch() throws Exception {
+        sink.clear();
+        long micros = TimestampFormatUtils.parseTimestamp("1970-10-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMM(micros, 3));
+        TestUtils.assertEquals("1970-09-01T00:00:00.000Z", sink);
+        sink.clear();
+        micros = TimestampFormatUtils.parseTimestamp("1970-02-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMM(micros, 3));
+        TestUtils.assertEquals("1970-01-01T00:00:00.000Z", sink);
+        sink.clear();
+        micros = TimestampFormatUtils.parseTimestamp("1969-11-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMM(micros, 3));
+        TestUtils.assertEquals("1970-01-01T00:00:00.000Z", sink);
+        sink.clear();
+        micros = TimestampFormatUtils.parseTimestamp("1969-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMM(micros, 3));
+        TestUtils.assertEquals("1970-06-01T00:00:00.000Z", sink);
+    }
+
+    @Test
     public void testFloorMS() throws Exception {
         final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMS(micros));
@@ -291,6 +311,34 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros));
         TestUtils.assertEquals("2008-01-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testFloorYYYYEpoch() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("1975-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
+        TestUtils.assertEquals("1973-01-01T00:00:00.000Z", sink);
+
+        sink.clear();
+        micros = TimestampFormatUtils.parseTimestamp("1975-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
+        TestUtils.assertEquals("1973-01-01T00:00:00.000Z", sink);
+
+        sink.clear();
+        micros = TimestampFormatUtils.parseTimestamp("1970-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
+        TestUtils.assertEquals("1970-01-01T00:00:00.000Z", sink);
+
+        sink.clear();
+        micros = TimestampFormatUtils.parseTimestamp("1968-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
+        TestUtils.assertEquals("1970-01-01T00:00:00.000Z", sink);
+
+        sink.clear();
+        micros = TimestampFormatUtils.parseTimestamp("1967-05-12T23:45:51.045Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros, 3));
+        TestUtils.assertEquals("1967-01-01T00:00:00.000Z", sink);
+
     }
 
     @Test

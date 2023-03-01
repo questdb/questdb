@@ -186,13 +186,20 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
+        private final int stride;
+
         public TimestampFloorMMFunction(Function arg) {
+            this(arg, 1);
+        }
+
+        public TimestampFloorMMFunction(Function arg, int stride) {
             super(arg);
+            this.stride = stride;
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorMM(timestamp);
+            return stride > 1 ? Timestamps.floorMM(timestamp, stride) : Timestamps.floorMM(timestamp);
         }
 
         @Override
@@ -303,13 +310,20 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
+        private final int stride;
+
         public TimestampFloorYYYYFunction(Function arg) {
+            this(arg, 1);
+        }
+
+        public TimestampFloorYYYYFunction(Function arg, int stride) {
             super(arg);
+            this.stride = stride;
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorYYYY(timestamp);
+            return stride > 1 ? Timestamps.floorYYYY(timestamp, stride) : Timestamps.floorYYYY(timestamp);
         }
 
         @Override

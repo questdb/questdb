@@ -287,6 +287,15 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    public static long floorMM(long micros, int stride) {
+        final int origin = getYear(0);
+        long m = (getMonthsBetween(0, micros) / stride) * stride;
+        int y = (int) (origin + m / 12);
+        int mm = (int) (m % 12);
+        boolean l = isLeapYear(y);
+        return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
+    }
+
     public static long floorMS(long micros) {
         return floorMS(micros, 1);
     }
@@ -348,6 +357,12 @@ public final class Timestamps {
     public static long floorYYYY(long micros) {
         int y;
         return yearMicros(y = getYear(micros), isLeapYear(y));
+    }
+
+    public static long floorYYYY(long micros, int stride) {
+        final int origin = getYear(0);
+        int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        return yearMicros(y, isLeapYear(y));
     }
 
     public static int getCentury(long micros) {
