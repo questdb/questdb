@@ -62,12 +62,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 sink.put("\\");
                 sink.put(c);
             } else if (c == '\\' && i + 1 < len && "_%\\".indexOf(pattern.charAt(i + 1)) != -1) {
-                c = pattern.charAt(i + 1);
+                i += 1;
+                c = pattern.charAt(i);
                 if (c == '_' || c == '%') {
-                    i += 1;
                     sink.put(c);
-                } else if (c == '\\') {
-                    i += 1;
+                } else  {
                     sink.put("\\\\");
                 }
             } else if (c == '\\') {
