@@ -468,8 +468,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("adouble = 0 and along = 0", 8);
         // 16B
         filterToOptions.put("auuid = '11111111-1111-1111-1111-111111111111'", 16);
-        filterToOptions.put("along128 = 0", 16);
-        filterToOptions.put("auuid = null and along128 = 0", 16);
+        filterToOptions.put("auuid = null", 16);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
