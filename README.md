@@ -120,7 +120,7 @@ results using the `cpu-only` use case with 6 to 16 workers on 32 CPUs and 64GB R
 
 <div align="center">
   <a href="https://github.com/questdb/questdb/releases/tag/7.0.1">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/quetsb7.0-benchmark.png"/>
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/questdb7.0-benchmark.png"/>
   </a>
 </div>
 
