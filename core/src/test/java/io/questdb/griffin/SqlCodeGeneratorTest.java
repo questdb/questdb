@@ -319,6 +319,48 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastAndAliasedColumnAfterWildcard() throws Exception {
+        assertQuery("a\tk\tklong\n" +
+                        "80.43224099968394\t1970-01-01T00:00:00.000000Z\t0\n" +
+                        "8.486964232560668\t1970-01-01T00:00:00.010000Z\t10000\n" +
+                        "8.43832076262595\t1970-01-01T00:00:00.020000Z\t20000\n",
+                "select *, cast(k as long) klong from x",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_double(0)*100 a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testCastAndAliasedColumnFollowedByWildcard() throws Exception {
+        assertQuery("klong\ta\tk\n" +
+                        "0\t80.43224099968394\t1970-01-01T00:00:00.000000Z\n" +
+                        "10000\t8.486964232560668\t1970-01-01T00:00:00.010000Z\n" +
+                        "20000\t8.43832076262595\t1970-01-01T00:00:00.020000Z\n",
+                "select cast(k as long) klong, * from x",
+                "create table x as " +
+                        "(" +
+                        "  select" +
+                        "    rnd_double(0)*100 a," +
+                        "    timestamp_sequence(0, 10000) k" +
+                        "  from long_sequence(3)" +
+                        ") timestamp(k)",
+                "k",
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testCg() throws Exception {
         assertQuery(
                 "title\tcurrent\told\tdifference\tdifference_percentage\tcolors\n" +

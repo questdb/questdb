@@ -937,7 +937,10 @@ class SqlOptimiser {
         LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
-            if (hasSeenWildcardExpression && translatingModel.getAliasToColumnMap().contains(columnName)) {
+            // check if the column is a duplicate, i.e. already referenced by the outer model;
+            // we're checking the outer model instead of the translating one
+            // to handle the "col as col1, *" case
+            if (hasSeenWildcardExpression && outerModel.getAliasToColumnMap().contains(columnName)) {
                 throw SqlException.duplicateColumn(columnAst.position, columnName);
             }
             // column is already being referenced by translating model
