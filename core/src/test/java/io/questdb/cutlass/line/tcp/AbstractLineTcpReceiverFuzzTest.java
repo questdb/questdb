@@ -178,7 +178,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             final CharSequence expected = table.generateRows(metadata);
             getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
 
-            if (timestampMark < 0) {
+            if (timestampMark < 0L) {
                 final TableReaderRecordCursor cursor = reader.getCursor();
                 // Assert reader min timestamp
                 long txnMinTs = reader.getMinTimestamp();
@@ -196,6 +196,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     final String sql = tableName + " where timestamp > " + timestampMark;
                     try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                                    .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
                             assertCursorTwoPass(expected, cursor, metadata);
                         }
                     }
@@ -313,7 +315,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             return false;
         }
 
-        if (timestampMark < 0) {
+        if (timestampMark < 0L) {
             try (TableReader reader = getReader(tableName)) {
                 getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                         .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
@@ -327,6 +329,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             final String sql = tableName + " where timestamp > " + timestampMark;
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                            .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
                     return table.size() <= cursor.size();
                 }
             }

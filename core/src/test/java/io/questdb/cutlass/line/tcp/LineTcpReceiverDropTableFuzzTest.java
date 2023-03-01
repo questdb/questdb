@@ -166,7 +166,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
         markTimestamp();
         clearTables();
 
-        // run apply job to make sure all drop table have been processed
+        // run apply job to make sure all table drops have been processed
         drainWalQueue();
 
         // ingest again
