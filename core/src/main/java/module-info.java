@@ -592,6 +592,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgAttrDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgAttrDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgAttributeFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgAttributeFunctionFactory,
             PgClassFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgClassFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgIndexFunctionFactory,
@@ -635,6 +636,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgIsInRecoveryFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedTxIDCurrentFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgDatabaseFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgDatabaseFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgShDescriptionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.SimulateCrashFunctionFactory,
 

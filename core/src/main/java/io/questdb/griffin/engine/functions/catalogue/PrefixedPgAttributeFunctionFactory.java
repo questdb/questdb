@@ -24,10 +24,10 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedPgTypeFunctionFactory extends PgTypeFunctionFactory {
+public class PrefixedPgAttributeFunctionFactory extends PgAttributeFunctionFactory {
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_type()";
+        return "pg_catalog.pg_attribute()";
     }
 }
