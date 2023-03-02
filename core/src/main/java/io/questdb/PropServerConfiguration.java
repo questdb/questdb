@@ -731,7 +731,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
             }
 
-            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuAvailable);
+            int walApplyWorkers = 2;
+            if (cpuAvailable > 16) {
+                walApplyWorkers = 4;
+            } else if (cpuAvailable > 8) {
+                walApplyWorkers = 3;
+            }
+            this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, walApplyWorkers);
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
@@ -1509,11 +1515,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3LagCalculationWindowsSize() {
-            return o3LagCalculationWindowsSize;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -1806,6 +1807,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3CopyQueueCapacity() {
             return o3CopyQueueCapacity;
+        }
+
+        @Override
+        public int getO3LagCalculationWindowsSize() {
+            return o3LagCalculationWindowsSize;
         }
 
         @Override
