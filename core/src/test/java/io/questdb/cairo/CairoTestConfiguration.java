@@ -262,6 +262,11 @@ public class CairoTestConfiguration extends DefaultTestCairoConfiguration {
     }
 
     @Override
+    public long getWalApplyMaxTimePerTable() {
+        return overrides.getWalApplyMaxTimePerTable() > 0 ? overrides.getWalApplyMaxTimePerTable() : super.getWalApplyMaxTimePerTable();
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return overrides.getDefaultTableWriteMode() < 0 ? super.getWalEnabledDefault() : overrides.getDefaultTableWriteMode() == 1;
     }

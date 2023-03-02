@@ -392,6 +392,7 @@ public enum PropertyKey {
     CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
     CAIRO_WAL_INACTIVE_WRITER_TTL("cairo.wal.inactive.writer.ttl"),
     CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT("cairo.wal.commit.squash.row.limit"),
+    CAIRO_WAL_APPLY_MAX_TIME_PER_TABLE("cairo.wal.apply.max.time.per.table"),
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),

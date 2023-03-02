@@ -112,6 +112,8 @@ public interface ConfigurationOverrides {
 
     MicrosecondClock getTestMicrosClock();
 
+    long getWalApplyMaxTimePerTable();
+
     long getWalPurgeInterval();
 
     long getWalSegmentRolloverRowCount();
@@ -231,6 +233,8 @@ public interface ConfigurationOverrides {
     void setSqlJoinMetadataPageSize(int sqlJoinMetadataPageSize);
 
     void setTestMicrosClock(MicrosecondClock testMicrosClock);
+
+    void setWalApplyMaxTimePerTable(long walApplyMaxTimePerTable);
 
     void setWalPurgeInterval(long walPurgeInterval);
 

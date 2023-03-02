@@ -64,11 +64,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3LagCalculationWindowsSize() {
-        return 4;
-    }
-
-    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -361,6 +356,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3CopyQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getO3LagCalculationWindowsSize() {
+        return 4;
     }
 
     @Override
@@ -789,6 +789,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
+    }
+
+    @Override
+    public long getWalApplyMaxTimePerTable() {
+        return 1000L;
     }
 
     @Override

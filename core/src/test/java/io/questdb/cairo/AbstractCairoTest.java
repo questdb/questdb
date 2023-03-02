@@ -403,10 +403,9 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
-        walApplyJob.drain(0);
-        new CheckWalTransactionsJob(engine).run(0);
-        // run once again as there might be notifications to handle now
-        walApplyJob.drain(0);
+        CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
+        }
     }
 
     protected static void drainWalQueue() {

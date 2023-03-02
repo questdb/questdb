@@ -6641,7 +6641,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     void closeActivePartition(boolean truncate) {
-        LOG.info().$("closing last partition [table=").utf8(tableToken.getTableName()).I$();
+        LOG.debug().$("closing last partition [table=").utf8(tableToken.getTableName()).I$();
         closeAppendMemoryTruncate(truncate);
         freeIndexers();
     }

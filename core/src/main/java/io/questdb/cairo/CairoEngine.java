@@ -672,7 +672,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
-                LOG.debug().$("cannot publish WAL notifications, queue is full [current=")
+                LOG.error().$("cannot publish WAL notifications, queue is full [current=")
                         .$(pubSeq.current()).$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
@@ -828,11 +828,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableInVolumeUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         securityContext.checkWritePermission();
 
         // only create the table after it has been registered
-        TableUtils.createTable(
+        TableUtils.createTableInVolume(
                 configuration.getFilesFacade(),
                 configuration.getRoot(),
                 configuration.getMkDirMode(),
@@ -850,11 +850,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableInVolumeUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableUnsafe(CairoSecurityContext securityContext, MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
         securityContext.checkWritePermission();
 
         // only create the table after it has been registered
-        TableUtils.createTableInVolume(
+        TableUtils.createTable(
                 configuration.getFilesFacade(),
                 configuration.getRoot(),
                 configuration.getMkDirMode(),

@@ -275,6 +275,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int vectorAggregateQueueCapacity;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final int walApplyLookAheadTransactionCount;
+    private final long walApplyMaxTimePerTable;
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
     private final long walApplySleepTimeout;
     private final int[] walApplyWorkerAffinity;
@@ -469,6 +470,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
         this.walCommitSquashRowLimit = getInt(properties, env, PropertyKey.CAIRO_WAL_COMMIT_SQUASH_ROW_LIMIT, 512 * 1024);
+        this.walApplyMaxTimePerTable = getLong(properties, env, PropertyKey.CAIRO_WAL_APPLY_MAX_TIME_PER_TABLE, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
 
@@ -1509,11 +1511,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3LagCalculationWindowsSize() {
-            return o3LagCalculationWindowsSize;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -1806,6 +1803,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3CopyQueueCapacity() {
             return o3CopyQueueCapacity;
+        }
+
+        @Override
+        public int getO3LagCalculationWindowsSize() {
+            return o3LagCalculationWindowsSize;
         }
 
         @Override
@@ -2230,6 +2232,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWalApplyLookAheadTransactionCount() {
             return walApplyLookAheadTransactionCount;
+        }
+
+        @Override
+        public long getWalApplyMaxTimePerTable() {
+            return walApplyMaxTimePerTable;
         }
 
         @Override
