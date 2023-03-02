@@ -48,7 +48,7 @@ import java.util.regex.Pattern;
 
 public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory {
 
-    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) {
+    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) throws SqlException {
         int len = pattern.length();
 
         StringSink sink = Misc.getThreadLocalBuilder();
@@ -61,16 +61,17 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             else if ("[](){}.*+?$^|#".indexOf(c) != -1) {
                 sink.put("\\");
                 sink.put(c);
-            } else if (c == '\\' && i + 1 < len && "_%\\".indexOf(pattern.charAt(i + 1)) != -1) {
+            } else if (c == '\\') {
                 i += 1;
+                if (i >= len)
+                    throw SqlException.parserErr(i - 1, pattern, "LIKE pattern must not end with escape character");
                 c = pattern.charAt(i);
-                if (c == '_' || c == '%') {
+                if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
+                    sink.put("\\");
                     sink.put(c);
                 } else {
-                    sink.put("\\\\");
+                    sink.put(c);
                 }
-            } else if (c == '\\') {
-                sink.put("\\\\");
             } else
                 sink.put(c);
         }
