@@ -1492,7 +1492,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     o3Hi - 1,
                                     BinarySearch.SCAN_DOWN
                             );
-                    walLagRowCount = Math.min(o3Hi - o3Lo - lagThresholdRow, MAX_WAL_LAG_ROWS);
+                    walLagRowCount = Math.min(o3Hi - lagThresholdRow, MAX_WAL_LAG_ROWS);
                     assert walLagRowCount > 0 && walLagRowCount < o3Hi - o3Lo;
                     o3Hi -= walLagRowCount;
                     commitMaxTimestamp = getTimestampIndexValue(timestampAddr, o3Hi - 1);
