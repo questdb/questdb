@@ -27,14 +27,14 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>examples</artifactId>
-    <version>1.0</version>
+    <version>1.1-SNAPSHOT</version>
     <name>Examples for QuestDB</name>
 
     <dependencies>
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb</artifactId>
-            <version>7.0.2</version>
+            <version>7.0.3-SNAPSHOT</version>
         </dependency>
     </dependencies>
 
