@@ -23,3 +23,11 @@
  ******************************************************************************/
 
 mod jni;
+
+use ::jni::sys::jlong;
+use tokio::runtime::Runtime;
+
+#[allow(dead_code)]
+pub fn runtime_from_jlong(ptr: jlong) -> &'static mut Runtime {
+    unsafe { &mut *(ptr as *mut Runtime) }
+}

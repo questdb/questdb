@@ -3,7 +3,7 @@ pub fn add(left: usize, right: usize) -> usize {
 }
 
 mod tokio;
-mod s3;
+mod wal_upload;
 
 #[cfg(test)]
 mod tests {
