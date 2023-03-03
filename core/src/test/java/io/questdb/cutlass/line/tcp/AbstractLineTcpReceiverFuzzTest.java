@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.SqlWalMode;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
@@ -320,6 +317,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                         .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
                 return table.size() <= reader.size();
+            } catch (CairoException ex) {
+                if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
+                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                            .$(", table.size(): ").$(table.size()).$(", reader.size(): table does not exist").$();
+                    return table.size() <= 0;
+                } else {
+                    throw ex;
+                }
             }
         }
 
@@ -332,6 +337,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                             .$(", table.size(): ").$(table.size()).$(", cursor.size(): ").$(cursor.size()).$();
                     return table.size() <= cursor.size();
+                }
+            } catch (SqlException ex) {
+                if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
+                    getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                            .$(", table.size(): ").$(table.size()).$(", cursor.size(): table does not exist").$();
+                    return table.size() <= 0;
+                } else {
+                    throw ex;
                 }
             }
         } catch (SqlException e) {
@@ -546,9 +559,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 Assert.fail("Data sending failed [e=" + e + "]");
                 throw new RuntimeException(e);
             } finally {
+                System.out.println("ingest thread finished " + threadId);
                 threadPushFinished.countDown();
             }
-            System.out.println("ingest thread finished " + threadId);
         }).start();
     }
 

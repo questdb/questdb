@@ -136,9 +136,9 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
                 throw new RuntimeException(e);
             } finally {
                 Path.clearThreadLocals();
+                System.out.println("drop table thread finished " + threadId);
                 dropsDone.countDown();
             }
-            System.out.println("drop table thread finished " + threadId);
         }).start();
     }
 
