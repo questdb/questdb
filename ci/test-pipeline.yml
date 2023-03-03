@@ -144,7 +144,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              options: "compile -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              options: "compile -DskipTests -Prust -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: "1.11"
           - download: current
             artifact: jacoco-coverage
