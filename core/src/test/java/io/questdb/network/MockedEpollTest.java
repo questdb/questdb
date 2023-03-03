@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,29 +24,27 @@
 
 package io.questdb.network;
 
-import io.questdb.std.Os;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import org.junit.Before;
+import org.junit.Test;
 
-public class IODispatchers {
+import static org.mockito.Mockito.mock;
 
-    private IODispatchers() {
+public class MockedEpollTest {
+
+    private Epoll epoll;
+    private IODispatcherLinux ioDispatcherLinux;
+    private IOContextFactory<HttpConnectionContext> ioContextFactory;
+    @Before
+    public void setUp(){
+        epoll = mock(Epoll.class);
+        IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration();
+        ioContextFactory = mock(IOContextFactory.class);
+        ioDispatcherLinux = new IODispatcherLinux(configuration, ioContextFactory, epoll);
     }
 
-    public static <C extends IOContext<C>> IODispatcher<C> create(
-            IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
-    ) {
-        switch (Os.type) {
-            case Os.LINUX_AMD64:
-            case Os.LINUX_ARM64:
-                return new IODispatcherLinux<>(configuration, ioContextFactory);
-            case Os.OSX_AMD64:
-            case Os.OSX_ARM64:
-            case Os.FREEBSD:
-                return new IODispatcherOsx<>(configuration, ioContextFactory);
-            case Os.WINDOWS:
-                return new IODispatcherWindows<>(configuration, ioContextFactory);
-            default:
-                throw new RuntimeException();
-        }
+    @Test
+    public void testRegister(){
+
     }
 }
