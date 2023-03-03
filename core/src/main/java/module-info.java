@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
+    requires io.questdb.jar.jni;
     requires static org.jetbrains.annotations;
     requires static java.sql;
     requires static java.management;
