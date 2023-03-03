@@ -82,6 +82,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.deploy.skip>true</maven.deploy.skip>
         <benchmarks.outputPath>target</benchmarks.outputPath>
 
         <!--
