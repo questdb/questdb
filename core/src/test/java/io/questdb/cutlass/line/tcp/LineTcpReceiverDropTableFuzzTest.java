@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cutlass.line.tcp.load.TableData;
@@ -111,7 +112,7 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
 
     private void startDropThread(final int threadId, SOCountDownLatch dropsDone) {
         // use different random
-        System.out.println("thread random");
+        System.out.println("drop table thread start " + threadId);
         final Rnd rnd = TestUtils.generateRandom(LOG);
         new Thread(() -> {
             String sql = "";
@@ -130,12 +131,14 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
                     Os.sleep(10);
                 }
             } catch (Exception e) {
+                e.printStackTrace();
                 Assert.fail("Drop table failed [e=" + e + ", sql=" + sql + "]");
                 throw new RuntimeException(e);
             } finally {
                 Path.clearThreadLocals();
                 dropsDone.countDown();
             }
+            System.out.println("drop table thread finished " + threadId);
         }).start();
     }
 
@@ -161,16 +164,59 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
     protected void waitDone(ObjList<Socket> sockets) {
         // wait for drop threads to finish
         dropsDone.await();
+        System.out.println("all table drop threads finished");
+
+        // run apply job to make sure everything has been processed
+        drainWalQueue();
+        System.out.println("apply job finished");
+
+        for (int i = 0; i < numOfTables; i++) {
+            final CharSequence tableName = getTableName(i, false);
+            final TableData table = tables.get(tableName);
+            try (TableReader reader = getReader(tableName)) {
+                System.out.println("tableName=" + tableName + ", reader.size()=" + reader.size() + ", table.size()=" + table.size());
+            } catch (CairoException ex) {
+                if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
+                    System.out.println("tableName=" + tableName + ", table dropped, table.size()=" + table.size());
+                } else {
+                    throw ex;
+                }
+            }
+        }
 
         // reset tables
         markTimestamp();
         clearTables();
+        System.out.println("reset done");
 
-        // run apply job to make sure all table drops have been processed
-        drainWalQueue();
+
+        for (int i = 0; i < numOfTables; i++) {
+            final CharSequence tableName = getTableName(i, false);
+            final TableData table = tables.get(tableName);
+            try (TableReader reader = getReader(tableName)) {
+                System.out.println("tableName=" + tableName + ", reader.size()=" + reader.size() + ", table.size()=" + table.size());
+            } catch (CairoException ex) {
+                if (ex.getFlyweightMessage().toString().contains("table does not exist")) {
+                    System.out.println("tableName=" + tableName + ", table dropped, table.size()=" + table.size());
+                } else {
+                    throw ex;
+                }
+            }
+        }
 
         // ingest again
         ingest(sockets);
+        System.out.println("second ingest done");
+
+        int numOfRows = 0;
+        final ObjList<CharSequence> names = tables.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            final CharSequence tableName = names.get(i);
+            final TableData table = tables.get(tableName);
+            numOfRows += table.size();
+        }
+        Assert.assertEquals(numOfThreads * numOfIterations * numOfLines, numOfRows);
+        System.out.println("table objects are ok");
 
         // wait for ingestion to finish
         super.waitDone(sockets);

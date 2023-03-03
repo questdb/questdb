@@ -521,6 +521,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             startThread(i, sockets.get(i), threadPushFinished);
         }
         threadPushFinished.await();
+        System.out.println("all ingest threads finished");
     }
 
     void setError(String errorMsg) {
@@ -529,6 +530,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
         new Thread(() -> {
+            System.out.println("ingest thread start " + threadId);
             try {
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
@@ -546,6 +548,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             } finally {
                 threadPushFinished.countDown();
             }
+            System.out.println("ingest thread finished " + threadId);
         }).start();
     }
 
