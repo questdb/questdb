@@ -75,6 +75,7 @@
                 <configuration>
                     <tagNameFormat>@{project.version}</tagNameFormat>
                     <arguments>-Dmaven.test.skipTests=true -Dmaven.test.skip=true</arguments>
+                    <releaseProfiles>build-web-console,maven-central-release</releaseProfiles>
                 </configuration>
             </plugin>
         </plugins>
