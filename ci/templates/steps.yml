@@ -79,6 +79,7 @@ steps:
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
+        -Prust
          $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
