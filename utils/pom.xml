@@ -27,7 +27,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>utils</artifactId>
-    <version>7.0.3-SNAPSHOT</version>
+    <version>7.0.3</version>
 
     <name>Command line utils for QuestDB</name>
 
@@ -52,7 +52,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb</artifactId>
-            <version>7.0.3-SNAPSHOT</version>
+            <version>7.0.3</version>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
