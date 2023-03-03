@@ -25,18 +25,18 @@
 package io.questdb.network;
 
 import io.questdb.cutlass.http.HttpConnectionContext;
-import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.*;
 
 public class MockedEpollTest {
 
-    private Epoll epoll;
-    private IODispatcherLinux ioDispatcherLinux;
-    private IOContextFactory<HttpConnectionContext> ioContextFactory;
-    @Before
-    public void setUp(){
+    private static Epoll epoll;
+    private static IODispatcherLinux ioDispatcherLinux;
+    private static IOContextFactory<HttpConnectionContext> ioContextFactory;
+    @BeforeClass
+    public static void setUp(){
         epoll = mock(Epoll.class);
         IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration();
         ioContextFactory = mock(IOContextFactory.class);
@@ -45,6 +45,13 @@ public class MockedEpollTest {
 
     @Test
     public void testRegister(){
+        ioDispatcherLinux.registerListenerFd();
+        verify(epoll, times(2)).listen(anyInt()); // once in constructor
+    }
 
+    @Test
+    public void testUnregister(){
+        ioDispatcherLinux.unregisterListenerFd();
+        verify(epoll, times(1)).removeListen(anyInt());
     }
 }
