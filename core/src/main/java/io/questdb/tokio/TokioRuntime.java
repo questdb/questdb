@@ -31,8 +31,6 @@ public class TokioRuntime implements Closeable {
 
     private static native long create(int workerThreads);
 
-    private static native void run(long ptr);
-
     private static native void free(long ptr);
 
     public TokioRuntime() {
@@ -41,10 +39,6 @@ public class TokioRuntime implements Closeable {
 
     public TokioRuntime(int workerThreads) {
         this.ptr = create(workerThreads);
-    }
-
-    public void run() {
-        run(ptr);
     }
 
     @Override
