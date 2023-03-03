@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>benchmarks</artifactId>
-    <version>7.0.5-SNAPSHOT</version>
+    <version>7.0.5</version>
     <packaging>jar</packaging>
     <name>JMH benchmarks for QuestDB</name>
 
@@ -56,7 +56,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb</artifactId>
-            <version>7.0.5-SNAPSHOT</version>
+            <version>7.0.5</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
