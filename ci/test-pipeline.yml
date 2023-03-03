@@ -125,7 +125,7 @@ stages:
               mavenOptions: "$(MAVEN_OPTS)"
               options:
                 "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: $(jdk)
+              jdkVersionOption: "1.11"
           - task: Maven@3
             displayName: "mvn install rust-maven-plugin"
             inputs:
@@ -133,7 +133,7 @@ stages:
               mavenOptions: "$(MAVEN_OPTS)"
               options:
                 "install -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: $(jdk)
+              jdkVersionOption: "1.11"
           - task: Cache@2
             inputs:
               key: '"questdb_main" | "maven"'
