@@ -29,6 +29,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
