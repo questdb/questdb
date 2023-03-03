@@ -31,17 +31,18 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
-    private final Epoll epoll;
+    protected final Epoll epoll;
     // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
     // id 0 is reserved for operations on the server fd
     private long idSeq = 1;
 
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
+            IOContextFactory<C> ioContextFactory,
+            Epoll epoll
     ) {
         super(configuration, ioContextFactory);
-        this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
+        this.epoll = epoll;
         registerListenerFd();
     }
 

@@ -38,7 +38,7 @@ public class IODispatchers {
         switch (Os.type) {
             case Os.LINUX_AMD64:
             case Os.LINUX_ARM64:
-                return new IODispatcherLinux<>(configuration, ioContextFactory);
+                return new IODispatcherLinux<>(configuration, ioContextFactory, new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity()));
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
             case Os.FREEBSD:
