@@ -117,7 +117,7 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
-          - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin -b fix_build_issues
+          - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin
           - task: Maven@3
             displayName: "mvn install jar-jni"
             inputs:

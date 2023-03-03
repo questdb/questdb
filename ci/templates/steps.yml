@@ -18,7 +18,7 @@ steps:
       echo '##vso[task.setvariable variable=path]$(PATH):$(HOME)/.cargo/bin'
     displayName: "Installing Rust"
     condition: eq(variables['install_rust'], 'true')
-  - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin -b fix_build_issues
+  - bash: git clone --depth 1 https://github.com/questdb/rust-maven-plugin
   - task: Cache@2
     inputs:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
