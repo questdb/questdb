@@ -62,9 +62,9 @@ steps:
       options:
         "compile $(javadoc_step) -DskipTests -P rust,build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
-    condition:
-      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
-      'none'))
+#    condition:
+#      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
+#      'none'))
   - task: Maven@3
     displayName: "Run tests"
     inputs:
