@@ -764,6 +764,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getTokioMaxThreads() {
+        return conf.getTokioMaxThreads();
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return conf.getTxnScoreboardEntryCount();
     }

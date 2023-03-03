@@ -52,6 +52,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
+import io.questdb.tokio.TokioRuntime;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -81,6 +82,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
 
+    private final int tokioMaxThreads;
+    // Lazily initialized
+    private TokioRuntime tokioRuntime;
+
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -102,6 +107,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
         this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
         this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        this.tokioMaxThreads = configuration.getTokioMaxThreads();
         try {
             this.tableIdGenerator.open();
         } catch (Throwable e) {
@@ -544,6 +550,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TextImportExecutionContext getTextImportExecutionContext() {
         return textImportExecutionContext;
+    }
+
+    public synchronized TokioRuntime getTokioRuntime() {
+        if (tokioRuntime == null) {
+            tokioRuntime = new TokioRuntime(tokioMaxThreads);
+        }
+        return tokioRuntime;
     }
 
     public long getUnpublishedWalTxnCount() {

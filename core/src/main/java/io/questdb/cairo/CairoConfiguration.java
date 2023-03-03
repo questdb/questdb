@@ -404,6 +404,8 @@ public interface CairoConfiguration {
 
     TextConfiguration getTextConfiguration();
 
+    int getTokioMaxThreads();
+
     int getTxnScoreboardEntryCount();
 
     int getVectorAggregateQueueCapacity();

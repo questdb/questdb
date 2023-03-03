@@ -772,6 +772,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getTokioMaxThreads() {
+        return 2;
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
     }

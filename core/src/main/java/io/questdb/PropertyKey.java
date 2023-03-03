@@ -395,7 +395,8 @@ public enum PropertyKey {
     CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT("cairo.wal.apply.look.ahead.txn.count"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
-    CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold");
+    CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD("cairo.table.registry.compaction.threshold"),
+    TOKIO_MAX_THREADS("tokio.max.threads");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

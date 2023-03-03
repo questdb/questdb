@@ -272,6 +272,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryHideTables;
     private final int telemetryQueueCapacity;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
+    private final int tokioMaxThreads;
     private final int vectorAggregateQueueCapacity;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final int walApplyLookAheadTransactionCount;
@@ -1052,6 +1053,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
 
             this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(2, cpuAvailable - cpuSpare - cpuUsed));
+            cpuUsed += this.sharedWorkerCount;
             this.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
             this.sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
             this.sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 10);
@@ -1069,6 +1071,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
+
+            this.tokioMaxThreads = getInt(properties, env, PropertyKey.TOKIO_MAX_THREADS, Math.max(2, cpuAvailable - cpuSpare - cpuUsed));
+            cpuUsed += this.tokioMaxThreads;
         }
     }
 
@@ -2210,6 +2215,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public TextConfiguration getTextConfiguration() {
             return textConfiguration;
+        }
+
+        @Override
+        public int getTokioMaxThreads() {
+            return tokioMaxThreads;
         }
 
         @Override
