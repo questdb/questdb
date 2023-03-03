@@ -384,6 +384,7 @@
                                 </goals>
                                 <configuration>
                                     <path>src/main/rust/questdb-jni</path>
+                                    <release>true</release>
                                     <copyTo>src/main/resources/io/questdb/bin</copyTo>
                                     <copyWithPlatformDir>true</copyWithPlatformDir>
                                     <environmentVariables>
@@ -398,6 +399,7 @@
                                 </goals>
                                 <configuration>
                                     <path>src/main/rust/questdb-jni</path>
+                                    <release>true</release>
                                 </configuration>
                             </execution>
                         </executions>
