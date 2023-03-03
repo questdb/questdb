@@ -1199,6 +1199,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 @Override
                 public int openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
+                        // Set errno to path does not exist
+                        this.openRO(Path.getThreadLocal2("does-not-exist").$());
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
@@ -1209,7 +1211,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 createTable(testName.getMethodName());
                 fail("Exception expected");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
             }
         });
     }
@@ -2916,7 +2918,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableToken)) {
                 Assert.fail();
             } catch (CairoException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("could not open read-write"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("table is dropped"));
                 MatcherAssert.assertThat(e.getMessage(), containsString(tableName));
             }
         });

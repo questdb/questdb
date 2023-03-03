@@ -203,6 +203,147 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDetachPartitionsLongerPartitionName() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+
+                    detachPartition(tableName, "2023-10-12T23:59:59.999999Z");
+                    detachPartition(tableName, "2023-10-11T23:59:59.999999Z");
+                    detachPartition(tableName, "2023-10-10T23:59:59.999999Z");
+
+                    assertTableX(tableName, TableHeader +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            MinMaxCountHeader +
+                                    "2023-10-15T00:00:00.000000Z\t2023-10-15T00:00:00.000000Z\t1\n");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionsLongerPartitionName() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+
+                    dropPartition(tableName, "2023-10-12T23:59:59.999999Z");
+                    dropPartition(tableName, "2023-10-11T23:59:59.999999Z");
+                    dropPartition(tableName, "2023-10-10T23:59:59.999999Z");
+
+                    assertTableX(tableName, TableHeader +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            MinMaxCountHeader +
+                                    "2023-10-15T00:00:00.000000Z\t2023-10-15T00:00:00.000000Z\t1\n");
+                }
+        );
+    }
+
+    @Test
+    public void testDropActivePartitionDetachHigherResolutionTimestamp() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+
+                    String activePartitionTs = "2023-10-15T00:00:00.000000Z";
+
+                    dropPartition(tableName, activePartitionTs); // drop active partition
+                    insert("insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')"); // recreate it
+                    dropPartition(tableName, activePartitionTs); // drop active partition
+
+                    assertTableX(tableName, TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n",
+                            MinMaxCountHeader +
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-12T00:00:02.000000Z\t5\n");
+                }
+        );
+    }
+
+    @Test
+    public void testDropActivePartitionDetachLowerResolutionTimestamp() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+
+                    createTableX(tableName,
+                            TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            "insert into " + tableName + " values(1, '2023-10-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2023-10-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2023-10-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2023-10-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
+
+                    String activePartitionTs = "2023-10";
+                    try {
+                        dropPartition(tableName, activePartitionTs); // drop active partition
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected, found [ts=2023-10]");
+                    }
+                    assertTableX(tableName, TableHeader +
+                                    "1\t2023-10-10T00:00:00.000000Z\n" +
+                                    "2\t2023-10-11T00:00:00.000000Z\n" +
+                                    "3\t2023-10-12T00:00:00.000000Z\n" +
+                                    "4\t2023-10-12T00:00:01.000000Z\n" +
+                                    "6\t2023-10-12T00:00:02.000000Z\n" +
+                                    "5\t2023-10-15T00:00:00.000000Z\n",
+                            MinMaxCountHeader +
+                                    "2023-10-10T00:00:00.000000Z\t2023-10-15T00:00:00.000000Z\t6\n");
+                }
+        );
+    }
+
+    @Test
     public void testDropActivePartitionFailsBecausePrevMaxPartitionIsIncorrect() throws Exception {
         FilesFacade myFf = new TestFilesFacadeImpl() {
             @Override

@@ -986,24 +986,21 @@ public class SqlCompiler implements Closeable {
                 }
                 break;
             }
-            if (Chars.equals(tok, ',')) {
+            if (Chars.equals(tok, ',') || Chars.equals(tok, ';')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
             }
-            final CharSequence partitionName = GenericLexer.unquote(tok);
-            final int partitionNamePosition = lexer.lastTokenPosition();
+            final CharSequence partitionName = GenericLexer.unquote(tok); // potentially a full timestamp, or part of it
+            final int lastPosition = lexer.lastTokenPosition();
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             if (reader != null) {
-                final long timestamp;
                 try {
-                    timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    long timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
+                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
                 } catch (CairoException e) {
-                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
-                            .put("[errno=").put(e.getErrno()).put(']');
+                    throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
                 }
-
-                alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
             }
 
             tok = SqlUtil.fetchNext(lexer);
@@ -1017,7 +1014,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(this.alterOperationBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, TableToken tableToken, TableRecordMetadata metadata) throws SqlException {

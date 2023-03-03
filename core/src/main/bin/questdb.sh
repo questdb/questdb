@@ -25,7 +25,7 @@
 ################################################################################
 
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
-export QDB_MAX_STOP_ATTEMPTS=5;
+export QDB_MAX_STOP_ATTEMPTS=60;
 export QDB_OS=`uname`
 
 case `uname` in
@@ -211,6 +211,8 @@ function stop {
 
     OUR_PID=${QDB_PID}
 
+    echo "Stopping ${OUR_PID}"
+
     count=${QDB_MAX_STOP_ATTEMPTS}
     while [ "${QDB_PID}" != "" ] && [ ${count} -gt 0 ]; do
         kill ${QDB_PID}
@@ -221,7 +223,7 @@ function stop {
 
     if [[ "${QDB_PID}" != "" ]]; then
         kill -9 ${QDB_PID}
-        echo "Something is wrong. Process does not stop. Killing.."
+        echo "Something is wrong. Process does not stop. Killing..."
         export_pid
     fi
 

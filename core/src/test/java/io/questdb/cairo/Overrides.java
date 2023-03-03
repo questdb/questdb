@@ -78,6 +78,7 @@ public class Overrides implements ConfigurationOverrides {
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
+    private int tableRegistryCompactionThreshold;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
     private int walTxnNotificationQueueCapacity = -1;
@@ -277,6 +278,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public int getTableRegistryCompactionThreshold() {
+        return tableRegistryCompactionThreshold;
+    }
+
+    @Override
     public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
     }
@@ -387,6 +393,7 @@ public class Overrides implements ConfigurationOverrides {
         walSegmentRolloverRowCount = -1;
         mangleTableDirNames = true;
         walPurgeInterval = -1;
+        tableRegistryCompactionThreshold = -1;
     }
 
     @Override
@@ -557,6 +564,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
         this.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
+    }
+
+    @Override
+    public void setRegistryCompactionThreshold(int value) {
+        tableRegistryCompactionThreshold = value;
     }
 
     @Override
