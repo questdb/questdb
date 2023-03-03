@@ -32,6 +32,13 @@
     <packaging>pom</packaging>
     <name>QuestDB</name>
 
+    <scm>
+        <connection>scm:git:https://github.com/questdb/questdb.git</connection>
+        <developerConnection>scm:git:https://github.com/questdb/questdb.git</developerConnection>
+        <url>https://github.com/questdb/questdb</url>
+        <tag>HEAD</tag>
+    </scm>
+
     <build>
         <plugins>
             <plugin>
